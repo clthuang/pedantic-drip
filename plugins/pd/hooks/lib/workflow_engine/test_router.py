@@ -59,10 +59,10 @@ class TestSC4BrainstormReviewingWritesWip:
 
     def test_draft_to_reviewing_writes_wip(self, db):
         db.register_entity(
-            entity_type="brainstorm", entity_id="sc4-probe",
+            entity_type="brainstorm", entity_id="20260101-000034-sc4-probe",
             name="SC4 probe", status="draft", project_id="__unknown__",
         )
-        type_id = "brainstorm:sc4-probe"
+        type_id = "brainstorm:20260101-000034-sc4-probe"
         init_entity_workflow(db, type_id, "draft", "wip")
         transition_entity_phase(db, type_id, "reviewing")
         row = db.get_workflow_phase(type_id)
@@ -525,8 +525,8 @@ class TestTransitionEntityPhaseDelegatesToMachineValidate:
     @pytest.mark.parametrize(
         "kind, entity_id, current, target",
         [
-            ("brainstorm", "msg-probe-1", "draft", "bogus-target"),
-            ("backlog", "msg-probe-2", "open", "bogus-target"),
+            ("brainstorm", "20260101-000029-msg-probe-1", "draft", "bogus-target"),
+            ("backlog", "001-msg-probe-2", "open", "bogus-target"),
         ],
     )
     def test_invalid_transition_message_matches_machine_validate_verbatim(

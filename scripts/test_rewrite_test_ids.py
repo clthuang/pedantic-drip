@@ -20,6 +20,11 @@ def test_mapping_rewrites_and_gate(tmp_path):
         db._register_entity_no_display("feature", "solo", "n")
         assert get("project:P001") and get("1-a") and get("solo")
         note = "see 1-a"
+        sql = "SELECT 1 WHERE type_id = 'feature:1-a'"
+        near = "feature:1-alpha"
+        msg = f"got {x} for project:P001"
+        multi = ("UPDATE x SET a = 1 "
+                 "WHERE type_id = 'feature:1-a'")
     """))
     (tests / "test_other.py").write_text('render("project:P001")\n')
 
@@ -49,8 +54,14 @@ def test_mapping_rewrites_and_gate(tmp_path):
         db.register_entity("feature", "001-solo", "n")
         assert get("project:001-p001") and get("002-a") and get("solo")
         note = "see 1-a"
+        sql = "SELECT 1 WHERE type_id = 'feature:002-a'"
+        near = "feature:1-alpha"
+        msg = f"got {x} for project:001-p001"
+        multi = ("UPDATE x SET a = 1 "
+                 "WHERE type_id = 'feature:002-a'")
     """)
-    # A file that never registers the id keeps its copy.
+    # A kind:id token inside SQL (one line or several) or an f-string moves too, but never inside a
+    # longer id; a file that never registers the id keeps its copy.
     assert (tests / "test_other.py").read_text() == 'render("project:P001")\n'
     # The refused id and the plain-word copy wait for a person; the gate finds
     # the id left in a sentence and the copy the unregistering file kept.
@@ -59,3 +70,9 @@ def test_mapping_rewrites_and_gate(tmp_path):
     left = rw.leftovers({lit for _, lit in mapping.new}, tmp_path)
     assert [(r.path, r.line, r.literal) for r in left] == [
         ("hooks/lib/test_ids.py", 9, "1-a"), ("hooks/lib/test_other.py", 1, "P001")]
+    # Only the file that registers the id is gated; the other file's copy is its own text.
+    mapping_file = tmp_path / "mapping.tsv"
+    rw.write_mapping(mapping, mapping_file)
+    registering = rw.registering_files(tmp_path, mapping_file)
+    assert [(r.path, r.literal) for r in left if r.path in registering[r.literal]] == [
+        ("hooks/lib/test_ids.py", "1-a")]

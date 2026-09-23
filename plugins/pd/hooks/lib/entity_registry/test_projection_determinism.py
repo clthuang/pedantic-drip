@@ -665,7 +665,7 @@ class TestBacklogProjectionIdentity:
         db = EntityDatabase(str(tmp_path / "e.db"))
         ws = _bootstrap_ws(db, tmp_path)
         self._seed(db, ws, "063-watch-the-thing", seq=63, slug="watch-the-thing")
-        self._seed(db, ws, "00063", is_archived=1)
+        self._seed(db, ws, "063-backlog", is_archived=1)
 
         rendered = self._rows(_project_backlog_md(db, workspace_uuid=ws))
         assert rendered == ["063-watch-the-thing"], (
@@ -696,7 +696,7 @@ class TestBacklogProjectionIdentity:
 
         db = EntityDatabase(str(tmp_path / "e.db"))
         ws = _bootstrap_ws(db, tmp_path)
-        uuid = self._seed(db, ws, "00059", status="open")
+        uuid = self._seed(db, ws, "059-backlog", status="open")
         # is_legacy is immutable (v2 migration 7), so this constructs a state
         # production can no longer reach: the flag was set once, by the
         # migration-4 backfill, before the trigger existed. Dropping and
@@ -714,7 +714,7 @@ class TestBacklogProjectionIdentity:
             "SELECT is_legacy FROM entities WHERE uuid=?", (uuid,)
         ).fetchone()[0] == 1, "setup failed: the row under test is not legacy"
 
-        assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == ["00059"]
+        assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == ["059-backlog"]
 
     def test_other_workspaces_are_excluded(self, tmp_path):
 

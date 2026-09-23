@@ -134,7 +134,7 @@ def test_apply_mode_updates_existing_entity(db, monkeypatch):
     # Pre-register a backlog entity WITHOUT format metadata.
     db.register_entity(
         entity_type="backlog",
-        entity_id="00010-existing",
+        entity_id="010-existing",
         name="Existing item",
         project_id=TEST_PROJECT_ID,
         status="open",
@@ -147,7 +147,7 @@ def test_apply_mode_updates_existing_entity(db, monkeypatch):
     _monkeypatch_apply_db(monkeypatch, db)
 
     records = [{
-        "entity_id": "00010-existing",
+        "entity_id": "010-existing",
         "format": "table_row",
         "section": None,
         "section_intro": None,
@@ -162,7 +162,7 @@ def test_apply_mode_updates_existing_entity(db, monkeypatch):
 
     # Verify the metadata was merged (description preserved, format added).
     rows = db.list_entities(entity_type="backlog")
-    matching = [r for r in rows if r["entity_id"] == "00010-existing"]
+    matching = [r for r in rows if r["entity_id"] == "010-existing"]
     assert len(matching) == 1
     md = json.loads(matching[0]["metadata"])
     assert md.get("format") == "table_row"
@@ -174,7 +174,7 @@ def test_apply_mode_idempotent(db, monkeypatch):
     # Pre-register with the exact metadata we'll try to apply.
     db.register_entity(
         entity_type="backlog",
-        entity_id="00020-idempotent",
+        entity_id="020-idempotent",
         name="Idempotent test",
         project_id=TEST_PROJECT_ID,
         status="open",
@@ -187,7 +187,7 @@ def test_apply_mode_idempotent(db, monkeypatch):
     _monkeypatch_apply_db(monkeypatch, db)
 
     records = [{
-        "entity_id": "00020-idempotent",
+        "entity_id": "020-idempotent",
         "format": "table_row",
         "section": None,
         "section_intro": None,
@@ -214,7 +214,7 @@ def test_apply_mode_inserts_missing_entity(db, monkeypatch):
     # Use {seq}-{slug} format per feature 110 Group 2 register_entity
     # contract (entity_id MUST match ^\d+-.+ post-migration-13).
     records = [{
-        "entity_id": "00099-new-row",
+        "entity_id": "099-new-row",
         "format": "bullet_item",
         "section": "From Feature 99 Pre-Release QA Findings",
         "section_intro": None,
@@ -228,7 +228,7 @@ def test_apply_mode_inserts_missing_entity(db, monkeypatch):
     assert result["failed"] == 0
 
     rows = db.list_entities(entity_type="backlog")
-    matching = [r for r in rows if r["entity_id"] == "00099-new-row"]
+    matching = [r for r in rows if r["entity_id"] == "099-new-row"]
     assert len(matching) == 1
     md = json.loads(matching[0]["metadata"])
     assert md.get("format") == "bullet_item"
@@ -243,7 +243,7 @@ def test_apply_mode_double_run_after_insert_is_noop(db, monkeypatch):
     _monkeypatch_apply_db(monkeypatch, db)
 
     records = [{
-        "entity_id": "00200-end-to-end",
+        "entity_id": "200-end-to-end",
         "format": "table_row",
         "section": None,
         "section_intro": None,

@@ -759,23 +759,23 @@ class TestCompletePhaseEntityMetadata:
     def test_terminal_phase_finish_sets_completed_status(self, db, tmp_path):
         """Completing 'finish' phase sets entity status to 'completed'."""
         # Setup: feature at 'finish' phase
-        db.register_entity("feature", "fin-test", "Finish Test", status="active", project_id="__unknown__")
-        db.create_workflow_phase("feature:fin-test", workflow_phase="finish")
+        db.register_entity("feature", "001-fin-test", "Finish Test", status="active", project_id="__unknown__")
+        db.create_workflow_phase("feature:001-fin-test", workflow_phase="finish")
 
-        feat_dir = os.path.join(str(tmp_path), "features", "fin-test")
+        feat_dir = os.path.join(str(tmp_path), "features", "001-fin-test")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             f.write('{"id": "fin", "slug": "fin-test", "status": "active", "mode": "standard"}')
 
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_complete_phase(
-            engine, "feature:fin-test", "finish",
+            engine, "feature:001-fin-test", "finish",
             db=db,
         )
         data = json.loads(result)
         assert "error" not in data
 
-        entity = db.get_entity("feature:fin-test")
+        entity = db.get_entity("feature:001-fin-test")
         assert entity["status"] == "completed"
 
     def test_completed_at_in_response(self, seeded_engine, db, tmp_path):
@@ -1130,14 +1130,14 @@ def perf_engine(tmp_path):
     """Engine with 50 seeded features for performance testing."""
     db = EntityDatabase(":memory:")
     for i in range(50):
-        db.register_entity("feature", f"perf-{i:03d}", f"Perf Test {i}", status="active", project_id="__unknown__")
-        db.create_workflow_phase(f"feature:perf-{i:03d}", workflow_phase="specify")
+        db.register_entity("feature", f"001-perf-{i:03d}", f"Perf Test {i}", status="active", project_id="__unknown__")
+        db.create_workflow_phase(f"feature:001-perf-{i:03d}", workflow_phase="specify")
 
         # Create feature directory with .meta.json
-        feat_dir = os.path.join(str(tmp_path), "features", f"perf-{i:03d}")
+        feat_dir = os.path.join(str(tmp_path), "features", f"001-perf-{i:03d}")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
-            f.write(f'{{"id": "perf-{i:03d}", "slug": "perf-{i:03d}", "status": "active", "mode": "standard"}}')
+            f.write(f'{{"id": "001-perf-{i:03d}", "slug": "001-perf-{i:03d}", "status": "active", "mode": "standard"}}')
 
     return WorkflowStateEngine(db, str(tmp_path))
 
@@ -1145,7 +1145,7 @@ def perf_engine(tmp_path):
 class TestPerformance:
     def test_get_phase(self, perf_engine):
         start = time.perf_counter()
-        _process_get_phase(perf_engine, "feature:perf-025")
+        _process_get_phase(perf_engine, "feature:001-perf-025")
         elapsed = time.perf_counter() - start
         assert elapsed < 0.1, f"get_phase took {elapsed:.3f}s (>100ms)"
 
@@ -1163,7 +1163,7 @@ class TestPerformance:
 
     def test_validate_prerequisites(self, perf_engine):
         start = time.perf_counter()
-        _process_validate_prerequisites(perf_engine, "feature:perf-025", "design")
+        _process_validate_prerequisites(perf_engine, "feature:001-perf-025", "design")
         elapsed = time.perf_counter() - start
         assert elapsed < 0.1, f"validate_prerequisites took {elapsed:.3f}s (>100ms)"
 
@@ -4891,7 +4891,7 @@ class TestProjectMetaJson:
     def test_project_kind_builds_project_shape(self, db, tmp_path):
         """D5: project kind builds PROJECT shape (id/slug/status/created/
         features/milestones/brainstorm_source), not the feature shape."""
-        project_dir = os.path.join(str(tmp_path), "projects", "P02-widget")
+        project_dir = os.path.join(str(tmp_path), "projects", "001-p02-widget")
         os.makedirs(project_dir, exist_ok=True)
         metadata = {
             "features": ["feature:001-a"],
@@ -4899,22 +4899,22 @@ class TestProjectMetaJson:
             "brainstorm_source": "brainstorm:002-source",
         }
         db.register_entity(
-            "project", "P02-widget", "widget",
+            "project", "001-p02-widget", "widget",
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
             project_id="__unknown__",
         )
 
-        result = _project_meta_json(db, None, "project:P02-widget", project_dir)
+        result = _project_meta_json(db, None, "project:001-p02-widget", project_dir)
         assert result is None
 
         with open(os.path.join(project_dir, ".meta.json")) as f:
             meta = json.load(f)
         created = meta.pop("created", None)
         assert meta == {
-            "id": "P02",
-            "slug": "widget",
+            "id": "001",
+            "slug": "p02-widget",
             "status": "active",
             "features": ["feature:001-a"],
             "milestones": ["m1", "m2"],
@@ -4925,18 +4925,18 @@ class TestProjectMetaJson:
     def test_project_kind_omits_brainstorm_source_when_absent(self, db, tmp_path):
         """D5: brainstorm_source is optional -- omitted (not null) when the
         project has none, matching init_project_state's own convention."""
-        project_dir = os.path.join(str(tmp_path), "projects", "P03-nosource")
+        project_dir = os.path.join(str(tmp_path), "projects", "001-p03-nosource")
         os.makedirs(project_dir, exist_ok=True)
         metadata = {"features": [], "milestones": []}
         db.register_entity(
-            "project", "P03-nosource", "nosource",
+            "project", "001-p03-nosource", "nosource",
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
             project_id="__unknown__",
         )
 
-        result = _project_meta_json(db, None, "project:P03-nosource", project_dir)
+        result = _project_meta_json(db, None, "project:001-p03-nosource", project_dir)
         assert result is None
 
         with open(os.path.join(project_dir, ".meta.json")) as f:
@@ -4981,7 +4981,7 @@ class TestProjectKindProjectionPreservesShape:
 
     @staticmethod
     def _seed_project(db, tmp_path, *, phase="discover"):
-        project_dir = os.path.join(str(tmp_path), "projects", "P01-demo")
+        project_dir = os.path.join(str(tmp_path), "projects", "001-p01-demo")
         os.makedirs(project_dir, exist_ok=True)
         metadata = {
             "id": "P01",
@@ -4991,14 +4991,14 @@ class TestProjectKindProjectionPreservesShape:
             "brainstorm_source": "brainstorm:001-source",
         }
         db.register_entity(
-            "project", "P01-demo", "demo",
+            "project", "001-p01-demo", "demo",
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
             project_id="__unknown__",
         )
         db.create_workflow_phase(
-            "project:P01-demo", workflow_phase=phase, mode="standard",
+            "project:001-p01-demo", workflow_phase=phase, mode="standard",
         )
         # A real PROJECT-shaped .meta.json already on disk, simulating
         # init_project_state's original write (feature_lifecycle.py:293-306).
@@ -5013,7 +5013,7 @@ class TestProjectKindProjectionPreservesShape:
                 "milestones": ["m1", "m2"],
                 "brainstorm_source": "brainstorm:001-source",
             }, f)
-        return "project:P01-demo", project_dir
+        return "project:001-p01-demo", project_dir
 
     def test_transition_phase_preserves_project_shape(self, db, tmp_path):
         """transition_phase on a project: id must not clobber features/
@@ -6477,19 +6477,19 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_creates_row(self, db):
         """Register brainstorm entity, call init, verify workflow_phases row."""
-        db.register_entity("brainstorm", "test-idea", "Test Idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", "20260101-000039-test-idea", "Test Idea", status="draft", project_id="__unknown__")
         result = json.loads(
-            _process_init_entity_workflow(db, "brainstorm:test-idea", "draft", "wip")
+            _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wip")
         )
         assert result["created"] is True
-        assert result["type_id"] == "brainstorm:test-idea"
+        assert result["type_id"] == "brainstorm:20260101-000039-test-idea"
         assert result["workflow_phase"] == "draft"
         assert result["kanban_column"] == "wip"
 
         # Verify row in DB
         row = db._conn.execute(
             "SELECT workflow_phase, kanban_column FROM workflow_phases WHERE type_id = ?",
-            ("brainstorm:test-idea",),
+            ("brainstorm:20260101-000039-test-idea",),
         ).fetchone()
         assert row is not None
         assert row["workflow_phase"] == "draft"
@@ -6497,11 +6497,11 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_idempotent(self, db):
         """Call init twice, second returns created=false with existing values."""
-        db.register_entity("brainstorm", "test-idea", "Test Idea", status="draft", project_id="__unknown__")
-        _process_init_entity_workflow(db, "brainstorm:test-idea", "draft", "wip")
+        db.register_entity("brainstorm", "20260101-000039-test-idea", "Test Idea", status="draft", project_id="__unknown__")
+        _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wip")
 
         result = json.loads(
-            _process_init_entity_workflow(db, "brainstorm:test-idea", "draft", "wip")
+            _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wip")
         )
         assert result["created"] is False
         assert result["reason"] == "already_exists"
@@ -6518,9 +6518,9 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_validates_phase_against_machine(self, db):
         """Invalid phase for brainstorm -> error_type=invalid_transition."""
-        db.register_entity("brainstorm", "test-idea", "Test Idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", "20260101-000039-test-idea", "Test Idea", status="draft", project_id="__unknown__")
         result = json.loads(
-            _process_init_entity_workflow(db, "brainstorm:test-idea", "invalid", "wip")
+            _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "invalid", "wip")
         )
         assert result["error"] is True
         assert result["error_type"] == "invalid_transition"
@@ -6528,9 +6528,9 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_validates_kanban_column_consistency(self, db):
         """Mismatched kanban_column for brainstorm draft -> error_type=invalid_transition."""
-        db.register_entity("brainstorm", "test-idea", "Test Idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", "20260101-000039-test-idea", "Test Idea", status="draft", project_id="__unknown__")
         result = json.loads(
-            _process_init_entity_workflow(db, "brainstorm:test-idea", "draft", "wrong")
+            _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wrong")
         )
         assert result["error"] is True
         assert result["error_type"] == "invalid_transition"
@@ -6580,9 +6580,9 @@ class TestTransitionEntityPhase:
 
     def test_transition_brainstorm_draft_to_reviewing(self, db):
         """Forward transition: draft -> reviewing, kanban_column -> wip."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "draft", "wip")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "draft", "wip")
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "reviewing")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "reviewing")
         )
         assert result["transitioned"] is True
         assert result["from_phase"] == "draft"
@@ -6591,9 +6591,9 @@ class TestTransitionEntityPhase:
 
     def test_transition_brainstorm_reviewing_to_promoted(self, db):
         """Terminal forward: reviewing -> promoted, kanban_column -> completed."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "reviewing", "agent_review")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "reviewing", "agent_review")
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "promoted")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "promoted")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "promoted"
@@ -6602,11 +6602,11 @@ class TestTransitionEntityPhase:
     def test_transition_brainstorm_reviewing_to_draft(self, db):
         """Backward transition: reviewing -> draft, last_completed_phase NOT updated."""
         self._seed_entity_with_workflow(
-            db, "brainstorm", "idea-1", "reviewing", "agent_review",
+            db, "brainstorm", "20260101-000019-idea-1", "reviewing", "agent_review",
             last_completed_phase="draft",
         )
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "draft")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "draft")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "draft"
@@ -6615,15 +6615,15 @@ class TestTransitionEntityPhase:
         # Verify last_completed_phase was NOT updated (backward transition)
         row = db._conn.execute(
             "SELECT last_completed_phase FROM workflow_phases WHERE type_id = ?",
-            ("brainstorm:idea-1",),
+            ("brainstorm:20260101-000019-idea-1",),
         ).fetchone()
         assert row["last_completed_phase"] == "draft"
 
     def test_transition_backlog_open_to_triaged(self, db):
         """Forward transition: open -> triaged, kanban_column -> prioritised."""
-        self._seed_entity_with_workflow(db, "backlog", "12345", "open", "backlog")
+        self._seed_entity_with_workflow(db, "backlog", "12345-backlog", "open", "backlog")
         result = json.loads(
-            _process_transition_entity_phase(db, "backlog:12345", "triaged")
+            _process_transition_entity_phase(db, "backlog:12345-backlog", "triaged")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "triaged"
@@ -6631,9 +6631,9 @@ class TestTransitionEntityPhase:
 
     def test_transition_backlog_triaged_to_promoted(self, db):
         """Terminal forward: triaged -> promoted, kanban_column -> completed."""
-        self._seed_entity_with_workflow(db, "backlog", "12345", "triaged", "prioritised")
+        self._seed_entity_with_workflow(db, "backlog", "12345-backlog", "triaged", "prioritised")
         result = json.loads(
-            _process_transition_entity_phase(db, "backlog:12345", "promoted")
+            _process_transition_entity_phase(db, "backlog:12345-backlog", "promoted")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "promoted"
@@ -6641,9 +6641,9 @@ class TestTransitionEntityPhase:
 
     def test_transition_invalid_from_terminal(self, db):
         """promoted -> anything -> invalid_transition."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "promoted", "completed")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "promoted", "completed")
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "draft")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "draft")
         )
         assert result["error"] is True
         assert result["error_type"] == "invalid_transition"
@@ -6667,16 +6667,16 @@ class TestTransitionEntityPhase:
 
     def test_transition_null_current_phase_error(self, db):
         """Row with NULL workflow_phase -> invalid_transition with init hint."""
-        db.register_entity("brainstorm", "idea-1", "Test Idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", "20260101-000019-idea-1", "Test Idea", status="draft", project_id="__unknown__")
         db._conn.execute(
             "INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, updated_at) "
             "VALUES (?, ?, ?, ?)",
-            ("brainstorm:idea-1", None, "wip", db._now_iso()),
+            ("brainstorm:20260101-000019-idea-1", None, "wip", db._now_iso()),
         )
         db._conn.commit()
 
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "reviewing")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "reviewing")
         )
         assert result["error"] is True
         assert result["error_type"] == "invalid_transition"
@@ -6684,42 +6684,42 @@ class TestTransitionEntityPhase:
 
     def test_transition_updates_entities_status(self, db):
         """After transition, entities.status matches target_phase."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "draft", "wip")
-        _process_transition_entity_phase(db, "brainstorm:idea-1", "reviewing")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "draft", "wip")
+        _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "reviewing")
 
-        entity = db.get_entity("brainstorm:idea-1")
+        entity = db.get_entity("brainstorm:20260101-000019-idea-1")
         assert entity["status"] == "reviewing"
 
     def test_transition_forward_sets_last_completed_phase(self, db):
         """After draft->reviewing (forward), last_completed_phase='draft'."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "draft", "wip")
-        _process_transition_entity_phase(db, "brainstorm:idea-1", "reviewing")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "draft", "wip")
+        _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "reviewing")
 
         row = db._conn.execute(
             "SELECT last_completed_phase FROM workflow_phases WHERE type_id = ?",
-            ("brainstorm:idea-1",),
+            ("brainstorm:20260101-000019-idea-1",),
         ).fetchone()
         assert row["last_completed_phase"] == "draft"
 
     def test_transition_backward_preserves_last_completed_phase(self, db):
         """After reviewing->draft (backward), last_completed_phase unchanged."""
         self._seed_entity_with_workflow(
-            db, "brainstorm", "idea-1", "reviewing", "agent_review",
+            db, "brainstorm", "20260101-000019-idea-1", "reviewing", "agent_review",
             last_completed_phase="draft",
         )
-        _process_transition_entity_phase(db, "brainstorm:idea-1", "draft")
+        _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "draft")
 
         row = db._conn.execute(
             "SELECT last_completed_phase FROM workflow_phases WHERE type_id = ?",
-            ("brainstorm:idea-1",),
+            ("brainstorm:20260101-000019-idea-1",),
         ).fetchone()
         assert row["last_completed_phase"] == "draft"
 
     def test_transition_brainstorm_draft_to_abandoned(self, db):
         """Valid direct-to-terminal from initial state: draft -> abandoned."""
-        self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "draft", "wip")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000019-idea-1", "draft", "wip")
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:idea-1", "abandoned")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000019-idea-1", "abandoned")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "abandoned"
@@ -6727,9 +6727,9 @@ class TestTransitionEntityPhase:
 
     def test_transition_backlog_open_to_dropped(self, db):
         """Valid direct-to-terminal from initial state: open -> dropped."""
-        self._seed_entity_with_workflow(db, "backlog", "12345", "open", "backlog")
+        self._seed_entity_with_workflow(db, "backlog", "12345-backlog", "open", "backlog")
         result = json.loads(
-            _process_transition_entity_phase(db, "backlog:12345", "dropped")
+            _process_transition_entity_phase(db, "backlog:12345-backlog", "dropped")
         )
         assert result["transitioned"] is True
         assert result["to_phase"] == "dropped"
@@ -6808,11 +6808,11 @@ class TestTransitionEntityPhaseDeepened:
         ]
         for i, (from_phase, to_phase, expected_kanban) in enumerate(transitions):
             self._seed_entity_with_workflow(
-                db, "brainstorm", f"exh-b-{i}", from_phase,
+                db, "brainstorm", f"001-exh-b-{i}", from_phase,
                 ENTITY_MACHINES["brainstorm"]["columns"][from_phase],
             )
             result = json.loads(
-                _process_transition_entity_phase(db, f"brainstorm:exh-b-{i}", to_phase)
+                _process_transition_entity_phase(db, f"brainstorm:001-exh-b-{i}", to_phase)
             )
             assert result["transitioned"] is True, (
                 f"brainstorm {from_phase}->{to_phase} failed"
@@ -6830,10 +6830,10 @@ class TestTransitionEntityPhaseDeepened:
         ]
         for i, (from_phase, to_phase, expected_kanban) in enumerate(reviewing_transitions):
             self._seed_entity_with_workflow(
-                db, "brainstorm", f"exh-br-{i}", from_phase, "agent_review",
+                db, "brainstorm", f"001-exh-br-{i}", from_phase, "agent_review",
             )
             result = json.loads(
-                _process_transition_entity_phase(db, f"brainstorm:exh-br-{i}", to_phase)
+                _process_transition_entity_phase(db, f"brainstorm:001-exh-br-{i}", to_phase)
             )
             assert result["transitioned"] is True, (
                 f"brainstorm {from_phase}->{to_phase} failed"
@@ -6854,10 +6854,10 @@ class TestTransitionEntityPhaseDeepened:
         ]
         for i, (from_phase, to_phase, expected_kanban) in enumerate(transitions_open):
             self._seed_entity_with_workflow(
-                db, "backlog", f"exh-bl-{i}", from_phase, "backlog",
+                db, "backlog", f"001-exh-bl-{i}", from_phase, "backlog",
             )
             result = json.loads(
-                _process_transition_entity_phase(db, f"backlog:exh-bl-{i}", to_phase)
+                _process_transition_entity_phase(db, f"backlog:001-exh-bl-{i}", to_phase)
             )
             assert result["transitioned"] is True
             assert result["kanban_column"] == expected_kanban
@@ -6869,10 +6869,10 @@ class TestTransitionEntityPhaseDeepened:
         ]
         for i, (from_phase, to_phase, expected_kanban) in enumerate(transitions_triaged):
             self._seed_entity_with_workflow(
-                db, "backlog", f"exh-blt-{i}", from_phase, "prioritised",
+                db, "backlog", f"001-exh-blt-{i}", from_phase, "prioritised",
             )
             result = json.loads(
-                _process_transition_entity_phase(db, f"backlog:exh-blt-{i}", to_phase)
+                _process_transition_entity_phase(db, f"backlog:001-exh-blt-{i}", to_phase)
             )
             assert result["transitioned"] is True
             assert result["kanban_column"] == expected_kanban
@@ -6885,10 +6885,10 @@ class TestTransitionEntityPhaseDeepened:
         a brainstorm could incorrectly accept 'triaged' (backlog-only phase).
         """
         # Given a brainstorm in draft phase
-        self._seed_entity_with_workflow(db, "brainstorm", "cross-1", "draft", "wip")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000015-cross-1", "draft", "wip")
         # When trying to transition to 'triaged' (a backlog-only phase)
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:cross-1", "triaged")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000015-cross-1", "triaged")
         )
         # Then it's rejected as invalid
         assert result["error"] is True
@@ -6903,10 +6903,10 @@ class TestTransitionEntityPhaseDeepened:
         Mutation: removing the terminal guard for 'abandoned' would let this pass.
         """
         # Given a brainstorm in abandoned (terminal) state
-        self._seed_entity_with_workflow(db, "brainstorm", "term-ab", "abandoned", "completed")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000037-term-ab", "abandoned", "completed")
         # When trying to transition to 'draft'
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:term-ab", "draft")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000037-term-ab", "draft")
         )
         # Then it's rejected
         assert result["error"] is True
@@ -6920,10 +6920,10 @@ class TestTransitionEntityPhaseDeepened:
         'dropped', transitions from dropped would be allowed incorrectly.
         """
         # Given a backlog in dropped (terminal) state
-        self._seed_entity_with_workflow(db, "backlog", "term-dr", "dropped", "completed")
+        self._seed_entity_with_workflow(db, "backlog", "001-term-dr", "dropped", "completed")
         # When trying to transition to 'open'
         result = json.loads(
-            _process_transition_entity_phase(db, "backlog:term-dr", "open")
+            _process_transition_entity_phase(db, "backlog:001-term-dr", "open")
         )
         # Then it's rejected
         assert result["error"] is True
@@ -6938,10 +6938,10 @@ class TestTransitionEntityPhaseDeepened:
         produce a confusing error.
         """
         # Given an entity registered but NO workflow_phases row
-        db.register_entity("brainstorm", "no-wp", "No Workflow", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", "20260101-000031-no-wp", "No Workflow", status="draft", project_id="__unknown__")
         # When trying to transition
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:no-wp", "reviewing")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000031-no-wp", "reviewing")
         )
         # Then it returns an error pointing to init_entity_workflow
         assert result["error"] is True
@@ -6954,10 +6954,10 @@ class TestTransitionEntityPhaseDeepened:
         must be valid to support programmatic promotion during feature creation.
         """
         # Given a brainstorm in draft
-        self._seed_entity_with_workflow(db, "brainstorm", "skip-1", "draft", "wip")
+        self._seed_entity_with_workflow(db, "brainstorm", "20260101-000035-skip-1", "draft", "wip")
         # When promoting directly
         result = json.loads(
-            _process_transition_entity_phase(db, "brainstorm:skip-1", "promoted")
+            _process_transition_entity_phase(db, "brainstorm:20260101-000035-skip-1", "promoted")
         )
         # Then it succeeds
         assert result["transitioned"] is True
@@ -8215,7 +8215,7 @@ class TestReconcileFrontmatterBulkBoundaryDeepened:
         """
         # Given multiple features with perfectly matching frontmatter
         for i in range(3):
-            slug = f"sync-{i:03d}"
+            slug = f"001-sync-{i:03d}"
             db.register_entity("feature", slug, f"Sync Feature {i}", status="active", project_id="__unknown__")
             entity = db.get_entity(f"feature:{slug}")
             feat_dir = os.path.join(str(tmp_path), "features", slug)
@@ -8244,7 +8244,7 @@ class TestReconcileFrontmatterBulkBoundaryDeepened:
         """
         # Given multiple features with NO frontmatter in spec files
         for i in range(3):
-            slug = f"drift-{i:03d}"
+            slug = f"001-drift-{i:03d}"
             db.register_entity("feature", slug, f"Drift Feature {i}", status="active", project_id="__unknown__")
             entity = db.get_entity(f"feature:{slug}")
             feat_dir = os.path.join(str(tmp_path), "features", slug)
@@ -8279,20 +8279,20 @@ class TestReconcileStatusHealthyWithFrontmatterDriftDeepened:
         does NOT affect the healthy boolean. Only workflow drift matters.
         """
         # Given a feature with workflow IN SYNC but frontmatter DRIFTED
-        db.register_entity("feature", "fm-only-drift", "FM Only Drift", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-fm-only-drift", "FM Only Drift", status="active", project_id="__unknown__")
         db.create_workflow_phase(
-            "feature:fm-only-drift",
+            "feature:001-fm-only-drift",
             workflow_phase="specify",
             last_completed_phase="brainstorm",
             mode="standard",
         )
-        entity = db.get_entity("feature:fm-only-drift")
-        feat_dir = os.path.join(str(tmp_path), "features", "fm-only-drift")
+        entity = db.get_entity("feature:001-fm-only-drift")
+        feat_dir = os.path.join(str(tmp_path), "features", "001-fm-only-drift")
         os.makedirs(feat_dir, exist_ok=True)
         # meta.json matches DB (workflow in sync)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             json.dump({
-                "id": "fm", "slug": "fm-only-drift", "status": "active",
+                "id": "fm", "slug": "001-fm-only-drift", "status": "active",
                 "mode": "standard", "lastCompletedPhase": "brainstorm",
                 "phases": {"brainstorm": {"status": "completed"}},
             }, f)
@@ -9157,11 +9157,11 @@ class TestPhaseEventsDualWrite:
         engine = WorkflowStateEngine(db, str(tmp_path))
         _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
-            "feature", "dw-001", "Dual Write Test",
+            "feature", "001-dw-001", "Dual Write Test",
             status="active", project_id="test-proj",
         )
-        db.create_workflow_phase("feature:dw-001", workflow_phase="brainstorm")
-        feat_dir = os.path.join(str(tmp_path), "features", "dw-001")
+        db.create_workflow_phase("feature:001-dw-001", workflow_phase="brainstorm")
+        feat_dir = os.path.join(str(tmp_path), "features", "001-dw-001")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             f.write('{"id": "dw", "slug": "001", "status": "active", "mode": "standard"}')
@@ -9171,14 +9171,14 @@ class TestPhaseEventsDualWrite:
         """AC-4: transition_phase inserts a started event."""
         db, engine = fresh_setup
         result = _process_transition_phase(
-            engine, "feature:dw-001", "specify", False,
+            engine, "feature:001-dw-001", "specify", False,
             db=db,
         )
         data = json.loads(result)
         assert data.get("transitioned") is True
 
         events = db.query_phase_events(
-            type_id="feature:dw-001", phase="specify", event_type="started",
+            type_id="feature:001-dw-001", phase="specify", event_type="started",
         )
         assert len(events) == 1
         assert events[0]["source"] == "live"
@@ -9187,14 +9187,14 @@ class TestPhaseEventsDualWrite:
         """AC-5: complete_phase inserts a completed event with iterations."""
         db, engine = fresh_setup
         result = _process_complete_phase(
-            engine, "feature:dw-001", "brainstorm",
+            engine, "feature:001-dw-001", "brainstorm",
             db=db, iterations=3, reviewer_notes=None,
         )
         data = json.loads(result)
         assert "error" not in data
 
         events = db.query_phase_events(
-            type_id="feature:dw-001", phase="brainstorm", event_type="completed",
+            type_id="feature:001-dw-001", phase="brainstorm", event_type="completed",
         )
         assert len(events) == 1
         assert events[0]["iterations"] == 3
@@ -9205,14 +9205,14 @@ class TestPhaseEventsDualWrite:
         db, engine = fresh_setup
         # Use yolo to bypass G-08 prerequisite check for design
         result = _process_transition_phase(
-            engine, "feature:dw-001", "specify", True,
+            engine, "feature:001-dw-001", "specify", True,
             db=db, skipped_phases='["brainstorm"]',
         )
         data = json.loads(result)
         assert data.get("transitioned") is True
 
         events = db.query_phase_events(
-            type_id="feature:dw-001", event_type="skipped",
+            type_id="feature:001-dw-001", event_type="skipped",
         )
         assert len(events) == 1
         assert events[0]["phase"] == "brainstorm"
@@ -9220,7 +9220,7 @@ class TestPhaseEventsDualWrite:
         # workflow_phase back — the TARGET phase is the resulting state.
         # (Old Step 5 projected 'skipped' too: last-skipped-won and the
         # transition silently failed to advance.)
-        row = db.get_workflow_phase("feature:dw-001")
+        row = db.get_workflow_phase("feature:001-dw-001")
         assert row["workflow_phase"] == "specify", row
 
     def test_append_failure_aborts_transition_atomically(self, fresh_setup, monkeypatch):
@@ -9235,7 +9235,7 @@ class TestPhaseEventsDualWrite:
         monkeypatch.setattr(db, "append_phase_event", raise_on_insert)
 
         result = _process_transition_phase(
-            engine, "feature:dw-001", "specify", False,
+            engine, "feature:001-dw-001", "specify", False,
             db=db,
         )
         data = json.loads(result)
@@ -9244,7 +9244,7 @@ class TestPhaseEventsDualWrite:
 
         # Atomicity anchor (true only on the post-#055 path): the rolled-back
         # transaction left NO phase_timing for the target phase.
-        entity = db.get_entity("feature:dw-001")
+        entity = db.get_entity("feature:001-dw-001")
         metadata = json.loads(entity["metadata"]) if entity.get("metadata") else {}
         assert "specify" not in metadata.get("phase_timing", {})
         # And the retired partial-failure flag is gone from the contract.
@@ -9267,11 +9267,11 @@ class TestPhaseEventsDualWrite:
             "approved": True,
         }
         _process_complete_phase(
-            engine, "feature:dw-001", "brainstorm",
+            engine, "feature:001-dw-001", "brainstorm",
             db=db, iterations=2,
             reviewer_notes=json.dumps(reviewer_payload),
         )
-        entity = db.get_entity("feature:dw-001")
+        entity = db.get_entity("feature:001-dw-001")
         metadata = json.loads(entity["metadata"])
         assert "phase_timing" in metadata
         assert "brainstorm" in metadata["phase_timing"]
@@ -9308,7 +9308,7 @@ class TestRecordBackwardEvent:
         # Feature 088 FR-2.3: entity must exist; project_id resolved server-side.
         _bootstrap_test_workspace(db, "P001")
         db.register_entity(
-            "feature", "test", "Test",
+            "feature", "003-test", "Test",
             status="active", project_id="P001",
         )
         # Feature 088 AC-21: module-level autouse fixture restores _db on
@@ -9317,7 +9317,7 @@ class TestRecordBackwardEvent:
 
         result_str = asyncio.run(
             workflow_state_server.record_backward_event(
-                type_id="feature:test",
+                type_id="feature:003-test",
                 source_phase="design",
                 target_phase="specify",
                 reason="scope gap",
@@ -9327,7 +9327,7 @@ class TestRecordBackwardEvent:
         assert result.get("recorded") is True
 
         events = db.query_phase_events(
-            type_id="feature:test", event_type="backward",
+            type_id="feature:003-test", event_type="backward",
         )
         assert len(events) == 1
         assert events[0]["phase"] == "design"
@@ -9683,7 +9683,7 @@ class TestFeature088BundleD:
         db = EntityDatabase(":memory:")
         _bootstrap_test_workspace(db, "P001")
         db.register_entity(
-            "feature", "trunc-001", "Trunc",
+            "feature", "001-trunc-001", "Trunc",
             status="active", project_id="P001",
         )
         wss._db = db
@@ -9691,7 +9691,7 @@ class TestFeature088BundleD:
         long_target = "y" * 3000
         result_str = asyncio.run(
             wss.record_backward_event(
-                type_id="feature:trunc-001",
+                type_id="feature:001-trunc-001",
                 source_phase="design",
                 target_phase=long_target,
                 reason=long_reason,
@@ -9701,7 +9701,7 @@ class TestFeature088BundleD:
         assert result.get("recorded") is True
 
         rows = db.query_phase_events(
-            type_id="feature:trunc-001", event_type="backward",
+            type_id="feature:001-trunc-001", event_type="backward",
         )
         assert len(rows) == 1
         assert len(rows[0]["backward_reason"]) == 500
@@ -9728,11 +9728,11 @@ class TestFeature088BundleE:
         engine = WorkflowStateEngine(db, str(tmp_path))
         _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
-            "feature", "e-001", "Bundle E Test",
+            "feature", "001-e-001", "Bundle E Test",
             status="active", project_id="test-proj",
         )
-        db.create_workflow_phase("feature:e-001", workflow_phase="brainstorm")
-        feat_dir = os.path.join(str(tmp_path), "features", "e-001")
+        db.create_workflow_phase("feature:001-e-001", workflow_phase="brainstorm")
+        feat_dir = os.path.join(str(tmp_path), "features", "001-e-001")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             f.write(
@@ -9759,14 +9759,14 @@ class TestFeature088BundleE:
         monkeypatch.setattr(db, "append_phase_event", raise_integrity_error)
 
         result = _process_transition_phase(
-            engine, "feature:e-001", "specify", False, db=db,
+            engine, "feature:001-e-001", "specify", False, db=db,
         )
         data = json.loads(result)
 
         assert data.get("transitioned") is not True
         assert "phase_events_write_failed" not in data
 
-        entity = db.get_entity("feature:e-001")
+        entity = db.get_entity("feature:001-e-001")
         metadata = json.loads(entity["metadata"]) if entity.get("metadata") else {}
         assert "specify" not in metadata.get("phase_timing", {})
 
@@ -9782,7 +9782,7 @@ class TestFeature088BundleE:
         # Valid JSON whose serialized form is well above the 10000 cap.
         oversized = json.dumps(["x" * 20000])
         result = _process_complete_phase(
-            engine, "feature:e-001", "brainstorm",
+            engine, "feature:001-e-001", "brainstorm",
             db=db, reviewer_notes=oversized,
         )
         data = json.loads(result)
@@ -9791,7 +9791,7 @@ class TestFeature088BundleE:
 
         # Raw non-JSON garbage of any size is an invalid-payload error.
         result2 = _process_complete_phase(
-            engine, "feature:e-001", "brainstorm",
+            engine, "feature:001-e-001", "brainstorm",
             db=db, reviewer_notes="x" * 20000,
         )
         data2 = json.loads(result2)
@@ -9801,7 +9801,7 @@ class TestFeature088BundleE:
         # F12 (feature 109): register_entity emits an entity_created phase_event,
         # so the relevant assertion is that no NEW non-entity-created row was
         # written by the rejected complete_phase call.
-        rows = db.query_phase_events(type_id="feature:e-001")
+        rows = db.query_phase_events(type_id="feature:001-e-001")
         non_created = [r for r in rows if r.get("event_type") != "entity_created"]
         assert non_created == []
 
@@ -9814,7 +9814,7 @@ class TestFeature088BundleE:
         db, engine = fresh_setup
 
         result = _process_complete_phase(
-            engine, "feature:e-001", "brainstorm",
+            engine, "feature:001-e-001", "brainstorm",
             db=db, reviewer_notes="not-valid-json{",
         )
         data = json.loads(result)
@@ -10126,11 +10126,11 @@ class TestFeature088BundleH4:
         engine = WorkflowStateEngine(db, str(tmp_path))
         _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
-            "feature", "h4-001", "H4 Test",
+            "feature", "001-h4-001", "H4 Test",
             status="active", project_id="test-proj",
         )
-        db.create_workflow_phase("feature:h4-001", workflow_phase="brainstorm")
-        feat_dir = os.path.join(str(tmp_path), "features", "h4-001")
+        db.create_workflow_phase("feature:001-h4-001", workflow_phase="brainstorm")
+        feat_dir = os.path.join(str(tmp_path), "features", "001-h4-001")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             f.write(
@@ -10213,7 +10213,7 @@ class TestFeature088BundleH4:
         db = EntityDatabase(":memory:")
         _bootstrap_test_workspace(db, "P-lock")
         db.register_entity(
-            "feature", "lock-001", "Lock",
+            "feature", "001-lock-001", "Lock",
             status="active", project_id="P-lock",
         )
 
@@ -10225,7 +10225,7 @@ class TestFeature088BundleH4:
 
         result_str = asyncio.run(
             wss.record_backward_event(
-                type_id="feature:lock-001",
+                type_id="feature:001-lock-001",
                 source_phase="design",
                 target_phase="specify",
                 reason="test",
@@ -10257,7 +10257,7 @@ class TestFeature088BundleH4:
         monkeypatch.setattr(db, "append_phase_event", raise_on_insert)
 
         result = _process_complete_phase(
-            engine, "feature:h4-001", "brainstorm",
+            engine, "feature:001-h4-001", "brainstorm",
             db=db, iterations=1, reviewer_notes=None,
         )
         data = json.loads(result)
@@ -10267,14 +10267,14 @@ class TestFeature088BundleH4:
         assert data.get("error"), f"expected error envelope, got: {data!r}"
 
         # Metadata side: the rolled-back transaction left NO completion stamp.
-        entity = db.get_entity("feature:h4-001")
+        entity = db.get_entity("feature:001-h4-001")
         metadata = json.loads(entity["metadata"]) if entity.get("metadata") else {}
         assert "completed" not in metadata.get("phase_timing", {}).get("brainstorm", {})
 
         # Phase-events side: no row either (both sides of the old split-brain
         # are empty — the fact true only on the atomic path).
         events = db.query_phase_events(
-            type_id="feature:h4-001", phase="brainstorm",
+            type_id="feature:001-h4-001", phase="brainstorm",
             event_type="completed",
         )
         assert events == []
@@ -11393,17 +11393,17 @@ class TestProjectMetaJsonKindDispatchDeepened:
         derived_from: design:D5 (features/milestones from DB metadata),
         dimension:boundary_values (Optional/nullable: missing key)
         """
-        project_dir = os.path.join(str(tmp_path), "projects", "P04-nokeys")
+        project_dir = os.path.join(str(tmp_path), "projects", "001-p04-nokeys")
         os.makedirs(project_dir, exist_ok=True)
         db.register_entity(
-            "project", "P04-nokeys", "nokeys",
+            "project", "001-p04-nokeys", "nokeys",
             artifact_path=project_dir,
             status="active",
             metadata={},  # no "features"/"milestones" keys at all
             project_id="__unknown__",
         )
 
-        result = _project_meta_json(db, None, "project:P04-nokeys", project_dir)
+        result = _project_meta_json(db, None, "project:001-p04-nokeys", project_dir)
         assert result is None
 
         with open(os.path.join(project_dir, ".meta.json")) as f:
@@ -11425,10 +11425,10 @@ class TestProjectMetaJsonKindDispatchDeepened:
         derived_from: design:D5 (created fallback pattern),
         dimension:boundary_values (Optional/nullable: null)
         """
-        project_dir = os.path.join(str(tmp_path), "projects", "P06-nocreated")
+        project_dir = os.path.join(str(tmp_path), "projects", "001-p06-nocreated")
         os.makedirs(project_dir, exist_ok=True)
         db.register_entity(
-            "project", "P06-nocreated", "nocreated",
+            "project", "001-p06-nocreated", "nocreated",
             artifact_path=project_dir,
             status="active",
             metadata={"features": [], "milestones": []},
@@ -11446,7 +11446,7 @@ class TestProjectMetaJsonKindDispatchDeepened:
 
         monkeypatch.setattr(db, "get_entity", _get_entity_falsy_created)
 
-        result = _project_meta_json(db, None, "project:P06-nocreated", project_dir)
+        result = _project_meta_json(db, None, "project:001-p06-nocreated", project_dir)
         assert result is None
 
         with open(os.path.join(project_dir, ".meta.json")) as f:

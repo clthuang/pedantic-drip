@@ -727,11 +727,11 @@ class TestFixMissedCascade:
         db = EntityDatabase(db_path)
 
         uuid_blocked = db.register_entity(
-            "feature", "stale-blocked", "Blocked Entity",
+            "feature", "001-stale-blocked", "Blocked Entity",
             status="blocked", project_id="__unknown__",
         )
         uuid_blocker = db.register_entity(
-            "feature", "stale-blocker", "Completed Blocker",
+            "feature", "001-stale-blocker", "Completed Blocker",
             status="completed", project_id="__unknown__",
         )
         db.add_dependency(uuid_blocked, uuid_blocker)
@@ -744,7 +744,7 @@ class TestFixMissedCascade:
         issue = Issue(
             check="missed_cascade", severity="warning", entity=None,
             message=(
-                f"Missed cascade: entity '{uuid_blocked}' (feature:stale-blocked) "
+                f"Missed cascade: entity '{uuid_blocked}' (feature:001-stale-blocked) "
                 f"has every blocker resolved but remains 'blocked'; "
                 f"e.g. blocker '{uuid_blocker}'"
             ),

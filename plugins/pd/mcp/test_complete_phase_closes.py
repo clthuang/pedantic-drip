@@ -152,7 +152,7 @@ def _get_uuid(db, type_id: str) -> str:
 
 class TestAcEx2EnvelopeNonexistentCaller:
     def test_returns_entitynotfounderror_envelope(self, seeded):
-        u = _register_bug(seeded["db"], "1-foo")
+        u = _register_bug(seeded["db"], "001-foo")
         result = _process_complete_phase(
             seeded["engine"], "feature:nonexistent", "finish",
             db=seeded["db"], entity_engine=seeded["entity_engine"],
@@ -174,8 +174,8 @@ class TestAcEx2EnvelopeNonexistentCaller:
 class TestAc10_1AtomicClosureTwoUuids:
     def test_feature_finishes_and_two_relations_persisted(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "1-bug-a")
-        u_task = _register_task(db, "2-task-a")
+        u_bug = _register_bug(db, "001-bug-a")
+        u_task = _register_task(db, "002-task-a")
 
         result = _process_complete_phase(
             seeded["engine"], seeded["feature_type_id"], "finish",
@@ -239,7 +239,7 @@ class TestAc10_2EmptyClosesAppliedWithoutCloses:
 class TestAc10_3AtomicRollbackOnInvalidTarget:
     def test_feature_in_closes_rolls_back_everything(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "3-keep-open")
+        u_bug = _register_bug(db, "003-keep-open")
 
         # Register a sibling feature; lifecycle_class='feature_flow' → not closable.
         u_other_feature = db.register_entity(
@@ -296,7 +296,7 @@ class TestAc10_3AtomicRollbackOnInvalidTarget:
 class TestAc10_4IdempotentReplay:
     def test_three_replays_produce_exactly_one_row_and_one_event(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "4-replay")
+        u_bug = _register_bug(db, "004-replay")
         feature_uuid = _get_uuid(db, seeded["feature_type_id"])
 
         for call in range(3):
@@ -337,7 +337,7 @@ class TestAc10_4IdempotentReplay:
 class TestAc10_5CrossCloserConflict:
     def test_different_closer_raises_invalidclose(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "5-conflict")
+        u_bug = _register_bug(db, "005-conflict")
 
         # First closer (the seeded feature) closes it cleanly.
         first = _process_complete_phase(
@@ -403,7 +403,7 @@ class TestAc10_6CrossWorkspacePermitted:
         )
         u_bug_ws2 = db.register_entity(
             entity_type="bug",
-            entity_id="6-foreign",
+            entity_id="006-foreign",
             name="Foreign bug",
             status="open",
             workspace_uuid=ws2_uuid,
@@ -444,7 +444,7 @@ class TestAc10_6CrossWorkspacePermitted:
 class TestAc10_7TerminalWithoutCloserRecord:
     def test_manually_closed_bug_blocks_subsequent_closure(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "7-manual")
+        u_bug = _register_bug(db, "007-manual")
         # Manually flip to closed WITHOUT going through closes= path.
         db.update_entity(u_bug, status="closed", project_id="__unknown__")
 
@@ -467,7 +467,7 @@ class TestAc10_7TerminalWithoutCloserRecord:
 class TestAc10_8EntityStatusChangedEvent:
     def test_metadata_records_old_new_status_and_closed_by_uuid(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "8-event")
+        u_bug = _register_bug(db, "008-event")
         feature_uuid = _get_uuid(db, seeded["feature_type_id"])
 
         result = _process_complete_phase(
@@ -507,7 +507,7 @@ class TestAc10_8EntityStatusChangedEvent:
 class TestAc10_9CallerNotRegistered:
     def test_unknown_caller_raises_entitynotfound(self, seeded):
         db = seeded["db"]
-        u_bug = _register_bug(db, "9-orphan")
+        u_bug = _register_bug(db, "009-orphan")
 
         rel_before = db._conn.execute(
             "SELECT COUNT(*) FROM entity_relations"
@@ -570,7 +570,7 @@ class TestAc10_10FeatureNotClosableViaCloses:
 class TestAc10_11BacklogStateMachineBypass:
     def test_open_backlog_drops_directly_via_closes(self, seeded):
         db = seeded["db"]
-        u_bk = _register_backlog(db, "11-bypass", status="open")
+        u_bk = _register_backlog(db, "011-bypass", status="open")
 
         result = _process_complete_phase(
             seeded["engine"], seeded["feature_type_id"], "finish",

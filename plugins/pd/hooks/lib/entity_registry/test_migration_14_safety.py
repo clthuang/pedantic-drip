@@ -345,7 +345,7 @@ def test_ac_mr_10_down_refuses_when_bug_entities_exist(tmp_path):
     try:
         db.register_entity(
             entity_type="bug",
-            entity_id="1-foo",
+            entity_id="001-foo",
             name="A bug",
             status="open",
             project_id="__unknown__",

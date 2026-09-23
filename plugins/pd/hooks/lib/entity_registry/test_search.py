@@ -209,7 +209,7 @@ class TestFTSSync:
 
     def test_register_makes_searchable(self, db):
         """AC-4: register entity makes it immediately searchable."""
-        db.register_entity("feature", "search-test", "Search Test Feature", project_id="__unknown__")
+        db.register_entity("feature", "001-search-test", "Search Test Feature", project_id="__unknown__")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'Search'"
         ).fetchall()
@@ -217,8 +217,8 @@ class TestFTSSync:
 
     def test_duplicate_register_no_fts_corruption(self, db):
         """upsert_entity (F12 idempotent path) doesn't double-insert FTS."""
-        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
-        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
+        db.upsert_entity("feature", "001-dup-test", "Dup Test", project_id="__unknown__")
+        db.upsert_entity("feature", "001-dup-test", "Dup Test", project_id="__unknown__")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'Dup'"
         ).fetchall()
@@ -227,7 +227,7 @@ class TestFTSSync:
     def test_register_with_metadata(self, db):
         """Metadata content appears in FTS index."""
         db.register_entity(
-            "feature", "meta-test", "Meta Test",
+            "feature", "001-meta-test", "Meta Test",
             metadata={"module": "State Engine"},
             project_id="__unknown__",
         )
@@ -242,19 +242,19 @@ class TestFTSSync:
         F11 (feature 109): entity_type column dropped; kind replaces it
         alongside the (type, lifecycle_class) discriminators per FR-1.
         """
-        db.register_entity("feature", "rc-test", "RC Test", project_id="__unknown__")
+        db.register_entity("feature", "001-rc-test", "RC Test", project_id="__unknown__")
         # Read the existing entity's workspace_uuid so the duplicate INSERT
         # OR IGNORE collides on the (workspace_uuid, type_id) UNIQUE
         # constraint exactly the way the pre-feature-109 fixture did.
         ws_uuid = db._conn.execute(
             "SELECT workspace_uuid FROM entities WHERE type_id = ?",
-            ("feature:rc-test",),
+            ("feature:001-rc-test",),
         ).fetchone()[0]
         cursor = db._conn.execute(
             "INSERT OR IGNORE INTO entities "
             "(uuid, workspace_uuid, type_id, kind, entity_id, name, "
             "created_at, updated_at, type, lifecycle_class) "
-            "VALUES ('new-uuid', ?, 'feature:rc-test', 'feature', 'rc-test', "
+            "VALUES ('new-uuid', ?, 'feature:001-rc-test', 'feature', '001-rc-test', "
             "'RC Test', '2026-01-01', '2026-01-01', 'work', 'feature_flow')",
             (ws_uuid,),
         )
@@ -265,8 +265,8 @@ class TestFTSSync:
 
     def test_update_name_reflected(self, db):
         """AC-5: update name, new name searchable, old name not."""
-        db.register_entity("feature", "upd-name", "OldName", project_id="__unknown__")
-        db.update_entity("feature:upd-name", name="NewName")
+        db.register_entity("feature", "001-upd-name", "OldName", project_id="__unknown__")
+        db.update_entity("feature:001-upd-name", name="NewName")
         # New name searchable
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'NewName'"
@@ -280,10 +280,10 @@ class TestFTSSync:
 
     def test_update_status_reflected(self, db):
         """Update status, new status searchable."""
-        db.register_entity("feature", "upd-status", "StatusTest",
+        db.register_entity("feature", "001-upd-status", "StatusTest",
                                project_id="__unknown__",
                            status="draft")
-        db.update_entity("feature:upd-status", status="completed")
+        db.update_entity("feature:001-upd-status", status="completed")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'completed'"
         ).fetchall()
@@ -291,10 +291,10 @@ class TestFTSSync:
 
     def test_update_metadata_reflected(self, db):
         """Update metadata, new content searchable."""
-        db.register_entity("feature", "upd-meta", "MetaTest",
+        db.register_entity("feature", "001-upd-meta", "MetaTest",
                                project_id="__unknown__",
                            metadata={"old": "value"})
-        db.update_entity("feature:upd-meta", metadata={"new": "fresh"})
+        db.update_entity("feature:001-upd-meta", metadata={"new": "fresh"})
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'fresh'"
         ).fetchall()
@@ -302,8 +302,8 @@ class TestFTSSync:
 
     def test_update_non_fts_field(self, db):
         """Update artifact_path only, entity still searchable."""
-        db.register_entity("feature", "upd-path", "PathTest", project_id="__unknown__")
-        db.update_entity("feature:upd-path", artifact_path="/some/path")
+        db.register_entity("feature", "001-upd-path", "PathTest", project_id="__unknown__")
+        db.update_entity("feature:001-upd-path", artifact_path="/some/path")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'PathTest'"
         ).fetchall()
@@ -325,10 +325,10 @@ def search_db(db):
                        "State Engine MCP Tools", status="completed",
                        project_id="__unknown__",
                        metadata={"module": "State Engine"})
-    db.register_entity("brainstorm", "kanban-board",
+    db.register_entity("brainstorm", "20260101-000022-kanban-board",
                        "Kanban Board View", status="active",
                        project_id="__unknown__")
-    db.register_entity("project", "crypto-tracker",
+    db.register_entity("project", "001-crypto-tracker",
                        "Crypto Tracker", status="active",
                        project_id="__unknown__")
     db.register_entity("feature", "020-entity-list",
@@ -663,7 +663,7 @@ class TestSearchAdversarial:
     def test_null_metadata_entity_still_searchable(self, db):
         """derived_from: dimension:adversarial — entity with no metadata searchable."""
         # Given an entity registered with no metadata
-        db.register_entity("feature", "no-meta", "NoMetaEntity", project_id="__unknown__")
+        db.register_entity("feature", "001-no-meta", "NoMetaEntity", project_id="__unknown__")
         # When searching by name
         results = db.search_entities("NoMetaEntity")
         # Then entity is found
@@ -678,9 +678,9 @@ class TestSearchAdversarial:
         updates use ``update_entity`` explicitly.
         """
         # Given an entity already registered
-        db.upsert_entity("feature", "dup-adv", "OriginalName", project_id="__unknown__")
+        db.upsert_entity("feature", "001-dup-adv", "OriginalName", project_id="__unknown__")
         # When upserting again with a different name (status-only conflict path)
-        db.upsert_entity("feature", "dup-adv", "DifferentName", project_id="__unknown__")
+        db.upsert_entity("feature", "001-dup-adv", "DifferentName", project_id="__unknown__")
         # Then original name is still searchable, new name is not
         results = db.search_entities("OriginalName")
         assert len(results) == 1
@@ -748,11 +748,11 @@ class TestSearchErrorPropagation:
         db._conn.commit()
         # When registering an entity (FTS INSERT will fail)
         with pytest.raises(Exception):
-            db.register_entity("feature", "fail-fts", "FailFTS", project_id="__unknown__")
+            db.register_entity("feature", "001-fail-fts", "FailFTS", project_id="__unknown__")
         # Then the entity row is rolled back (transaction() atomicity)
         # — no partial writes remain.
         row = db._conn.execute(
-            "SELECT * FROM entities WHERE type_id = 'feature:fail-fts'"
+            "SELECT * FROM entities WHERE type_id = 'feature:001-fail-fts'"
         ).fetchone()
         assert row is None, "Entity row should be rolled back (transaction atomicity)"
         db.close()
@@ -767,16 +767,16 @@ class TestSearchErrorPropagation:
         # Given an entity exists, then FTS table is dropped
         db_path = str(tmp_path / "fts_update_rollback.db")
         db = EntityDatabase(db_path)
-        db.register_entity("feature", "upd-fail", "UpdateFail", project_id="__unknown__")
+        db.register_entity("feature", "001-upd-fail", "UpdateFail", project_id="__unknown__")
         db._conn.execute("DROP TABLE entities_fts")
         db._conn.commit()
         # When updating the entity (FTS DELETE+INSERT will fail)
         with pytest.raises(Exception):
-            db.update_entity("feature:upd-fail", name="NewName")
+            db.update_entity("feature:001-upd-fail", name="NewName")
         # Then the UPDATE is rolled back (transaction() atomicity)
         # — original name is preserved.
         row = db._conn.execute(
-            "SELECT name FROM entities WHERE type_id = 'feature:upd-fail'"
+            "SELECT name FROM entities WHERE type_id = 'feature:001-upd-fail'"
         ).fetchone()
         assert row is not None, "Entity row should still exist"
         assert row["name"] == "UpdateFail", "Name should be unchanged after rollback"
@@ -797,7 +797,7 @@ class TestSearchMutationMindset:
     def test_prefix_star_appended_not_prepended(self, db):
         """derived_from: dimension:mutation_mindset — star goes at end of token."""
         # Given an entity with name "Reconciliation"
-        db.register_entity("feature", "mut-prefix", "Reconciliation", project_id="__unknown__")
+        db.register_entity("feature", "001-mut-prefix", "Reconciliation", project_id="__unknown__")
         # When searching for "recon"
         # Then _build_fts_query should produce "recon*" (suffix wildcard)
         query = db._build_fts_query("recon")
@@ -810,7 +810,7 @@ class TestSearchMutationMindset:
         """derived_from: dimension:mutation_mindset — min AND max clamping."""
         # Given we can inspect the clamping behavior
         # When limit is below minimum
-        db.register_entity("feature", "clamp-test", "ClampTest", project_id="__unknown__")
+        db.register_entity("feature", "001-clamp-test", "ClampTest", project_id="__unknown__")
         results_low = db.search_entities("ClampTest", limit=-999)
         # Then clamped to 1 (min)
         assert len(results_low) <= 1
@@ -823,9 +823,9 @@ class TestSearchMutationMindset:
     def test_old_name_not_searchable_after_update(self, db):
         """derived_from: dimension:mutation_mindset — FTS delete+insert on update."""
         # Given an entity with a specific name
-        db.register_entity("feature", "mut-old", "OldMutName", project_id="__unknown__")
+        db.register_entity("feature", "001-mut-old", "OldMutName", project_id="__unknown__")
         # When updating the name
-        db.update_entity("feature:mut-old", name="NewMutName")
+        db.update_entity("feature:001-mut-old", name="NewMutName")
         # Then old name returns zero results (FTS delete worked)
         old_results = db.search_entities("OldMutName")
         assert len(old_results) == 0
@@ -844,7 +844,7 @@ class TestSearchMutationMindset:
     def test_empty_query_returns_list_not_none(self, db):
         """derived_from: dimension:mutation_mindset — return type is always list."""
         # Given a database
-        db.register_entity("feature", "mut-empty", "EmptyTest", project_id="__unknown__")
+        db.register_entity("feature", "001-mut-empty", "EmptyTest", project_id="__unknown__")
         # When searching with empty string
         result = db.search_entities("")
         # Then returns empty list, NOT None
@@ -886,9 +886,9 @@ class TestSearchMutationMindset:
         F12: ``upsert_entity`` is status-only on conflict — no second FTS row.
         """
         # Given an entity is registered
-        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        db.upsert_entity("feature", "001-rc-mut", "RowcountMut", project_id="__unknown__")
         # When upserting duplicate (no-op conflict branch)
-        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        db.upsert_entity("feature", "001-rc-mut", "RowcountMut", project_id="__unknown__")
         # Then FTS should still have exactly 1 entry (not 2)
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'RowcountMut'"
@@ -906,7 +906,7 @@ def test_fts_rebuild_succeeds_on_production_schema(tmp_path):
     db = EntityDatabase(str(tmp_path / "test.db"))
     db.register_entity(
         entity_type="feature",
-        entity_id="test-rebuild",
+        entity_id="001-test-rebuild",
         name="Rebuild Test Feature",
         metadata={"key": "value"},
         project_id="__unknown__",
@@ -920,7 +920,7 @@ def test_fts_rebuild_succeeds_on_production_schema(tmp_path):
     # Search should still find the entity after rebuild
     results = db.search_entities("Rebuild")
     assert len(results) == 1
-    assert results[0]["entity_id"] == "test-rebuild"
+    assert results[0]["entity_id"] == "001-test-rebuild"
 
 
 def test_migration_7_upgrades_v6_database(tmp_path):

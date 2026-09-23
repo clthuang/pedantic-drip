@@ -113,23 +113,23 @@ class TestDeriveOptionalFields:
 
         entity = {
             "type_id": "feature:001-test",
-            "metadata": '{"project_id": "P001"}',
+            "metadata": '{"project_id": "001-p001"}',
             "parent_type_id": None,
         }
         result = _derive_optional_fields(entity, "spec")
-        assert result["project_id"] == "P001"
+        assert result["project_id"] == "001-p001"
 
     def test_derive_project_id_from_parent(self):
-        """Entity with parent_type_id='project:P001' extracts project_id."""
+        """Entity with parent_type_id='project:001-p001' extracts project_id."""
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
         entity = {
             "type_id": "feature:001-test",
             "metadata": None,
-            "parent_type_id": "project:P001",
+            "parent_type_id": "project:001-p001",
         }
         result = _derive_optional_fields(entity, "spec")
-        assert result["project_id"] == "P001"
+        assert result["project_id"] == "001-p001"
 
     def test_derive_metadata_priority(self):
         """When both metadata JSON and parent_type_id have project_id, metadata wins."""
@@ -148,7 +148,7 @@ class TestDeriveOptionalFields:
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
         entity = {
-            "type_id": "project:P001",
+            "type_id": "project:001-p001",
             "metadata": None,
             "parent_type_id": None,
         }
@@ -419,7 +419,7 @@ class TestStampHeader:
         db = EntityDatabase(":memory:")
         db.register_entity(
             "feature", "001-test", "Test Feature",
-            metadata={"project_id": "P001"},
+            metadata={"project_id": "001-p001"},
             project_id="__unknown__",
         )
 
@@ -431,7 +431,7 @@ class TestStampHeader:
 
         header = read_frontmatter(str(filepath))
         assert header is not None
-        assert header.get("project_id") == "P001"
+        assert header.get("project_id") == "001-p001"
 
     def test_stamp_updates_header(self, tmp_path):
         """Existing matching header returns action='updated' (AC-7).
@@ -1357,14 +1357,14 @@ class TestBoundaryValues:
         entity = {
             "type_id": "feature:001-test",
             "metadata": None,
-            "parent_type_id": "project:P001",
+            "parent_type_id": "project:001-p001",
         }
 
         # When we derive optional fields
         result = _derive_optional_fields(entity, "spec")
 
         # Then project_id is derived from parent (no crash from None metadata)
-        assert result["project_id"] == "P001"
+        assert result["project_id"] == "001-p001"
 
     def test_derive_optional_fields_metadata_has_empty_project_id(self):
         """metadata project_id='' -> falls back to parent_type_id.
@@ -1503,13 +1503,13 @@ class TestAdversarial:
 
         # Given a project entity in DB
         db = EntityDatabase(":memory:")
-        db.register_entity("project", "P001", "My Project", project_id="__unknown__")
+        db.register_entity("project", "001-p001", "My Project", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, "# Spec\n")
 
         # When we stamp with the project entity
-        result = stamp_header(db, str(filepath), "project:P001", "spec")
+        result = stamp_header(db, str(filepath), "project:001-p001", "spec")
         assert result.action == "created"
 
         # Then the header has no feature_id or feature_slug
@@ -1563,7 +1563,7 @@ class TestAdversarial:
 
         # Given a project entity and a feature entity
         db = EntityDatabase(":memory:")
-        db.register_entity("project", "P001", "My Project", project_id="__unknown__")
+        db.register_entity("project", "001-p001", "My Project", project_id="__unknown__")
         db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
 
         feature_dir = tmp_path / "features" / "001-test"
@@ -1571,7 +1571,7 @@ class TestAdversarial:
         (feature_dir / "spec.md").write_text("# Spec\n")
 
         # Also create a project dir structure (if it were accidentally scanned)
-        project_dir = tmp_path / "features" / "P001"
+        project_dir = tmp_path / "features" / "001-p001"
         project_dir.mkdir(parents=True)
         (project_dir / "spec.md").write_text("# Project Spec\n")
 

@@ -713,14 +713,14 @@ class TestCheckWorkflowDrift:
         # Non-feature entity with workflow_phases row
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="some-brainstorm",
+            entity_id="20260101-000036-some-brainstorm",
             name="Some Brainstorm",
             project_id="__unknown__",
         )
         # Brainstorms normally don't have workflow_phases, but if one exists
         # it should be excluded from db_only detection
         db.create_workflow_phase(
-            "brainstorm:some-brainstorm", workflow_phase="brainstorm", mode="standard"
+            "brainstorm:20260101-000036-some-brainstorm", workflow_phase="brainstorm", mode="standard"
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -729,7 +729,7 @@ class TestCheckWorkflowDrift:
 
         # Only feature:001-feat-a should be in the results
         type_ids = {r.feature_type_id for r in result.features}
-        assert "brainstorm:some-brainstorm" not in type_ids
+        assert "brainstorm:20260101-000036-some-brainstorm" not in type_ids
         assert result.summary.get("db_only", 0) == 0
 
     def test_summary_counts(self, tmp_path) -> None:
@@ -3419,15 +3419,15 @@ class TestOKRScoreReconciliation:
         db = _make_db()
         # Create objective with stale score
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="obj-stale",
+            entity_type="objective", entity_id="001-obj-stale",
             name="Stale Objective", metadata={"score": 0.0},
             project_id="__unknown__",
         )
         # Add KR child with baseline_target score=1.0 (compute_okr_score reads this)
         db.register_entity(
-            entity_type="key_result", entity_id="kr-done",
+            entity_type="key_result", entity_id="001-kr-done",
             name="Done KR", status="active",
-            parent_type_id="objective:obj-stale",
+            parent_type_id="objective:001-obj-stale",
             metadata={"metric_type": "baseline_target", "score": 1.0},
             project_id="__unknown__",
         )
@@ -3447,21 +3447,21 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="obj-correct",
+            entity_type="objective", entity_id="001-obj-correct",
             name="Correct Objective",
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="kr-ok",
+            entity_type="key_result", entity_id="001-kr-ok",
             name="OK KR", status="active",
-            parent_type_id="objective:obj-correct",
+            parent_type_id="objective:001-obj-correct",
             metadata={"metric_type": "baseline_target", "score": 1.0},
             project_id="__unknown__",
         )
         # Pre-set correct score AND progress (both checked by reconciliation)
         expected_score = compute_objective_score(db, obj_uuid)
         expected_progress = compute_progress(db, obj_uuid)
-        db.update_entity("objective:obj-correct", metadata={
+        db.update_entity("objective:001-obj-correct", metadata={
             "score": expected_score,
             "progress": expected_progress,
         })
@@ -3475,7 +3475,7 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         db.register_entity(
-            entity_type="objective", entity_id="obj-empty",
+            entity_type="objective", entity_id="001-obj-empty",
             name="Empty Objective",
             project_id="__unknown__",
         )
@@ -3488,14 +3488,14 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="obj-noscore",
+            entity_type="objective", entity_id="001-obj-noscore",
             name="No Score Objective",
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="kr-new",
+            entity_type="key_result", entity_id="001-kr-new",
             name="New KR", status="active",
-            parent_type_id="objective:obj-noscore",
+            parent_type_id="objective:001-obj-noscore",
             project_id="__unknown__",
         )
         count = _recover_pending_cascades(db)
@@ -3511,21 +3511,21 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="obj-weighted",
+            entity_type="objective", entity_id="001-obj-weighted",
             name="Weighted Objective", metadata={"score": 0.0},
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="kr-heavy",
+            entity_type="key_result", entity_id="001-kr-heavy",
             name="Heavy KR", status="active",
-            parent_type_id="objective:obj-weighted",
+            parent_type_id="objective:001-obj-weighted",
             metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0},
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="kr-light",
+            entity_type="key_result", entity_id="001-kr-light",
             name="Light KR", status="active",
-            parent_type_id="objective:obj-weighted",
+            parent_type_id="objective:001-obj-weighted",
             metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0},
             project_id="__unknown__",
         )

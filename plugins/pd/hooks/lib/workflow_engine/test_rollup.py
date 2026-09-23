@@ -118,30 +118,30 @@ class TestGetChildrenByUuid:
     """Tests for EntityDatabase.get_children_by_uuid()."""
 
     def test_parent_with_three_children(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        c1 = _register(db, "feature", "f1", "F1",
-                        parent_type_id="project:p1", status="active")
-        c2 = _register(db, "feature", "f2", "F2",
-                        parent_type_id="project:p1", status="active")
-        c3 = _register(db, "feature", "f3", "F3",
-                        parent_type_id="project:p1", status="active")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        c1 = _register(db, "feature", "001-f1", "F1",
+                        parent_type_id="project:002-p1", status="active")
+        c2 = _register(db, "feature", "001-f2", "F2",
+                        parent_type_id="project:002-p1", status="active")
+        c3 = _register(db, "feature", "001-f3", "F3",
+                        parent_type_id="project:002-p1", status="active")
 
         children = db.get_children_by_uuid(parent_uuid)
         child_uuids = {c["uuid"] for c in children}
         assert child_uuids == {c1, c2, c3}
 
     def test_no_children(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
         children = db.get_children_by_uuid(parent_uuid)
         assert children == []
 
     def test_only_direct_children(self, db):
         """Grandchildren should not be returned."""
-        gp_uuid = _register(db, "project", "p1", "Project 1")
-        parent_uuid = _register(db, "feature", "f1", "F1",
-                                 parent_type_id="project:p1")
-        _register(db, "task", "t1", "T1",
-                  parent_type_id="feature:f1")
+        gp_uuid = _register(db, "project", "002-p1", "Project 1")
+        parent_uuid = _register(db, "feature", "001-f1", "F1",
+                                 parent_type_id="project:002-p1")
+        _register(db, "task", "001-t1", "T1",
+                  parent_type_id="feature:001-f1")
 
         children = db.get_children_by_uuid(gp_uuid)
         assert len(children) == 1
@@ -161,106 +161,106 @@ class TestComputeProgress:
     """Tests for compute_progress()."""
 
     def test_no_children(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
         assert compute_progress(db, parent_uuid) == 0.0
 
     def test_all_children_completed(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f3", "F3",
-                  parent_type_id="project:p1", status="completed")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f3", "F3",
+                  parent_type_id="project:002-p1", status="completed")
 
         assert compute_progress(db, parent_uuid) == 1.0
 
     def test_feature_child_in_implement_phase(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f1", "implement")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f1", "implement")
 
         progress = compute_progress(db, parent_uuid)
         assert progress == pytest.approx(0.7)
 
     def test_feature_child_in_brainstorm_phase(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f1", "brainstorm")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f1", "brainstorm")
 
         assert compute_progress(db, parent_uuid) == pytest.approx(0.0)
 
     def test_task_child_in_deliver_phase(self, db):
         """Tasks use 5D weights."""
-        parent_uuid = _register(db, "feature", "f1", "Feature 1",
+        parent_uuid = _register(db, "feature", "001-f1", "Feature 1",
                                  status="active")
-        _register(db, "task", "t1", "T1",
-                  parent_type_id="feature:f1", status="active")
-        _with_phase(db, "task:t1", "deliver")
+        _register(db, "task", "001-t1", "T1",
+                  parent_type_id="feature:001-f1", status="active")
+        _with_phase(db, "task:001-t1", "deliver")
 
         assert compute_progress(db, parent_uuid) == pytest.approx(0.7)
 
     def test_abandoned_children_excluded(self, db):
         """Abandoned children are excluded from both numerator and denominator."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="abandoned")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="abandoned")
 
         # Only f1 counts: 1.0 / 1 active child = 1.0
         assert compute_progress(db, parent_uuid) == 1.0
 
     def test_all_children_abandoned(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="abandoned")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="abandoned")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="abandoned")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="abandoned")
 
         assert compute_progress(db, parent_uuid) == 0.0
 
     def test_mixed_children_progress(self, db):
         """One completed, one in implement, one abandoned."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "implement")
-        _register(db, "feature", "f3", "F3",
-                  parent_type_id="project:p1", status="abandoned")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "implement")
+        _register(db, "feature", "001-f3", "F3",
+                  parent_type_id="project:002-p1", status="abandoned")
 
         # f1=1.0, f2=0.7, f3=excluded => (1.0+0.7)/2 = 0.85
         assert compute_progress(db, parent_uuid) == pytest.approx(0.85)
 
     def test_child_without_workflow_phase_row(self, db):
         """Child with no workflow_phases row contributes 0.0."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="active")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="active")
         # No _with_phase call — no workflow_phases row
 
         assert compute_progress(db, parent_uuid) == pytest.approx(0.0)
 
     def test_child_with_unknown_phase(self, db):
         """Child with a phase not in the weight table contributes 0.0."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="active")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="active")
         # Use a valid CHECK phase that isn't in PHASE_WEIGHTS_7
-        _with_phase(db, "feature:f1", "draft")
+        _with_phase(db, "feature:001-f1", "draft")
 
         assert compute_progress(db, parent_uuid) == pytest.approx(0.0)
 
     def test_five_d_child_phases(self, db):
         """5D entity types use PHASE_WEIGHTS_5D."""
-        parent_uuid = _register(db, "initiative", "i1", "Init 1")
-        _register(db, "project", "pr1", "Proj 1",
-                  parent_type_id="initiative:i1", status="active")
-        _with_phase(db, "project:pr1", "deliver")
+        parent_uuid = _register(db, "initiative", "001-i1", "Init 1")
+        _register(db, "project", "001-pr1", "Proj 1",
+                  parent_type_id="initiative:001-i1", status="active")
+        _with_phase(db, "project:001-pr1", "deliver")
 
         assert compute_progress(db, parent_uuid) == pytest.approx(0.7)
 
@@ -274,14 +274,14 @@ class TestRollupParent:
 
     def test_no_parent_is_noop(self, db):
         """Child with no parent_uuid — rollup does nothing."""
-        child_uuid = _register(db, "feature", "f1", "F1", status="completed")
+        child_uuid = _register(db, "feature", "001-f1", "F1", status="completed")
         rollup_parent(db, child_uuid)
         # No exception, nothing to verify on parent
 
     def test_child_completion_updates_parent_progress(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
 
         rollup_parent(db, child_uuid)
@@ -291,13 +291,13 @@ class TestRollupParent:
         assert meta["progress"] == pytest.approx(1.0)
 
     def test_partial_progress_rollup(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child1_uuid = _register(db, "feature", "f1", "F1",
-                                 parent_type_id="project:p1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child1_uuid = _register(db, "feature", "001-f1", "F1",
+                                 parent_type_id="project:002-p1",
                                  status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "design")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "design")
 
         rollup_parent(db, child1_uuid)
 
@@ -308,13 +308,13 @@ class TestRollupParent:
 
     def test_ancestor_chain_rollup(self, db):
         """Rollup propagates up: grandparent <- parent <- child."""
-        gp_uuid = _register(db, "initiative", "i1", "Init 1")
-        parent_uuid = _register(db, "project", "p1", "Project 1",
-                                 parent_type_id="initiative:i1",
+        gp_uuid = _register(db, "initiative", "001-i1", "Init 1")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1",
+                                 parent_type_id="initiative:001-i1",
                                  status="active")
-        _with_phase(db, "project:p1", "deliver")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        _with_phase(db, "project:002-p1", "deliver")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
 
         rollup_parent(db, child_uuid)
@@ -335,12 +335,12 @@ class TestRollupParent:
         # No exception
 
     def test_abandoned_children_excluded_from_rollup(self, db):
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child1_uuid = _register(db, "feature", "f1", "F1",
-                                 parent_type_id="project:p1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child1_uuid = _register(db, "feature", "001-f1", "F1",
+                                 parent_type_id="project:002-p1",
                                  status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="abandoned")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="abandoned")
 
         rollup_parent(db, child1_uuid)
 
@@ -356,7 +356,7 @@ class TestRollupParent:
         uuids = []
         for i in range(_MAX_DEPTH + 2):
             etype = "project" if i % 2 == 0 else "feature"
-            eid = f"e{i}"
+            eid = f"001-e{i}"
             parent = type_ids[-1] if type_ids else None
             uuid = _register(db, etype, eid, f"Entity {i}",
                              parent_type_id=parent, status="active")
@@ -377,10 +377,10 @@ class TestRollupParent:
 
     def test_preserves_existing_metadata(self, db):
         """rollup_parent should merge progress into existing metadata."""
-        parent_uuid = _register(db, "project", "p1", "Project 1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1",
                                  metadata={"team": "alpha", "priority": 1})
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
 
         rollup_parent(db, child_uuid)
@@ -393,13 +393,13 @@ class TestRollupParent:
 
     def test_all_children_complete_means_full_progress(self, db):
         """AC-25: all children complete => parent progress = 100%."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        c1 = _register(db, "feature", "f1", "F1",
-                        parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f3", "F3",
-                  parent_type_id="project:p1", status="completed")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        c1 = _register(db, "feature", "001-f1", "F1",
+                        parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f3", "F3",
+                  parent_type_id="project:002-p1", status="completed")
 
         rollup_parent(db, c1)
 
@@ -409,9 +409,9 @@ class TestRollupParent:
 
     def test_traffic_light_stored_in_metadata(self, db):
         """AC-27: rollup stores traffic_light alongside progress."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
 
         rollup_parent(db, child_uuid)
@@ -423,13 +423,13 @@ class TestRollupParent:
 
     def test_traffic_light_yellow_on_partial_progress(self, db):
         """AC-27: progress 0.65 → YELLOW traffic light."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "design")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "design")
 
         rollup_parent(db, child_uuid)
 
@@ -441,13 +441,13 @@ class TestRollupParent:
 
     def test_traffic_light_red_on_low_progress(self, db):
         """AC-27: low progress → RED traffic light."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f1", "specify")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "brainstorm")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f1", "specify")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "brainstorm")
 
         rollup_parent(db, child_uuid)
 
@@ -459,12 +459,12 @@ class TestRollupParent:
 
     def test_traffic_light_propagates_up_ancestor_chain(self, db):
         """Traffic light stored at every level of the ancestor chain."""
-        gp_uuid = _register(db, "initiative", "i1", "Init 1")
-        _register(db, "project", "p1", "Project 1",
-                  parent_type_id="initiative:i1", status="active")
-        _with_phase(db, "project:p1", "deliver")
-        child_uuid = _register(db, "feature", "f1", "F1",
-                                parent_type_id="project:p1",
+        gp_uuid = _register(db, "initiative", "001-i1", "Init 1")
+        _register(db, "project", "002-p1", "Project 1",
+                  parent_type_id="initiative:001-i1", status="active")
+        _with_phase(db, "project:002-p1", "deliver")
+        child_uuid = _register(db, "feature", "001-f1", "F1",
+                                parent_type_id="project:002-p1",
                                 status="completed")
 
         rollup_parent(db, child_uuid)
@@ -477,15 +477,15 @@ class TestRollupParent:
 
     def test_ac27_verification_scenario(self, db):
         """AC-27 verification: 3 features (completed, implement, design) → 0.67 → YELLOW."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        c1 = _register(db, "feature", "f1", "F1",
-                        parent_type_id="project:p1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "implement")
-        _register(db, "feature", "f3", "F3",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f3", "design")
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        c1 = _register(db, "feature", "001-f1", "F1",
+                        parent_type_id="project:002-p1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "implement")
+        _register(db, "feature", "001-f3", "F3",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f3", "design")
 
         rollup_parent(db, c1)
 
@@ -543,13 +543,13 @@ class TestComputeProgressMixedChildren:
 
     def test_mixed_feature_and_task_children(self, db):
         """Project with feature (7-phase) and task (5D) children."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f1", "implement")  # 0.7
-        _register(db, "task", "t1", "T1",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "task:t1", "define")  # 0.1
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f1", "implement")  # 0.7
+        _register(db, "task", "001-t1", "T1",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "task:001-t1", "define")  # 0.1
 
         progress = compute_progress(db, parent_uuid)
         # (0.7 + 0.1) / 2 = 0.4
@@ -557,15 +557,15 @@ class TestComputeProgressMixedChildren:
 
     def test_mixed_children_with_completed(self, db):
         """Feature completed + task in deliver + feature in brainstorm."""
-        parent_uuid = _register(db, "project", "p1", "Project 1")
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="project:p1", status="completed")  # 1.0
-        _register(db, "task", "t1", "T1",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "task:t1", "deliver")  # 0.7
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="project:p1", status="active")
-        _with_phase(db, "feature:f2", "brainstorm")  # 0.0
+        parent_uuid = _register(db, "project", "002-p1", "Project 1")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="project:002-p1", status="completed")  # 1.0
+        _register(db, "task", "001-t1", "T1",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "task:001-t1", "deliver")  # 0.7
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="project:002-p1", status="active")
+        _with_phase(db, "feature:001-f2", "brainstorm")  # 0.0
 
         progress = compute_progress(db, parent_uuid)
         # (1.0 + 0.7 + 0.0) / 3 ≈ 0.567
@@ -583,55 +583,55 @@ class TestComputeOkrScore:
 
     def test_milestone_two_of_three_complete(self, db):
         """AC-32 verification: milestone KR with 2/3 children complete → 0.67."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f3", "F3",
-                  parent_type_id="key_result:kr1", status="active")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f3", "F3",
+                  parent_type_id="key_result:001-kr1", status="active")
 
         score = compute_okr_score(db, kr_uuid)
         assert score == pytest.approx(2.0 / 3.0, abs=0.01)
 
     def test_milestone_all_complete(self, db):
         """All children complete → 1.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="completed")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="completed")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(1.0)
 
     def test_milestone_none_complete(self, db):
         """No children complete → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="active")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="active")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="active")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="active")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
     def test_milestone_abandoned_children_excluded(self, db):
         """Abandoned children excluded from both numerator and denominator."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="abandoned")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="abandoned")
 
         # 1 completed / 1 active = 1.0
         assert compute_okr_score(db, kr_uuid) == pytest.approx(1.0)
 
     def test_milestone_no_children(self, db):
         """Milestone KR with no children → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
@@ -639,48 +639,48 @@ class TestComputeOkrScore:
 
     def test_binary_all_complete(self, db):
         """Binary KR: all children complete → 1.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR binary",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR binary",
                             metadata={"metric_type": "binary"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="completed")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="completed")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(1.0)
 
     def test_binary_not_all_complete(self, db):
         """Binary KR: not all children complete → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR binary",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR binary",
                             metadata={"metric_type": "binary"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="active")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="active")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
     def test_binary_no_children_manual(self, db):
         """AC-32: Binary KR without children → manual score from metadata."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR binary",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR binary",
                             metadata={"metric_type": "binary", "score": 1.0})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(1.0)
 
     def test_binary_no_children_no_score(self, db):
         """Binary KR without children and no score → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR binary",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR binary",
                             metadata={"metric_type": "binary"})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
     def test_binary_abandoned_excluded(self, db):
         """Binary KR: abandoned children excluded, remaining all complete → 1.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR binary",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR binary",
                             metadata={"metric_type": "binary"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="abandoned")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="abandoned")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(1.0)
 
@@ -688,14 +688,14 @@ class TestComputeOkrScore:
 
     def test_baseline_target_returns_stored_score(self, db):
         """Baseline/target KR → manual only, return stored score."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR target",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR target",
                             metadata={"metric_type": "baseline_target", "score": 0.75})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.75)
 
     def test_baseline_target_no_score(self, db):
         """Baseline/target KR with no stored score → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR target",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR target",
                             metadata={"metric_type": "baseline_target"})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
@@ -704,20 +704,20 @@ class TestComputeOkrScore:
 
     def test_no_metric_type(self, db):
         """KR with no metric_type → 0.0 (un-scored default)."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR unscored",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR unscored",
                             metadata={})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
     def test_none_metadata(self, db):
         """KR with None metadata → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR no meta")
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR no meta")
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
 
     def test_unknown_metric_type(self, db):
         """KR with unrecognized metric_type → 0.0."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR unknown",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR unknown",
                             metadata={"metric_type": "velocity"})
 
         assert compute_okr_score(db, kr_uuid) == pytest.approx(0.0)
@@ -730,12 +730,12 @@ class TestComputeOkrScore:
 
     def test_score_stored_in_metadata(self, db):
         """compute_okr_score stores result in KR metadata."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="active")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="active")
 
         compute_okr_score(db, kr_uuid)
 
@@ -745,10 +745,10 @@ class TestComputeOkrScore:
 
     def test_score_preserves_existing_metadata(self, db):
         """Storing score merges into existing metadata."""
-        kr_uuid = _register(db, "key_result", "kr1", "KR milestone",
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR milestone",
                             metadata={"metric_type": "milestone", "priority": "high"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
 
         compute_okr_score(db, kr_uuid)
 
@@ -768,15 +768,15 @@ class TestComputeObjectiveScore:
 
     def test_ac34_verification_scenario(self, db):
         """AC-34 verification: 3 KRs (0.8, 0.5, 1.0) → 0.77 → Green."""
-        obj_uuid = _register(db, "objective", "o1", "Reliability Objective")
-        _register(db, "key_result", "kr1", "KR A",
-                  parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Reliability Objective")
+        _register(db, "key_result", "001-kr1", "KR A",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.8})
-        _register(db, "key_result", "kr2", "KR B",
-                  parent_type_id="objective:o1",
+        _register(db, "key_result", "001-kr2", "KR B",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.5})
-        _register(db, "key_result", "kr3", "KR C",
-                  parent_type_id="objective:o1",
+        _register(db, "key_result", "001-kr3", "KR C",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 1.0})
 
         score = compute_objective_score(db, obj_uuid)
@@ -790,15 +790,15 @@ class TestComputeObjectiveScore:
 
     def test_no_children_returns_zero(self, db):
         """Objective with no KR children → 0.0."""
-        obj_uuid = _register(db, "objective", "o1", "Empty Objective")
+        obj_uuid = _register(db, "objective", "001-o1", "Empty Objective")
         score = compute_objective_score(db, obj_uuid)
         assert score == pytest.approx(0.0)
 
     def test_single_kr_child(self, db):
         """Objective with one KR → score equals that KR's score."""
-        obj_uuid = _register(db, "objective", "o1", "Single KR Obj")
-        _register(db, "key_result", "kr1", "KR Solo",
-                  parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Single KR Obj")
+        _register(db, "key_result", "001-kr1", "KR Solo",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "milestone"})
         # KR has no children → milestone score = 0.0
         score = compute_objective_score(db, obj_uuid)
@@ -811,12 +811,12 @@ class TestComputeObjectiveScore:
 
     def test_abandoned_kr_children_excluded(self, db):
         """Abandoned KR children should be excluded from the average."""
-        obj_uuid = _register(db, "objective", "o1", "Obj With Abandoned")
-        _register(db, "key_result", "kr1", "KR Active",
-                  parent_type_id="objective:o1", status="active",
+        obj_uuid = _register(db, "objective", "001-o1", "Obj With Abandoned")
+        _register(db, "key_result", "001-kr1", "KR Active",
+                  parent_type_id="objective:001-o1", status="active",
                   metadata={"metric_type": "baseline_target", "score": 0.8})
-        _register(db, "key_result", "kr2", "KR Abandoned",
-                  parent_type_id="objective:o1", status="abandoned",
+        _register(db, "key_result", "001-kr2", "KR Abandoned",
+                  parent_type_id="objective:001-o1", status="abandoned",
                   metadata={"metric_type": "baseline_target", "score": 0.0})
 
         score = compute_objective_score(db, obj_uuid)
@@ -825,9 +825,9 @@ class TestComputeObjectiveScore:
 
     def test_stores_traffic_light_red(self, db):
         """Low score → RED traffic light stored."""
-        obj_uuid = _register(db, "objective", "o1", "Low Score Obj")
-        _register(db, "key_result", "kr1", "KR Low",
-                  parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Low Score Obj")
+        _register(db, "key_result", "001-kr1", "KR Low",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.2})
 
         compute_objective_score(db, obj_uuid)
@@ -838,9 +838,9 @@ class TestComputeObjectiveScore:
 
     def test_stores_traffic_light_yellow(self, db):
         """Mid-range score → YELLOW traffic light stored."""
-        obj_uuid = _register(db, "objective", "o1", "Mid Score Obj")
-        _register(db, "key_result", "kr1", "KR Mid",
-                  parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Mid Score Obj")
+        _register(db, "key_result", "001-kr1", "KR Mid",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.5})
 
         compute_objective_score(db, obj_uuid)
@@ -851,10 +851,10 @@ class TestComputeObjectiveScore:
 
     def test_preserves_existing_objective_metadata(self, db):
         """Score and traffic_light merge into existing metadata."""
-        obj_uuid = _register(db, "objective", "o1", "Obj With Meta",
+        obj_uuid = _register(db, "objective", "001-o1", "Obj With Meta",
                              metadata={"team": "platform", "priority": 1})
-        _register(db, "key_result", "kr1", "KR",
-                  parent_type_id="objective:o1",
+        _register(db, "key_result", "001-kr1", "KR",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.9})
 
         compute_objective_score(db, obj_uuid)
@@ -868,14 +868,14 @@ class TestComputeObjectiveScore:
 
     def test_uses_compute_okr_score_for_each_kr(self, db):
         """KR scores are computed via compute_okr_score (milestone with children)."""
-        obj_uuid = _register(db, "objective", "o1", "Milestone Obj")
-        kr_uuid = _register(db, "key_result", "kr1", "KR Milestone",
-                            parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Milestone Obj")
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR Milestone",
+                            parent_type_id="objective:001-o1",
                             metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
-        _register(db, "feature", "f2", "F2",
-                  parent_type_id="key_result:kr1", status="active")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
+        _register(db, "feature", "001-f2", "F2",
+                  parent_type_id="key_result:001-kr1", status="active")
 
         score = compute_objective_score(db, obj_uuid)
         # milestone: 1/2 = 0.5
@@ -883,16 +883,16 @@ class TestComputeObjectiveScore:
 
     def test_mixed_metric_types(self, db):
         """Objective with KRs of different metric types."""
-        obj_uuid = _register(db, "objective", "o1", "Mixed Obj")
+        obj_uuid = _register(db, "objective", "001-o1", "Mixed Obj")
         # milestone KR: 1/1 = 1.0
-        _register(db, "key_result", "kr1", "KR Milestone",
-                  parent_type_id="objective:o1",
+        _register(db, "key_result", "001-kr1", "KR Milestone",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "milestone"})
-        _register(db, "feature", "f1", "F1",
-                  parent_type_id="key_result:kr1", status="completed")
+        _register(db, "feature", "001-f1", "F1",
+                  parent_type_id="key_result:001-kr1", status="completed")
         # baseline_target KR: manual score 0.5
-        _register(db, "key_result", "kr2", "KR Target",
-                  parent_type_id="objective:o1",
+        _register(db, "key_result", "001-kr2", "KR Target",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.5})
 
         score = compute_objective_score(db, obj_uuid)
@@ -901,13 +901,13 @@ class TestComputeObjectiveScore:
 
     def test_non_kr_children_ignored(self, db):
         """Only key_result children are used for objective scoring."""
-        obj_uuid = _register(db, "objective", "o1", "Obj With Mixed Children")
-        _register(db, "key_result", "kr1", "KR",
-                  parent_type_id="objective:o1",
+        obj_uuid = _register(db, "objective", "001-o1", "Obj With Mixed Children")
+        _register(db, "key_result", "001-kr1", "KR",
+                  parent_type_id="objective:001-o1",
                   metadata={"metric_type": "baseline_target", "score": 0.8})
         # A feature directly under the objective (should be ignored)
-        _register(db, "feature", "f1", "Direct Feature",
-                  parent_type_id="objective:o1", status="active")
+        _register(db, "feature", "001-f1", "Direct Feature",
+                  parent_type_id="objective:001-o1", status="active")
 
         score = compute_objective_score(db, obj_uuid)
         # Only kr1 counts: 0.8
@@ -923,20 +923,20 @@ class TestGetAncestorProgress:
 
     def test_no_parent_returns_empty(self, db):
         """Entity with no parent → empty list."""
-        uuid = _register(db, "feature", "f1", "Feature 1")
+        uuid = _register(db, "feature", "001-f1", "Feature 1")
         result = get_ancestor_progress(db, uuid)
         assert result == []
 
     def test_single_parent(self, db):
         """Entity with one parent → single entry."""
-        proj_uuid = _register(db, "project", "p1", "Project 1")
-        db.update_entity("project:p1", metadata={"progress": 0.65, "traffic_light": "YELLOW"})
-        feat_uuid = _register(db, "feature", "f1", "Feature 1",
-                              parent_type_id="project:p1")
+        proj_uuid = _register(db, "project", "002-p1", "Project 1")
+        db.update_entity("project:002-p1", metadata={"progress": 0.65, "traffic_light": "YELLOW"})
+        feat_uuid = _register(db, "feature", "001-f1", "Feature 1",
+                              parent_type_id="project:002-p1")
 
         result = get_ancestor_progress(db, feat_uuid)
         assert len(result) == 1
-        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["type_id"] == "project:002-p1"
         assert result[0]["name"] == "Project 1"
         assert result[0]["progress"] == pytest.approx(0.65)
         assert result[0]["traffic_light"] == "YELLOW"
@@ -944,39 +944,39 @@ class TestGetAncestorProgress:
 
     def test_full_hierarchy(self, db):
         """initiative → objective → KR → project → feature: returns 4 ancestors."""
-        init_uuid = _register(db, "initiative", "i1", "Initiative Alpha")
-        db.update_entity("initiative:i1", metadata={"progress": 0.5, "traffic_light": "YELLOW"})
+        init_uuid = _register(db, "initiative", "001-i1", "Initiative Alpha")
+        db.update_entity("initiative:001-i1", metadata={"progress": 0.5, "traffic_light": "YELLOW"})
 
-        obj_uuid = _register(db, "objective", "o1", "Objective Beta",
-                             parent_type_id="initiative:i1")
-        db.update_entity("objective:o1", metadata={"progress": 0.7, "traffic_light": "GREEN"})
+        obj_uuid = _register(db, "objective", "001-o1", "Objective Beta",
+                             parent_type_id="initiative:001-i1")
+        db.update_entity("objective:001-o1", metadata={"progress": 0.7, "traffic_light": "GREEN"})
 
-        kr_uuid = _register(db, "key_result", "kr1", "KR Gamma",
-                            parent_type_id="objective:o1")
-        db.update_entity("key_result:kr1", metadata={"progress": 0.3, "traffic_light": "RED"})
+        kr_uuid = _register(db, "key_result", "001-kr1", "KR Gamma",
+                            parent_type_id="objective:001-o1")
+        db.update_entity("key_result:001-kr1", metadata={"progress": 0.3, "traffic_light": "RED"})
 
-        proj_uuid = _register(db, "project", "p1", "Project Delta",
-                              parent_type_id="key_result:kr1")
-        db.update_entity("project:p1", metadata={"progress": 0.85, "traffic_light": "GREEN"})
+        proj_uuid = _register(db, "project", "002-p1", "Project Delta",
+                              parent_type_id="key_result:001-kr1")
+        db.update_entity("project:002-p1", metadata={"progress": 0.85, "traffic_light": "GREEN"})
 
-        feat_uuid = _register(db, "feature", "f1", "Feature Epsilon",
-                              parent_type_id="project:p1")
+        feat_uuid = _register(db, "feature", "001-f1", "Feature Epsilon",
+                              parent_type_id="project:002-p1")
 
         result = get_ancestor_progress(db, feat_uuid)
         assert len(result) == 4
 
         # Nearest first
-        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["type_id"] == "project:002-p1"
         assert result[0]["depth"] == 1
         assert result[0]["progress"] == pytest.approx(0.85)
 
-        assert result[1]["type_id"] == "key_result:kr1"
+        assert result[1]["type_id"] == "key_result:001-kr1"
         assert result[1]["depth"] == 2
 
-        assert result[2]["type_id"] == "objective:o1"
+        assert result[2]["type_id"] == "objective:001-o1"
         assert result[2]["depth"] == 3
 
-        assert result[3]["type_id"] == "initiative:i1"
+        assert result[3]["type_id"] == "initiative:001-i1"
         assert result[3]["depth"] == 4
         assert result[3]["progress"] == pytest.approx(0.5)
 
@@ -987,7 +987,7 @@ class TestGetAncestorProgress:
         uuids = []
         for i in range(7):
             etype = "project" if i % 2 == 0 else "feature"
-            eid = f"e{i}"
+            eid = f"001-e{i}"
             uuid = _register(db, etype, eid, f"Entity {i}",
                              parent_type_id=prev_type_id, status="active")
             db.update_entity(f"{etype}:{eid}", metadata={"progress": 0.1 * i, "traffic_light": "RED"})
@@ -999,10 +999,10 @@ class TestGetAncestorProgress:
 
     def test_missing_progress_returns_none(self, db):
         """Ancestor with no stored progress → progress=None, traffic_light=None."""
-        proj_uuid = _register(db, "project", "p1", "Project 1")
+        proj_uuid = _register(db, "project", "002-p1", "Project 1")
         # No metadata update → no progress stored
-        feat_uuid = _register(db, "feature", "f1", "Feature 1",
-                              parent_type_id="project:p1")
+        feat_uuid = _register(db, "feature", "001-f1", "Feature 1",
+                              parent_type_id="project:002-p1")
 
         result = get_ancestor_progress(db, feat_uuid)
         assert len(result) == 1
@@ -1017,12 +1017,12 @@ class TestGetAncestorProgress:
     def test_full_hierarchy_with_rollup(self, db):
         """End-to-end: build hierarchy, rollup, then verify ancestor progress view."""
         # Build: initiative → project → feature (completed)
-        init_uuid = _register(db, "initiative", "i1", "Init")
-        proj_uuid = _register(db, "project", "p1", "Proj",
-                              parent_type_id="initiative:i1", status="active")
-        _with_phase(db, "project:p1", "deliver")
-        feat_uuid = _register(db, "feature", "f1", "Feat",
-                              parent_type_id="project:p1", status="completed")
+        init_uuid = _register(db, "initiative", "001-i1", "Init")
+        proj_uuid = _register(db, "project", "002-p1", "Proj",
+                              parent_type_id="initiative:001-i1", status="active")
+        _with_phase(db, "project:002-p1", "deliver")
+        feat_uuid = _register(db, "feature", "001-f1", "Feat",
+                              parent_type_id="project:002-p1", status="completed")
 
         # Run rollup from leaf to populate stored values
         rollup_parent(db, feat_uuid)
@@ -1032,12 +1032,12 @@ class TestGetAncestorProgress:
         assert len(result) == 2
 
         # Project: 1 completed child → 1.0
-        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["type_id"] == "project:002-p1"
         assert result[0]["progress"] == pytest.approx(1.0)
         assert result[0]["traffic_light"] == "GREEN"
 
         # Initiative: 1 active child in deliver → 0.7
-        assert result[1]["type_id"] == "initiative:i1"
+        assert result[1]["type_id"] == "initiative:001-i1"
         assert result[1]["progress"] == pytest.approx(0.7)
         assert result[1]["traffic_light"] == "GREEN"
 
@@ -1052,12 +1052,12 @@ class TestComputeObjectiveScoreWeighted:
 
     def test_weighted_average(self, db):
         """KR1(completed, weight=2.0) + KR2(active/no-phase, weight=1.0) → weighted."""
-        obj_uuid = _register(db, "objective", "o1", "Objective 1")
-        _register(db, "key_result", "kr1", "KR 1",
-                  parent_type_id="objective:o1", status="completed",
+        obj_uuid = _register(db, "objective", "001-o1", "Objective 1")
+        _register(db, "key_result", "001-kr1", "KR 1",
+                  parent_type_id="objective:001-o1", status="completed",
                   metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 2.0})
-        _register(db, "key_result", "kr2", "KR 2",
-                  parent_type_id="objective:o1", status="active",
+        _register(db, "key_result", "001-kr2", "KR 2",
+                  parent_type_id="objective:001-o1", status="active",
                   metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0})
         # KR1 score=1.0 (baseline_target), KR2 score=0.0 (baseline_target)
         # weighted: (1.0*2.0 + 0.0*1.0) / (2.0+1.0) = 2/3
@@ -1066,12 +1066,12 @@ class TestComputeObjectiveScoreWeighted:
 
     def test_default_weights_backward_compat(self, db):
         """No weights → equal average."""
-        obj_uuid = _register(db, "objective", "o2", "Objective 2")
-        _register(db, "key_result", "kr-a", "KR A",
-                  parent_type_id="objective:o2", status="active",
+        obj_uuid = _register(db, "objective", "001-o2", "Objective 2")
+        _register(db, "key_result", "001-kr-a", "KR A",
+                  parent_type_id="objective:001-o2", status="active",
                   metadata={"metric_type": "baseline_target", "score": 1.0})
-        _register(db, "key_result", "kr-b", "KR B",
-                  parent_type_id="objective:o2", status="active",
+        _register(db, "key_result", "001-kr-b", "KR B",
+                  parent_type_id="objective:001-o2", status="active",
                   metadata={"metric_type": "baseline_target", "score": 0.0})
         # (1.0 + 0.0) / 2 = 0.5
         score = compute_objective_score(db, obj_uuid)
@@ -1079,21 +1079,21 @@ class TestComputeObjectiveScoreWeighted:
 
     def test_all_weights_zero(self, db):
         """All KRs weight=0.0 → returns 0.0 (no ZeroDivisionError)."""
-        obj_uuid = _register(db, "objective", "o3", "Objective 3")
-        _register(db, "key_result", "kr-z1", "KR Z1",
-                  parent_type_id="objective:o3", status="completed",
+        obj_uuid = _register(db, "objective", "001-o3", "Objective 3")
+        _register(db, "key_result", "001-kr-z1", "KR Z1",
+                  parent_type_id="objective:001-o3", status="completed",
                   metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 0.0})
         score = compute_objective_score(db, obj_uuid)
         assert score == 0.0
 
     def test_mixed_weights(self, db):
         """Weight=3 completed + weight=1 zero-score → 0.75."""
-        obj_uuid = _register(db, "objective", "o6", "Objective 6")
-        _register(db, "key_result", "kr-w3", "KR W3",
-                  parent_type_id="objective:o6", status="active",
+        obj_uuid = _register(db, "objective", "001-o6", "Objective 6")
+        _register(db, "key_result", "001-kr-w3", "KR W3",
+                  parent_type_id="objective:001-o6", status="active",
                   metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0})
-        _register(db, "key_result", "kr-w1", "KR W1",
-                  parent_type_id="objective:o6", status="active",
+        _register(db, "key_result", "001-kr-w1", "KR W1",
+                  parent_type_id="objective:001-o6", status="active",
                   metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0})
         # (1.0*3.0 + 0.0*1.0) / (3.0+1.0) = 0.75
         score = compute_objective_score(db, obj_uuid)
@@ -1101,18 +1101,18 @@ class TestComputeObjectiveScoreWeighted:
 
     def test_invalid_weight_defaults_to_one(self, db):
         """Non-numeric weight defaults to 1.0."""
-        obj_uuid = _register(db, "objective", "o7", "Objective 7")
-        _register(db, "key_result", "kr-bad-w", "Bad Weight KR",
-                  parent_type_id="objective:o7", status="active",
+        obj_uuid = _register(db, "objective", "001-o7", "Objective 7")
+        _register(db, "key_result", "001-kr-bad-w", "Bad Weight KR",
+                  parent_type_id="objective:001-o7", status="active",
                   metadata={"metric_type": "baseline_target", "score": 1.0, "weight": "heavy"})
         score = compute_objective_score(db, obj_uuid)
         assert score == pytest.approx(1.0)
 
     def test_weight_int_accepted(self, db):
         """Integer weight is accepted and converted to float."""
-        obj_uuid = _register(db, "objective", "o8", "Objective 8")
-        _register(db, "key_result", "kr-int", "Int Weight KR",
-                  parent_type_id="objective:o8", status="active",
+        obj_uuid = _register(db, "objective", "001-o8", "Objective 8")
+        _register(db, "key_result", "001-kr-int", "Int Weight KR",
+                  parent_type_id="objective:001-o8", status="active",
                   metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 2})
         score = compute_objective_score(db, obj_uuid)
         assert score == pytest.approx(1.0)

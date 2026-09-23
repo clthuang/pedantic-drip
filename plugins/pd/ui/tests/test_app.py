@@ -789,10 +789,10 @@ def test_board_workspace_scoping(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:002-beta", kanban_column="wip")
     # Orphan row: no matching entity anywhere.
     _seed_workflow_row(db_file, "feature:orphan-card", kanban_column="backlog")
 
@@ -956,8 +956,8 @@ def test_board_full_page_switcher_selection_states(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
     ws_b = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-b"))
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
 
     from ui import create_app
 
@@ -1017,7 +1017,7 @@ def test_board_full_page_switcher_unpopulated_default_shows_unmatched_option(
         db_file, project_root=str(tmp_path / "proj-populated")
     )
     db.register_entity(
-        "feature", "1-only", "Only Card", workspace_uuid=ws_populated
+        "feature", "001-only", "Only Card", workspace_uuid=ws_populated
     )
     ws_empty = _bootstrap_workspace(
         db_file, project_root=str(tmp_path / "proj-empty")
@@ -1046,7 +1046,7 @@ def test_board_htmx_partial_has_no_switcher_select(tmp_path):
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
 
     from ui import create_app
 
@@ -1298,10 +1298,10 @@ def test_board_scoping_via_cookie_names_workspace(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:002-beta", kanban_column="wip")
     _seed_workflow_row(db_file, "feature:orphan-cookie", kanban_column="backlog")
 
     from ui import create_app
@@ -1325,10 +1325,10 @@ def test_board_scoping_via_cookie_wildcard_shows_all(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:002-beta", kanban_column="wip")
 
     from ui import create_app
 
@@ -1353,10 +1353,10 @@ def test_board_scoping_shaped_unknown_cookie_shows_empty_board(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:002-beta", kanban_column="wip")
     _seed_workflow_row(db_file, "feature:orphan-unknown", kanban_column="backlog")
 
     from ui import create_app
@@ -1382,10 +1382,10 @@ def test_board_scoping_malformed_cookie_falls_back_to_startup_default(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
-    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
+    db.register_entity("feature", "002-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:002-beta", kanban_column="wip")
 
     from ui import create_app
 
@@ -1508,8 +1508,8 @@ def test_board_scoping_uppercase_cookie_case_mismatch_is_unmatched(tmp_path):
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
-    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:001-alpha", kanban_column="wip")
 
     from ui import create_app
 
@@ -1663,7 +1663,7 @@ def test_board_full_page_switcher_none_default_no_cookie_selects_all(tmp_path):
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
-    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.register_entity("feature", "001-alpha", "Alpha Card", workspace_uuid=ws_a)
 
     from ui import create_app
 

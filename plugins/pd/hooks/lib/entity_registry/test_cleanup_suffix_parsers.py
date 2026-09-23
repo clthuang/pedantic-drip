@@ -224,7 +224,7 @@ class TestACCL3DoctorIdentifiesClosureViaDb:
             )
             bl_uuid = db.register_entity(
                 entity_type="backlog",
-                entity_id="00777",
+                entity_id="777-backlog",
                 name="Some backlog",
                 artifact_path="docs/backlog.md",
                 status="dropped",  # already terminal
@@ -250,7 +250,7 @@ class TestACCL3DoctorIdentifiesClosureViaDb:
 
             # And the closed entity's status is intact (the DB is the
             # source of truth — no parsing step would mutate it).
-            entity = db.get_entity("backlog:00777")
+            entity = db.get_entity("backlog:777-backlog")
             assert entity["status"] == "dropped"
         finally:
             db.close()

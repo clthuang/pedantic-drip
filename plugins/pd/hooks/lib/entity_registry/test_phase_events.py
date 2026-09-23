@@ -172,7 +172,7 @@ class TestMigration10:
         """AC-9: entity with malformed metadata produces 0 rows."""
         # Register entity then corrupt its metadata
         db.register_entity(
-            "feature", "bad-meta", "Bad Meta",
+            "feature", "001-bad-meta", "Bad Meta",
             project_id=TEST_PROJECT_ID, metadata={"phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}}},
         )
         # The entity was registered after migration 10 ran, so its phase_timing
@@ -191,7 +191,7 @@ class TestMigration10:
         db._conn.execute("DROP INDEX IF EXISTS idx_pe_timestamp")
         # Insert entity with bad metadata directly
         db._conn.execute(
-            "UPDATE entities SET metadata = 'not json' WHERE type_id = 'feature:bad-meta'"
+            "UPDATE entities SET metadata = 'not json' WHERE type_id = 'feature:001-bad-meta'"
         )
         db._conn.execute(
             "INSERT INTO _metadata(key, value) VALUES('schema_version', '9') "
@@ -205,7 +205,7 @@ class TestMigration10:
 
         # Verify no rows for the bad entity
         count = db._conn.execute(
-            "SELECT COUNT(*) as cnt FROM phase_events WHERE type_id='feature:bad-meta'"
+            "SELECT COUNT(*) as cnt FROM phase_events WHERE type_id='feature:001-bad-meta'"
         ).fetchone()["cnt"]
         assert count == 0
 
@@ -604,7 +604,7 @@ class TestFeature088Migration10Hardening:
         _bootstrap_test_workspace(database)
         # Seed an entity with an unparseable timestamp in metadata.phase_timing.
         database.register_entity(
-            "feature", "bad-ts", "Bad Timestamp",
+            "feature", "001-bad-ts", "Bad Timestamp",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {
@@ -622,7 +622,7 @@ class TestFeature088Migration10Hardening:
         # Row for (type_id, design, started) MUST NOT exist.
         rows = database._conn.execute(
             "SELECT * FROM phase_events "
-            "WHERE type_id='feature:bad-ts' AND phase='design' "
+            "WHERE type_id='feature:001-bad-ts' AND phase='design' "
             "AND event_type='started'"
         ).fetchall()
         assert rows == []
@@ -630,7 +630,7 @@ class TestFeature088Migration10Hardening:
         # Valid rows still landed.
         rows_ok = database._conn.execute(
             "SELECT * FROM phase_events "
-            "WHERE type_id='feature:bad-ts' AND phase='brainstorm'"
+            "WHERE type_id='feature:001-bad-ts' AND phase='brainstorm'"
         ).fetchall()
         assert len(rows_ok) == 2
 
@@ -646,7 +646,7 @@ class TestFeature088Migration10Hardening:
         database = EntityDatabase(":memory:")
         _bootstrap_test_workspace(database)
         database.register_entity(
-            "feature", "trunc-001", "Trunc",
+            "feature", "001-trunc-001", "Trunc",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "backward_history": [{
@@ -662,7 +662,7 @@ class TestFeature088Migration10Hardening:
 
         row = database._conn.execute(
             "SELECT backward_reason, backward_target "
-            "FROM phase_events WHERE type_id='feature:trunc-001' "
+            "FROM phase_events WHERE type_id='feature:001-trunc-001' "
             "AND event_type='backward'"
         ).fetchone()
         assert row is not None
@@ -670,7 +670,7 @@ class TestFeature088Migration10Hardening:
         assert len(row["backward_target"]) == 500
 
         # Original metadata blob is unchanged (AC-9b invariant).
-        entity = database.get_entity("feature:trunc-001")
+        entity = database.get_entity("feature:001-trunc-001")
         meta = json.loads(entity["metadata"])
         bh = meta["backward_history"][0]
         assert len(bh["reason"]) == 800
@@ -836,7 +836,7 @@ class TestFeature088BundleH4PhaseEvents:
         database = EntityDatabase(":memory:")
         _bootstrap_test_workspace(database)
         database.register_entity(
-            "feature", "rerun-001", "Rerun",
+            "feature", "001-rerun-001", "Rerun",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {

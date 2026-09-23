@@ -924,14 +924,14 @@ class TestCheck9CircularParentChain:
         uuid_a = "uuid-a"
         uuid_b = "uuid-b"
         _register_entity_with_uuid(
-            db_path, "feature:a", "feature", "a",
+            db_path, "feature:002-a", "feature", "a",
             uuid_val=uuid_a,
-            parent_type_id="feature:b", parent_uuid=uuid_b,
+            parent_type_id="feature:002-b", parent_uuid=uuid_b,
         )
         _register_entity_with_uuid(
-            db_path, "feature:b", "feature", "b",
+            db_path, "feature:002-b", "feature", "b",
             uuid_val=uuid_b,
-            parent_type_id="feature:a", parent_uuid=uuid_a,
+            parent_type_id="feature:002-a", parent_uuid=uuid_a,
         )
 
         conn = _entities_conn(db_path)
@@ -1734,10 +1734,10 @@ class TestCheck11MissedCascadeDetected:
         from doctor.checks import check_missed_cascade
 
         db, conn = _make_live_db(tmp_path)
-        _register_live_feature(db, "blocker", status="completed")
-        blocker_uuid = _entity_uuid(conn, "feature:blocker")
-        _register_live_feature(db, "blocked", status="blocked")
-        blocked_uuid = _entity_uuid(conn, "feature:blocked")
+        _register_live_feature(db, "001-blocker", status="completed")
+        blocker_uuid = _entity_uuid(conn, "feature:001-blocker")
+        _register_live_feature(db, "001-blocked", status="blocked")
+        blocked_uuid = _entity_uuid(conn, "feature:001-blocked")
         db.add_dependency(blocked_uuid, blocker_uuid)
 
         try:
@@ -1761,10 +1761,10 @@ class TestCheck11CleanDependenciesPass:
         from doctor.checks import check_missed_cascade
 
         db, conn = _make_live_db(tmp_path)
-        _register_live_feature(db, "a", status="active")
-        a_uuid = _entity_uuid(conn, "feature:a")
-        _register_live_feature(db, "b", status="blocked")
-        b_uuid = _entity_uuid(conn, "feature:b")
+        _register_live_feature(db, "002-a", status="active")
+        a_uuid = _entity_uuid(conn, "feature:002-a")
+        _register_live_feature(db, "002-b", status="blocked")
+        b_uuid = _entity_uuid(conn, "feature:002-b")
 
         # Blocker NOT resolved (status=active) -- must not fire.
         db.add_dependency(b_uuid, a_uuid)
@@ -1786,12 +1786,12 @@ class TestCheck11MultiBlockerPartialNoFire:
         from doctor.checks import check_missed_cascade
 
         db, conn = _make_live_db(tmp_path)
-        _register_live_feature(db, "resolved-blocker", status="completed")
-        resolved_uuid = _entity_uuid(conn, "feature:resolved-blocker")
-        _register_live_feature(db, "active-blocker", status="active")
-        active_uuid = _entity_uuid(conn, "feature:active-blocker")
-        _register_live_feature(db, "downstream", status="blocked")
-        downstream_uuid = _entity_uuid(conn, "feature:downstream")
+        _register_live_feature(db, "001-resolved-blocker", status="completed")
+        resolved_uuid = _entity_uuid(conn, "feature:001-resolved-blocker")
+        _register_live_feature(db, "001-active-blocker", status="active")
+        active_uuid = _entity_uuid(conn, "feature:001-active-blocker")
+        _register_live_feature(db, "001-downstream", status="blocked")
+        downstream_uuid = _entity_uuid(conn, "feature:001-downstream")
 
         db.add_dependency(downstream_uuid, resolved_uuid)
         db.add_dependency(downstream_uuid, active_uuid)
@@ -1817,7 +1817,7 @@ class TestCheck11MultiBlockerPartialNoFire:
             result2 = check_missed_cascade(entities_conn=conn)
             assert not result2.passed
             assert len(result2.issues) == 1
-            assert result2.issues[0].entity == "feature:downstream"
+            assert result2.issues[0].entity == "feature:001-downstream"
         finally:
             conn.close()
 
@@ -1846,11 +1846,11 @@ class TestCheck11PerKindEquivalence:
 
         db, conn = _make_live_db(tmp_path)
         _register_live_feature(
-            db, "blocker-x", kind=kind, status=resolved_status,
+            db, "001-blocker-x", kind=kind, status=resolved_status,
         )
-        blocker_uuid = _entity_uuid(conn, f"{kind}:blocker-x")
-        _register_live_feature(db, "downstream-x", status="blocked")
-        downstream_uuid = _entity_uuid(conn, "feature:downstream-x")
+        blocker_uuid = _entity_uuid(conn, f"{kind}:001-blocker-x")
+        _register_live_feature(db, "001-downstream-x", status="blocked")
+        downstream_uuid = _entity_uuid(conn, "feature:001-downstream-x")
         db.add_dependency(downstream_uuid, blocker_uuid)
 
         try:
@@ -1865,7 +1865,7 @@ class TestCheck11PerKindEquivalence:
             # defaulting to False on both sides would pass the equality
             # check vacuously.
             assert python_resolved is True
-            assert ("feature:downstream-x" in sql_flagged) == python_resolved
+            assert ("feature:001-downstream-x" in sql_flagged) == python_resolved
         finally:
             conn.close()
 
@@ -1893,8 +1893,8 @@ class TestCheck11ZeroBlockerEdgeDivergence:
         from entity_registry.dependencies import DependencyManager
 
         db, conn = _make_live_db(tmp_path)
-        _register_live_feature(db, "lone-blocked", status="blocked")
-        lone_uuid = _entity_uuid(conn, "feature:lone-blocked")
+        _register_live_feature(db, "001-lone-blocked", status="blocked")
+        lone_uuid = _entity_uuid(conn, "feature:001-lone-blocked")
 
         try:
             # Then the Python helper is vacuously True (all([]) is True).
@@ -1913,7 +1913,7 @@ class TestCheck11ZeroBlockerEdgeDivergence:
         from doctor.checks import check_missed_cascade
 
         db, conn = _make_live_db(tmp_path)
-        _register_live_feature(db, "lone-blocked-2", status="blocked")
+        _register_live_feature(db, "001-lone-blocked-2", status="blocked")
 
         try:
             # When the doctor's missed_cascade check runs.

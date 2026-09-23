@@ -419,21 +419,21 @@ def integration_client(tmp_path):
     """Create a DB seeded with entities and workflow data, return TestClient.
 
     Entities seeded:
-    - feature:feat-alpha  (active, parent=project:proj-one, workflow_phase=implement)
-    - feature:feat-beta   (completed, no parent, no workflow)
-    - brainstorm:bs-one   (active, no parent, no workflow)
-    - project:proj-one    (active, no parent, no workflow)
+    - feature:001-feat-alpha  (active, parent=project:001-proj-one, workflow_phase=implement)
+    - feature:001-feat-beta   (completed, no parent, no workflow)
+    - brainstorm:20260101-000010-bs-one   (active, no parent, no workflow)
+    - project:001-proj-one    (active, no parent, no workflow)
     """
     db = EntityDatabase(str(tmp_path / "test.db"))
 
     # Seed entities via the DB API
-    db._register_entity_no_display("feature", "feat-alpha", "Alpha Feature", status="active", project_id="__unknown__")
-    db._register_entity_no_display("feature", "feat-beta", "Beta Feature", status="completed", project_id="__unknown__")
-    db._register_entity_no_display("brainstorm", "bs-one", "Brainstorm One", status="active", project_id="__unknown__")
-    db._register_entity_no_display("project", "proj-one", "Project One", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-feat-alpha", "Alpha Feature", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-feat-beta", "Beta Feature", status="completed", project_id="__unknown__")
+    db.register_entity("brainstorm", "20260101-000010-bs-one", "Brainstorm One", status="active", project_id="__unknown__")
+    db.register_entity("project", "001-proj-one", "Project One", status="active", project_id="__unknown__")
 
     # Set parent relationship: feat-alpha -> proj-one
-    db.set_parent("feature:feat-alpha", "project:proj-one")
+    db.set_parent("feature:001-feat-alpha", "project:001-proj-one")
 
     # Disable FK enforcement for raw workflow_phases insert
     db._conn.execute("PRAGMA foreign_keys = OFF")
@@ -444,7 +444,7 @@ def integration_client(tmp_path):
         "INSERT INTO workflow_phases "
         "(type_id, kanban_column, workflow_phase, updated_at) "
         "VALUES (?, ?, ?, ?)",
-        ("feature:feat-alpha", "wip", "implement", "2026-03-08T00:00:00Z"),
+        ("feature:001-feat-alpha", "wip", "implement", "2026-03-08T00:00:00Z"),
     )
     db._conn.commit()
 
@@ -508,13 +508,13 @@ def test_integration_entity_list_status_filter(integration_client):
 # Task 4.2.1: Entity detail returns full data with workflow fields (FR-4)
 # ---------------------------------------------------------------------------
 def test_integration_entity_detail_with_workflow(integration_client):
-    """GET /entities/feature:feat-alpha returns 200 with entity + workflow data."""
-    response = integration_client.get("/entities/feature:feat-alpha")
+    """GET /entities/feature:001-feat-alpha returns 200 with entity + workflow data."""
+    response = integration_client.get("/entities/feature:001-feat-alpha")
 
     assert response.status_code == 200
     # Entity fields
     assert "Alpha Feature" in response.text
-    assert "feature:feat-alpha" in response.text
+    assert "feature:001-feat-alpha" in response.text
     assert "active" in response.text
     # Workflow fields from the template (execution_status, workflow_phase)
     assert "wip" in response.text
@@ -540,16 +540,16 @@ def test_entity_detail_selects_correct_row_by_type_id_when_multiple_rows_exist(t
     # Given two entities with DIFFERING vocabulary execution_status values
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "multi-blocked", "Multi Blocked",
+    db.register_entity(
+        "feature", "001-multi-blocked", "Multi Blocked",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:multi-blocked", kanban_column="blocked")
-    db._register_entity_no_display(
-        "feature", "multi-documenting", "Multi Documenting",
+    db.create_workflow_phase("feature:001-multi-blocked", kanban_column="blocked")
+    db.register_entity(
+        "feature", "001-multi-documenting", "Multi Documenting",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:multi-documenting", kanban_column="documenting")
+    db.create_workflow_phase("feature:001-multi-documenting", kanban_column="documenting")
 
     from ui import create_app
 
@@ -557,8 +557,8 @@ def test_entity_detail_selects_correct_row_by_type_id_when_multiple_rows_exist(t
     client = TestClient(app)
 
     # When each entity's own detail page is requested
-    blocked_response = client.get("/entities/feature:multi-blocked")
-    documenting_response = client.get("/entities/feature:multi-documenting")
+    blocked_response = client.get("/entities/feature:001-multi-blocked")
+    documenting_response = client.get("/entities/feature:001-multi-documenting")
 
     # Then each shows only its own value, never the other's
     assert blocked_response.status_code == 200
@@ -583,16 +583,16 @@ def test_entity_detail_renders_legacy_agent_review_verbatim_with_other_rows_pres
     # Given an agent_review entity AND a second, unrelated vocabulary row
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "brainstorm", "legacy-agent-detail", "Legacy Agent Detail",
+    db.register_entity(
+        "brainstorm", "20260101-000024-legacy-agent-detail", "Legacy Agent Detail",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("brainstorm:legacy-agent-detail", kanban_column="agent_review")
-    db._register_entity_no_display(
-        "feature", "other-row-present", "Other Row Present",
+    db.create_workflow_phase("brainstorm:20260101-000024-legacy-agent-detail", kanban_column="agent_review")
+    db.register_entity(
+        "feature", "001-other-row-present", "Other Row Present",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:other-row-present", kanban_column="blocked")
+    db.create_workflow_phase("feature:001-other-row-present", kanban_column="blocked")
 
     from ui import create_app
 
@@ -600,7 +600,7 @@ def test_entity_detail_renders_legacy_agent_review_verbatim_with_other_rows_pres
     client = TestClient(app)
 
     # When the legacy entity's detail page is requested
-    response = client.get("/entities/brainstorm:legacy-agent-detail")
+    response = client.get("/entities/brainstorm:20260101-000024-legacy-agent-detail")
 
     # Then it shows the raw legacy value verbatim -- no remap to 'wip'
     assert response.status_code == 200
@@ -618,11 +618,11 @@ def test_entity_detail_renders_legacy_human_review_verbatim(tmp_path):
     # Given an entity seeded with the legacy human_review value
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "legacy-human-detail", "Legacy Human Detail",
+    db.register_entity(
+        "feature", "001-legacy-human-detail", "Legacy Human Detail",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:legacy-human-detail", kanban_column="human_review")
+    db.create_workflow_phase("feature:001-legacy-human-detail", kanban_column="human_review")
 
     from ui import create_app
 
@@ -630,7 +630,7 @@ def test_entity_detail_renders_legacy_human_review_verbatim(tmp_path):
     client = TestClient(app)
 
     # When the detail page is requested
-    response = client.get("/entities/feature:legacy-human-detail")
+    response = client.get("/entities/feature:001-legacy-human-detail")
 
     # Then it shows the raw legacy value verbatim -- no remap to 'wip'
     assert response.status_code == 200
@@ -656,18 +656,18 @@ def test_integration_entity_detail_lineage(integration_client):
     Detail page for proj-one shows no ancestors and children (feat-alpha).
     Self is stripped from both lists."""
     # feat-alpha has parent proj-one
-    response = integration_client.get("/entities/feature:feat-alpha")
+    response = integration_client.get("/entities/feature:001-feat-alpha")
     assert response.status_code == 200
     # Ancestors section should show the parent
-    assert "project:proj-one" in response.text
+    assert "project:001-proj-one" in response.text
     # feat-alpha has no children, so "No children" should appear
     assert "No children" in response.text
 
     # proj-one is a parent, should show feat-alpha as child
-    response_parent = integration_client.get("/entities/project:proj-one")
+    response_parent = integration_client.get("/entities/project:001-proj-one")
     assert response_parent.status_code == 200
     # Children section should show the child
-    assert "feature:feat-alpha" in response_parent.text
+    assert "feature:001-feat-alpha" in response_parent.text
     # proj-one has no parent, so "No parent" should appear
     assert "No parent" in response_parent.text
 
@@ -687,7 +687,7 @@ def test_integration_search_fts_fallback(tmp_path):
     """When search_entities raises ValueError, fallback returns all entities
     with search input disabled."""
     db = EntityDatabase(str(tmp_path / "test.db"))
-    db._register_entity_no_display("feature", "fb-test", "Fallback Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-fb-test", "Fallback Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -762,18 +762,18 @@ def test_entity_list_sorted_by_updated_at_descending(tmp_path):
     # Given entities with different updated_at timestamps
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "older", "Older Feature", status="active", project_id="__unknown__")
-    db._register_entity_no_display("feature", "newer", "Newer Feature", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-older", "Older Feature", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-newer", "Newer Feature", status="active", project_id="__unknown__")
 
     # Manually set different updated_at values via raw SQL
     conn = sqlite3.connect(db_file)
     conn.execute(
         "UPDATE entities SET updated_at = '2026-01-01T00:00:00Z' "
-        "WHERE type_id = 'feature:older'"
+        "WHERE type_id = 'feature:001-older'"
     )
     conn.execute(
         "UPDATE entities SET updated_at = '2026-03-08T00:00:00Z' "
-        "WHERE type_id = 'feature:newer'"
+        "WHERE type_id = 'feature:001-newer'"
     )
     conn.commit()
     conn.close()
@@ -847,14 +847,14 @@ def test_entity_detail_shows_all_required_fields(integration_client):
     Anticipate: If a field is missing from the template, the page would
     render but lack that information.
     """
-    response = integration_client.get("/entities/feature:feat-alpha")
+    response = integration_client.get("/entities/feature:001-feat-alpha")
 
     assert response.status_code == 200
     # Entity Info section should contain all core fields
     assert "Alpha Feature" in response.text  # name
-    assert "feature:feat-alpha" in response.text  # type_id
+    assert "feature:001-feat-alpha" in response.text  # type_id
     assert "feature" in response.text  # entity_type
-    assert "feat-alpha" in response.text  # entity_id
+    assert "001-feat-alpha" in response.text  # entity_id
     assert "active" in response.text  # status
     # UUID should be present (generated by register_entity)
     assert "UUID" in response.text  # section label
@@ -873,7 +873,7 @@ def test_entity_detail_no_workflow_for_non_feature(integration_client):
     Anticipate: If workflow section renders unconditionally, non-feature
     entities would show empty/broken workflow data.
     """
-    response = integration_client.get("/entities/brainstorm:bs-one")
+    response = integration_client.get("/entities/brainstorm:20260101-000010-bs-one")
 
     assert response.status_code == 200
     assert "Brainstorm One" in response.text
@@ -1028,7 +1028,7 @@ def test_entity_list_single_entity(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "solo", "Solo Feature", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-solo", "Solo Feature", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1052,13 +1052,13 @@ def test_entity_detail_with_null_fields(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("brainstorm", "minimal", "Minimal Entity", status="active", project_id="__unknown__")
+    db.register_entity("brainstorm", "20260101-000027-minimal", "Minimal Entity", status="active", project_id="__unknown__")
 
     from ui import create_app
 
     app = create_app(db_path=db_file)
     client = TestClient(app)
-    response = client.get("/entities/brainstorm:minimal")
+    response = client.get("/entities/brainstorm:20260101-000027-minimal")
 
     assert response.status_code == 200
     assert "Minimal Entity" in response.text
@@ -1078,10 +1078,10 @@ def test_entity_detail_with_colon_in_type_id(integration_client):
     """
     # This is already working via integration_client, but let's verify
     # the path converter specifically with a type_id containing colons
-    response = integration_client.get("/entities/feature:feat-alpha")
+    response = integration_client.get("/entities/feature:001-feat-alpha")
 
     assert response.status_code == 200
-    assert "feature:feat-alpha" in response.text
+    assert "feature:001-feat-alpha" in response.text
 
 
 # derived_from: dimension:boundary (empty search query string)
@@ -1158,8 +1158,8 @@ def test_entity_list_xss_in_entity_name(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "xss-test",
+    db.register_entity(
+        "feature", "001-xss-test",
         '<script>alert("xss")</script>',
         status="active",
         project_id="__unknown__",
@@ -1210,7 +1210,7 @@ def test_entity_detail_lineage_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "lin-err", "Lineage Error Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-lin-err", "Lineage Error Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1220,7 +1220,7 @@ def test_entity_detail_lineage_error_shows_error_page(tmp_path):
         side_effect=Exception("lineage query failed")
     )
     client = TestClient(app)
-    response = client.get("/entities/feature:lin-err")
+    response = client.get("/entities/feature:001-lin-err")
 
     assert response.status_code == 200
     assert "An error occurred while querying the database" in response.text
@@ -1235,7 +1235,7 @@ def test_entity_detail_workflow_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "wf-err", "Workflow Error Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-wf-err", "Workflow Error Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1247,7 +1247,7 @@ def test_entity_detail_workflow_error_shows_error_page(tmp_path):
         side_effect=Exception("workflow query failed")
     )
     client = TestClient(app)
-    response = client.get("/entities/feature:wf-err")
+    response = client.get("/entities/feature:001-wf-err")
 
     assert response.status_code == 200
     assert "An error occurred while querying the database" in response.text
@@ -1263,7 +1263,7 @@ def test_entity_list_workflow_lookup_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "wl-err", "Workflow Lookup Error", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-wl-err", "Workflow Lookup Error", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1364,16 +1364,16 @@ def test_entity_list_renders_legacy_values_verbatim_not_remapped(tmp_path):
     # Given two entities seeded with the two legacy kanban_column values
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "legacy-agent-list", "Legacy Agent List",
+    db.register_entity(
+        "feature", "001-legacy-agent-list", "Legacy Agent List",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:legacy-agent-list", kanban_column="agent_review")
-    db._register_entity_no_display(
-        "feature", "legacy-human-list", "Legacy Human List",
+    db.create_workflow_phase("feature:001-legacy-agent-list", kanban_column="agent_review")
+    db.register_entity(
+        "feature", "001-legacy-human-list", "Legacy Human List",
         status="active", project_id="__unknown__",
     )
-    db.create_workflow_phase("feature:legacy-human-list", kanban_column="human_review")
+    db.create_workflow_phase("feature:001-legacy-human-list", kanban_column="human_review")
 
     from ui import create_app
 
@@ -1413,8 +1413,8 @@ def test_entity_list_renders_raw_unknown_execution_status_verbatim_no_warning(tm
     # Given an entity whose workflow lookup returns an unknown value
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "raw-unknown-list", "Raw Unknown List",
+    db.register_entity(
+        "feature", "001-raw-unknown-list", "Raw Unknown List",
         status="active", project_id="__unknown__",
     )
 
@@ -1423,7 +1423,7 @@ def test_entity_list_renders_raw_unknown_execution_status_verbatim_no_warning(tm
     app = create_app(db_path=db_file)
     app.state.db.list_workflow_phases = unittest.mock.MagicMock(
         return_value=[
-            {"type_id": "feature:raw-unknown-list", "execution_status": "totally-not-real"}
+            {"type_id": "feature:001-raw-unknown-list", "execution_status": "totally-not-real"}
         ]
     )
     client = TestClient(app)
@@ -1452,8 +1452,8 @@ def test_entity_list_execution_status_blank_not_literal_none_for_entity_without_
     # Given an entity with no workflow_phases row
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "brainstorm", "no-workflow-row", "No Workflow Row",
+    db.register_entity(
+        "brainstorm", "20260101-000030-no-workflow-row", "No Workflow Row",
         status="active", project_id="__unknown__",
     )
 
@@ -1532,7 +1532,7 @@ def test_entity_list_search_passes_limit_100(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "lim", "Limit Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-lim", "Limit Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1573,7 +1573,7 @@ def test_entity_detail_lineage_directions(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display("feature", "dir-test", "Direction Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", "001-dir-test", "Direction Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1588,7 +1588,7 @@ def test_entity_detail_lineage_directions(tmp_path):
 
     app.state.db.get_lineage = tracking_get_lineage
     client = TestClient(app)
-    client.get("/entities/feature:dir-test")
+    client.get("/entities/feature:001-dir-test")
 
     # Should call with "up" for ancestors and "down" for children
     assert len(lineage_calls) == 2
@@ -1814,15 +1814,15 @@ def test_build_workflow_lookup_scoped_to_workspace_on_type_id_collision(tmp_path
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
-    db.register_entity("feature", "1-collide", "Feature In A", workspace_uuid=ws_a)
-    db.register_entity("feature", "1-collide", "Feature In B", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:1-collide", kanban_column="wip")
+    db.register_entity("feature", "001-collide", "Feature In A", workspace_uuid=ws_a)
+    db.register_entity("feature", "001-collide", "Feature In B", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:001-collide", kanban_column="wip")
 
     result = _build_workflow_lookup(db, workspace_uuid=ws_a)
 
     assert len(result) == 1
-    assert result["feature:1-collide"]["entity_name"] == "Feature In A"
-    assert result["feature:1-collide"]["execution_status"] == "wip"
+    assert result["feature:001-collide"]["entity_name"] == "Feature In A"
+    assert result["feature:001-collide"]["execution_status"] == "wip"
 
 
 def test_entity_list_workspace_scoping(tmp_path):
@@ -1835,10 +1835,10 @@ def test_entity_list_workspace_scoping(tmp_path):
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
     db.register_entity(
-        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
     )
     db.register_entity(
-        "feature", "2-beta", "Beta Entity", status="active", workspace_uuid=ws_b
+        "feature", "002-beta", "Beta Entity", status="active", workspace_uuid=ws_b
     )
 
     from ui import create_app
@@ -1869,10 +1869,10 @@ def test_entity_list_search_workspace_scoping(tmp_path):
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
     db.register_entity(
-        "feature", "1-alpha", "Findme Alpha", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Findme Alpha", status="active", workspace_uuid=ws_a
     )
     db.register_entity(
-        "feature", "2-beta", "Findme Beta", status="active", workspace_uuid=ws_b
+        "feature", "002-beta", "Findme Beta", status="active", workspace_uuid=ws_b
     )
 
     from ui import create_app
@@ -1926,10 +1926,10 @@ def test_entity_list_full_page_switcher_selection_states(tmp_path):
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
     ws_b = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-b"))
     db.register_entity(
-        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
     )
     db.register_entity(
-        "feature", "2-beta", "Beta Entity", status="active", workspace_uuid=ws_b
+        "feature", "002-beta", "Beta Entity", status="active", workspace_uuid=ws_b
     )
 
     from ui import create_app
@@ -1990,7 +1990,7 @@ def test_entity_list_full_page_switcher_unpopulated_default_shows_unmatched_opti
         db_file, project_root=str(tmp_path / "proj-populated")
     )
     db.register_entity(
-        "feature", "1-only", "Only Entity", status="active",
+        "feature", "001-only", "Only Entity", status="active",
         workspace_uuid=ws_populated,
     )
     ws_empty = _bootstrap_workspace(
@@ -2021,7 +2021,7 @@ def test_entity_list_htmx_partial_has_no_switcher_select(tmp_path):
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
     db.register_entity(
-        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
     )
 
     from ui import create_app
@@ -2075,8 +2075,8 @@ def test_entity_detail_has_no_switcher_select(tmp_path):
     spec SC4)."""
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db._register_entity_no_display(
-        "feature", "detail-no-switcher", "Detail No Switcher",
+    db.register_entity(
+        "feature", "001-detail-no-switcher", "Detail No Switcher",
         status="active", project_id="__unknown__",
     )
 
@@ -2085,7 +2085,7 @@ def test_entity_detail_has_no_switcher_select(tmp_path):
     app = create_app(db_path=db_file)
     client = TestClient(app)
 
-    response = client.get("/entities/feature:detail-no-switcher")
+    response = client.get("/entities/feature:001-detail-no-switcher")
 
     assert response.status_code == 200
     assert '<select name="uuid"' not in response.text
@@ -2105,7 +2105,7 @@ def test_entity_detail_unscoped_by_cookie(tmp_path):
     ws_a = _bootstrap_workspace(db_file)
     ws_b = _bootstrap_workspace(db_file)
     db.register_entity(
-        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
     )
 
     from ui import create_app
@@ -2114,7 +2114,7 @@ def test_entity_detail_unscoped_by_cookie(tmp_path):
     client = TestClient(app)
     client.cookies.set(COOKIE_NAME, ws_b)
 
-    response = client.get("/entities/feature:1-alpha")
+    response = client.get("/entities/feature:001-alpha")
 
     assert response.status_code == 200
     assert "Alpha Entity" in response.text
@@ -2140,15 +2140,15 @@ def test_switcher_label_collision_gets_uuid_suffix(tmp_path):
     )
     ws_null_root = _bootstrap_workspace(db_file, project_root=None)
     db.register_entity(
-        "feature", "1-a", "Entity In Collide One",
+        "feature", "001-a", "Entity In Collide One",
         status="active", workspace_uuid=ws_collide_1,
     )
     db.register_entity(
-        "feature", "1-b", "Entity In Collide Two",
+        "feature", "001-b", "Entity In Collide Two",
         status="active", workspace_uuid=ws_collide_2,
     )
     db.register_entity(
-        "feature", "1-c", "Entity In Null Root",
+        "feature", "001-c", "Entity In Null Root",
         status="active", workspace_uuid=ws_null_root,
     )
 
@@ -2188,7 +2188,7 @@ def test_entity_list_full_page_switcher_none_default_no_cookie_selects_all(
     db = EntityDatabase(db_file)
     ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
     db.register_entity(
-        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+        "feature", "001-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
     )
 
     from ui import create_app

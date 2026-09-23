@@ -73,7 +73,7 @@ class TestCensus:
         WITH display rows returns N. The old regex returned nothing for
         these — that is the original incident."""
         db, ws = _db(tmp_path)
-        _seed(db, ws, "project", "P004-entity-db-redesign", seq=4)
+        _seed(db, ws, "project", "001-p004-entity-db-redesign", seq=4)
         assert _census_max(db._conn, kind="project", workspace_uuid=ws) == 4
 
     def test_archived_rows_still_count(self, tmp_path):
@@ -87,7 +87,7 @@ class TestCensus:
         """Legacy rows have no display row by definition; the stored counter
         is what reserves their numbers, not this."""
         db, ws = _db(tmp_path)
-        _seed(db, ws, "project", "P004-entity-db-redesign", seq=None)
+        _seed(db, ws, "project", "001-p004-entity-db-redesign", seq=None)
         assert _census_max(db._conn, kind="project", workspace_uuid=ws) is None
 
     def test_other_kinds_and_workspaces_do_not_leak(self, tmp_path):
@@ -133,8 +133,8 @@ class TestMonotonicIssuance:
         census is None, and the stored counter is the only reservation.
         Taking the census alone would restart at 1 and collide with P001."""
         db, ws = _db(tmp_path)
-        _seed(db, ws, "project", "P001", seq=None)
-        _seed(db, ws, "project", "P004-entity-db-redesign", seq=None)
+        _seed(db, ws, "project", "001-p001", seq=None)
+        _seed(db, ws, "project", "001-p004-entity-db-redesign", seq=None)
         db._conn.execute(
             "INSERT OR REPLACE INTO sequences(workspace_uuid, entity_type, next_val) "
             "VALUES(?,?,?)", (ws, "project", 5))

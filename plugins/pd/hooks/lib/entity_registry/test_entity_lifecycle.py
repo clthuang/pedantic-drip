@@ -30,7 +30,7 @@ def db(tmp_path):
     database.close()
 
 
-def _create_brainstorm(db: EntityDatabase, entity_id: str = "idea-1") -> str:
+def _create_brainstorm(db: EntityDatabase, entity_id: str = "20260101-000019-idea-1") -> str:
     """Helper: register a brainstorm entity and return its type_id."""
     type_id = f"brainstorm:{entity_id}"
     db.register_entity(
@@ -43,7 +43,7 @@ def _create_brainstorm(db: EntityDatabase, entity_id: str = "idea-1") -> str:
     return type_id
 
 
-def _create_backlog(db: EntityDatabase, entity_id: str = "item-1") -> str:
+def _create_backlog(db: EntityDatabase, entity_id: str = "001-item-1") -> str:
     """Helper: register a backlog entity and return its type_id."""
     type_id = f"backlog:{entity_id}"
     db.register_entity(
@@ -113,24 +113,24 @@ class TestInitEntityWorkflow:
     def test_init_feature_type_rejected(self, db):
         db.register_entity(
             entity_type="feature",
-            entity_id="feat-1",
+            entity_id="001-feat-1",
             name="Test feature",
             status="active",
             project_id="__unknown__",
         )
         with pytest.raises(ValueError, match="invalid_entity_type.*feature"):
-            init_entity_workflow(db, "feature:feat-1", "ideation", "backlog")
+            init_entity_workflow(db, "feature:001-feat-1", "ideation", "backlog")
 
     def test_init_project_type_rejected(self, db):
         db.register_entity(
             entity_type="project",
-            entity_id="proj-1",
+            entity_id="001-proj-1",
             name="Test project",
             status="active",
             project_id="__unknown__",
         )
         with pytest.raises(ValueError, match="invalid_entity_type.*project"):
-            init_entity_workflow(db, "project:proj-1", "active", "wip")
+            init_entity_workflow(db, "project:001-proj-1", "active", "wip")
 
     def test_init_invalid_phase_for_brainstorm_raises(self, db):
         type_id = _create_brainstorm(db)
@@ -207,7 +207,7 @@ class TestTransitionEntityPhase:
 
     def test_unsupported_entity_type_raises(self, db):
         with pytest.raises(ValueError, match="invalid_entity_type.*feature"):
-            transition_entity_phase(db, "feature:feat-1", "reviewing")
+            transition_entity_phase(db, "feature:001-feat-1", "reviewing")
 
     def test_nonexistent_entity_raises(self, db):
         with pytest.raises(ValueError, match="entity_not_found"):
@@ -266,7 +266,7 @@ class TestTransitionEntityPhase:
 
         Setup bootstraps two workspaces. The brainstorm entity 'foo' is
         registered in ws_a with a workflow_phases row scoped to ws_a. A
-        parallel 'brainstorm:other' entity is registered in ws_b as a
+        parallel 'brainstorm:20260101-000032-other' entity is registered in ws_b as a
         cross-workspace isolation witness.
 
         Test instruments db.update_workflow_phase via monkeypatch to capture
@@ -291,13 +291,13 @@ class TestTransitionEntityPhase:
         # ws_a: 'brainstorm:foo' + workflow_phase row.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="foo",
+            entity_id="20260101-000018-foo",
             name="Foo brainstorm in ws-a",
             status="draft",
             workspace_uuid=ws_a_uuid,
         )
         db.upsert_workflow_phase(
-            "brainstorm:foo",
+            "brainstorm:20260101-000018-foo",
             workflow_phase="draft",
             kanban_column="wip",
             workspace_uuid=ws_a_uuid,
@@ -305,7 +305,7 @@ class TestTransitionEntityPhase:
         # Sanity: stored workflow_phases.workspace_uuid is ws_a.
         wp_row = db._conn.execute(
             "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
-            ("brainstorm:foo",),
+            ("brainstorm:20260101-000018-foo",),
         ).fetchone()
         assert wp_row["workspace_uuid"] == ws_a_uuid
 
@@ -313,7 +313,7 @@ class TestTransitionEntityPhase:
         # cross-workspace isolation witness.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="other",
+            entity_id="20260101-000032-other",
             name="Other brainstorm in ws-b",
             status="draft",
             workspace_uuid=ws_b_uuid,
@@ -336,7 +336,7 @@ class TestTransitionEntityPhase:
         try:
             # (1) Success path: workspace_uuid=ws_a → both writes land.
             result = transition_entity_phase(
-                db, "brainstorm:foo", "promoted", workspace_uuid=ws_a_uuid,
+                db, "brainstorm:20260101-000018-foo", "promoted", workspace_uuid=ws_a_uuid,
             )
         finally:
             db.update_workflow_phase = real_update_workflow_phase  # type: ignore[method-assign]
@@ -348,12 +348,12 @@ class TestTransitionEntityPhase:
         ws_a_entity = db._conn.execute(
             "SELECT status FROM entities "
             "WHERE type_id = ? AND workspace_uuid = ?",
-            ("brainstorm:foo", ws_a_uuid),
+            ("brainstorm:20260101-000018-foo", ws_a_uuid),
         ).fetchone()
         assert ws_a_entity["status"] == "promoted"
 
         # workflow_phase row updated (advanced + kanban changed).
-        wp_after = db.get_workflow_phase("brainstorm:foo")
+        wp_after = db.get_workflow_phase("brainstorm:20260101-000018-foo")
         assert wp_after["workflow_phase"] == "promoted"
         assert wp_after["kanban_column"] == "completed"
 
@@ -361,7 +361,7 @@ class TestTransitionEntityPhase:
         ws_b_entity = db._conn.execute(
             "SELECT status FROM entities "
             "WHERE type_id = ? AND workspace_uuid = ?",
-            ("brainstorm:other", ws_b_uuid),
+            ("brainstorm:20260101-000032-other", ws_b_uuid),
         ).fetchone()
         assert ws_b_entity["status"] == "draft", (
             "ws_b entity status should be UNCHANGED — "
@@ -391,13 +391,13 @@ class TestTransitionEntityPhase:
         # symmetric scope rejection contract.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="bar",
+            entity_id="20260101-000002-bar",
             name="Bar brainstorm in ws-a",
             status="draft",
             workspace_uuid=ws_a_uuid,
         )
         db.upsert_workflow_phase(
-            "brainstorm:bar",
+            "brainstorm:20260101-000002-bar",
             workflow_phase="draft",
             kanban_column="wip",
             workspace_uuid=ws_a_uuid,
@@ -405,7 +405,7 @@ class TestTransitionEntityPhase:
 
         with pytest.raises(ValueError):
             transition_entity_phase(
-                db, "brainstorm:bar", "reviewing", workspace_uuid=ws_b_uuid,
+                db, "brainstorm:20260101-000002-bar", "reviewing", workspace_uuid=ws_b_uuid,
             )
 
 
@@ -431,7 +431,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
         # missing-entity branch).
         db.register_entity(
             entity_type="bug",
-            entity_id="1-defensive-bug",
+            entity_id="001-defensive-bug",
             name="Defensive raise check",
             status="open",
             project_id="__unknown__",
@@ -439,7 +439,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
 
         with pytest.raises(ValueError) as excinfo:
             transition_entity_phase(
-                db, "bug:1-defensive-bug", "resolved",
+                db, "bug:001-defensive-bug", "resolved",
             )
         msg = str(excinfo.value)
         assert "invalid_entity_type" in msg
@@ -448,7 +448,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
     def test_transition_entity_phase_rejects_task_type_id(self, db):
         db.register_entity(
             entity_type="task",
-            entity_id="2-defensive-task",
+            entity_id="002-defensive-task",
             name="Defensive raise check task",
             status="open",
             project_id="__unknown__",
@@ -456,7 +456,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
 
         with pytest.raises(ValueError) as excinfo:
             transition_entity_phase(
-                db, "task:2-defensive-task", "closed",
+                db, "task:002-defensive-task", "closed",
             )
         msg = str(excinfo.value)
         assert "invalid_entity_type" in msg
@@ -503,7 +503,7 @@ class TestTransitionFromTerminalPhases:
         # Given an entity whose workflow_phases row is already AT a
         # terminal phase (no outgoing edges in ENTITY_MACHINES)
         create = _create_brainstorm if kind == "brainstorm" else _create_backlog
-        type_id = create(db, "terminal-probe")
+        type_id = create(db, "001-terminal-probe")
         init_entity_workflow(db, type_id, terminal_phase, terminal_column)
         row_before = db.get_workflow_phase(type_id)
 
@@ -546,7 +546,7 @@ class TestInitEntityWorkflowIdempotencyOrdering:
 
     def test_idempotent_call_still_validates_new_args(self, db):
         # Given a brainstorm with an existing draft/wip workflow row
-        type_id = _create_brainstorm(db, "idempotent-validate")
+        type_id = _create_brainstorm(db, "20260101-000021-idempotent-validate")
         first = init_entity_workflow(db, type_id, "draft", "wip")
         assert first["created"] is True
 
@@ -565,7 +565,7 @@ class TestInitEntityWorkflowIdempotencyOrdering:
         self, db,
     ):
         # Given a brainstorm initialized at draft/wip
-        type_id = _create_brainstorm(db, "idempotent-stored")
+        type_id = _create_brainstorm(db, "20260101-000020-idempotent-stored")
         first = init_entity_workflow(db, type_id, "draft", "wip")
         assert first["created"] is True
 
@@ -599,7 +599,7 @@ class TestInitEntityWorkflowIdempotencyOrdering:
 class TestBacklogSkipToTerminalForwardClassification:
     def test_open_to_dropped_is_forward_and_sets_last_completed_phase(self, db):
         # Given a backlog item at 'open' (its initial phase)
-        type_id = _create_backlog(db, "skip-to-dropped")
+        type_id = _create_backlog(db, "001-skip-to-dropped")
         init_entity_workflow(db, type_id, "open", "backlog")
 
         # When it transitions directly to the terminal 'dropped' phase

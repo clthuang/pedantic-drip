@@ -140,54 +140,54 @@ class TestRenderTree:
     def test_branching_tree_two_children(self):
         """Two children: first uses box tee, second uses corner."""
         entities = _link_parent_uuids([
-            _make_entity("project:root", "Root", "project", status="active"),
+            _make_entity("project:001-root", "Root", "project", status="active"),
             _make_entity(
-                "feature:a", "Alpha", "feature",
-                parent_type_id="project:root",
+                "feature:002-a", "Alpha", "feature",
+                parent_type_id="project:001-root",
             ),
             _make_entity(
-                "feature:b", "Beta", "feature",
+                "feature:002-b", "Beta", "feature",
                 status="done",
-                parent_type_id="project:root",
+                parent_type_id="project:001-root",
             ),
         ])
         result = render_tree(entities, entities[0]["uuid"])
         expected = (
-            'project:root \u2014 "Root" (active, 2026-02-27)\n'
-            '  \u251c\u2500 feature:a \u2014 "Alpha" (2026-02-27)\n'
-            '  \u2514\u2500 feature:b \u2014 "Beta" (done, 2026-02-27)'
+            'project:001-root \u2014 "Root" (active, 2026-02-27)\n'
+            '  \u251c\u2500 feature:002-a \u2014 "Alpha" (2026-02-27)\n'
+            '  \u2514\u2500 feature:002-b \u2014 "Beta" (done, 2026-02-27)'
         )
         assert result == expected
 
     def test_branching_tree_with_nested_children(self):
         """A root with two children, first child has a grandchild."""
         entities = _link_parent_uuids([
-            _make_entity("project:root", "Root", "project"),
+            _make_entity("project:001-root", "Root", "project"),
             _make_entity(
-                "feature:a", "Alpha", "feature",
-                parent_type_id="project:root",
+                "feature:002-a", "Alpha", "feature",
+                parent_type_id="project:001-root",
             ),
             _make_entity(
                 "feature:a1", "Alpha Sub", "feature",
-                parent_type_id="feature:a",
+                parent_type_id="feature:002-a",
             ),
             _make_entity(
-                "feature:b", "Beta", "feature",
-                parent_type_id="project:root",
+                "feature:002-b", "Beta", "feature",
+                parent_type_id="project:001-root",
             ),
         ])
         result = render_tree(entities, entities[0]["uuid"])
         lines = result.split("\n")
         assert len(lines) == 4
         # Root line
-        assert lines[0] == 'project:root \u2014 "Root" (2026-02-27)'
+        assert lines[0] == 'project:001-root \u2014 "Root" (2026-02-27)'
         # First child (not last) uses tee
-        assert "\u251c\u2500 feature:a" in lines[1]
+        assert "\u251c\u2500 feature:002-a" in lines[1]
         # Grandchild under first child; continuation line uses pipe
         assert "\u2502" in lines[2]
         assert "\u2514\u2500 feature:a1" in lines[2]
         # Second child (last) uses corner
-        assert "\u2514\u2500 feature:b" in lines[3]
+        assert "\u2514\u2500 feature:002-b" in lines[3]
 
     def test_empty_list_returns_empty_string(self):
         """An empty entity list should return an empty string."""
@@ -197,7 +197,7 @@ class TestRenderTree:
     def test_root_not_found_returns_empty_string(self):
         """If root_id UUID is not in the entities list, return empty."""
         entities = [
-            _make_entity("feature:a", "Alpha", "feature"),
+            _make_entity("feature:002-a", "Alpha", "feature"),
         ]
         result = render_tree(entities, "not-a-real-uuid")
         assert result == ""
@@ -307,39 +307,39 @@ class TestProcessRegisterEntity:
     def test_happy_path_returns_success_string(self, db: EntityDatabase):
         """Successful registration returns a string containing the type_id."""
         result = _process_register_entity(
-            db, "feature", "f1", "Feature One",
+            db, "feature", "001-f1", "Feature One",
             artifact_path=None, status="active",
             parent_type_id=None, metadata=None,
         )
         assert isinstance(result, str)
-        assert "feature:f1" in result
+        assert "feature:001-f1" in result
 
     def test_entity_actually_registered(self, db: EntityDatabase):
         """The entity should exist in the database after registration."""
         _process_register_entity(
-            db, "project", "p1", "Project One",
+            db, "project", "002-p1", "Project One",
             artifact_path="/docs/p1", status="active",
             parent_type_id=None, metadata=None,
         )
-        entity = db.get_entity("project:p1")
+        entity = db.get_entity("project:002-p1")
         assert entity is not None
         assert entity["name"] == "Project One"
         assert entity["status"] == "active"
 
     def test_with_parent_and_metadata(self, db: EntityDatabase):
         """Registration with parent and metadata should succeed."""
-        db.register_entity("project", "parent", "Parent", project_id="__unknown__")
+        db.register_entity("project", "001-parent", "Parent", project_id="__unknown__")
         result = _process_register_entity(
-            db, "feature", "child", "Child Feature",
+            db, "feature", "001-child", "Child Feature",
             artifact_path=None, status=None,
-            parent_type_id="project:parent",
+            parent_type_id="project:001-parent",
             metadata={"key": "value"},
         )
         assert isinstance(result, str)
-        assert "feature:child" in result
-        entity = db.get_entity("feature:child")
+        assert "feature:001-child" in result
+        entity = db.get_entity("feature:001-child")
         assert entity is not None
-        assert entity["parent_type_id"] == "project:parent"
+        assert entity["parent_type_id"] == "project:001-parent"
 
     def test_invalid_entity_type_returns_error_string(self, db: EntityDatabase):
         """Invalid entity_type should return an error string, not raise."""
@@ -354,14 +354,14 @@ class TestProcessRegisterEntity:
     def test_invalid_parent_registers_with_null_parent_uuid(self, db: EntityDatabase):
         """Referencing a non-existent parent registers entity with NULL parent_uuid."""
         result = _process_register_entity(
-            db, "feature", "f1", "Feature",
+            db, "feature", "001-f1", "Feature",
             artifact_path=None, status=None,
             parent_type_id="project:nonexistent",
             metadata=None,
         )
         assert isinstance(result, str)
         assert "registered" in result.lower()
-        entity = db.get_entity("feature:f1")
+        entity = db.get_entity("feature:001-f1")
         assert entity["parent_uuid"] is None
 
     def test_never_raises(self, db: EntityDatabase):
@@ -381,7 +381,7 @@ class TestProcessRegisterEntity:
         plain 'Error registering entity: ...' string, not a raised exception
         — that string IS the MCP-visible result."""
         result = _process_register_entity(
-            db, "feature", "orphan-ws", "Orphan WS",
+            db, "feature", "001-orphan-ws", "Orphan WS",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
             workspace_uuid="aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
@@ -393,37 +393,37 @@ class TestProcessRegisterEntity:
 
 class TestProcessGetLineage:
     def _setup_chain(self, db: EntityDatabase):
-        """Create project:root -> feature:mid -> feature:leaf chain."""
-        db.register_entity("project", "root", "Root Project", status="active", project_id="__unknown__")
+        """Create project:001-root -> feature:001-mid -> feature:001-leaf chain."""
+        db.register_entity("project", "001-root", "Root Project", status="active", project_id="__unknown__")
         db.register_entity(
-            "feature", "mid", "Mid Feature",
-            parent_type_id="project:root",
+            "feature", "001-mid", "Mid Feature",
+            parent_type_id="project:001-root",
             project_id="__unknown__",
         )
         db.register_entity(
-            "feature", "leaf", "Leaf Feature",
+            "feature", "001-leaf", "Leaf Feature",
             status="done",
-            parent_type_id="feature:mid",
+            parent_type_id="feature:001-mid",
             project_id="__unknown__",
         )
 
     def test_upward_returns_formatted_tree(self, db: EntityDatabase):
         """Upward lineage should return a formatted string with all ancestors."""
         self._setup_chain(db)
-        result = _process_get_lineage(db, "feature:leaf", "up", 10)
+        result = _process_get_lineage(db, "feature:001-leaf", "up", 10)
         assert isinstance(result, str)
-        assert "project:root" in result
-        assert "feature:mid" in result
-        assert "feature:leaf" in result
+        assert "project:001-root" in result
+        assert "feature:001-mid" in result
+        assert "feature:001-leaf" in result
 
     def test_downward_returns_formatted_tree(self, db: EntityDatabase):
         """Downward lineage should return a formatted tree."""
         self._setup_chain(db)
-        result = _process_get_lineage(db, "project:root", "down", 10)
+        result = _process_get_lineage(db, "project:001-root", "down", 10)
         assert isinstance(result, str)
-        assert "project:root" in result
-        assert "feature:mid" in result
-        assert "feature:leaf" in result
+        assert "project:001-root" in result
+        assert "feature:001-mid" in result
+        assert "feature:001-leaf" in result
 
     def test_nonexistent_entity_returns_not_found(self, db: EntityDatabase):
         """Non-existent type_id should return a 'not found' message."""
@@ -433,10 +433,10 @@ class TestProcessGetLineage:
 
     def test_single_entity_lineage(self, db: EntityDatabase):
         """A single entity with no parents/children returns just itself."""
-        db.register_entity("project", "solo", "Solo", project_id="__unknown__")
-        result = _process_get_lineage(db, "project:solo", "up", 10)
+        db.register_entity("project", "001-solo", "Solo", project_id="__unknown__")
+        result = _process_get_lineage(db, "project:001-solo", "up", 10)
         assert isinstance(result, str)
-        assert "project:solo" in result
+        assert "project:001-solo" in result
 
     def test_never_raises(self, db: EntityDatabase):
         """_process_get_lineage should never raise exceptions."""
@@ -448,30 +448,30 @@ class TestProcessGetLineage:
     def test_upward_shows_chain_format(self, db: EntityDatabase):
         """Upward lineage renders as a chain (root first)."""
         self._setup_chain(db)
-        result = _process_get_lineage(db, "feature:leaf", "up", 10)
+        result = _process_get_lineage(db, "feature:001-leaf", "up", 10)
         # Root should appear before leaf in the output
-        root_pos = result.index("project:root")
-        leaf_pos = result.index("feature:leaf")
+        root_pos = result.index("project:001-root")
+        leaf_pos = result.index("feature:001-leaf")
         assert root_pos < leaf_pos
 
     def test_downward_shows_tree_format(self, db: EntityDatabase):
         """Downward lineage renders as a tree from root."""
-        db.register_entity("project", "root", "Root", status="active", project_id="__unknown__")
+        db.register_entity("project", "001-root", "Root", status="active", project_id="__unknown__")
         db.register_entity(
-            "feature", "a", "Alpha",
-            parent_type_id="project:root",
+            "feature", "002-a", "Alpha",
+            parent_type_id="project:001-root",
             project_id="__unknown__",
         )
         db.register_entity(
-            "feature", "b", "Beta",
-            parent_type_id="project:root",
+            "feature", "002-b", "Beta",
+            parent_type_id="project:001-root",
             project_id="__unknown__",
         )
-        result = _process_get_lineage(db, "project:root", "down", 10)
+        result = _process_get_lineage(db, "project:001-root", "down", 10)
         assert isinstance(result, str)
-        assert "project:root" in result
-        assert "feature:a" in result
-        assert "feature:b" in result
+        assert "project:001-root" in result
+        assert "feature:002-a" in result
+        assert "feature:002-b" in result
 
     def test_process_get_lineage_passes_uuid(self):
         """_process_get_lineage passes UUID (not type_id) to render_tree."""
@@ -481,21 +481,21 @@ class TestProcessGetLineage:
 
         db = EntityDatabase(":memory:")
         try:
-            db.register_entity("project", "root", "Root Project", status="active", project_id="__unknown__")
+            db.register_entity("project", "001-root", "Root Project", status="active", project_id="__unknown__")
             db.register_entity(
-                "feature", "mid", "Mid Feature",
-                parent_type_id="project:root",
+                "feature", "001-mid", "Mid Feature",
+                parent_type_id="project:001-root",
                 project_id="__unknown__",
             )
             db.register_entity(
-                "feature", "leaf", "Leaf Feature",
+                "feature", "001-leaf", "Leaf Feature",
                 status="done",
-                parent_type_id="feature:mid",
+                parent_type_id="feature:001-mid",
                 project_id="__unknown__",
             )
 
             with patch('entity_registry.server_helpers.render_tree', wraps=render_tree) as mock_rt:
-                _process_get_lineage(db, "feature:leaf", "up", 10)
+                _process_get_lineage(db, "feature:001-leaf", "up", 10)
                 # render_tree(entities, root_id, max_depth) -- root_id is args[1]
                 root_arg = mock_rt.call_args.args[1]
                 assert _UUID_RE.match(root_arg), (
@@ -513,27 +513,27 @@ class TestProcessGetLineage:
 class TestProcessExportLineageMarkdown:
     def test_returns_markdown_string(self, db: EntityDatabase):
         """Export returns a markdown string when no output_path is given."""
-        db.register_entity("project", "p1", "Project One", status="active", project_id="__unknown__")
-        result = _process_export_lineage_markdown(db, "project:p1", None, "/tmp")
+        db.register_entity("project", "002-p1", "Project One", status="active", project_id="__unknown__")
+        result = _process_export_lineage_markdown(db, "project:002-p1", None, "/tmp")
         assert isinstance(result, str)
         assert "Project One" in result
 
     def test_all_trees_when_type_id_is_none(self, db: EntityDatabase):
         """Export all trees when type_id is None."""
-        db.register_entity("project", "p1", "Project One", project_id="__unknown__")
-        db.register_entity("project", "p2", "Project Two", project_id="__unknown__")
+        db.register_entity("project", "002-p1", "Project One", project_id="__unknown__")
+        db.register_entity("project", "001-p2", "Project Two", project_id="__unknown__")
         result = _process_export_lineage_markdown(db, None, None, "/tmp")
         assert "Project One" in result
         assert "Project Two" in result
 
     def test_writes_to_file(self, db: EntityDatabase, tmp_path):
         """Export writes markdown to file when output_path is given."""
-        db.register_entity("feature", "f1", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-f1", "Feature One", status="active", project_id="__unknown__")
         artifacts_root = str(tmp_path / "docs")
         import os
         os.makedirs(artifacts_root, exist_ok=True)
         result = _process_export_lineage_markdown(
-            db, "feature:f1", "lineage.md", artifacts_root,
+            db, "feature:001-f1", "lineage.md", artifacts_root,
         )
         assert "Exported" in result
         expected_path = os.path.realpath(os.path.join(artifacts_root, "lineage.md"))
@@ -544,11 +544,11 @@ class TestProcessExportLineageMarkdown:
 
     def test_relative_path_resolved_against_artifacts_root(self, db: EntityDatabase, tmp_path):
         """A relative output_path is resolved against artifacts_root."""
-        db.register_entity("project", "p1", "Project One", project_id="__unknown__")
+        db.register_entity("project", "002-p1", "Project One", project_id="__unknown__")
         artifacts_root = str(tmp_path / "docs")
         import os
         os.makedirs(artifacts_root, exist_ok=True)
-        result = _process_export_lineage_markdown(db, "project:p1", "lineage.md", artifacts_root)
+        result = _process_export_lineage_markdown(db, "project:002-p1", "lineage.md", artifacts_root)
         assert "Exported" in result
         expected_path = str(tmp_path / "docs" / "lineage.md")
         assert expected_path in result
@@ -579,13 +579,13 @@ class TestRenderTreeDeepNesting:
 
     def test_render_tree_with_deeply_nested_structure(self):
         # Given a chain 6 levels deep
-        entities = [_make_entity("project:root", "Root", "project")]
+        entities = [_make_entity("project:001-root", "Root", "project")]
         for i in range(1, 6):
             entities.append(
                 _make_entity(
                     f"feature:level-{i}", f"Level {i}", "feature",
                     parent_type_id=(
-                        "project:root" if i == 1 else f"feature:level-{i-1}"
+                        "project:001-root" if i == 1 else f"feature:level-{i-1}"
                     ),
                 )
             )
@@ -593,7 +593,7 @@ class TestRenderTreeDeepNesting:
         # When rendering the tree
         result = render_tree(entities, entities[0]["uuid"])
         # Then all 6 levels appear in output
-        assert "project:root" in result
+        assert "project:001-root" in result
         for i in range(1, 6):
             assert f"feature:level-{i}" in result
         # And indentation increases with depth
@@ -668,10 +668,10 @@ class TestErrorPropagation:
 
     def test_orphaned_parent_registers_with_null_parent_uuid(self, db: EntityDatabase):
         # Given a feature entity with no parent
-        db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
+        db.register_entity("feature", "001-f1", "Feature One", project_id="__unknown__")
         # When setting parent to nonexistent entity via _process helper
         result = _process_register_entity(
-            db, "feature", "orphan-child", "Orphan",
+            db, "feature", "001-orphan-child", "Orphan",
             artifact_path=None, status=None,
             parent_type_id="project:nonexistent",
             metadata=None,
@@ -679,7 +679,7 @@ class TestErrorPropagation:
         # Then the entity is registered with NULL parent_uuid
         assert isinstance(result, str)
         assert "registered" in result.lower()
-        entity = db.get_entity("feature:orphan-child")
+        entity = db.get_entity("feature:001-orphan-child")
         assert entity["parent_uuid"] is None
 
     def test_database_connection_failure_propagates_cleanly(
@@ -688,26 +688,26 @@ class TestErrorPropagation:
         # Given a closed database connection
         db.close()
         # When attempting to get lineage
-        result = _process_get_lineage(db, "feature:f1", "up", 10)
+        result = _process_get_lineage(db, "feature:001-f1", "up", 10)
         # Then a string error is returned, not an exception
         assert isinstance(result, str)
 
     def test_depth_limit_message_for_truncated_lineage(self, db: EntityDatabase):
         # Given a chain of 15 entities
-        db.register_entity("project", "e0", "E0", project_id="__unknown__")
+        db.register_entity("project", "001-e0", "E0", project_id="__unknown__")
         for i in range(1, 15):
             db.register_entity(
-                "feature", f"e{i}", f"E{i}",
-                parent_type_id=f"{'project' if i == 1 else 'feature'}:e{i-1}",
+                "feature", f"001-e{i}", f"E{i}",
+                parent_type_id=f"{'project' if i == 1 else 'feature'}:001-e{i-1}",
                 project_id="__unknown__",
             )
         # When traversing upward from e14 with max_depth=5
-        result = _process_get_lineage(db, "feature:e14", "up", 5)
+        result = _process_get_lineage(db, "feature:001-e14", "up", 5)
         # Then a tree is returned (not empty/not-found) but truncated
         assert isinstance(result, str)
-        assert "feature:e14" in result
+        assert "feature:001-e14" in result
         # And e0 (root, 14 hops away) is NOT in the output
-        assert "project:e0" not in result
+        assert "project:001-e0" not in result
 
 
 class TestExternalPathWarning:
@@ -719,9 +719,9 @@ class TestExternalPathWarning:
         # Given an export to a relative output file path
         artifacts_root = str(tmp_path / "docs")
         os.makedirs(artifacts_root, exist_ok=True)
-        db.register_entity("project", "p1", "Test Project", project_id="__unknown__")
+        db.register_entity("project", "002-p1", "Test Project", project_id="__unknown__")
         # When exporting with a relative output path
-        result = _process_export_lineage_markdown(db, "project:p1", "output.md", artifacts_root)
+        result = _process_export_lineage_markdown(db, "project:002-p1", "output.md", artifacts_root)
         # Then the result contains the resolved path
         expected_path = os.path.realpath(os.path.join(artifacts_root, "output.md"))
         assert expected_path in result
@@ -734,20 +734,20 @@ class TestProcessGetLineageUpwardChainFormat:
 
     def test_upward_lineage_renders_root_before_leaf(self, db: EntityDatabase):
         # Given A -> B -> C chain
-        db.register_entity("project", "root", "Root", status="active", project_id="__unknown__")
+        db.register_entity("project", "001-root", "Root", status="active", project_id="__unknown__")
         db.register_entity(
-            "feature", "mid", "Mid", parent_type_id="project:root",
+            "feature", "001-mid", "Mid", parent_type_id="project:001-root",
             project_id="__unknown__",
         )
         db.register_entity(
-            "feature", "leaf", "Leaf", parent_type_id="feature:mid",
+            "feature", "001-leaf", "Leaf", parent_type_id="feature:001-mid",
             project_id="__unknown__",
         )
         # When getting upward lineage from leaf
-        result = _process_get_lineage(db, "feature:leaf", "up", 10)
+        result = _process_get_lineage(db, "feature:001-leaf", "up", 10)
         # Then root appears before leaf in the rendered string
-        root_pos = result.index("project:root")
-        leaf_pos = result.index("feature:leaf")
+        root_pos = result.index("project:001-root")
+        leaf_pos = result.index("feature:001-leaf")
         assert root_pos < leaf_pos
         # Mutation check: if order was reversed, root would appear after leaf
 
@@ -894,12 +894,12 @@ class TestRegisterEntityDualIdentityMessage:
         # Given a database
         # When registering an entity
         result = _process_register_entity(
-            db, "project", "p1", "Project One",
+            db, "project", "002-p1", "Project One",
             artifact_path=None, status="active",
             parent_type_id=None, metadata=None,
         )
         # Then the message contains only type_id, no UUID
-        assert result == "Registered: project:p1"
+        assert result == "Registered: project:002-p1"
         assert not _UUID_SEARCH_RE.search(result), (
             f"UUID found in message, should be type_id only: {result}"
         )
@@ -912,40 +912,40 @@ class TestRegisterEntityDualIdentityMessage:
         """
         # Given an already-registered entity
         first_result = _process_register_entity(
-            db, "feature", "f1", "Feature One",
+            db, "feature", "001-f1", "Feature One",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
-        assert first_result == "Registered: feature:f1"
+        assert first_result == "Registered: feature:001-f1"
         # When registering again
         second_result = _process_register_entity(
-            db, "feature", "f1", "Feature One Updated",
+            db, "feature", "001-f1", "Feature One Updated",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
         # Then message indicates already existed
-        assert second_result == "Already existed: feature:f1 \u2014 no changes"
+        assert second_result == "Already existed: feature:001-f1 \u2014 no changes"
 
     def test_register_existing_entity_with_parent_applied(
         self, db: EntityDatabase,
     ):
         """Re-registering with parent_type_id on parentless entity applies parent."""
         db.register_entity(
-            "project", "parent-p", "Parent",
+            "project", "001-parent-p", "Parent",
             project_id="__unknown__",
         )
         _process_register_entity(
-            db, "feature", "f2", "Feature Two",
+            db, "feature", "001-f2", "Feature Two",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
         result = _process_register_entity(
-            db, "feature", "f2", "Feature Two",
+            db, "feature", "001-f2", "Feature Two",
             artifact_path=None, status=None,
-            parent_type_id="project:parent-p", metadata=None,
+            parent_type_id="project:001-parent-p", metadata=None,
         )
         assert "parent applied" in result
-        assert "project:parent-p" in result
+        assert "project:001-parent-p" in result
 
 
 class TestRenderTreeUuidKeying:
@@ -960,18 +960,18 @@ class TestRenderTreeUuidKeying:
         """
         # Given entities with uuid fields
         entities = _link_parent_uuids([
-            _make_entity("project:root", "Root", "project"),
+            _make_entity("project:001-root", "Root", "project"),
             _make_entity(
-                "feature:child", "Child", "feature",
-                parent_type_id="project:root",
+                "feature:001-child", "Child", "feature",
+                parent_type_id="project:001-root",
             ),
         ])
         root_uuid = entities[0]["uuid"]
         # When rendering with UUID root_id
         result = render_tree(entities, root_uuid)
         # Then both entities appear in output
-        assert "project:root" in result
-        assert "feature:child" in result
+        assert "project:001-root" in result
+        assert "feature:001-child" in result
 
     def test_render_tree_type_id_as_root_returns_empty(self):
         """Passing type_id (not UUID) as root_id should return empty.
@@ -981,10 +981,10 @@ class TestRenderTreeUuidKeying:
         """
         # Given entities with uuid fields
         entities = [
-            _make_entity("project:root", "Root", "project"),
+            _make_entity("project:001-root", "Root", "project"),
         ]
         # When passing type_id as root_id (not UUID)
-        result = render_tree(entities, "project:root")
+        result = render_tree(entities, "project:001-root")
         # Then empty string (type_id is not a key in by_id — keyed by uuid)
         assert result == ""
 
@@ -1000,10 +1000,10 @@ class TestProcessGetLineageUuidRoot:
         and might pass type_id instead of uuid to render_tree.
         """
         # Given a parent-child tree
-        db.register_entity("project", "root", "Root", status="active", project_id="__unknown__")
+        db.register_entity("project", "001-root", "Root", status="active", project_id="__unknown__")
         db.register_entity(
-            "feature", "child", "Child",
-            parent_type_id="project:root",
+            "feature", "001-child", "Child",
+            parent_type_id="project:001-root",
             project_id="__unknown__",
         )
         # When getting downward lineage
@@ -1012,7 +1012,7 @@ class TestProcessGetLineageUuidRoot:
             'entity_registry.server_helpers.render_tree',
             wraps=render_tree,
         ) as mock_rt:
-            _process_get_lineage(db, "project:root", "down", 10)
+            _process_get_lineage(db, "project:001-root", "down", 10)
             # Then render_tree's root_id arg is a UUID
             root_arg = mock_rt.call_args.args[1]
             assert _UUID_RE.match(root_arg), (
@@ -1039,7 +1039,7 @@ class TestProcessExportEntities:
         """When output_path is None, returns valid JSON string directly."""
         import json
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1059,7 +1059,7 @@ class TestProcessExportEntities:
         and returns confirmation message (AC-4)."""
         import json
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         out_file = str(tmp_path / "export.json")
         result = _process_export_entities(
             db,
@@ -1082,7 +1082,7 @@ class TestProcessExportEntities:
     def test_output_path_creates_parent_dirs(self, db: EntityDatabase, tmp_path):
         """When output_path has non-existent parent dirs, they are
         auto-created (AC-10)."""
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         nested = tmp_path / "deep" / "nested" / "dir"
         out_file = str(nested / "export.json")
         result = _process_export_entities(
@@ -1112,7 +1112,7 @@ class TestProcessExportEntities:
         """OSError (e.g. permission denied) returns error string (FR-3)."""
         from unittest.mock import patch
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         out_file = str(tmp_path / "export.json")
         with patch("builtins.open", side_effect=OSError("Permission denied")):
             result = _process_export_entities(
@@ -1146,7 +1146,7 @@ class TestProcessExportEntities:
         import json
 
         db.register_entity(
-            "feature", "001", "Funcionalidad especial", status="activo",
+            "feature", "001-feature", "Funcionalidad especial", status="activo",
             project_id="__unknown__",
         )
         result = _process_export_entities(
@@ -1165,7 +1165,7 @@ class TestProcessExportEntities:
 
     def test_json_compact_inline(self, db: EntityDatabase):
         """Inline JSON output uses compact separators (no indent)."""
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1182,7 +1182,7 @@ class TestProcessExportEntities:
         """include_lineage=False is passed through to database method."""
         from unittest.mock import patch
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         with patch.object(
             db, "export_entities_json", wraps=db.export_entities_json
         ) as mock_export:
@@ -1198,9 +1198,9 @@ class TestProcessExportEntities:
 
     def test_confirmation_message_format(self, db: EntityDatabase, tmp_path):
         """Returns 'Exported {n} entities to {path}' with correct count."""
-        db.register_entity("feature", "001", "F1", status="active", project_id="__unknown__")
-        db.register_entity("feature", "002", "F2", status="active", project_id="__unknown__")
-        db.register_entity("project", "P1", "P1", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "F1", status="active", project_id="__unknown__")
+        db.register_entity("feature", "002-feature", "F2", status="active", project_id="__unknown__")
+        db.register_entity("project", "001-p1", "001-p1", status="active", project_id="__unknown__")
         out_file = str(tmp_path / "export.json")
         result = _process_export_entities(
             db,
@@ -1237,7 +1237,7 @@ class TestProcessExportEntitiesDeepened:
         derived_from: adversarial: path traversal variant
         """
         # Given an output_path with traversal embedded in intermediate segments
-        db.register_entity("feature", "001", "Feature One", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1259,7 +1259,7 @@ class TestProcessExportEntitiesDeepened:
         derived_from: adversarial: SQL injection
         """
         # Given a malicious entity_type
-        db.register_entity("feature", "001", "Safe Feature", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Safe Feature", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type="'; DROP TABLE entities; --",
@@ -1285,7 +1285,7 @@ class TestProcessExportEntitiesDeepened:
         derived_from: adversarial: case boundary
         """
         # Given entities of type 'feature' exist
-        db.register_entity("feature", "001", "Feature One", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", project_id="__unknown__")
         # When calling with 'Feature' (capital F)
         result = _process_export_entities(
             db,
@@ -1330,10 +1330,10 @@ class TestProcessExportEntitiesDeepened:
         import json as json_mod
 
         # Given an entity exists with corrupted metadata in the database
-        db.register_entity("feature", "001", "Feature One", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", project_id="__unknown__")
         db._conn.execute(
             "UPDATE entities SET metadata = '{bad json' WHERE type_id = ?",
-            ("feature:001",),
+            ("feature:001-feature",),
         )
         db._conn.commit()
         # When export is called
@@ -1363,7 +1363,7 @@ class TestProcessExportEntitiesDeepened:
 
         # Given 4 entities exist
         for i in range(4):
-            db.register_entity("feature", f"f{i}", f"Feature {i}", project_id="__unknown__")
+            db.register_entity("feature", f"001-f{i}", f"Feature {i}", project_id="__unknown__")
         # When export with no output_path
         result = _process_export_entities(
             db,
@@ -1389,7 +1389,7 @@ class TestProcessExportEntitiesDeepened:
 
         # Given an entity with unicode characters in its name
         db.register_entity(
-            "feature", "001", "Funcion especial con acentos y tildes",
+            "feature", "001-feature", "Funcion especial con acentos y tildes",
             project_id="__unknown__",
         )
         out_file = str(tmp_path / "export.json")
@@ -1418,9 +1418,9 @@ class TestProcessExportEntitiesDeepened:
         import json as json_mod
 
         # Given entities with parent relationships
-        db.register_entity("project", "p1", "Project One", project_id="__unknown__")
+        db.register_entity("project", "002-p1", "Project One", project_id="__unknown__")
         db.register_entity(
-            "feature", "f1", "Feature One", parent_type_id="project:p1",
+            "feature", "001-f1", "Feature One", parent_type_id="project:002-p1",
             project_id="__unknown__",
         )
         # When export with include_lineage=False
@@ -1449,9 +1449,9 @@ class TestProcessExportEntitiesDeepened:
         import json as json_mod
 
         # Given entities with parent relationships
-        db.register_entity("project", "p1", "Project One", project_id="__unknown__")
+        db.register_entity("project", "002-p1", "Project One", project_id="__unknown__")
         db.register_entity(
-            "feature", "f1", "Feature One", parent_type_id="project:p1",
+            "feature", "001-f1", "Feature One", parent_type_id="project:002-p1",
             project_id="__unknown__",
         )
         # When export with include_lineage=True
@@ -1465,8 +1465,8 @@ class TestProcessExportEntitiesDeepened:
         )
         # Then parent_type_id is present and correct
         parsed = json_mod.loads(result)
-        child = [e for e in parsed["entities"] if e["type_id"] == "feature:f1"][0]
-        assert child["parent_type_id"] == "project:p1"
+        child = [e for e in parsed["entities"] if e["type_id"] == "feature:001-f1"][0]
+        assert child["parent_type_id"] == "project:002-p1"
 
 
 # ---------------------------------------------------------------------------
@@ -1485,8 +1485,8 @@ class TestProcessExportEntitiesFields:
         """When fields='type_id,name,status', only those 3 keys appear per entity."""
         import json as json_mod
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
-        db.register_entity("feature", "002", "Feature Two", status="draft", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "002-feature", "Feature Two", status="draft", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1505,7 +1505,7 @@ class TestProcessExportEntitiesFields:
         """When fields=None (default), all entity fields are returned (backward compat)."""
         import json as json_mod
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1527,7 +1527,7 @@ class TestProcessExportEntitiesFields:
 
     def test_all_invalid_fields_returns_error(self, db: EntityDatabase):
         """When every field name is invalid, returns error listing valid field names."""
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1547,7 +1547,7 @@ class TestProcessExportEntitiesFields:
         """When some fields are valid and some invalid, returns only valid ones (no error)."""
         import json as json_mod
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1565,7 +1565,7 @@ class TestProcessExportEntitiesFields:
         """Field names with surrounding whitespace are trimmed."""
         import json as json_mod
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         result = _process_export_entities(
             db,
             entity_type=None,
@@ -1601,7 +1601,7 @@ class TestProcessExportEntitiesFields:
         """Field projection applies before writing to file."""
         import json as json_mod
 
-        db.register_entity("feature", "001", "Feature One", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-feature", "Feature One", status="active", project_id="__unknown__")
         out_file = str(tmp_path / "export.json")
         result = _process_export_entities(
             db,
@@ -1648,7 +1648,7 @@ class TestProcessExportEntitiesFieldsDeepened:
         import json as json_mod
 
         # Given an entity in the database
-        db.register_entity("feature", "sf-001", "Single Field", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-sf-001", "Single Field", status="active", project_id="__unknown__")
         # When exporting with exactly one field
         result = _process_export_entities(
             db,
@@ -1677,7 +1677,7 @@ class TestProcessExportEntitiesFieldsDeepened:
         import json as json_mod
 
         # Given an entity with known fields
-        db.register_entity("feature", "af-001", "All Fields", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-af-001", "All Fields", status="active", project_id="__unknown__")
         # First get the full set of field names from an unfiltered export
         unfiltered = json_mod.loads(
             _process_export_entities(
@@ -1714,7 +1714,7 @@ class TestProcessExportEntitiesFieldsDeepened:
         match nothing, leading to empty entities without an error message.
         """
         # Given an entity in the database
-        db.register_entity("feature", "ef-001", "Empty Fields", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-ef-001", "Empty Fields", status="active", project_id="__unknown__")
         # When exporting with empty string fields
         result = _process_export_entities(
             db,
@@ -1741,7 +1741,7 @@ class TestProcessExportEntitiesFieldsDeepened:
         import json as json_mod
 
         # Given an entity in the database
-        db.register_entity("feature", "ci-001", "Compact Inline", status="active", project_id="__unknown__")
+        db.register_entity("feature", "001-ci-001", "Compact Inline", status="active", project_id="__unknown__")
         # When exporting inline (no output_path)
         result = _process_export_entities(
             db,
@@ -1786,7 +1786,7 @@ class TestParentResolutionNarrowExcept:
 
         # Bootstrap a parent so resolution would otherwise succeed.
         db.register_entity(
-            "project", "parent-db-err", "Parent",
+            "project", "001-parent-db-err", "Parent",
             project_id="__unknown__",
         )
 
@@ -1797,7 +1797,7 @@ class TestParentResolutionNarrowExcept:
         real_get_entity = db.get_entity
 
         def _boom(type_id, *args, **kwargs):
-            if type_id == "project:parent-db-err":
+            if type_id == "project:001-parent-db-err":
                 raise _sqlite3.OperationalError("database is locked")
             return real_get_entity(type_id, *args, **kwargs)
 
@@ -1806,23 +1806,23 @@ class TestParentResolutionNarrowExcept:
         result = _process_register_entity(
             db,
             entity_type="feature",
-            entity_id="db-err-child",
+            entity_id="001-db-err-child",
             name="Child",
             artifact_path=None,
             status=None,
-            parent_type_id="project:parent-db-err",
+            parent_type_id="project:001-parent-db-err",
             metadata=None,
         )
 
         # Entity registered (orphan path; not an error string).
-        assert result == "Registered: feature:db-err-child", (
+        assert result == "Registered: feature:001-db-err-child", (
             f"Expected orphan registration to succeed, got: {result!r}"
         )
 
         # Verify parent_uuid is None on the stored row.
         # (Restore real get_entity since monkeypatch is scoped to test.)
         monkeypatch.setattr(db, "get_entity", real_get_entity)
-        row = db.get_entity("feature:db-err-child")
+        row = db.get_entity("feature:001-db-err-child")
         assert row is not None
         assert row.get("parent_uuid") is None, (
             f"Expected orphan (parent_uuid=None) after DB error, "
@@ -1841,14 +1841,14 @@ class TestParentResolutionNarrowExcept:
         """RuntimeError from parent lookup must propagate (FR-8.1)."""
         # Bootstrap so the wrapper's outer try/except can't intercept early.
         db.register_entity(
-            "project", "parent-runtime", "Parent",
+            "project", "001-parent-runtime", "Parent",
             project_id="__unknown__",
         )
 
         real_get_entity = db.get_entity
 
         def _boom(type_id, *args, **kwargs):
-            if type_id == "project:parent-runtime":
+            if type_id == "project:001-parent-runtime":
                 raise RuntimeError("unexpected resolution error")
             return real_get_entity(type_id, *args, **kwargs)
 
@@ -1865,7 +1865,7 @@ class TestParentResolutionNarrowExcept:
             name="Child",
             artifact_path=None,
             status=None,
-            parent_type_id="project:parent-runtime",
+            parent_type_id="project:001-parent-runtime",
             metadata=None,
         )
         assert result.startswith("Error registering entity:"), (

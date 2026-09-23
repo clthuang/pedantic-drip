@@ -801,10 +801,10 @@ class TestCascadeUnblock:
         name described was deleted by feature 132's #080 fix.)"""
         db = _make_db()
         blocker_uuid = _register(
-            db, "initiative", "i103-blocker", "Blocker Initiative"
+            db, "initiative", "001-i103-blocker", "Blocker Initiative"
         )
         _with_phase(
-            db, "initiative:i103-blocker", "discover", mode="standard"
+            db, "initiative:001-i103-blocker", "discover", mode="standard"
         )
 
         dependent_uuid = _register(
@@ -851,8 +851,8 @@ class TestFiveDProjectTransition:
     def test_project_transitions_through_all_5d_phases(self, tmp_path):
         """Project transitions discover → define → design → deliver → debrief."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p001-alpha", "Alpha Project")
-        _with_phase(db, "project:p001-alpha", "discover", mode="standard")
+        proj_uuid = _register(db, "project", "001-p001-alpha", "Alpha Project")
+        _with_phase(db, "project:001-p001-alpha", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
 
@@ -867,8 +867,8 @@ class TestFiveDProjectTransition:
     def test_project_complete_advances_phases(self, tmp_path):
         """Completing each 5D phase advances to the next."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p002-beta", "Beta Project")
-        _with_phase(db, "project:p002-beta", "discover", mode="standard")
+        proj_uuid = _register(db, "project", "001-p002-beta", "Beta Project")
+        _with_phase(db, "project:001-p002-beta", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
 
@@ -881,9 +881,9 @@ class TestFiveDProjectTransition:
     def test_project_complete_terminal_sets_completed(self, tmp_path):
         """Completing debrief (terminal) marks project completed."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p003-gamma", "Gamma Project")
+        proj_uuid = _register(db, "project", "001-p003-gamma", "Gamma Project")
         _with_phase(
-            db, "project:p003-gamma", "debrief",
+            db, "project:001-p003-gamma", "debrief",
             mode="standard", last_completed_phase="deliver",
         )
 
@@ -897,9 +897,9 @@ class TestFiveDProjectTransition:
     def test_project_get_state(self, tmp_path):
         """get_state returns correct state for 5D project."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p004-delta", "Delta Project")
+        proj_uuid = _register(db, "project", "001-p004-delta", "Delta Project")
         _with_phase(
-            db, "project:p004-delta", "design",
+            db, "project:001-p004-delta", "design",
             mode="full", last_completed_phase="define",
         )
 
@@ -917,8 +917,8 @@ class TestFiveDOutOfSequence:
     def test_project_skip_phase_rejected(self, tmp_path):
         """Cannot skip from discover to deliver (skipping define+design)."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p010-skip", "Skip Project")
-        _with_phase(db, "project:p010-skip", "discover", mode="standard")
+        proj_uuid = _register(db, "project", "001-p010-skip", "Skip Project")
+        _with_phase(db, "project:001-p010-skip", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "deliver")
@@ -932,9 +932,9 @@ class TestFiveDOutOfSequence:
         """Initiative: cannot skip from discover to debrief."""
         db = _make_db()
         init_uuid = _register(
-            db, "initiative", "i001-skip", "Skip Initiative"
+            db, "initiative", "001-i001-skip", "Skip Initiative"
         )
-        _with_phase(db, "initiative:i001-skip", "discover", mode="standard")
+        _with_phase(db, "initiative:001-i001-skip", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(init_uuid, "debrief")
@@ -946,8 +946,8 @@ class TestFiveDOutOfSequence:
     def test_project_invalid_phase_rejected(self, tmp_path):
         """Phase not in 5D sequence is rejected."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p011-bad", "Bad Phase Project")
-        _with_phase(db, "project:p011-bad", "discover", mode="standard")
+        proj_uuid = _register(db, "project", "001-p011-bad", "Bad Phase Project")
+        _with_phase(db, "project:001-p011-bad", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "implement")
@@ -960,8 +960,8 @@ class TestFiveDOutOfSequence:
     def test_project_next_phase_allowed(self, tmp_path):
         """Transition to the immediate next phase is allowed."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p012-next", "Next Project")
-        _with_phase(db, "project:p012-next", "define", mode="standard")
+        proj_uuid = _register(db, "project", "001-p012-next", "Next Project")
+        _with_phase(db, "project:001-p012-next", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "design")
@@ -976,12 +976,12 @@ class TestFiveDDeliverBlockedBy:
         """Project blocked by another entity cannot transition to deliver."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "project", "p020-blocker", "Blocker Project"
+            db, "project", "001-p020-blocker", "Blocker Project"
         )
         blocked_uuid = _register(
-            db, "project", "p021-blocked", "Blocked Project"
+            db, "project", "001-p021-blocked", "Blocked Project"
         )
-        _with_phase(db, "project:p021-blocked", "design", mode="standard")
+        _with_phase(db, "project:001-p021-blocked", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
@@ -995,12 +995,12 @@ class TestFiveDDeliverBlockedBy:
         """Blocker does NOT prevent non-deliver transitions (e.g. define)."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "project", "p022-blocker", "Blocker"
+            db, "project", "001-p022-blocker", "Blocker"
         )
         blocked_uuid = _register(
-            db, "project", "p023-blocked", "Blocked"
+            db, "project", "001-p023-blocked", "Blocked"
         )
-        _with_phase(db, "project:p023-blocked", "discover", mode="standard")
+        _with_phase(db, "project:001-p023-blocked", "discover", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
@@ -1014,9 +1014,9 @@ class TestFiveDDeliverBlockedBy:
         """Deliver transition succeeds when no blockers exist."""
         db = _make_db()
         proj_uuid = _register(
-            db, "project", "p024-free", "Free Project"
+            db, "project", "001-p024-free", "Free Project"
         )
-        _with_phase(db, "project:p024-free", "design", mode="standard")
+        _with_phase(db, "project:001-p024-free", "design", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "deliver")
@@ -1055,8 +1055,8 @@ class TestFiveDInitiativeObjectiveKeyResult:
 
     def test_initiative_complete_phase(self, tmp_path):
         db = _make_db()
-        uuid = _register(db, "initiative", "i002-comp", "Complete Init")
-        _with_phase(db, "initiative:i002-comp", "discover", mode="full")
+        uuid = _register(db, "initiative", "001-i002-comp", "Complete Init")
+        _with_phase(db, "initiative:001-i002-comp", "discover", mode="full")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.complete_phase(uuid, "discover")
@@ -1066,8 +1066,8 @@ class TestFiveDInitiativeObjectiveKeyResult:
 
     def test_objective_complete_phase(self, tmp_path):
         db = _make_db()
-        uuid = _register(db, "objective", "o001-comp", "Complete Obj")
-        _with_phase(db, "objective:o001-comp", "define", mode="standard")
+        uuid = _register(db, "objective", "001-o001-comp", "Complete Obj")
+        _with_phase(db, "objective:001-o001-comp", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.complete_phase(uuid, "define")
@@ -1077,8 +1077,8 @@ class TestFiveDInitiativeObjectiveKeyResult:
 
     def test_key_result_complete_phase(self, tmp_path):
         db = _make_db()
-        uuid = _register(db, "key_result", "kr001-comp", "Complete KR")
-        _with_phase(db, "key_result:kr001-comp", "define", mode="standard")
+        uuid = _register(db, "key_result", "001-kr001-comp", "Complete KR")
+        _with_phase(db, "key_result:001-kr001-comp", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.complete_phase(uuid, "define")
@@ -1089,9 +1089,9 @@ class TestFiveDInitiativeObjectiveKeyResult:
     def test_key_result_terminal_completes(self, tmp_path):
         """key_result: debrief is terminal → status=completed."""
         db = _make_db()
-        uuid = _register(db, "key_result", "kr002-term", "Terminal KR")
+        uuid = _register(db, "key_result", "001-kr002-term", "Terminal KR")
         _with_phase(
-            db, "key_result:kr002-term", "debrief",
+            db, "key_result:001-kr002-term", "debrief",
             mode="standard", last_completed_phase="deliver",
         )
 
@@ -1103,8 +1103,8 @@ class TestFiveDInitiativeObjectiveKeyResult:
 
     def test_initiative_transition_sequence(self, tmp_path):
         db = _make_db()
-        uuid = _register(db, "initiative", "i003-trans", "Trans Init")
-        _with_phase(db, "initiative:i003-trans", "define", mode="standard")
+        uuid = _register(db, "initiative", "001-i003-trans", "Trans Init")
+        _with_phase(db, "initiative:001-i003-trans", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(uuid, "design")
@@ -1119,12 +1119,12 @@ class TestFiveDDeliverPhaseMapping:
         """Project's deliver gate is at 'deliver' phase."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "project", "p030-blocker", "Blocker"
+            db, "project", "001-p030-blocker", "Blocker"
         )
         proj_uuid = _register(
-            db, "project", "p031-proj", "Project"
+            db, "project", "001-p031-proj", "Project"
         )
-        _with_phase(db, "project:p031-proj", "design", mode="standard")
+        _with_phase(db, "project:001-p031-proj", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, proj_uuid, blocker_uuid)
@@ -1137,7 +1137,7 @@ class TestFiveDDeliverPhaseMapping:
 
         # design is NOT blocked (non-deliver phase)
         # Reset to define so we can transition to design
-        db.update_workflow_phase("project:p031-proj", workflow_phase="define")
+        db.update_workflow_phase("project:001-p031-proj", workflow_phase="define")
         response = engine.transition_phase(proj_uuid, "design")
         assert any(r.allowed for r in response.results)
 
@@ -1145,13 +1145,13 @@ class TestFiveDDeliverPhaseMapping:
         """Initiative's deliver gate is at 'deliver' phase."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "initiative", "i010-blocker", "Blocker Init"
+            db, "initiative", "001-i010-blocker", "Blocker Init"
         )
         init_uuid = _register(
-            db, "initiative", "i011-blocked", "Blocked Init"
+            db, "initiative", "001-i011-blocked", "Blocked Init"
         )
         _with_phase(
-            db, "initiative:i011-blocked", "design", mode="standard"
+            db, "initiative:001-i011-blocked", "design", mode="standard"
         )
 
         dep_mgr = DependencyManager()
@@ -1196,12 +1196,12 @@ class TestDeliverGateBlockerDetails:
     def test_error_lists_multiple_blocker_type_ids(self, tmp_path):
         """Multiple blockers are all listed in the error."""
         db = _make_db()
-        b1_uuid = _register(db, "project", "p040-b1", "Blocker 1")
-        b2_uuid = _register(db, "project", "p041-b2", "Blocker 2")
+        b1_uuid = _register(db, "project", "001-p040-b1", "Blocker 1")
+        b2_uuid = _register(db, "project", "001-p041-b2", "Blocker 2")
         blocked_uuid = _register(
-            db, "project", "p042-blocked", "Blocked"
+            db, "project", "001-p042-blocked", "Blocked"
         )
-        _with_phase(db, "project:p042-blocked", "design", mode="standard")
+        _with_phase(db, "project:001-p042-blocked", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, b1_uuid)
@@ -1209,7 +1209,7 @@ class TestDeliverGateBlockerDetails:
 
         engine = _make_engine(db, str(tmp_path))
 
-        with pytest.raises(ValueError, match="project:p040-b1"):
+        with pytest.raises(ValueError, match="project:001-p040-b1"):
             engine.transition_phase(blocked_uuid, "deliver")
 
     def test_surviving_edge_to_completed_blocker_does_not_block_deliver(
@@ -1222,13 +1222,13 @@ class TestDeliverGateBlockerDetails:
         any-edge-exists."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "project", "p043-resolved-blocker", "Resolved Blocker",
+            db, "project", "001-p043-resolved-blocker", "Resolved Blocker",
             status="completed",
         )
         blocked_uuid = _register(
-            db, "project", "p044-survives", "Survives"
+            db, "project", "001-p044-survives", "Survives"
         )
-        _with_phase(db, "project:p044-survives", "design", mode="standard")
+        _with_phase(db, "project:001-p044-survives", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
@@ -1255,17 +1255,17 @@ class TestDeliverGateBlockerDetails:
         (which would wrongly include the resolved blocker too)."""
         db = _make_db()
         resolved_blocker_uuid = _register(
-            db, "project", "p045-resolved", "Resolved Blocker",
+            db, "project", "001-p045-resolved", "Resolved Blocker",
             status="completed",
         )
         unresolved_blocker_uuid = _register(
-            db, "project", "p046-unresolved", "Unresolved Blocker",
+            db, "project", "001-p046-unresolved", "Unresolved Blocker",
             status="active",
         )
         blocked_uuid = _register(
-            db, "project", "p047-mixed", "Mixed Blocked"
+            db, "project", "001-p047-mixed", "Mixed Blocked"
         )
-        _with_phase(db, "project:p047-mixed", "design", mode="standard")
+        _with_phase(db, "project:001-p047-mixed", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, resolved_blocker_uuid)
@@ -1277,8 +1277,8 @@ class TestDeliverGateBlockerDetails:
             engine.transition_phase(blocked_uuid, "deliver")
 
         message = str(exc_info.value)
-        assert "project:p046-unresolved" in message
-        assert "project:p045-resolved" not in message
+        assert "project:001-p046-unresolved" in message
+        assert "project:001-p045-resolved" not in message
 
     def test_complete_blocker_then_deliver_succeeds(self, tmp_path):
         """End-to-end: feature B blocked by A. Complete A → B can implement."""
@@ -1333,7 +1333,7 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_no_children_succeeds(self, tmp_path):
         """Entity with no children can be abandoned."""
         db = _make_db()
-        uuid = _register(db, "project", "p050-solo", "Solo Project")
+        uuid = _register(db, "project", "001-p050-solo", "Solo Project")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.abandon_entity(uuid)
@@ -1345,11 +1345,11 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_with_active_children_blocked(self, tmp_path):
         """Project with active features → abandon blocked."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p051-parent", "Parent Proj")
+        proj_uuid = _register(db, "project", "001-p051-parent", "Parent Proj")
         child_uuid = _register(
             db, "feature", "044-child", "Active Child",
             status="active",
-            parent_type_id="project:p051-parent",
+            parent_type_id="project:001-p051-parent",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1364,16 +1364,16 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_with_completed_children_succeeds(self, tmp_path):
         """Completed children don't block abandonment."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p052-done-kids", "Done Kids")
+        proj_uuid = _register(db, "project", "001-p052-done-kids", "Done Kids")
         _register(
             db, "feature", "045-done", "Done Feature",
             status="completed",
-            parent_type_id="project:p052-done-kids",
+            parent_type_id="project:001-p052-done-kids",
         )
         _register(
             db, "feature", "046-abn", "Abandoned Feature",
             status="abandoned",
-            parent_type_id="project:p052-done-kids",
+            parent_type_id="project:001-p052-done-kids",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1386,11 +1386,11 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_cascade_abandons_all_descendants(self, tmp_path):
         """cascade=True → all active descendants abandoned."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p053-cascade", "Cascade Proj")
+        proj_uuid = _register(db, "project", "001-p053-cascade", "Cascade Proj")
         feat_uuid = _register(
             db, "feature", "047-active-feat", "Active Feature",
             status="active",
-            parent_type_id="project:p053-cascade",
+            parent_type_id="project:001-p053-cascade",
         )
         task_uuid = _register(
             db, "task", "011-active-task", "Active Task",
@@ -1416,16 +1416,16 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_cascade_skips_completed(self, tmp_path):
         """cascade=True skips already-completed children."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p054-mixed", "Mixed Proj")
+        proj_uuid = _register(db, "project", "001-p054-mixed", "Mixed Proj")
         active_uuid = _register(
             db, "feature", "048-active", "Active",
             status="active",
-            parent_type_id="project:p054-mixed",
+            parent_type_id="project:001-p054-mixed",
         )
         completed_uuid = _register(
             db, "feature", "049-done", "Done",
             status="completed",
-            parent_type_id="project:p054-mixed",
+            parent_type_id="project:001-p054-mixed",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1450,16 +1450,16 @@ class TestAbandonEntityOrphanGuard:
     def test_abandon_error_lists_active_children_type_ids(self, tmp_path):
         """Error message lists the active children's type_ids."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p055-list", "List Proj")
+        proj_uuid = _register(db, "project", "001-p055-list", "List Proj")
         _register(
             db, "feature", "050-kid1", "Kid 1",
             status="active",
-            parent_type_id="project:p055-list",
+            parent_type_id="project:001-p055-list",
         )
         _register(
             db, "feature", "051-kid2", "Kid 2",
             status="active",
-            parent_type_id="project:p055-list",
+            parent_type_id="project:001-p055-list",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1471,17 +1471,17 @@ class TestAbandonEntityOrphanGuard:
         """Three-level cascade: initiative → project → feature."""
         db = _make_db()
         init_uuid = _register(
-            db, "initiative", "i020-deep", "Deep Initiative"
+            db, "initiative", "001-i020-deep", "Deep Initiative"
         )
         proj_uuid = _register(
-            db, "project", "p056-deep", "Deep Project",
+            db, "project", "001-p056-deep", "Deep Project",
             status="active",
-            parent_type_id="initiative:i020-deep",
+            parent_type_id="initiative:001-i020-deep",
         )
         feat_uuid = _register(
             db, "feature", "052-deep", "Deep Feature",
             status="active",
-            parent_type_id="project:p056-deep",
+            parent_type_id="project:001-p056-deep",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1577,8 +1577,8 @@ class TestInitiativeFullLifecycle:
     def test_initiative_full_5d_lifecycle(self, tmp_path):
         """Initiative completes all 5 phases -> status=completed."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i100-lifecycle", "Lifecycle Initiative")
-        _with_phase(db, "initiative:i100-lifecycle", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i100-lifecycle", "Lifecycle Initiative")
+        _with_phase(db, "initiative:001-i100-lifecycle", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         phases = ["discover", "define", "design", "deliver", "debrief"]
@@ -1597,8 +1597,8 @@ class TestInitiativeFullLifecycle:
     def test_initiative_transitions_through_all_phases(self, tmp_path):
         """Initiative transition_phase walks the full 5D sequence."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i101-trans", "Trans Initiative")
-        _with_phase(db, "initiative:i101-trans", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i101-trans", "Trans Initiative")
+        _with_phase(db, "initiative:001-i101-trans", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         phases = ["discover", "define", "design", "deliver", "debrief"]
@@ -1612,8 +1612,8 @@ class TestInitiativeFullLifecycle:
     def test_initiative_full_weight_uses_all_5_phases(self, tmp_path):
         """Initiative with full weight has all 5 phases."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i102-full", "Full Initiative")
-        _with_phase(db, "initiative:i102-full", "discover", mode="full")
+        init_uuid = _register(db, "initiative", "001-i102-full", "Full Initiative")
+        _with_phase(db, "initiative:001-i102-full", "discover", mode="full")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.complete_phase(init_uuid, "discover")
@@ -1631,8 +1631,8 @@ class TestObjectiveFullLifecycle:
     def test_objective_full_lifecycle(self, tmp_path):
         """Objective completes all 4 phases -> status=completed."""
         db = _make_db()
-        obj_uuid = _register(db, "objective", "o100-lifecycle", "Lifecycle Objective")
-        _with_phase(db, "objective:o100-lifecycle", "define", mode="standard")
+        obj_uuid = _register(db, "objective", "001-o100-lifecycle", "Lifecycle Objective")
+        _with_phase(db, "objective:001-o100-lifecycle", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         phases = ["define", "design", "deliver", "debrief"]
@@ -1649,8 +1649,8 @@ class TestObjectiveFullLifecycle:
     def test_objective_transitions_through_all_phases(self, tmp_path):
         """Objective transition_phase walks the full 4-phase sequence."""
         db = _make_db()
-        obj_uuid = _register(db, "objective", "o101-trans", "Trans Objective")
-        _with_phase(db, "objective:o101-trans", "define", mode="standard")
+        obj_uuid = _register(db, "objective", "001-o101-trans", "Trans Objective")
+        _with_phase(db, "objective:001-o101-trans", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         phases = ["define", "design", "deliver", "debrief"]
@@ -1662,8 +1662,8 @@ class TestObjectiveFullLifecycle:
     def test_objective_discover_phase_rejected(self, tmp_path):
         """Objective does not have 'discover' in its template -> rejected."""
         db = _make_db()
-        obj_uuid = _register(db, "objective", "o102-no-disc", "No Discover Obj")
-        _with_phase(db, "objective:o102-no-disc", "define", mode="standard")
+        obj_uuid = _register(db, "objective", "001-o102-no-disc", "No Discover Obj")
+        _with_phase(db, "objective:001-o102-no-disc", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(obj_uuid, "discover")
@@ -1684,14 +1684,14 @@ class TestInitiativeObjectiveParentChild:
     def test_initiative_with_objective_child(self, tmp_path):
         """Create initiative -> create objective as child -> both complete lifecycle."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i110-parent", "Parent Initiative")
-        _with_phase(db, "initiative:i110-parent", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i110-parent", "Parent Initiative")
+        _with_phase(db, "initiative:001-i110-parent", "discover", mode="standard")
 
         obj_uuid = _register(
-            db, "objective", "o110-child", "Child Objective",
-            parent_type_id="initiative:i110-parent",
+            db, "objective", "001-o110-child", "Child Objective",
+            parent_type_id="initiative:001-i110-parent",
         )
-        _with_phase(db, "objective:o110-child", "define", mode="standard")
+        _with_phase(db, "objective:001-o110-child", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
 
@@ -1718,28 +1718,28 @@ class TestInitiativeObjectiveParentChild:
     def test_initiative_multiple_objectives_progress(self, tmp_path):
         """Initiative with 2 objectives: one completed, one active -> partial progress."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i111-multi", "Multi-Obj Initiative")
-        _with_phase(db, "initiative:i111-multi", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i111-multi", "Multi-Obj Initiative")
+        _with_phase(db, "initiative:001-i111-multi", "discover", mode="standard")
 
         # Completed objective
         obj1_uuid = _register(
-            db, "objective", "o111-done", "Done Objective",
+            db, "objective", "001-o111-done", "Done Objective",
             status="completed",
-            parent_type_id="initiative:i111-multi",
+            parent_type_id="initiative:001-i111-multi",
         )
         _with_phase(
-            db, "objective:o111-done", "debrief",
+            db, "objective:001-o111-done", "debrief",
             mode="standard", last_completed_phase="debrief",
         )
 
         # Active objective in design phase
         obj2_uuid = _register(
-            db, "objective", "o112-active", "Active Objective",
+            db, "objective", "001-o112-active", "Active Objective",
             status="active",
-            parent_type_id="initiative:i111-multi",
+            parent_type_id="initiative:001-i111-multi",
         )
         _with_phase(
-            db, "objective:o112-active", "design",
+            db, "objective:001-o112-active", "design",
             mode="standard", last_completed_phase="define",
         )
 
@@ -1751,15 +1751,15 @@ class TestInitiativeObjectiveParentChild:
     def test_objective_completion_cascades_to_initiative_progress(self, tmp_path):
         """Completing an objective updates the initiative's rollup progress."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i112-cascade", "Cascade Initiative")
-        _with_phase(db, "initiative:i112-cascade", "define", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i112-cascade", "Cascade Initiative")
+        _with_phase(db, "initiative:001-i112-cascade", "define", mode="standard")
 
         obj_uuid = _register(
-            db, "objective", "o113-cascade", "Cascade Objective",
-            parent_type_id="initiative:i112-cascade",
+            db, "objective", "001-o113-cascade", "Cascade Objective",
+            parent_type_id="initiative:001-i112-cascade",
         )
         _with_phase(
-            db, "objective:o113-cascade", "debrief",
+            db, "objective:001-o113-cascade", "debrief",
             mode="standard", last_completed_phase="deliver",
         )
 
@@ -1783,8 +1783,8 @@ class TestInitiativeObjectiveNoAutomatedTransition:
     def test_completing_phase_does_not_auto_advance_next(self, tmp_path):
         """Completing 'discover' on initiative does NOT auto-complete 'define'."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i120-no-auto", "No Auto Initiative")
-        _with_phase(db, "initiative:i120-no-auto", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i120-no-auto", "No Auto Initiative")
+        _with_phase(db, "initiative:001-i120-no-auto", "discover", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
         result = engine.complete_phase(init_uuid, "discover")
@@ -1798,15 +1798,15 @@ class TestInitiativeObjectiveNoAutomatedTransition:
     def test_completing_child_does_not_auto_advance_parent(self, tmp_path):
         """Completing all objectives does NOT auto-advance the initiative's phase."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i121-no-cascade-adv", "No Cascade Adv")
-        _with_phase(db, "initiative:i121-no-cascade-adv", "discover", mode="standard")
+        init_uuid = _register(db, "initiative", "001-i121-no-cascade-adv", "No Cascade Adv")
+        _with_phase(db, "initiative:001-i121-no-cascade-adv", "discover", mode="standard")
 
         obj_uuid = _register(
-            db, "objective", "o120-child", "Child Obj",
-            parent_type_id="initiative:i121-no-cascade-adv",
+            db, "objective", "001-o120-child", "Child Obj",
+            parent_type_id="initiative:001-i121-no-cascade-adv",
         )
         _with_phase(
-            db, "objective:o120-child", "debrief",
+            db, "objective:001-o120-child", "debrief",
             mode="standard", last_completed_phase="deliver",
         )
 
@@ -1821,8 +1821,8 @@ class TestInitiativeObjectiveNoAutomatedTransition:
     def test_objective_phase_requires_explicit_invocation(self, tmp_path):
         """Each objective phase must be explicitly completed -- no auto-fire."""
         db = _make_db()
-        obj_uuid = _register(db, "objective", "o121-explicit", "Explicit Obj")
-        _with_phase(db, "objective:o121-explicit", "define", mode="standard")
+        obj_uuid = _register(db, "objective", "001-o121-explicit", "Explicit Obj")
+        _with_phase(db, "objective:001-o121-explicit", "define", mode="standard")
 
         engine = _make_engine(db, str(tmp_path))
 
@@ -1844,50 +1844,50 @@ class TestInitiativeObjectiveBlockedBy:
         """Initiative blocked at deliver phase by another initiative."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "initiative", "i130-blocker", "Blocker Initiative"
+            db, "initiative", "001-i130-blocker", "Blocker Initiative"
         )
         blocked_uuid = _register(
-            db, "initiative", "i131-blocked", "Blocked Initiative"
+            db, "initiative", "001-i131-blocked", "Blocked Initiative"
         )
-        _with_phase(db, "initiative:i131-blocked", "design", mode="standard")
+        _with_phase(db, "initiative:001-i131-blocked", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
 
         engine = _make_engine(db, str(tmp_path))
 
-        with pytest.raises(ValueError, match="blocked by.*initiative:i130-blocker"):
+        with pytest.raises(ValueError, match="blocked by.*initiative:001-i130-blocker"):
             engine.transition_phase(blocked_uuid, "deliver")
 
     def test_objective_deliver_blocked_by_dependency(self, tmp_path):
         """Objective blocked at deliver phase."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "objective", "o130-blocker", "Blocker Objective"
+            db, "objective", "001-o130-blocker", "Blocker Objective"
         )
         blocked_uuid = _register(
-            db, "objective", "o131-blocked", "Blocked Objective"
+            db, "objective", "001-o131-blocked", "Blocked Objective"
         )
-        _with_phase(db, "objective:o131-blocked", "design", mode="standard")
+        _with_phase(db, "objective:001-o131-blocked", "design", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
 
         engine = _make_engine(db, str(tmp_path))
 
-        with pytest.raises(ValueError, match="blocked by.*objective:o130-blocker"):
+        with pytest.raises(ValueError, match="blocked by.*objective:001-o130-blocker"):
             engine.transition_phase(blocked_uuid, "deliver")
 
     def test_initiative_non_deliver_allowed_with_blocker(self, tmp_path):
         """Blocker does NOT prevent non-deliver transitions on initiative."""
         db = _make_db()
         blocker_uuid = _register(
-            db, "initiative", "i132-blocker", "Blocker"
+            db, "initiative", "001-i132-blocker", "Blocker"
         )
         blocked_uuid = _register(
-            db, "initiative", "i133-blocked", "Blocked"
+            db, "initiative", "001-i133-blocked", "Blocked"
         )
-        _with_phase(db, "initiative:i133-blocked", "discover", mode="standard")
+        _with_phase(db, "initiative:001-i133-blocked", "discover", mode="standard")
 
         dep_mgr = DependencyManager()
         dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
@@ -1903,9 +1903,9 @@ class TestInitiativeObjectiveGetState:
     def test_initiative_get_state_with_completed_phases(self, tmp_path):
         """get_state returns completed_phases derived from template."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i140-state", "State Initiative")
+        init_uuid = _register(db, "initiative", "001-i140-state", "State Initiative")
         _with_phase(
-            db, "initiative:i140-state", "design",
+            db, "initiative:001-i140-state", "design",
             mode="standard", last_completed_phase="define",
         )
 
@@ -1922,9 +1922,9 @@ class TestInitiativeObjectiveGetState:
     def test_objective_get_state_with_completed_phases(self, tmp_path):
         """Objective get_state reflects its 4-phase template."""
         db = _make_db()
-        obj_uuid = _register(db, "objective", "o140-state", "State Objective")
+        obj_uuid = _register(db, "objective", "001-o140-state", "State Objective")
         _with_phase(
-            db, "objective:o140-state", "deliver",
+            db, "objective:001-o140-state", "deliver",
             mode="standard", last_completed_phase="design",
         )
 
@@ -1940,7 +1940,7 @@ class TestInitiativeObjectiveGetState:
     def test_initiative_get_state_not_found(self, tmp_path):
         """get_state for initiative with no workflow_phases row -> None."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i141-no-wf", "No WF")
+        init_uuid = _register(db, "initiative", "001-i141-no-wf", "No WF")
         # No _with_phase call -> no workflow_phases row
 
         engine = _make_engine(db, str(tmp_path))
@@ -1954,11 +1954,11 @@ class TestInitiativeObjectiveAbandon:
     def test_abandon_initiative_with_active_objective_blocked(self, tmp_path):
         """Cannot abandon initiative with active objective child."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i150-abn", "Abandon Init")
+        init_uuid = _register(db, "initiative", "001-i150-abn", "Abandon Init")
         _register(
-            db, "objective", "o150-active", "Active Obj",
+            db, "objective", "001-o150-active", "Active Obj",
             status="active",
-            parent_type_id="initiative:i150-abn",
+            parent_type_id="initiative:001-i150-abn",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1968,11 +1968,11 @@ class TestInitiativeObjectiveAbandon:
     def test_abandon_initiative_cascade_abandons_objectives(self, tmp_path):
         """cascade=True on initiative -> all active objectives abandoned."""
         db = _make_db()
-        init_uuid = _register(db, "initiative", "i151-cascade", "Cascade Init")
+        init_uuid = _register(db, "initiative", "001-i151-cascade", "Cascade Init")
         obj_uuid = _register(
-            db, "objective", "o151-active", "Active Obj",
+            db, "objective", "001-o151-active", "Active Obj",
             status="active",
-            parent_type_id="initiative:i151-cascade",
+            parent_type_id="initiative:001-i151-cascade",
         )
 
         engine = _make_engine(db, str(tmp_path))
@@ -1995,12 +1995,12 @@ class TestAnomalyPropagation:
     def test_systemic_finding_propagated_to_parent(self, tmp_path):
         """Complete debrief with systemic_finding → parent gets anomaly entry."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p060-anomaly", "Anomaly Project")
-        _with_phase(db, "project:p060-anomaly", "deliver", mode="standard")
+        proj_uuid = _register(db, "project", "001-p060-anomaly", "Anomaly Project")
+        _with_phase(db, "project:001-p060-anomaly", "deliver", mode="standard")
 
         feat_uuid = _register(
             db, "feature", "060-finding", "Finding Feature",
-            parent_type_id="project:p060-anomaly",
+            parent_type_id="project:001-p060-anomaly",
         )
         # Set systemic_finding in entity metadata
         db.update_entity(
@@ -2034,12 +2034,12 @@ class TestAnomalyPropagation:
     def test_no_systemic_finding_no_anomaly(self, tmp_path):
         """Complete debrief without systemic_finding → no anomaly recorded."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p061-clean", "Clean Project")
-        _with_phase(db, "project:p061-clean", "deliver", mode="standard")
+        proj_uuid = _register(db, "project", "001-p061-clean", "Clean Project")
+        _with_phase(db, "project:001-p061-clean", "deliver", mode="standard")
 
         feat_uuid = _register(
             db, "feature", "061-clean", "Clean Feature",
-            parent_type_id="project:p061-clean",
+            parent_type_id="project:001-p061-clean",
         )
 
         slug = "061-clean"
@@ -2063,12 +2063,12 @@ class TestAnomalyPropagation:
     def test_anomaly_appended_to_existing_anomalies(self, tmp_path):
         """Second anomaly appends to existing list."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p062-multi", "Multi Anomaly")
-        _with_phase(db, "project:p062-multi", "deliver", mode="standard")
+        proj_uuid = _register(db, "project", "001-p062-multi", "Multi Anomaly")
+        _with_phase(db, "project:001-p062-multi", "deliver", mode="standard")
 
         # Pre-seed parent with existing anomaly
         db.update_entity(
-            "project:p062-multi",
+            "project:001-p062-multi",
             metadata={
                 "anomalies": [
                     {"description": "earlier issue", "source_type_id": "feature:old", "timestamp": "2026-01-01T00:00:00+00:00"},
@@ -2079,7 +2079,7 @@ class TestAnomalyPropagation:
         # 5D child with systemic_finding completing debrief
         task_uuid = _register(
             db, "task", "012-anomaly", "Anomaly Task",
-            parent_type_id="project:p062-multi",
+            parent_type_id="project:001-p062-multi",
         )
         db.update_entity(
             "task:012-anomaly",
@@ -2102,12 +2102,12 @@ class TestAnomalyPropagation:
     def test_anomaly_not_propagated_on_non_terminal_phase(self, tmp_path):
         """Systemic finding only checked on terminal phase (debrief/finish)."""
         db = _make_db()
-        proj_uuid = _register(db, "project", "p063-non-term", "Non Terminal")
-        _with_phase(db, "project:p063-non-term", "deliver", mode="standard")
+        proj_uuid = _register(db, "project", "001-p063-non-term", "Non Terminal")
+        _with_phase(db, "project:001-p063-non-term", "deliver", mode="standard")
 
         task_uuid = _register(
             db, "task", "013-early", "Early Task",
-            parent_type_id="project:p063-non-term",
+            parent_type_id="project:001-p063-non-term",
         )
         db.update_entity(
             "task:013-early",

@@ -665,9 +665,9 @@ def test_sc4_cycle_detected_on_new_store(tmp_path):
     db = EntityDatabase(db_path)
     try:
         mgr = DependencyManager()
-        a = db.register_entity("feature", "sc4-a", "A", project_id="__unknown__")
-        b = db.register_entity("feature", "sc4-b", "B", project_id="__unknown__")
-        c = db.register_entity("feature", "sc4-c", "C", project_id="__unknown__")
+        a = db.register_entity("feature", "001-sc4-a", "A", project_id="__unknown__")
+        b = db.register_entity("feature", "001-sc4-b", "B", project_id="__unknown__")
+        c = db.register_entity("feature", "001-sc4-c", "C", project_id="__unknown__")
         mgr.add_dependency(db, a, b)  # A blocked by B
         mgr.add_dependency(db, b, c)  # B blocked by C
         with pytest.raises(CycleError):
@@ -684,9 +684,9 @@ def test_sc4_no_false_positive_on_new_store(tmp_path):
     db = EntityDatabase(db_path)
     try:
         mgr = DependencyManager()
-        a = db.register_entity("feature", "sc4-d", "D", project_id="__unknown__")
-        b = db.register_entity("feature", "sc4-e", "E", project_id="__unknown__")
-        c = db.register_entity("feature", "sc4-f", "F", project_id="__unknown__")
+        a = db.register_entity("feature", "001-sc4-d", "D", project_id="__unknown__")
+        b = db.register_entity("feature", "001-sc4-e", "E", project_id="__unknown__")
+        c = db.register_entity("feature", "001-sc4-f", "F", project_id="__unknown__")
         mgr.add_dependency(db, a, b)
         mgr.add_dependency(db, a, c)  # diamond shape, no cycle
     finally:
@@ -700,7 +700,7 @@ def test_sc4_self_dependency_rejected_on_new_store(tmp_path):
 
     db = EntityDatabase(db_path)
     try:
-        a = db.register_entity("feature", "sc4-g", "G", project_id="__unknown__")
+        a = db.register_entity("feature", "001-sc4-g", "G", project_id="__unknown__")
         assert db.check_dependency_cycle(a, a) is True
     finally:
         db.close()

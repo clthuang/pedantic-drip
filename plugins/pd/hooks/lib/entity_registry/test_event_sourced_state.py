@@ -347,7 +347,7 @@ def test_append_phase_event_validates_per_event_type_params(
     is_entity_event = event_type.startswith("entity_")
     suffix = event_type.replace("_", "-")
     workspace_uuid, type_id = _register_for_event(
-        db, entity_id=f"valid-{suffix}-{abs(hash(event_type)) % 10000:04d}"
+        db, entity_id=f"001-valid-{suffix}-{abs(hash(event_type)) % 10000:04d}"
     )
 
     # (a) Required params + base params → success.
@@ -378,7 +378,7 @@ def test_entity_created_emits_one_event_no_redundant_update(db):
     AC-2.7's ``entities.updated_at == phase_events.timestamp`` invariant.
     """
     workspace_uuid, type_id = _register_for_event(
-        db, entity_id="created-001", status="planned"
+        db, entity_id="001-created-001", status="planned"
     )
 
     before = db._conn.execute(
@@ -421,7 +421,7 @@ def test_entity_status_changed_emits_event_and_updates_status(db):
     set status = metadata['new_status'] and bump updated_at.
     """
     workspace_uuid, type_id = _register_for_event(
-        db, entity_id="status-changed-001", status="planned"
+        db, entity_id="001-status-changed-001", status="planned"
     )
 
     before_updated_at = db._conn.execute(
@@ -468,7 +468,7 @@ def test_append_phase_event_atomicity(db):
     ``self.transaction()`` must roll the whole call back.
     """
     workspace_uuid, type_id = _register_for_event(
-        db, entity_id="atomicity-001", status="planned"
+        db, entity_id="001-atomicity-001", status="planned"
     )
 
     pre_pe_count = db._conn.execute(

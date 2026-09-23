@@ -96,7 +96,7 @@ def test_ac_bl_4_register_bug_no_workflow_phases(db):
     """
     db.register_entity(
         entity_type="bug",
-        entity_id="1-foo",
+        entity_id="001-foo",
         name="A bug",
         status="open",
         project_id="__unknown__",
@@ -104,7 +104,7 @@ def test_ac_bl_4_register_bug_no_workflow_phases(db):
 
     row = db._conn.execute(
         "SELECT type, kind, lifecycle_class, status FROM entities "
-        "WHERE type_id='bug:1-foo'"
+        "WHERE type_id='bug:001-foo'"
     ).fetchone()
     assert row is not None
     assert row["type"] == "work"
@@ -114,7 +114,7 @@ def test_ac_bl_4_register_bug_no_workflow_phases(db):
 
     # No workflow_phases row should exist (status-only model).
     wp_rows = db._conn.execute(
-        "SELECT type_id FROM workflow_phases WHERE type_id='bug:1-foo'"
+        "SELECT type_id FROM workflow_phases WHERE type_id='bug:001-foo'"
     ).fetchall()
     assert wp_rows == []
 
@@ -128,22 +128,22 @@ def test_ac_bl_5_direct_update_entity_status(db):
     """entities.status has no CHECK; direct update accepts any string."""
     db.register_entity(
         entity_type="bug",
-        entity_id="2-bar",
+        entity_id="002-bar",
         name="Another bug",
         status="open",
         project_id="__unknown__",
     )
 
-    db.update_entity("bug:2-bar", status="resolved", project_id="__unknown__")
+    db.update_entity("bug:002-bar", status="resolved", project_id="__unknown__")
 
     row = db._conn.execute(
-        "SELECT status FROM entities WHERE type_id='bug:2-bar'"
+        "SELECT status FROM entities WHERE type_id='bug:002-bar'"
     ).fetchone()
     assert row["status"] == "resolved"
 
     # No workflow_phases write triggered.
     wp_rows = db._conn.execute(
-        "SELECT type_id FROM workflow_phases WHERE type_id='bug:2-bar'"
+        "SELECT type_id FROM workflow_phases WHERE type_id='bug:002-bar'"
     ).fetchall()
     assert wp_rows == []
 
@@ -158,21 +158,21 @@ def test_ac_bl_5_direct_update_entity_status(db):
 def test_ac_bl_6_status_only_close_does_not_create_workflow_phases(db):
     db.register_entity(
         entity_type="bug",
-        entity_id="3-baz",
+        entity_id="003-baz",
         name="Close-me bug",
         status="open",
         project_id="__unknown__",
     )
 
-    db.update_entity("bug:3-baz", status="closed", project_id="__unknown__")
+    db.update_entity("bug:003-baz", status="closed", project_id="__unknown__")
 
     row = db._conn.execute(
-        "SELECT status FROM entities WHERE type_id='bug:3-baz'"
+        "SELECT status FROM entities WHERE type_id='bug:003-baz'"
     ).fetchone()
     assert row["status"] == "closed"
 
     wp_rows = db._conn.execute(
-        "SELECT type_id FROM workflow_phases WHERE type_id='bug:3-baz'"
+        "SELECT type_id FROM workflow_phases WHERE type_id='bug:003-baz'"
     ).fetchall()
     assert wp_rows == []
 
@@ -188,14 +188,14 @@ def test_ac_bl_7_transition_entity_phase_rejects_bug(db):
     # place so the INSERT succeeds; Group A established this).
     db.register_entity(
         entity_type="bug",
-        entity_id="4-defensive",
+        entity_id="004-defensive",
         name="Defensive raise check",
         status="open",
         project_id="__unknown__",
     )
 
     with pytest.raises(ValueError) as excinfo:
-        transition_entity_phase(db, "bug:4-defensive", "resolved")
+        transition_entity_phase(db, "bug:004-defensive", "resolved")
     msg = str(excinfo.value)
     assert "invalid_entity_type" in msg
     assert "bug" in msg

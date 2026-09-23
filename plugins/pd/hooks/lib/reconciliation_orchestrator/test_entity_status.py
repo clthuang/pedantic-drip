@@ -216,7 +216,7 @@ class TestProjectsScanned:
 
     def test_projects_scanned(self, tmp_path):
         db = make_db()
-        folder = "my-project"
+        folder = "001-my-project"
         seed_project(db, folder, status="active")
 
         projects_dir = tmp_path / "projects" / folder
@@ -233,7 +233,7 @@ class TestProjectsScanned:
     def test_projects_missing_meta_json_archived(self, tmp_path):
         """Entity in registry, project folder exists but .meta.json deleted → archived."""
         db = make_db()
-        folder = "my-project"
+        folder = "001-my-project"
         seed_project(db, folder, status="active")
 
         # Folder exists, no .meta.json
@@ -274,24 +274,24 @@ class TestSyncBrainstormEntities:
         db = make_db()
         brainstorms_dir = tmp_path / "brainstorms"
         brainstorms_dir.mkdir()
-        (brainstorms_dir / "foo.prd.md").touch()
+        (brainstorms_dir / "20260101-000018-foo.prd.md").touch()
 
         result = entity_status._sync_brainstorm_entities(
             db, str(tmp_path), "docs", str(tmp_path), "test-project"
         )
 
         assert result["registered"] == 1
-        entity = db.get_entity("brainstorm:foo")
+        entity = db.get_entity("brainstorm:20260101-000018-foo")
         assert entity is not None
         assert entity["status"] == "active"
 
     def test_existing_brainstorm_skipped(self, tmp_path):
         """Already-registered brainstorm -> skipped, no duplicate created."""
         db = make_db()
-        seed_brainstorm(db, "foo")
+        seed_brainstorm(db, "20260101-000018-foo")
         brainstorms_dir = tmp_path / "brainstorms"
         brainstorms_dir.mkdir()
-        (brainstorms_dir / "foo.prd.md").touch()
+        (brainstorms_dir / "20260101-000018-foo.prd.md").touch()
 
         result = entity_status._sync_brainstorm_entities(
             db, str(tmp_path), "docs", str(tmp_path), "test-project"
@@ -306,8 +306,8 @@ class TestSyncBrainstormEntities:
         """AC-9: brainstorm entity exists but .prd.md file deleted -> status archived."""
         db = make_db()
         seed_brainstorm(
-            db, "foo", status="active",
-            artifact_path="docs/brainstorms/foo.prd.md",
+            db, "20260101-000018-foo", status="active",
+            artifact_path="docs/brainstorms/20260101-000018-foo.prd.md",
             project_id="test-project",
         )
         # Do NOT create the file — it should be detected as missing
@@ -320,15 +320,15 @@ class TestSyncBrainstormEntities:
         )
 
         assert result["archived"] == 1
-        entity = db.get_entity("brainstorm:foo")
+        entity = db.get_entity("brainstorm:20260101-000018-foo")
         assert entity["is_archived"] == 1
 
     def test_terminal_brainstorm_not_rearchived(self, tmp_path):
         """Brainstorm with terminal status (promoted) -> not re-archived even if file missing."""
         db = make_db()
         seed_brainstorm(
-            db, "foo", status="promoted",
-            artifact_path="docs/brainstorms/foo.prd.md",
+            db, "20260101-000018-foo", status="promoted",
+            artifact_path="docs/brainstorms/20260101-000018-foo.prd.md",
             project_id="test-project",
         )
         # No file created — but promoted is terminal, should not be touched
@@ -340,7 +340,7 @@ class TestSyncBrainstormEntities:
         )
 
         assert result["archived"] == 0
-        entity = db.get_entity("brainstorm:foo")
+        entity = db.get_entity("brainstorm:20260101-000018-foo")
         assert entity["status"] == "promoted"
 
 
@@ -354,10 +354,10 @@ class TestBrainstormAdversarial:
         """
         # Given a brainstorm entity with empty artifact_path (no file to check)
         db = make_db()
-        seed_brainstorm(db, "bar", status="active", artifact_path="")
+        seed_brainstorm(db, "20260101-000002-bar", status="active", artifact_path="")
         brainstorms_dir = tmp_path / "brainstorms"
         brainstorms_dir.mkdir()
-        # No bar.prd.md on disk
+        # No 20260101-000002-bar.prd.md on disk
 
         # When brainstorm sync runs
         result = entity_status._sync_brainstorm_entities(
@@ -365,7 +365,7 @@ class TestBrainstormAdversarial:
         )
 
         # Then entity is NOT archived (empty artifact_path guard)
-        entity = db.get_entity("brainstorm:bar")
+        entity = db.get_entity("brainstorm:20260101-000002-bar")
         assert entity["status"] == "active"
         assert result["archived"] == 0
 
@@ -441,7 +441,7 @@ class TestUnifiedSync:
         # 3) Brainstorm: .prd.md file, no entity in DB -> registered
         brainstorms_dir = tmp_path / "brainstorms"
         brainstorms_dir.mkdir()
-        (brainstorms_dir / "bar.prd.md").touch()
+        (brainstorms_dir / "20260101-000002-bar.prd.md").touch()
 
         result = sync_entity_statuses(
             db, str(tmp_path),
@@ -462,7 +462,7 @@ class TestUnifiedSync:
 
         # Brainstorm should have been registered
         assert result["registered"] >= 1
-        assert db.get_entity("brainstorm:bar") is not None
+        assert db.get_entity("brainstorm:20260101-000002-bar") is not None
 
         # A1: reconciliation deletes nothing, structurally.
         assert result["deleted"] == 0
@@ -542,8 +542,8 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
     """
     db.register_entity(
         entity_type="brainstorm",
-        entity_id="archived-bs",
-        name="archived-bs",
+        entity_id="20260101-000001-archived-bs",
+        name="20260101-000001-archived-bs",
         status="active",
         artifact_path="docs/brainstorms/archived-bs.prd.md",
         workspace_uuid=ws_uuid,
@@ -552,7 +552,7 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
     (tmp_path / "brainstorms").mkdir()
 
     def verify(db, result):
-        entity = db.get_entity("brainstorm:archived-bs")
+        entity = db.get_entity("brainstorm:20260101-000001-archived-bs")
         assert entity["is_archived"] == 1, (
             f"site 189 brainstorm archive did not fire: entity status="
             f"{entity['status']!r}, result={result!r}"
@@ -693,7 +693,7 @@ class TestReconciliationIsNonDestructive:
         """Fixture 1: workspace_uuid set, project_id suppressed."""
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        db.register_entity(entity_type="backlog", entity_id="00042",
+        db.register_entity(entity_type="backlog", entity_id="042-backlog",
                            name="legacy five-digit", status="open",
                            workspace_uuid=ws)
         db.register_entity(entity_type="backlog", entity_id="077-modern-slug",
@@ -709,7 +709,7 @@ class TestReconciliationIsNonDestructive:
         assert spy.deletes == []
         assert result["deleted"] == 0
         # Both id shapes survive: neither is "junk".
-        assert db.get_entity("backlog:00042") is not None
+        assert db.get_entity("backlog:042-backlog") is not None
         assert db.get_entity("backlog:077-modern-slug") is not None
 
     def test_brainstorm_read_is_workspace_scoped(self, tmp_path):
@@ -775,12 +775,12 @@ class TestReconciliationIsNonDestructive:
         """
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        db.register_entity(entity_type="backlog", entity_id="00053",
+        db.register_entity(entity_type="backlog", entity_id="053-backlog",
                            name="no display row, no file", status="open",
                            workspace_uuid=ws)
         assert db._conn.execute(
             "SELECT COUNT(*) c FROM entity_display d "
-            "JOIN entities e ON e.uuid = d.uuid WHERE e.entity_id = '00053'"
+            "JOIN entities e ON e.uuid = d.uuid WHERE e.entity_id = '053-backlog'"
         ).fetchone()["c"] == 0, "fixture precondition: no display row"
 
         with _WriteSpy(db) as spy:
@@ -790,7 +790,7 @@ class TestReconciliationIsNonDestructive:
             )
 
         assert spy.deletes == []
-        assert db.get_entity("backlog:00053") is not None
+        assert db.get_entity("backlog:053-backlog") is not None
 
     def test_reconciliation_creates_nothing_from_a_projection(self, tmp_path):
         """A1 amendment: zero creations, not merely zero deletions.

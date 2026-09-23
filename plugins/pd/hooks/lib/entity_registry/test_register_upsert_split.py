@@ -69,10 +69,10 @@ def test_register_entity_raises_on_conflict(db):
     entity_status_changed event emitted).
     """
     first_uuid = db.register_entity(
-        "feature", "ee-001", "First Name",
+        "feature", "001-ee-001", "First Name",
         project_id=TEST_PROJECT_ID, status="planned",
     )
-    type_id = "feature:ee-001"
+    type_id = "feature:001-ee-001"
 
     pre_count = db._conn.execute(
         "SELECT COUNT(*) FROM entities WHERE type_id = ?",
@@ -82,7 +82,7 @@ def test_register_entity_raises_on_conflict(db):
 
     with pytest.raises(EntityExistsError) as exc_info:
         db.register_entity(
-            "feature", "ee-001", "Different Name",
+            "feature", "001-ee-001", "Different Name",
             project_id=TEST_PROJECT_ID, status="active",
         )
     err = exc_info.value
@@ -120,7 +120,7 @@ def test_upsert_entity_inserts_when_new(db):
     (workspace_uuid, type_id) creates the entity and emits exactly one
     entity_created phase_event.
     """
-    type_id = "feature:upsert-new-002"
+    type_id = "feature:001-upsert-new-002"
     pre_entities = db._conn.execute(
         "SELECT COUNT(*) FROM entities WHERE type_id = ?",
         (type_id,),
@@ -128,7 +128,7 @@ def test_upsert_entity_inserts_when_new(db):
     assert pre_entities == 0
 
     new_uuid = db.upsert_entity(
-        "feature", "upsert-new-002", "Upsert New",
+        "feature", "001-upsert-new-002", "Upsert New",
         project_id=TEST_PROJECT_ID, status="planned",
     )
     assert new_uuid  # returns the new entity's uuid
@@ -159,14 +159,14 @@ def test_upsert_entity_emits_event_on_status_change(db):
     AND updates entities.status. Returns the existing uuid (no new uuid).
     """
     first_uuid = db.upsert_entity(
-        "feature", "upsert-sc-003", "Status Change",
+        "feature", "001-upsert-sc-003", "Status Change",
         project_id=TEST_PROJECT_ID, status="planned",
     )
-    type_id = "feature:upsert-sc-003"
+    type_id = "feature:001-upsert-sc-003"
 
     # Status change branch.
     second_uuid = db.upsert_entity(
-        "feature", "upsert-sc-003", "Status Change",
+        "feature", "001-upsert-sc-003", "Status Change",
         project_id=TEST_PROJECT_ID, status="active",
     )
     assert second_uuid == first_uuid  # No new uuid generated.
@@ -198,10 +198,10 @@ def test_upsert_entity_noop_when_no_change(db):
     ``entities.updated_at`` unchanged. Returns the existing uuid.
     """
     first_uuid = db.upsert_entity(
-        "feature", "upsert-noop-004", "Noop",
+        "feature", "001-upsert-noop-004", "Noop",
         project_id=TEST_PROJECT_ID, status="planned",
     )
-    type_id = "feature:upsert-noop-004"
+    type_id = "feature:001-upsert-noop-004"
 
     before = db._conn.execute(
         "SELECT updated_at FROM entities WHERE type_id = ?",
@@ -216,7 +216,7 @@ def test_upsert_entity_noop_when_no_change(db):
 
     # Same-status upsert.
     second_uuid = db.upsert_entity(
-        "feature", "upsert-noop-004", "Noop",
+        "feature", "001-upsert-noop-004", "Noop",
         project_id=TEST_PROJECT_ID, status="planned",
     )
     assert second_uuid == first_uuid
@@ -337,11 +337,11 @@ def test_register_entities_batch_idempotent(db):
     the same rows: emits 0 additional events AND the row count is unchanged.
     """
     batch = [
-        {"entity_type": "feature", "entity_id": "batch-001", "name": "B1",
+        {"entity_type": "feature", "entity_id": "001-batch-001", "name": "B1",
          "status": "planned"},
-        {"entity_type": "feature", "entity_id": "batch-002", "name": "B2",
+        {"entity_type": "feature", "entity_id": "001-batch-002", "name": "B2",
          "status": "planned"},
-        {"entity_type": "backlog", "entity_id": "batch-003", "name": "B3",
+        {"entity_type": "backlog", "entity_id": "001-batch-003", "name": "B3",
          "status": "planned"},
     ]
 
@@ -353,15 +353,15 @@ def test_register_entities_batch_idempotent(db):
 
     first_entities = db._conn.execute(
         "SELECT COUNT(*) FROM entities "
-        "WHERE type_id IN ('feature:batch-001', 'feature:batch-002', "
-        "'backlog:batch-003')"
+        "WHERE type_id IN ('feature:001-batch-001', 'feature:001-batch-002', "
+        "'backlog:001-batch-003')"
     ).fetchone()[0]
     assert first_entities == 3
 
     first_created = db._conn.execute(
         "SELECT COUNT(*) FROM phase_events "
         "WHERE event_type = 'entity_created' AND type_id IN "
-        "('feature:batch-001', 'feature:batch-002', 'backlog:batch-003')"
+        "('feature:001-batch-001', 'feature:001-batch-002', 'backlog:001-batch-003')"
     ).fetchone()[0]
     assert first_created == 3, (
         f"Expected 3 entity_created events after first batch call, "
@@ -377,15 +377,15 @@ def test_register_entities_batch_idempotent(db):
 
     second_entities = db._conn.execute(
         "SELECT COUNT(*) FROM entities "
-        "WHERE type_id IN ('feature:batch-001', 'feature:batch-002', "
-        "'backlog:batch-003')"
+        "WHERE type_id IN ('feature:001-batch-001', 'feature:001-batch-002', "
+        "'backlog:001-batch-003')"
     ).fetchone()[0]
     assert second_entities == 3  # still 3 rows, no duplicates
 
     second_created = db._conn.execute(
         "SELECT COUNT(*) FROM phase_events "
         "WHERE event_type = 'entity_created' AND type_id IN "
-        "('feature:batch-001', 'feature:batch-002', 'backlog:batch-003')"
+        "('feature:001-batch-001', 'feature:001-batch-002', 'backlog:001-batch-003')"
     ).fetchone()[0]
     assert second_created == 3, (
         f"Expected exactly 3 entity_created events after IDEMPOTENT second "
@@ -439,7 +439,7 @@ def test_entity_tag_duplicate_attach_noop(db):
     do not produce duplicate rows.
     """
     entity_uuid = db.register_entity(
-        "feature", "tag-001", "Tag Test", project_id=TEST_PROJECT_ID,
+        "feature", "001-tag-001", "Tag Test", project_id=TEST_PROJECT_ID,
     )
 
     db.add_tag(entity_uuid, "taga")
@@ -464,10 +464,10 @@ def test_okr_alignment_duplicate_noop(db):
     level for this idempotency check — INSERT OR IGNORE protects).
     """
     entity_uuid = db.register_entity(
-        "feature", "okr-001", "OKR Test", project_id=TEST_PROJECT_ID,
+        "feature", "001-okr-001", "OKR Test", project_id=TEST_PROJECT_ID,
     )
     kr_uuid = db.register_entity(
-        "feature", "okr-kr-001", "Synthetic KR",
+        "feature", "001-okr-kr-001", "Synthetic KR",
         project_id=TEST_PROJECT_ID,
     )
 
@@ -491,9 +491,9 @@ def test_workflow_phases_init_duplicate_noop(db):
     ``upsert_workflow_phase`` (the init path) for the same type_id keeps a
     single row.
     """
-    type_id = "feature:wp-init-001"
+    type_id = "feature:001-wp-init-001"
     db.register_entity(
-        "feature", "wp-init-001", "WP Init",
+        "feature", "001-wp-init-001", "WP Init",
         project_id=TEST_PROJECT_ID,
     )
 
@@ -515,10 +515,10 @@ def test_dependency_duplicate_noop(db):
     duplicate edge add is a no-op.
     """
     a_uuid = db.register_entity(
-        "feature", "dep-001-a", "Dep A", project_id=TEST_PROJECT_ID,
+        "feature", "001-dep-001-a", "Dep A", project_id=TEST_PROJECT_ID,
     )
     b_uuid = db.register_entity(
-        "feature", "dep-001-b", "Dep B", project_id=TEST_PROJECT_ID,
+        "feature", "001-dep-001-b", "Dep B", project_id=TEST_PROJECT_ID,
     )
 
     db.add_dependency(a_uuid, b_uuid)
@@ -549,11 +549,11 @@ def test_register_entity_materializes_depends_on_features(db):
     to_uuid=the registered (blocked) entity, per D1's mapping.
     """
     blocker_uuid = db.register_entity(
-        "feature", "dep7-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+        "feature", "001-dep7-blocker", "Blocker", project_id=TEST_PROJECT_ID,
     )
     blocked_uuid = db.register_entity(
-        "feature", "dep7-blocked", "Blocked", project_id=TEST_PROJECT_ID,
-        metadata={"depends_on_features": ["feature:dep7-blocker"]},
+        "feature", "001-dep7-blocked", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:001-dep7-blocker"]},
     )
 
     row = db._conn.execute(
@@ -571,11 +571,11 @@ def test_upsert_entity_materializes_depends_on_features(db):
     branch -- upsert_entity's insert branch delegates to register_entity.
     """
     blocker_uuid = db.register_entity(
-        "feature", "dep7-blocker-u", "Blocker", project_id=TEST_PROJECT_ID,
+        "feature", "001-dep7-blocker-u", "Blocker", project_id=TEST_PROJECT_ID,
     )
     blocked_uuid = db.upsert_entity(
-        "feature", "dep7-blocked-u", "Blocked", project_id=TEST_PROJECT_ID,
-        metadata={"depends_on_features": ["feature:dep7-blocker-u"]},
+        "feature", "001-dep7-blocked-u", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:001-dep7-blocker-u"]},
     )
 
     row = db._conn.execute(
@@ -595,8 +595,8 @@ def test_register_entity_depends_on_features_self_edge_filtered(db, capsys):
     materialized either direction.
     """
     entity_uuid = db.register_entity(
-        "feature", "dep7-self", "Self Ref", project_id=TEST_PROJECT_ID,
-        metadata={"depends_on_features": ["feature:dep7-self"]},
+        "feature", "001-dep7-self", "Self Ref", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:001-dep7-self"]},
     )
 
     count = db._conn.execute(
@@ -617,7 +617,7 @@ def test_register_entity_depends_on_features_unresolvable_warns_not_blocked(
     NOT block registration (design D7 -- registration is never blocked).
     """
     entity_uuid = db.register_entity(
-        "feature", "dep7-unresolvable", "Has Bad Ref",
+        "feature", "001-dep7-unresolvable", "Has Bad Ref",
         project_id=TEST_PROJECT_ID,
         metadata={"depends_on_features": ["feature:does-not-exist"]},
     )
@@ -650,20 +650,20 @@ def test_upsert_entity_conflict_status_change_does_not_materialize_dependency(
     explicitly.
     """
     db.register_entity(
-        "feature", "dep7-conflict-blocker", "Blocker",
+        "feature", "001-dep7-conflict-blocker", "Blocker",
         project_id=TEST_PROJECT_ID,
     )
     entity_uuid = db.upsert_entity(
-        "feature", "dep7-conflict-target", "Target",
+        "feature", "001-dep7-conflict-target", "Target",
         project_id=TEST_PROJECT_ID, status="planned",
     )
 
     # Conflict + status-change branch, now carrying a RESOLVABLE
     # depends_on_features ref.
     second_uuid = db.upsert_entity(
-        "feature", "dep7-conflict-target", "Target",
+        "feature", "001-dep7-conflict-target", "Target",
         project_id=TEST_PROJECT_ID, status="active",
-        metadata={"depends_on_features": ["feature:dep7-conflict-blocker"]},
+        metadata={"depends_on_features": ["feature:001-dep7-conflict-blocker"]},
     )
     assert second_uuid == entity_uuid
 
@@ -691,17 +691,17 @@ def test_upsert_entity_conflict_no_change_does_not_materialize_dependency(db):
     edge.
     """
     db.register_entity(
-        "feature", "dep7-noop-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+        "feature", "001-dep7-noop-blocker", "Blocker", project_id=TEST_PROJECT_ID,
     )
     entity_uuid = db.upsert_entity(
-        "feature", "dep7-noop-target", "Target",
+        "feature", "001-dep7-noop-target", "Target",
         project_id=TEST_PROJECT_ID, status="planned",
     )
 
     second_uuid = db.upsert_entity(
-        "feature", "dep7-noop-target", "Target",
+        "feature", "001-dep7-noop-target", "Target",
         project_id=TEST_PROJECT_ID, status="planned",  # SAME status
-        metadata={"depends_on_features": ["feature:dep7-noop-blocker"]},
+        metadata={"depends_on_features": ["feature:001-dep7-noop-blocker"]},
     )
     assert second_uuid == entity_uuid
 

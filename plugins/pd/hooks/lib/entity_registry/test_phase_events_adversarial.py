@@ -55,7 +55,7 @@ class TestBackfillEdgeCases:
     def test_empty_phase_timing_dict(self, db):
         """Entity with phase_timing={} should produce 0 backfill rows, no crash."""
         db.register_entity(
-            "feature", "empty-timing", "Empty Timing",
+            "feature", "001-empty-timing", "Empty Timing",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {}},
         )
@@ -63,7 +63,7 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         count = db._conn.execute(
-            "SELECT COUNT(*) as cnt FROM phase_events WHERE type_id='feature:empty-timing'"
+            "SELECT COUNT(*) as cnt FROM phase_events WHERE type_id='feature:001-empty-timing'"
         ).fetchone()["cnt"]
         assert count == 0, "Empty phase_timing should produce 0 events"
 
@@ -71,7 +71,7 @@ class TestBackfillEdgeCases:
         """Mid-phase entity: started exists but completed missing.
         Should produce only a 'started' event, not crash."""
         db.register_entity(
-            "feature", "mid-phase", "Mid Phase",
+            "feature", "001-mid-phase", "Mid Phase",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {"design": {"started": "2026-03-01T00:00:00Z"}}},
         )
@@ -79,7 +79,7 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:mid-phase'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-mid-phase'"
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["event_type"] == "started"
@@ -88,7 +88,7 @@ class TestBackfillEdgeCases:
         """backward_history entry missing source_phase, target_phase, reason.
         Migration should handle gracefully (defaults or skip)."""
         db.register_entity(
-            "feature", "bad-bh", "Bad Backward History",
+            "feature", "001-bad-bh", "Bad Backward History",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},
@@ -104,7 +104,7 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:bad-bh'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-bad-bh'"
         ).fetchall()
         # Both entries should be backfilled (with defaults), verify they exist
         assert len(rows) == 2, f"Expected 2 backward events (with defaults), got {len(rows)}"
@@ -117,7 +117,7 @@ class TestBackfillEdgeCases:
         The migration iterates over it; iterating a string yields characters.
         BUG CANDIDATE: 'for skipped in "design"' yields 'd', 'e', 's', 'i', 'g', 'n'."""
         db.register_entity(
-            "feature", "str-skip", "String Skip",
+            "feature", "001-str-skip", "String Skip",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},
@@ -128,7 +128,7 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:str-skip' AND event_type='skipped'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-str-skip' AND event_type='skipped'"
         ).fetchall()
         # If string iteration happens, we'd get 6 char-events instead of 1 phase-event
         if len(rows) > 1:
@@ -154,7 +154,7 @@ class TestBackfillEdgeCases:
         assert len(json.dumps(meta)) > 50000, "Metadata should be >50KB"
 
         db.register_entity(
-            "feature", "big-meta", "Big Metadata",
+            "feature", "001-big-meta", "Big Metadata",
             project_id=TEST_PROJECT_ID,
             metadata=meta,
         )
@@ -162,14 +162,14 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:big-meta'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-big-meta'"
         ).fetchall()
         assert len(rows) == 2  # started + completed
 
     def test_extra_unknown_fields_in_metadata(self, db):
         """Metadata with unknown fields alongside phase_timing. Should not crash."""
         db.register_entity(
-            "feature", "extra-fields", "Extra Fields",
+            "feature", "001-extra-fields", "Extra Fields",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}},
@@ -181,7 +181,7 @@ class TestBackfillEdgeCases:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:extra-fields'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-extra-fields'"
         ).fetchall()
         assert len(rows) == 1
 
@@ -189,7 +189,7 @@ class TestBackfillEdgeCases:
         """phase_timing where a phase value is a string instead of dict.
         BUG CANDIDATE: timing.get("started") on a string will crash."""
         db.register_entity(
-            "feature", "bad-timing-val", "Bad Timing Value",
+            "feature", "001-bad-timing-val", "Bad Timing Value",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {
@@ -267,7 +267,7 @@ class TestMigrationSafety:
         """Verify backfill timestamps use consistent format.
         Spec says ISO-8601 UTC. Check for Z suffix vs +00:00 mixing."""
         db.register_entity(
-            "feature", "ts-check", "Timestamp Check",
+            "feature", "001-ts-check", "Timestamp Check",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {"brainstorm": {
                 "started": "2026-01-01T00:00:00+00:00",  # +00:00 format
@@ -278,7 +278,7 @@ class TestMigrationSafety:
         _migration_10_phase_events(db._conn)
 
         rows = db._conn.execute(
-            "SELECT timestamp FROM phase_events WHERE type_id='feature:ts-check' ORDER BY timestamp"
+            "SELECT timestamp FROM phase_events WHERE type_id='feature:001-ts-check' ORDER BY timestamp"
         ).fetchall()
         timestamps = [r["timestamp"] for r in rows]
         # The migration preserves original timestamps, which may mix formats
@@ -519,7 +519,7 @@ class TestCombinationAttacks:
         """Entity with all edge cases combined: empty phase_timing,
         string skipped_phases, empty backward_history entry."""
         db.register_entity(
-            "feature", "combo", "Combo Edge Case",
+            "feature", "001-combo", "Combo Edge Case",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},
@@ -535,7 +535,7 @@ class TestCombinationAttacks:
             pytest.fail(f"BUG: Migration crashes on combined edge cases: {e}")
 
         rows = db._conn.execute(
-            "SELECT * FROM phase_events WHERE type_id='feature:combo'"
+            "SELECT * FROM phase_events WHERE type_id='feature:001-combo'"
         ).fetchall()
         # Report what we got
         event_types = [(r["phase"], r["event_type"]) for r in rows]

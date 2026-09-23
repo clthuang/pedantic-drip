@@ -505,11 +505,11 @@ class TestCascadeCrossWorkspace:
         ws_dependent = bootstrap_test_workspace(db, "evt-fields-dependent-ws")
 
         blocker = db.register_entity(
-            "feature", "evtf-blocker", "Blocker", status="completed",
+            "feature", "001-evtf-blocker", "Blocker", status="completed",
             workspace_uuid=ws_blocker,
         )
         dependent = db.register_entity(
-            "feature", "evtf-dependent", "Dependent", status="blocked",
+            "feature", "001-evtf-dependent", "Dependent", status="blocked",
             workspace_uuid=ws_dependent,
         )
         mgr.add_dependency(db, dependent, blocker)
@@ -565,7 +565,7 @@ class TestPerformance:
         nodes = []
         for i in range(1000):
             nodes.append(
-                db.register_entity("feature", f"perf-{i:04d}", f"Perf {i}", project_id="__unknown__")
+                db.register_entity("feature", f"001-perf-{i:04d}", f"Perf {i}", project_id="__unknown__")
             )
         start = time.time()
         for i in range(999):

@@ -44,10 +44,10 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm with a child feature
-        bs_uuid = db.register_entity("brainstorm", "test-bs", "Test Brainstorm", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", "20260101-000038-test-bs", "Test Brainstorm", project_id="__unknown__")
         feat_uuid = db.register_entity(
             "feature", "001-child", "Child Feature",
-            parent_type_id="brainstorm:test-bs",
+            parent_type_id="brainstorm:20260101-000038-test-bs",
             project_id="__unknown__",
         )
 
@@ -88,12 +88,12 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm
-        bs_uuid = db.register_entity("brainstorm", "legacy-bs", "Legacy BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", "20260101-000025-legacy-bs", "Legacy BS", project_id="__unknown__")
 
         # Register child feature
         feat_uuid = db.register_entity(
             "feature", "002-legacy", "Legacy Child",
-            parent_type_id="brainstorm:legacy-bs",
+            parent_type_id="brainstorm:20260101-000025-legacy-bs",
             project_id="__unknown__",
         )
 
@@ -107,7 +107,7 @@ class TestParentUuidPreference:
         # Verify parent_uuid is NULL but parent_type_id is set
         child = db.get_entity("feature:002-legacy")
         assert child["parent_uuid"] is None
-        assert child["parent_type_id"] == "brainstorm:legacy-bs"
+        assert child["parent_type_id"] == "brainstorm:20260101-000025-legacy-bs"
 
         # Mark child as completed
         db.update_entity("feature:002-legacy", status="completed")
@@ -132,13 +132,13 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm parent
-        bs_uuid = db.register_entity("brainstorm", "parent-bs", "Parent BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", "20260101-000033-parent-bs", "Parent BS", project_id="__unknown__")
 
         # Register two child features with parent_uuid
         for i in range(1, 3):
             db.register_entity(
                 "feature", f"00{i}-c", f"Child {i}",
-                parent_type_id="brainstorm:parent-bs",
+                parent_type_id="brainstorm:20260101-000033-parent-bs",
                 project_id="__unknown__",
             )
             db.update_entity(f"feature:00{i}-c", status="completed")
@@ -158,7 +158,7 @@ class TestParentUuidPreference:
         assert result["errors"] == []
 
         # Check brainstorm got completed kanban due to all children complete
-        wp = db.get_workflow_phase("brainstorm:parent-bs")
+        wp = db.get_workflow_phase("brainstorm:20260101-000033-parent-bs")
         assert wp is not None
         assert wp["kanban_column"] == "completed"
 
@@ -166,12 +166,12 @@ class TestParentUuidPreference:
         """Some children have parent_uuid, some only parent_type_id."""
         db, artifacts_root = db_and_root
 
-        bs_uuid = db.register_entity("brainstorm", "mix-bs", "Mixed BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", "20260101-000028-mix-bs", "Mixed BS", project_id="__unknown__")
 
         # Child 1: has parent_uuid (normal)
         feat1_uuid = db.register_entity(
             "feature", "001-mix", "Mix Child 1",
-            parent_type_id="brainstorm:mix-bs",
+            parent_type_id="brainstorm:20260101-000028-mix-bs",
             project_id="__unknown__",
         )
         db.update_entity("feature:001-mix", status="completed")
@@ -179,7 +179,7 @@ class TestParentUuidPreference:
         # Child 2: parent_uuid cleared (legacy)
         feat2_uuid = db.register_entity(
             "feature", "002-mix", "Mix Child 2",
-            parent_type_id="brainstorm:mix-bs",
+            parent_type_id="brainstorm:20260101-000028-mix-bs",
             project_id="__unknown__",
         )
         db._conn.execute(
@@ -201,6 +201,6 @@ class TestParentUuidPreference:
         assert result["errors"] == []
 
         # Both children should be found (via uuid or type_id fallback)
-        wp = db.get_workflow_phase("brainstorm:mix-bs")
+        wp = db.get_workflow_phase("brainstorm:20260101-000028-mix-bs")
         assert wp is not None
         assert wp["kanban_column"] == "completed"

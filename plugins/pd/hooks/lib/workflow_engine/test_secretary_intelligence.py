@@ -520,14 +520,14 @@ class TestCheckKrCount:
     def test_five_krs_no_warning(self, db):
         """5 KRs is within limit → no warning."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="o1",
+            entity_type="objective", entity_id="001-o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(5):
             db.register_entity(
-                entity_type="key_result", entity_id=f"kr{i}",
+                entity_type="key_result", entity_id=f"001-kr{i}",
                 project_id="__unknown__",
-                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+                name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
         result = check_kr_count(db, obj_uuid)
         assert result is None
@@ -535,14 +535,14 @@ class TestCheckKrCount:
     def test_six_krs_triggers_warning(self, db):
         """AC-33: 6th KR on objective → warning."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="o1",
+            entity_type="objective", entity_id="001-o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(6):
             db.register_entity(
-                entity_type="key_result", entity_id=f"kr{i}",
+                entity_type="key_result", entity_id=f"001-kr{i}",
                 project_id="__unknown__",
-                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+                name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
         result = check_kr_count(db, obj_uuid)
         assert result is not None
@@ -550,21 +550,21 @@ class TestCheckKrCount:
 
     def test_seven_krs_triggers_warning(self, db):
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="o1",
+            entity_type="objective", entity_id="001-o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(7):
             db.register_entity(
-                entity_type="key_result", entity_id=f"kr{i}",
+                entity_type="key_result", entity_id=f"001-kr{i}",
                 project_id="__unknown__",
-                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+                name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
         result = check_kr_count(db, obj_uuid)
         assert result is not None
 
     def test_zero_krs_no_warning(self, db):
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="o1",
+            entity_type="objective", entity_id="001-o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
 
@@ -578,18 +578,18 @@ class TestCheckKrCount:
     def test_abandoned_krs_excluded_from_count(self, db):
         """Abandoned KRs should not count toward the limit."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="o1",
+            entity_type="objective", entity_id="001-o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(5):
             db.register_entity(
-                entity_type="key_result", entity_id=f"kr{i}",
+                entity_type="key_result", entity_id=f"001-kr{i}",
                 project_id="__unknown__",
-                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+                name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
         # 6th KR is abandoned — should not count
         db.register_entity(
-            entity_type="key_result", entity_id="kr-abandoned",
-            name="KR Abandoned", parent_type_id="objective:o1",
+            entity_type="key_result", entity_id="001-kr-abandoned",
+            name="KR Abandoned", parent_type_id="objective:001-o1",
             project_id="__unknown__",
             status="abandoned")
 
