@@ -29,11 +29,11 @@ Every number below was read from the live registry or the tree today. Re-derive 
 | Hook integration tests | 66/66 passed, 1 skipped |
 | `register_entity`/`upsert_entity`/`register_entities_batch`/`_register_entity_no_display` call sites | **13 external production · 3 internal · 1,153 test** across 49 files (a 3-name census undercounts by 25) |
 | Tests that fail once identity is mandatory (`STRICT_ID_FORMAT=1`) | **751** (707 failed + 44 errors) across 26 files — **693** `EntityIdFormatError`, 14 assertion-shaped (13 downstream of it, **1 a second class**) |
-| Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 not yet applied live |
+| Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 is already in the live plugin and applies at the next pd MCP start; rehearsed on a copy 2026-09-23 (see the gate, step 4) |
 | Brainstorms | 100 · **97 carry display rows** (all non-legacy) · 3 without, all `is_legacy=1` |
-| Workspaces with no `project_id_legacy` | **10 of 24** — 7 are deleted directories (4 stranded entities, a dead counter at 88); **3 are live worktrees of project_illium**, which `project_id` resolves to the **parent's** workspace (measured 2026-09-23) |
+| Workspaces with no `project_id_legacy` | **10 of 24** — 7 are deleted directories (4 stranded entities, a dead counter at 88); **3 are live worktrees of project_illium**, which `project_id` resolves to the **parent's** workspace (measured 2026-09-23). **C17a (`833095a9`) retired the 3 worktree rows: 21 workspaces remain** |
 | Feature directories the registry has never seen | **152** — project_illium 78, fractorg 57, terry_agent 16, pedantic-drip 1 (read-only scan, 2026-09-23) |
-| Feature counters behind their disk | project_illium 57 vs dirs to 114, terry_agent 36 vs 50 — **raised to 115 and 51 on 2026-09-23** (snapshot `entities.db.pre-counterfix-20260923`); the 3 illium worktrees' own buckets clear with C17a |
+| Feature counters behind their disk | project_illium 57 vs dirs to 114, terry_agent 36 vs 50 — **raised to 115 and 51 on 2026-09-23** (snapshot `entities.db.pre-counterfix-20260923`); the 3 illium worktrees' own buckets went with their rows (C17a) |
 
 **Shipped since the parent plan was written:** Release A (`96b2f88a`), C20a (`12f1b571`), B1 (`b7bf5040`), B3 (`b7bf5040`), B4 (`6f971b28`), B5 (`6faf7222`), B6's marker half (`6f971b28`), three orthogonal flags — `is_legacy` (`d42689b1`), `is_archived` (`bb0fb55e`), `is_deleted` (`76c4a4cc`).
 
@@ -347,7 +347,7 @@ So there is a **second class**, small but real: tests whose expectations encode 
 **The real reason to defer is design risk, not edit count:**
 
 - **7 of 13 external production sites pass `project_id` with no `workspace_uuid`** — `backfill.py:443/:570/:617/:735/:837`, `entity_server.py:474`, `scripts/parse_backlog_md.py:262`. Each needs genuine re-homing design.
-- **`project_id` resolves to the wrong workspace in git worktrees.** Rev 2 said it "cannot address 10 of 24 workspaces"; corrected 2026-09-23. Of the 10 with no `project_id_legacy`, 7 are deleted directories. The other 3 are live worktrees of project_illium, and `_compute_legacy_project_id` gives every one of them the repository's root-commit id, so each `project_id`-only write resolves to **project_illium's** workspace. Startup backfill (`entity_server.py:276`) would register a worktree's artifacts there, and MCP `register_entity` with `auto_id` (`entity_server.py:597-624`) takes the number from project_illium's counter but registers the row in the worktree's own workspace. Nothing is damaged yet — the three worktree workspaces are empty. Decision 6 settles which workspace is right; **C17a** implements it.
+- **`project_id` resolves to the wrong workspace in git worktrees.** Rev 2 said it "cannot address 10 of 24 workspaces"; corrected 2026-09-23. Of the 10 with no `project_id_legacy`, 7 are deleted directories. The other 3 are live worktrees of project_illium, and `_compute_legacy_project_id` gives every one of them the repository's root-commit id, so each `project_id`-only write resolves to **project_illium's** workspace. Startup backfill (`entity_server.py:276`) would register a worktree's artifacts there, and MCP `register_entity` with `auto_id` (`entity_server.py:597-624`) takes the number from project_illium's counter but registers the row in the worktree's own workspace. Nothing is damaged yet — the three worktree workspaces are empty. Decision 6 settles which workspace is right; **C17a** implemented it (`833095a9`).
 - **`project_id` is not only a workspace alias.** At `database.py:7635-7645` the explicit kwarg is *also* the `entity_created` phase-event label, falling back to `workspaces.project_id_legacy` only when absent. Dropping it changes event metadata on an append-only table. C5b's Verify must assert those labels are byte-unchanged at all 13 sites.
 
 Design risk of that shape is exactly what does not belong in the irreversible wave. Edit count was never the argument.
@@ -469,9 +469,15 @@ Rev 1 wrote `rg -c … # expect 0`. `rg -c` prints per-file counts and prints **
 
 After C6 there is no flag to set, so a green suite with the flag absent is green on the production path by construction. Today that path is reached by **all 13 tests in `mcp/test_issue_spawn.py`** — `:63` sits inside a module-scope `@pytest.fixture(autouse=True)` declared at `:54`, so it applies to the whole file. There is exactly one opt-in *site* repo-wide, which is not the same as one test; rev 1 conflated them. No test passes `_strict_id_format=True`; all 7 explicit sites pass `False`, and 25 more take `False` via the helper.
 
-### ⛔ STOP-THE-WORLD GATE — it guards the merge, not the first commit
+### ⛔ STOP-THE-WORLD GATE — it guards the moment new code can reach the live plugin
 
-Wave 2 is built on a feature branch against temp databases; branch commits touch no live state. The hazard is a process on the **old build** writing display-less rows once the new build is in place.
+The hazard is a process on the **old build** writing display-less rows once the new build is in place.
+
+**Corrected 2026-09-23 — where the code lives decides what is live, not which branch it is on.** Rev 2 said "branch commits touch no live state". False for anything checked out in the main working tree: `plugins/pd/hooks/sync-cache.sh` runs on every SessionStart (startup, resume, `/clear`) and rsyncs the working tree's `plugins/pd/` into the installed plugin (`~/.claude/plugins/cache/pedantic-drip-marketplace/pd/6.0.0`), which every workspace's hooks and MCP servers load. The live build is the main working tree as of its last session start. Verified 2026-09-23: the cache matched the working tree byte for byte, down to a test file renamed but not yet committed.
+
+- **Steps 0–2 change tests only** (walker, test-id codemod, strict default in the two conftests). Nothing in production runs tests, so they are built in the main working tree on develop.
+- **Steps 3–5 change production code.** Build them in `.pd-worktrees/wave2`, a linked worktree nested inside the main checkout. `detect_project_root` only matches a `.git` *directory*, so a session started there, or a `/clear` in this one, resolves to the main checkout and keeps syncing develop. A sibling directory is **not** safe: there the walk finds no `.git` directory and falls back to the worktree itself, which then syncs its own unmerged code.
+- The gate runs **before merging steps 3–5 into the main working tree**. The world stays stopped until the first SessionStart in pedantic-drip after the merge has synced the new build and a pd MCP server has started on it.
 
 **1. Cue the operator.** Person-in-the-loop by design (decision 4).
 
@@ -482,17 +488,17 @@ ps -axww | grep -i "entity_server\|workflow_state_server" | grep -v grep   # exp
 lsof ~/.claude/pd/entities/entities.db                                      # expect no output
 ```
 
-`lsof` alone is insufficient — servers connect on demand. **Verified 2026-09-22 21:31: 0 processes, 0 file holders.** The executing session cannot stop itself; stated exception.
+`lsof` alone is insufficient — servers connect on demand. **Verified 2026-09-22 21:31, and again 2026-09-23 before each live write: 0 processes, 0 file holders.** The executing session cannot stop itself; stated exception.
 
 **3. Snapshot after the world is stopped.** `.backup`, never `cp`; verify it **read-only** (`file:…?mode=ro`). Opening a snapshot read-write is what left `-shm`/`-wal` siblings beside six existing ones.
 
-**4. Restart normally.** Live file is `schema_version 6`, build is `V2_SCHEMA_VERSION = 7`; the first process to open applies migration 7 (B8's trigger), which has not yet run live.
+**4. Restart normally.** Migration 7 (B8's `is_legacy` trigger) does not wait for Wave 2. It reached the live plugin with B8, and the live file is still at `schema_version 6` only because no pd MCP server has started since; the next one to start, in any workspace, applies it. **Rehearsed 2026-09-23** by opening a `.backup` copy of the live registry with `EntityDatabase`, the same open an MCP start performs: schema 6 → 7; entities 579, `is_legacy` 180 and display rows 399 all unchanged; trigger installed and refusing an `is_legacy` UPDATE; integrity ok; 0 foreign-key violations.
 
 ### Build order — never red
 
 Rev 1 ordered the work C5 → C7 → codemod → C6 and accepted ~751 red tests across three steps. **That red window was never necessary.** The strict gate at `database.py:7575` only *rejects* non-conformant ids — conformant ones already pass today — and no display row is written either way while `strict` is false (`:7708`). So the id migration is independently shippable **green, right now**, before any signature change. Rev 1's "red is expected and is the point of using a branch" was an assertion, not a justification.
 
-Each step below diffs against a green predecessor, so every failure is attributable to the step that caused it.
+Each step below diffs against a green predecessor, so every failure is attributable to the step that caused it. Steps 0–2 run in the main working tree; steps 3–5 in `.pd-worktrees/wave2` (see the gate).
 
 | # | Step | Gate |
 |---|---|---|
@@ -534,7 +540,7 @@ Re-derive with the step-0 walker rather than reading these literals. Rev 1 wrote
 
 ### Rollback — Wave 2 adds no migration
 
-`V2_MIGRATIONS` ends at **7**, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger, already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**. Code rollback is `git revert`.
+`V2_MIGRATIONS` ends at **7**, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger, already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**. Code rollback is `git revert` in the main working tree, then a session start in pedantic-drip, which syncs the reverted build into the live plugin.
 
 The residual risk is data written by an **old build during the mixed-version window** — what the stop-the-world gate closes. Those rows are identifiable by the existing detector: non-legacy, non-exempt entities with no display row. Remediate only rows created after the cutover timestamp.
 
@@ -545,7 +551,7 @@ The residual risk is data written by an **old build during the mixed-version win
 Both pre-existing, neither caused by Wave 2, neither blocking it:
 
 - ~~**`promote_entity` is type-locked.**~~ **Resolved 2026-09-23 — deleted in `2d654e1a` (decision 5).** The framing here was wrong: its spec allowed only kind changes the `type`/`kind` CHECK permits, and its designed use, backlog → feature, worked. The defect was that it had never been called.
-- **`_compute_legacy_project_id`'s docstring is false** (`project_identity.py:811`). It says migration-only, but it is `project_id`'s live source in both MCP servers (`entity_server.py:235`, `workflow_state_server.py:237`) and in `reconciliation_orchestrator/__main__.py:104` and `task_promotion.py:354`. What it hid is D1's worktree misrouting. **Moved into C17a (decision 6)**, which fixes both.
+- **`_compute_legacy_project_id`'s docstring is false** (`project_identity.py:811`). It says migration-only, but it is `project_id`'s live source in both MCP servers (`entity_server.py:235`, `workflow_state_server.py:237`) and in `reconciliation_orchestrator/__main__.py:104` and `task_promotion.py:354`. What it hid is D1's worktree misrouting. **Fixed with it in C17a (`833095a9`).**
 
 ## Wave 3 — census, allocator, guard
 
@@ -559,7 +565,7 @@ Both pre-existing, neither caused by Wave 2, neither blocking it:
 
 Parallel once Wave 2 lands: **C8–C12**, **C13**, **C14**, **C15–C16**, **C17**, **C18**, **C19/C20b**.
 
-**C17a — a git worktree resolves to its repository's workspace** (decision 6). Independent of Wave 2 — no schema change and no `register_entity` signature change — so it can land before it, and should land before any pd session runs in a project_illium worktree.
+**C17a — a git worktree resolves to its repository's workspace** (decision 6). **SHIPPED 2026-09-23 (`833095a9`).** `_repository_root()` maps a linked worktree to its main checkout before any path-keyed resolution, in both `resolve_workspace_uuid` and `resolve_startup_workspace_uuid`. A dry run over all 23 live workspace roots moved exactly the three worktrees, all to project_illium's workspace. Their rows were then retired (snapshot `entities.db.pre-c17a-20260923`; each row printed in full, so it can be re-inserted verbatim). The worktrees' own `.claude/pd/workspace.json` files are left in place: nothing reads them after C17a, and `illium-golive` is protected. Independent of Wave 2 — no schema change and no `register_entity` signature change.
 
 - **Contract.** `resolve_workspace_uuid` maps a worktree to the workspace of its `git rev-parse --git-common-dir`, not its root commit, which separate clones share. A working tree whose git directory lives in a bare repository (terry_agent: `/Users/terry_agent` → `~/projects/terry_agent-control/terry_agent.git`) is that repository's only workspace.
 - **Scope.** Retire the three empty worktree **workspace rows** — `illium-golive`, `illium-live-debug`, `illium-architecture-re-build`, 0 entities each. Registry rows only; the directories stay, and `illium-golive` is protected. Correct `_compute_legacy_project_id`'s docstring (`project_identity.py:811`).
@@ -618,8 +624,8 @@ Part 2   C23 ──────────────────────�
                    ├─ C17 ─────────────────────┤
                    └─ C19 ── C20b ─────────────┘
 
-         C17a (worktree → repository's workspace) ── C5b (project_id / parent_type_id removal), C17
-         (C17a has no Wave 2 dependency; C5b ships after Wave 2)
+         C17a ✓ (worktree → repository's workspace, 833095a9) ── C5b (project_id / parent_type_id removal), C17
+         (C5b ships after Wave 2)
 ```
 
 **C5b is new (Wave 2 re-plan, D1).** It is deliberately *not* a Wave 2 predecessor: it removes the two deprecated aliases, involves no schema change, and is revertible, so it ships after the cutover rather than inside it. **C17a is new (decision 6)** and precedes both C5b and C17; it does not depend on Wave 2.
