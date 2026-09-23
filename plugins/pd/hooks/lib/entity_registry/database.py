@@ -3947,42 +3947,6 @@ def _migration_12_polymorphic_taxonomy_and_events_down(
 
 
 # ---------------------------------------------------------------------------
-# Feature 110 (Group 2 Task 2.0): entity_id format validation.
-# ---------------------------------------------------------------------------
-# Migration 13 introduces ``entity_display(uuid, seq, slug)`` populated by
-# parsing ``entities.entity_id`` as ``{seq}-{slug}`` (numeric prefix + dash +
-# slug suffix). Post-migration, ``register_entity`` must enforce this format
-# on insert so the 1:1 invariant between entities and entity_display is
-# preserved for new rows. Existing test fixtures with non-conformant
-# entity_ids may use the ``_register_entity_no_display`` escape hatch (see
-# EntityDatabase) which bypasses both the regex check and the entity_display
-# INSERT — appropriate ONLY for tests that need to exercise the pre-migration
-# fixture shape directly.
-_ENTITY_ID_FORMAT_RE = re.compile(r"^\d+-.+")
-
-
-class EntityIdFormatError(ValueError):
-    """Raised when ``entity_id`` does not match the ``{seq}-{slug}`` format
-    (feature 110 FR-8 / Group 2 Task 2.0).
-
-    Production callers must supply ``entity_id`` matching ``^\\d+-.+`` so
-    Migration 13's backfill SQL (CAST + substr on the dash position) yields
-    a well-formed ``(seq, slug)`` tuple. Tests that need non-conformant
-    fixture ids use ``EntityDatabase._register_entity_no_display`` which
-    skips both the regex check and the entity_display INSERT.
-    """
-
-    def __init__(self, entity_id: str):
-        super().__init__(
-            f"Invalid entity_id format: {entity_id!r}. "
-            f"Must match '^\\d+-.+' (numeric prefix + dash + slug suffix). "
-            f"Test fixtures using non-standard ids should use "
-            f"_register_entity_no_display."
-        )
-        self.entity_id = entity_id
-
-
-# ---------------------------------------------------------------------------
 # Feature 110 (Groups 1+2+3): Migration 13 — entity_display + migration_audit_log.
 # ---------------------------------------------------------------------------
 def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
@@ -6391,11 +6355,10 @@ def _v2_migration_7_immutable_is_legacy(conn: sqlite3.Connection) -> None:
     It matters because of what B8's invariant says: every entity has an
     ``entity_display`` row UNLESS ``is_legacy = 1`` or its kind has no
     sequence (Wave 2 D3). A writable flag turns that into an invariant with
-    an escape hatch. Until Wave 2 steps 4-5, ``init_project_state`` still
-    passes the ``entity_id`` text form with ``_strict_id_format=False``, and
-    that form writes the display row only ``if strict:``, so
-    display-less rows keep appearing — and the cheapest way to green a red
-    check would be to mark the new rows legacy. C3 would then PERMIT exactly
+    an escape hatch. Before Wave 2, ``init_project_state`` registered
+    projects with no display row, so display-less rows kept appearing —
+    and the cheapest way to green a red check would have been to mark the
+    new rows legacy. C3 would then PERMIT exactly
     the bucket it exists to refuse, and ``clean_break`` already says that row
     shape "is a bug, not history". Since #081 removed hard delete, there is
     no other remediation, which is what makes the hatch attractive.
@@ -7460,23 +7423,22 @@ class EntityDatabase:
     @staticmethod
     def _structured_identity(
         entity_type: str,
-        entity_id: str | None,
         seq: int | None,
         slug: str | None,
         display_id: str | None,
-    ) -> tuple[str, tuple[int, str] | None] | None:
-        """``(entity_id, display row)`` for a structured call, None for the text form.
+    ) -> tuple[str, tuple[int, str] | None]:
+        """``(entity_id, display row)`` for a registration's identity.
 
         A call names its identity exactly one way: ``(seq, slug)`` for sequence
         kinds, whose id is rendered and whose display row is always written;
-        ``display_id`` for ``NON_SEQUENCE_KINDS``, stored verbatim with no display
-        row; or, until Wave 2 step 5 deletes it, the ``entity_id`` text form.
+        or ``display_id`` for ``NON_SEQUENCE_KINDS``, stored verbatim with no
+        display row. There is no text form to parse.
         """
-        forms = (entity_id is not None) + (display_id is not None) + (seq is not None or slug is not None)
+        forms = (display_id is not None) + (seq is not None or slug is not None)
         if forms != 1:
             raise ValueError(
-                "register an entity with exactly one of (seq, slug), display_id "
-                f"or entity_id; got {forms}"
+                "register an entity with exactly one of (seq, slug) or display_id; "
+                f"got {forms}"
             )
         if display_id is not None:
             if entity_type not in NON_SEQUENCE_KINDS:
@@ -7492,7 +7454,6 @@ class EntityDatabase:
                 raise ValueError("seq and slug are passed together")
             # Refuses non-sequence kinds, seq < 1 and an empty slug.
             return render_display_id(entity_type, seq, slug), (seq, slug)
-        return None
 
     def _insert_display_row(self, entity_uuid: str, seq: int, slug: str) -> None:
         try:
@@ -7509,7 +7470,6 @@ class EntityDatabase:
     def register_entity(
         self,
         entity_type: str,
-        entity_id: str | None = None,
         name: str | None = None,
         *,
         seq: int | None = None,
@@ -7522,7 +7482,6 @@ class EntityDatabase:
         parent_uuid: str | None = None,
         parent_type_id: str | None = None,
         metadata: dict | None = None,
-        _strict_id_format: bool | None = None,
     ) -> str:
         """Register a new entity. Raises :class:`EntityExistsError` on
         ``(workspace_uuid, type_id)`` conflict.
@@ -7531,20 +7490,16 @@ class EntityDatabase:
         ``INSERT OR IGNORE`` no-op is removed. Callers that need idempotent
         semantics use :meth:`upsert_entity` instead.
 
-        Identity comes one of three ways (Wave 2 C5): ``seq`` and ``slug`` for
-        sequence kinds — ``entity_id`` is rendered by ``render_display_id`` and
-        the ``entity_display`` row is always written; ``display_id`` for
-        ``NON_SEQUENCE_KINDS``, stored verbatim with no display row; or the
-        ``entity_id`` text form, which must match ``^\\d+-.+`` under the strict
-        switch and is parsed into the display row. Step 5 deletes the text form.
+        Identity comes one of two ways (Wave 2): ``seq`` and ``slug`` for
+        sequence kinds — the id is rendered by ``render_display_id`` and the
+        ``entity_display`` row is always written — or ``display_id`` for
+        ``NON_SEQUENCE_KINDS``, stored verbatim with no display row.
 
         Parameters
         ----------
         entity_type:
             One of the VALID_ENTITY_TYPES (backlog, brainstorm, project,
             feature, initiative, objective, key_result, task).
-        entity_id:
-            The text form of the identity; being removed (Wave 2 step 5).
         name:
             Human-readable name. Required.
         seq, slug:
@@ -7609,38 +7564,7 @@ class EntityDatabase:
 
         self._validate_entity_type(entity_type)
 
-        structured = self._structured_identity(entity_type, entity_id, seq, slug, display_id)
-        display_row = None
-        if structured is not None:
-            entity_id, display_row = structured
-
-        # Feature 110 Group 2 (Task 2.0): fail-fast entity_id format check.
-        #
-        # Resolution order for _strict_id_format:
-        #   1. Explicit kwarg (None means "use default resolution").
-        #   2. Env var PD_REGISTER_ENTITY_STRICT_ID_FORMAT
-        #      ('1' = strict, '0' = permissive).
-        #   3. Default: True (strict — matches spec FR-8 / Task 2.0 DoD).
-        #
-        # The env var is a transition-window escape hatch. Since Wave 2
-        # step 2 the test suites run strict too; the one remaining setter is
-        # hooks/lib/conftest.py's _strict_id_format_off_until_c7, for backfill
-        # tests whose fixture files hold legacy ids, until C7 (step 4). C6
-        # deletes the variable. Production callers do NOT set it → they get
-        # strict mode by default.
-        if structured is not None:
-            strict = False  # identity arrived as data: nothing to check or parse
-        elif _strict_id_format is None:
-            env_flag = os.environ.get("PD_REGISTER_ENTITY_STRICT_ID_FORMAT")
-            if env_flag is None:
-                strict = True
-            else:
-                strict = env_flag != "0"
-        else:
-            strict = _strict_id_format
-
-        if strict and not _ENTITY_ID_FORMAT_RE.match(entity_id):
-            raise EntityIdFormatError(entity_id)
+        entity_id, display_row = self._structured_identity(entity_type, seq, slug, display_id)
 
         type_id = f"{entity_type}:{entity_id}"
         now = self._now_iso()
@@ -7764,32 +7688,10 @@ class EntityDatabase:
                  metadata_text),
             )
 
-            # Feature 110 Group 2 (Task 2.0): entity_display 1:1 invariant.
-            # Insert seq + slug parsed from entity_id in the same transaction
-            # so AC-8.2 (entity_display row count == entities row count)
-            # holds for new rows. Pre-migration-13 databases lack the
-            # entity_display table — swallow that specific OperationalError
-            # so register_entity remains functional in the transition window.
-            # The strict regex match above guarantees a dash separator and a
-            # numeric prefix, so the parse is well-defined.
+            # entity_display 1:1 invariant (feature 110 AC-8.2): written in the
+            # same transaction as the entity row, for every sequence kind.
             if display_row is not None:
                 self._insert_display_row(entity_uuid, *display_row)
-            elif strict:
-                dash_idx = entity_id.index("-")
-                _seq = int(entity_id[:dash_idx])
-                _slug = entity_id[dash_idx + 1:]
-                try:
-                    self._conn.execute(
-                        "INSERT INTO entity_display (uuid, seq, slug) "
-                        "VALUES (?, ?, ?)",
-                        (entity_uuid, _seq, _slug),
-                    )
-                except sqlite3.OperationalError as exc:
-                    if "no such table" not in str(exc).lower():
-                        raise
-                    # Pre-migration-13: entity_display table does not exist
-                    # yet. The migration-13 backfill INSERT-SELECT covers
-                    # rows registered before the table existed. Silent skip.
 
             # entity_created phase_event emission (feature 109 FR-2 /
             # spec line 104). The append_phase_event helper INSERTs the
@@ -7856,46 +7758,9 @@ class EntityDatabase:
 
         return entity_uuid
 
-    def _register_entity_no_display(
-        self,
-        entity_type: str,
-        entity_id: str,
-        name: str,
-        *,
-        workspace_uuid: str | None = None,
-        project_id: str | None = None,
-        artifact_path: str | None = None,
-        status: str | None = None,
-        parent_uuid: str | None = None,
-        parent_type_id: str | None = None,
-        metadata: dict | None = None,
-    ) -> str:
-        """Test-only escape hatch (feature 110 Group 2 Task 2.0).
-
-        Bypasses the ``^\\d+-.+`` entity_id format check AND the
-        ``entity_display(uuid, seq, slug)`` INSERT. Used by legacy test
-        fixtures whose entity_ids predate the feature-110 format contract.
-
-        DO NOT use in production code paths. The corresponding entity row
-        will be missing from ``entity_display`` — any downstream query
-        joining on ``entity_display.uuid`` will not return this row.
-        """
-        return self.register_entity(
-            entity_type, entity_id, name,
-            workspace_uuid=workspace_uuid,
-            project_id=project_id,
-            artifact_path=artifact_path,
-            status=status,
-            parent_uuid=parent_uuid,
-            parent_type_id=parent_type_id,
-            metadata=metadata,
-            _strict_id_format=False,
-        )
-
     def upsert_entity(
         self,
         entity_type: str,
-        entity_id: str | None = None,
         name: str | None = None,
         *,
         seq: int | None = None,
@@ -7908,7 +7773,6 @@ class EntityDatabase:
         parent_uuid: str | None = None,
         parent_type_id: str | None = None,
         metadata: dict | None = None,
-        _strict_id_format: bool | None = None,
     ) -> str:
         """Idempotent insert-or-status-update. Signature byte-identical to
         :meth:`register_entity` (feature 109 FR-4 / AC-4.3).
@@ -7938,14 +7802,13 @@ class EntityDatabase:
         if not name or not name.strip():
             raise ValueError(self._BLANK_NAME_ERROR)
 
-        structured = self._structured_identity(entity_type, entity_id, seq, slug, display_id)
-        type_id = f"{entity_type}:{structured[0] if structured else entity_id}"
+        type_id = f"{entity_type}:{self._structured_identity(entity_type, seq, slug, display_id)[0]}"
         with self.transaction():
             try:
                 # Try the insert branch via register_entity. On success,
                 # it emits entity_created and returns the new uuid.
                 return self.register_entity(
-                    entity_type, entity_id, name,
+                    entity_type, name,
                     seq=seq, slug=slug, display_id=display_id,
                     workspace_uuid=workspace_uuid,
                     project_id=project_id,
@@ -7954,7 +7817,6 @@ class EntityDatabase:
                     parent_uuid=parent_uuid,
                     parent_type_id=parent_type_id,
                     metadata=metadata,
-                    _strict_id_format=_strict_id_format,
                 )
             except EntityExistsError:
                 # Conflict branch: workspace-scoped direct SELECT (PRD Goal 1
@@ -10463,10 +10325,8 @@ class EntityDatabase:
         # only happens in ``_migration_13_*`` functions and test files.
         #
         # Defense-in-depth (per implementer brief): rows whose entity_display
-        # row is missing (test fixtures inserted via raw SQL or
-        # ``_register_entity_no_display``) fall back to the raw entity_id
-        # value with a WARN log so the fixture continues to work during the
-        # transition window.
+        # row is missing (legacy rows, or test fixtures inserted via raw
+        # SQL) fall back to the raw entity_id value with a WARN log.
         # F11 (Group 6): the legacy ``entity_type`` column was dropped by
         # migration 12; filter on ``kind`` (same value for the 5 production
         # kinds per FR-1).
@@ -10520,8 +10380,8 @@ class EntityDatabase:
             elif seq is not None and slug is not None:
                 out.append(render_display_id(entity_type, seq, slug))
             else:
-                # Defense-in-depth: entity_display row missing (e.g., test
-                # fixture used _register_entity_no_display / raw SQL insert).
+                # Defense-in-depth: entity_display row missing (a legacy row,
+                # or a test fixture inserted by raw SQL).
                 sys.stderr.write(
                     f"[entity_registry] scan_entity_ids: no entity_display "
                     f"row for entity_id={row['entity_id']!r} "
@@ -10716,8 +10576,8 @@ class EntityDatabase:
         ----------
         entities:
             List of dicts, each with keys: entity_type, name, one identity
-            (seq + slug, display_id, or the entity_id text form until Wave 2
-            step 5), and optional: artifact_path, status, parent_uuid, metadata.
+            (seq + slug, or display_id), and optional: artifact_path, status,
+            parent_uuid, metadata.
             ``parent_uuid`` (post-Feature-108) replaces the legacy
             ``parent_type_id`` dict key.
         workspace_uuid:
@@ -10766,7 +10626,6 @@ class EntityDatabase:
             uuids: list[str] = []
             for ent in entities:
                 entity_type = ent["entity_type"]
-                entity_id = ent.get("entity_id")
                 name = ent["name"]
                 status = ent.get("status")
                 artifact_path = ent.get("artifact_path")
@@ -10775,7 +10634,7 @@ class EntityDatabase:
 
                 # F12 audit: idempotent bulk backfill → upsert_entity
                 row_uuid = self.upsert_entity(
-                    entity_type, entity_id, name,
+                    entity_type, name,
                     seq=ent.get("seq"), slug=ent.get("slug"), display_id=ent.get("display_id"),
                     workspace_uuid=ws_uuid,
                     status=status,

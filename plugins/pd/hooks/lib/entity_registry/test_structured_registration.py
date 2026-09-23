@@ -1,7 +1,6 @@
-"""Wave 2 C5: registration takes structured identity — (seq, slug) or display_id.
+"""Wave 2: registration takes structured identity — (seq, slug) or display_id.
 
-Until step 5 the old entity_id text form is still accepted beside these; every
-test here asserts something only the structured path does.
+Step 5 deleted the entity_id text form; there is no other way in.
 """
 import pytest
 
@@ -19,10 +18,7 @@ def _display_row(db, entity_uuid):
     return db.get_entity_display(entity_uuid)
 
 
-def test_seq_and_slug_render_the_id_and_always_write_the_display_row(db, monkeypatch):
-    # With the strict switch off the entity_id form writes no display row;
-    # the structured form writes one regardless.
-    monkeypatch.setenv("PD_REGISTER_ENTITY_STRICT_ID_FORMAT", "0")
+def test_seq_and_slug_render_the_id_and_always_write_the_display_row(db):
     entity_uuid = db.register_entity("feature", name="Alpha", seq=7, slug="alpha",
                                      project_id="__unknown__")
     assert db.get_entity("feature:007-alpha")["uuid"] == entity_uuid
@@ -39,7 +35,7 @@ def test_display_id_is_stored_verbatim_with_no_display_row(db):
 
 @pytest.mark.parametrize("identity", [
     {},                                                    # none
-    {"seq": 1, "slug": "a", "entity_id": "001-a"},         # two forms
+    {"seq": 1, "slug": "a", "display_id": "001-a"},        # two forms
     {"seq": 1},                                            # seq without slug
     {"display_id": "001-a"},                               # display_id on a sequence kind
     {"seq": 0, "slug": "a"},                               # no sequence number 0

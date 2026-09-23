@@ -854,8 +854,7 @@ async def issue_spawn(
     # values cannot leak into entities.metadata.
     caller_meta.pop("parent_uuid", None)
 
-    # FR-9.2: auto_id path via generate_entity_id produces conformant
-    # `{seq:03d}-{slug}` ids, so EntityIdFormatError cannot fire (AC-9.6).
+    # FR-9.2: generate_entity_id allocates the seq and derives the slug.
     seq, slug = generate_entity_id(_db, kind, summary, resolved_project_id)
 
     # FR-9.2: direct db.register_entity call (mirrors entity_server.py:502+

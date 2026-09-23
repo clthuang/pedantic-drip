@@ -108,9 +108,13 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
+# The strict gate's regex as step 1 ran against it; step 5 deleted the gate.
+STRICT_ID_RE = re.compile(r"^\d+-.+")
+
+
 def needs_rewrite(kind: str | None, literal: str) -> bool:
     if kind in NON_SEQUENCE_KINDS:
-        return not census.STRICT_ID_RE.match(literal)
+        return not STRICT_ID_RE.match(literal)
     return not census.round_trips(literal)
 
 

@@ -23,7 +23,6 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "pd"
 sys.path.insert(0, str(PLUGIN / "hooks" / "lib"))
-from entity_registry import database  # noqa: E402
 from entity_registry.id_generator import (  # noqa: E402
     NON_SEQUENCE_KINDS,
     render_display_id,
@@ -41,8 +40,6 @@ DEFINING_MODULE = "hooks/lib/entity_registry/database.py"
 # Tests reach the MCP register_entity tool through this module; the tool keeps
 # entity_id until C7 changes its surface, so these calls move separately.
 MCP_TOOL_MODULE = "entity_server"
-# The strict gate's own regex; C6 deletes it, after which C no longer splits.
-STRICT_ID_RE = getattr(database, "_ENTITY_ID_FORMAT_RE", None)
 _SEQ_SLUG = re.compile(r"^(\d+)-(.+)$")
 
 
@@ -240,9 +237,6 @@ def main(argv: list[str]) -> int:
     print(f"test        {len(test)} call sites across {len({s.path for s in test})} files")
     cats = collections.Counter(category(s) for s in test)
     print("categories  " + "  ".join(f"{c}={cats[c]}" for c in "ABCDEF"))
-    if STRICT_ID_RE is not None:
-        rejected = sum(1 for s in test if category(s) == "C" and not STRICT_ID_RE.match(s.literal))
-        print(f"            C: {cats['C'] - rejected} pass the strict regex, {rejected} rewritten at step 1")
     print(f"            {sum(s.is_mcp_tool for s in test)} call the MCP register_entity tool, not the database")
     # Wave 2 step 3's exit check: only calls to the MCP tool, which moves at
     # step 4, may still pass the entity_id text form.

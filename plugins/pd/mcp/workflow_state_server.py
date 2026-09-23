@@ -379,10 +379,9 @@ def _read_entity_display(
     """Return ``(id, slug)`` for an entity, preferring the ``entity_display``
     side table over ``metadata`` JSON (feature 110 FR-8.3b).
 
-    Defense-in-depth: if the entity_display row is missing (test fixtures
-    using ``_register_entity_no_display``, or rows registered before
-    migration 13 / pre-migration callers), emit a stderr WARN and fall back
-    to ``metadata.id`` / ``metadata.slug``.
+    Defense-in-depth: if the entity_display row is missing (a legacy row,
+    or one registered before migration 13), emit a stderr WARN and fall
+    back to ``metadata.id`` / ``metadata.slug``.
 
     The function intentionally returns ``str`` for both fields so the
     downstream ``.meta.json`` shape is stable. ``id`` is the integer ``seq``
@@ -514,8 +513,8 @@ def _project_meta_json(
 
     # Feature 110 Group 5 (FR-8.3b): read seq + slug from entity_display
     # table when available. Falls back to metadata JSON with a WARN log if
-    # the row is missing (defense-in-depth: test fixtures using
-    # _register_entity_no_display, or rows registered before migration 13).
+    # the row is missing (defense-in-depth: a legacy row, or one registered
+    # before migration 13).
     display_id, display_slug = _read_entity_display(
         db,
         entity.get("uuid"),
