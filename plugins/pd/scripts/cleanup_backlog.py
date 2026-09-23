@@ -232,6 +232,7 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:  # noqa: C901
     _setup_db_imports()
     try:
         from entity_registry.database import EntityDatabase
+        from entity_registry.project_identity import _repository_root
         from workflow_state_server import _project_backlog_md
     except Exception as exc:
         sys.stderr.write(
@@ -269,8 +270,9 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:  # noqa: C901
     # uuid for any directory containing .claude/, which (a) matches no
     # entities, so the projection comes back empty, and (b) leaves a stray
     # workspace.json behind in a directory that is not a workspace. Both
-    # were reproduced against a --backlog-path override.
-    project_root = str(backlog_path.resolve().parent.parent)
+    # were reproduced against a --backlog-path override. A backlog.md in a
+    # linked git worktree belongs to its repository's workspace (C17a).
+    project_root = _repository_root(str(backlog_path.resolve().parent.parent))
     row = db._conn.execute(
         "SELECT uuid FROM workspaces WHERE project_root = ?", (project_root,)
     ).fetchone()

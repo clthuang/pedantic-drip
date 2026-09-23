@@ -129,6 +129,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     # fall back to today's board-wide view.
     from entity_registry.project_identity import (
         _lookup_workspace_uuid_by_project_root,
+        _repository_root,
     )
 
     try:
@@ -136,8 +137,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
         escaped = db_path.replace("%", "%25").replace("?", "%3F").replace("#", "%23")
         conn = sqlite3.connect(f"file:{escaped}?mode=ro", uri=True)
         try:
+            # A linked git worktree shows its repository's board (C17a).
             app.state.workspace_uuid = _lookup_workspace_uuid_by_project_root(
-                conn, os.path.abspath(os.getcwd())
+                conn, _repository_root(os.path.abspath(os.getcwd()))
             )
         finally:
             conn.close()

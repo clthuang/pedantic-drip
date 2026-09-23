@@ -371,6 +371,68 @@ def test_reprojection_is_scoped_and_refuses_to_empty_the_file(tmp_path):
     )
 
 
+def test_reprojection_from_a_git_worktree_uses_the_repository_workspace(tmp_path):
+    """C17a: a backlog.md inside a linked git worktree re-projects from the
+    repository's workspace. The worktree has no workspaces row of its own,
+    so keyed on its path the lookup finds nothing and the re-projection is
+    skipped ("not a known workspace")."""
+    import subprocess
+    import uuid as _uuid
+
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "hooks" / "lib"))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "mcp"))
+    import cleanup_backlog
+    from entity_registry.database import EntityDatabase
+
+    def git(*args, cwd):
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+            cwd=cwd, check=True, capture_output=True,
+        )
+
+    main = tmp_path / "main"
+    main.mkdir()
+    git("init", "-q", cwd=main)
+    git("commit", "-q", "--allow-empty", "-m", "root", cwd=main)
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", str(worktree), cwd=main)
+    (worktree / "docs").mkdir()
+    backlog = worktree / "docs" / "backlog.md"
+    # No item rows yet: 001-mine appears only if the re-projection ran. The
+    # closed section keeps apply_archival from returning before it.
+    backlog.write_text(
+        "# Backlog\n\n"
+        "## From Feature Z QA (2026-01-01)\n\n"
+        "- ~~**#99500**~~ closed, makes this section archivable\n"
+    )
+
+    db_path = tmp_path / "e.db"
+    db = EntityDatabase(str(db_path))
+    now = db._now_iso()
+    ws = str(_uuid.uuid4())
+    db._conn.execute(
+        "INSERT INTO workspaces (uuid, project_id_legacy, project_root, "
+        "created_at, updated_at) VALUES (?,?,?,?,?)",
+        (ws, "__main__", os.path.realpath(main), now, now),
+    )
+    db._conn.commit()
+    db.register_entity("backlog", entity_id="001-mine", name="mine",
+                       workspace_uuid=ws, status="open")
+
+    prev = os.environ.get("ENTITY_DB_PATH")
+    os.environ["ENTITY_DB_PATH"] = str(db_path)
+    try:
+        cleanup_backlog.apply_archival(backlog, tmp_path / "archive.md")
+    finally:
+        if prev is None:
+            os.environ.pop("ENTITY_DB_PATH", None)
+        else:
+            os.environ["ENTITY_DB_PATH"] = prev
+
+    assert "001-mine" in backlog.read_text()
+
+
 def test_reprojection_refuses_when_it_would_empty_a_populated_file(tmp_path):
     """backlog.md is gitignored and this is its only writer, so an
     overwrite with nothing is unrecoverable.

@@ -839,6 +839,39 @@ def test_create_app_resolves_workspace_uuid_matching_project_root(
     assert app.state.workspace_uuid == ws_uuid
 
 
+def test_create_app_in_a_git_worktree_scopes_to_the_repository(
+    tmp_path, monkeypatch
+):
+    """C17a: started from a linked git worktree, the board is the
+    repository's. The worktree has no workspaces row of its own, so keyed
+    on its path the lookup finds nothing and the board falls back to the
+    unscoped, all-workspace view."""
+    import os
+    import subprocess
+
+    def git(*args, cwd):
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+            cwd=cwd, check=True, capture_output=True,
+        )
+
+    main = tmp_path / "main"
+    main.mkdir()
+    git("init", "-q", cwd=main)
+    git("commit", "-q", "--allow-empty", "-m", "root", cwd=main)
+    git("worktree", "add", "-q", str(tmp_path / "wt"), cwd=main)
+
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    ws_uuid = _bootstrap_workspace(db_file, project_root=os.path.realpath(main))
+    monkeypatch.chdir(tmp_path / "wt")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    assert app.state.workspace_uuid == ws_uuid
+
+
 def test_create_app_missing_db_workspace_uuid_none_and_warns(capsys):
     """GIVEN a nonexistent DB path
     WHEN create_app() runs its startup resolution
