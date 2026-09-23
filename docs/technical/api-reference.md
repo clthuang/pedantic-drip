@@ -126,33 +126,6 @@ EntityDatabase.upsert_entity(
 
 `name`, `parent_uuid`, and `metadata` are **never updated** on the conflict branch. Use `update_entity` for those fields.
 
-### promote_entity — EntityDatabase method (database.py, not an MCP tool)
-
-Atomically promotes an entity to a new kind within the same workspace, rewriting the `type_id` prefix (feature 109, FR-3).
-
-```
-EntityDatabase.promote_entity(
-    uuid: str,
-    new_kind: str,
-    new_lifecycle_class: str,
-    *,
-    project_id: str | None = None,
-) -> dict                   # updated entity row
-```
-
-**Operation (single transaction):**
-
-1. Pre-flight: read existing row by `uuid`; if the new `type_id` would collide with an existing `(workspace_uuid, new_type_id)` row, raise `PromotionConflictError`.
-2. `UPDATE entities SET kind = ?, lifecycle_class = ?, type_id = ?, updated_at = ?`; the `type_id` prefix is rewritten using first-colon split (`backlog:42` → `feature:42`; subsequent colons in the suffix are preserved verbatim).
-3. Append `entity_promoted` phase_event via `append_phase_event`, keyed on the new `type_id`. Metadata payload: `{"old_kind", "new_kind", "old_lifecycle_class", "new_lifecycle_class", "old_type_id", "new_type_id"}`.
-4. Return updated entity dict.
-
-The `uuid` and `workspace_uuid` are never changed. Dependencies referencing the uuid remain valid.
-
-**Exception:** `PromotionConflictError(ValueError)` — raised on `(workspace_uuid, new_type_id)` collision. Carries `.workspace_uuid`, `.old_type_id`, `.new_type_id`. Defined in `database.py`.
-
-**Allowed transitions:** any `(new_kind, new_lifecycle_class)` pair that satisfies the FR-1 composite CHECK constraint. Business-logic restrictions (e.g., only `backlog → feature`) must be enforced by callers.
-
 ### update_entity
 
 Shallow-merges `metadata` dict into existing entity metadata. Pass only the keys to update.

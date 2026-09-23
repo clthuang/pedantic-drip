@@ -2749,8 +2749,7 @@ def _migration_12_polymorphic_taxonomy_and_events(
         # ------------------------------------------------------------------
         # Detect (workspace_uuid, numeric suffix) collisions between backlog
         # and feature entities. Non-blocking — emit one INFO line per
-        # collision to stderr so operators see them up-front; AC-3.6 raises
-        # ``PromotionConflictError`` at promotion time for the same case.
+        # collision to stderr so operators see them up-front.
         collision_rows = conn.execute(
             "SELECT workspace_uuid, "
             "SUBSTR(type_id, INSTR(type_id, ':') + 1) AS suffix "
@@ -3543,7 +3542,7 @@ def _migration_12_polymorphic_taxonomy_and_events_down(
 
     One-shot rollback only — restores runtime schema state to the v11
     baseline. Source-code state (trigger definitions, register_entity SQL,
-    upsert_entity / promote_entity / append_phase_event helpers) is NOT
+    upsert_entity / append_phase_event helpers) is NOT
     touched — operators restore source via git-history per spec AC-5.1.
 
     Reverse sub-steps (mirror forward §1 in REVERSE order):
@@ -6729,29 +6728,6 @@ class InvalidCloseTargetError(ValueError):
     pass
 
 
-class PromotionConflictError(ValueError):
-    """Raised by ``promote_entity`` when the post-promotion ``type_id`` would
-    collide with an existing row in the same workspace (feature 109 FR-3 /
-    AC-3.6 / AC-4.1).
-    """
-
-    def __init__(
-        self,
-        workspace_uuid: str,
-        old_type_id: str,
-        new_type_id: str,
-    ):
-        super().__init__(
-            f"Promotion would create a UNIQUE conflict: "
-            f"workspace_uuid={workspace_uuid!r}, "
-            f"old_type_id={old_type_id!r}, "
-            f"new_type_id={new_type_id!r} (already exists)"
-        )
-        self.workspace_uuid = workspace_uuid
-        self.old_type_id = old_type_id
-        self.new_type_id = new_type_id
-
-
 class EntityDatabase:
     """SQLite-backed storage for entity registry.
 
@@ -8047,132 +8023,6 @@ class EntityDatabase:
         )
         self._commit()
         return child_uuid
-
-    def promote_entity(
-        self,
-        uuid: str,
-        new_kind: str,
-        new_lifecycle_class: str,
-        *,
-        project_id: str | None = None,
-    ) -> dict:
-        """Atomic kind/lifecycle_class change with ``type_id`` prefix rewrite.
-
-        Feature 109 FR-3 / AC-3.2-AC-3.6. Performs in a single transaction:
-
-        1. Read existing row by ``uuid`` (via :meth:`get_entity_by_uuid`).
-        2. Derive ``new_type_id`` by splitting on the FIRST colon
-           (``type_id.split(":", 1)``); subsequent colons in the suffix are
-           preserved verbatim.
-        3. UNIQUE-safety pre-flight: raise :class:`PromotionConflictError`
-           if ``(workspace_uuid, new_type_id)`` already exists.
-        4. ``UPDATE entities SET kind, lifecycle_class, type_id, updated_at``.
-        5. Emit ``entity_promoted`` phase_event (via
-           :meth:`append_phase_event`) with the POST-promotion ``type_id``
-           and metadata containing both ``old_*`` and ``new_*`` fields.
-
-        The ``enforce_immutable_entity_type`` and ``enforce_immutable_type_id``
-        triggers are dropped in migration 12, so the UPDATE succeeds without
-        trigger interference.
-
-        Parameters
-        ----------
-        uuid:
-            The entity UUID to promote.
-        new_kind:
-            The post-promotion ``kind`` value (e.g. ``'feature'``).
-        new_lifecycle_class:
-            The post-promotion ``lifecycle_class`` value (e.g. ``'feature_flow'``).
-        project_id:
-            Optional legacy project_id; resolved to ``workspaces.project_id_legacy``
-            for the phase_events row. If ``None``, derived from the entity's
-            workspace_uuid.
-
-        Returns
-        -------
-        dict
-            The updated entity row (post-promotion state).
-
-        Raises
-        ------
-        ValueError
-            If ``uuid`` does not resolve to an entity.
-        PromotionConflictError
-            If ``(workspace_uuid, new_type_id)`` already exists in the same
-            workspace.
-        """
-        with self.transaction():
-            # Step 1: read existing via the EXISTING public helper.
-            existing = self.get_entity_by_uuid(uuid)
-            if not existing:
-                raise ValueError(f"Entity not found: {uuid}")
-
-            # Step 2: derive new_type_id (first-colon split rule).
-            old_type_id = existing["type_id"]
-            entity_id_suffix = old_type_id.split(":", 1)[1]
-            new_type_id = f"{new_kind}:{entity_id_suffix}"
-
-            ws_uuid = existing["workspace_uuid"]
-
-            # Step 3: UNIQUE-safety pre-flight (AC-3.6). Only check if the
-            # prefix actually changes — same-kind same-suffix is a no-op
-            # rewrite and cannot collide with a different row.
-            if old_type_id != new_type_id:
-                collision = self._conn.execute(
-                    "SELECT 1 FROM entities "
-                    "WHERE workspace_uuid = ? AND type_id = ? AND uuid != ?",
-                    (ws_uuid, new_type_id, uuid),
-                ).fetchone()
-                if collision:
-                    raise PromotionConflictError(
-                        workspace_uuid=ws_uuid,
-                        old_type_id=old_type_id,
-                        new_type_id=new_type_id,
-                    )
-
-            # Resolve project_id for the phase_events row. If the caller did
-            # not pass one, derive from the workspace's project_id_legacy.
-            resolved_project_id = project_id
-            if resolved_project_id is None:
-                ws_row = self._conn.execute(
-                    "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
-                    (ws_uuid,),
-                ).fetchone()
-                if ws_row is not None and ws_row["project_id_legacy"]:
-                    resolved_project_id = ws_row["project_id_legacy"]
-                else:
-                    # Fall back to a sentinel: phase_events.project_id is
-                    # NOT NULL; "__unknown__" is the canonical fallback.
-                    resolved_project_id = "__unknown__"
-
-            # Step 4: UPDATE entities.
-            self._conn.execute(
-                "UPDATE entities "
-                "SET kind = ?, lifecycle_class = ?, type_id = ?, "
-                "updated_at = ? "
-                "WHERE uuid = ?",
-                (new_kind, new_lifecycle_class, new_type_id,
-                 self._now_iso(), uuid),
-            )
-
-            # Step 5: emit entity_promoted event (post-promotion identity).
-            self.append_phase_event(
-                type_id=new_type_id,
-                project_id=resolved_project_id,
-                event_type="entity_promoted",
-                workspace_uuid=ws_uuid,
-                metadata={
-                    "old_kind": existing["kind"],
-                    "new_kind": new_kind,
-                    "old_lifecycle_class": existing["lifecycle_class"],
-                    "new_lifecycle_class": new_lifecycle_class,
-                    "old_type_id": old_type_id,
-                    "new_type_id": new_type_id,
-                },
-            )
-
-            # Step 6: return updated entity dict via EXISTING helper.
-            return self.get_entity_by_uuid(uuid)
 
     def get_entity(
         self, type_id: str, *, include_deleted: bool = False
@@ -9722,8 +9572,8 @@ class EntityDatabase:
             # entity lookup entirely on v1 files -- the overwhelming
             # majority of callers today. Resolve (entity_uuid, kind) from
             # type_id, workspace-scoped when workspace_uuid is known
-            # (register_entity / upsert_entity / promote_entity /
-            # update_entity / dependencies.py's cascade_ready all pass it).
+            # (register_entity / upsert_entity / update_entity /
+            # dependencies.py's cascade_ready all pass it).
             # Phase-transition callers (workflow_state_server.py) may pass
             # workspace_uuid=None; the unscoped fallback is exact for them
             # in practice because Step 5's own projection is ALSO keyed on

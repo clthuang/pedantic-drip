@@ -25,7 +25,6 @@ from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
     EntityNotFoundError,
-    PromotionConflictError,
 )
 from entity_registry.id_generator import (
     _slugify,

@@ -929,10 +929,10 @@ class TestImmutableTriggers:
     def test_type_id_no_longer_immutable_at_db_layer(self, db: EntityDatabase):
         """Feature 109 FR-3: ``enforce_immutable_type_id`` trigger dropped.
 
-        ``type_id`` rewrites are now permitted at the DB layer to support
-        ``promote_entity`` (backlog→feature prefix swap). Higher-level
-        callers must route through the promote_entity API for the event-
-        sourced state changes; the trigger no longer blocks raw UPDATEs.
+        ``type_id`` rewrites were permitted at the DB layer to support
+        ``promote_entity`` (backlog→feature prefix swap). That API was
+        removed on 2026-09-23 without ever having had a caller, and no
+        trigger has been reinstated, so raw UPDATEs still succeed.
         """
         db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         db._conn.execute(
@@ -951,9 +951,10 @@ class TestImmutableTriggers:
         Migration 12 backfilled ``entity_type → (type, kind, lifecycle_class)``
         and Group 7 dropped the legacy column entirely; this test verifies
         the analogous ``kind`` column is mutable at the DB layer (the
-        trigger that previously guarded entity_type is gone, and no
-        replacement guard was added for kind because ``promote_entity``
-        is the canonical kind-rewrite path).
+        trigger that previously guarded entity_type is gone). No
+        replacement guard was added while ``promote_entity`` existed; it
+        was removed on 2026-09-23, so nothing at runtime writes ``kind``
+        and this test inverts when an immutability trigger is added.
         """
         db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         db._conn.execute(
@@ -2585,9 +2586,9 @@ class TestExistingImmutabilityTriggersStillFire:
 
     def test_type_id_mutable_post_feature_109(self, db: EntityDatabase):
         """Feature 109 FR-3: ``type_id`` UPDATE is no longer blocked at
-        the DB layer. ``promote_entity`` rewrites the ``type_id`` prefix
-        on backlog→feature promotion; the trigger that forbade this is
-        removed.
+        the DB layer. The trigger was removed so ``promote_entity`` could
+        rewrite the ``type_id`` prefix; ``promote_entity`` itself was
+        removed on 2026-09-23 without ever having had a caller.
         """
         entity_uuid = db.register_entity("feature", "immut", "Immutable Test", project_id="__unknown__")
         db._conn.execute(
@@ -2604,9 +2605,9 @@ class TestExistingImmutabilityTriggersStillFire:
         """Feature 109 FR-3: ``enforce_immutable_entity_type`` trigger
         dropped. Migration 12 Group 7 also dropped the ``entity_type``
         column itself; this test verifies the analogous ``kind`` column
-        can be updated at the DB layer (no replacement immutability
-        trigger was added since ``promote_entity`` is the canonical
-        kind-rewrite path).
+        can be updated at the DB layer. No replacement immutability
+        trigger was added while ``promote_entity`` existed; it was removed
+        on 2026-09-23, so this test inverts when one is.
         """
         entity_uuid = db.register_entity("feature", "immut2", "Immutable Test 2", project_id="__unknown__")
         db._conn.execute(

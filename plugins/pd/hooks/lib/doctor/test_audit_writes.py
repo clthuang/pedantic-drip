@@ -535,14 +535,13 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/database.py",           927, "split",       "migration internal - sanctioned"),
-    ("entity_registry/database.py",           2755, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4198, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4261, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           7599, "regex",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7733, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7734, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7735, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           8112, "split",       "C12 re-kind from columns"),
+    ("entity_registry/database.py",           2754, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4197, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4260, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           7575, "regex",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           7709, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           7710, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           7711, "slice",       "C6 delete registration parsers"),
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
@@ -618,11 +617,13 @@ def test_identity_inference_inventory_is_exact() -> None:
 #
 #   28  initial, scanning hooks/lib + mcp
 #   30  B2 (2026-09-22) added ui/templates, surfacing _card.html:4 and :10
+#   29  C2 (2026-09-22) removed next_sequence_value's text parse; not lowered until 2026-09-23
+#   28  promote_entity deleted (2026-09-23), taking its type_id split (C12) with it
 #
 # Raising this is a deliberate act with a line in that table, not a way to
 # quiet a red test. If the number rose because production grew a NEW parser,
 # the entry belongs in the diff being reviewed, not here.
-_INVENTORY_HIGH_WATER = 30
+_INVENTORY_HIGH_WATER = 28
 
 
 def test_inventory_shrinks_to_zero_eventually() -> None:

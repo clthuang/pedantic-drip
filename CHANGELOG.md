@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`promote_entity` and `PromotionConflictError`** — feature 109 built them to replace the backlog→feature promotion path, but no caller was ever switched over: the only non-test commit to touch them was the one that added them. Nothing is lost — promotion registers a new feature entity (`/pd:create-feature`), and every status/phase change goes through `append_phase_event()`. `promote_entity` was the only runtime writer of `entities.kind`, so the kind-based exemption in the display-row invariant no longer depends on an accident of the `type`/`kind` CHECK; it also held one identity-inference site (`type_id.split(":", 1)`, owned by C12), so the inventory drops to 28. Its six tests go with it; the three trigger-removal tests that shared the file move to `test_immutable_trigger_removal.py`. The unused `PromotionConflictError` import in `entity_server.py` is removed.
+
 ## [6.0.0] - 2026-07-25
 
 ### Removed
