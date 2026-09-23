@@ -24,10 +24,10 @@ Every number below was read from the live registry or the tree today. Re-derive 
 | Legacy rows, by filter | **180** raw · **148** `AND NOT is_archived` · **16** `AND` live status · **11** with both |
 | Children whose `parent_uuid` points at a legacy row | **79** (16 under `P004-entity-db-redesign`, 29 under cast-below's `P001`, 15 under terry_agent's pair) |
 | Identity-inference sites detected | **28 declared** (7 sanctioned, 21 to remove) — `promote_entity`'s `type_id.split` left with it in `2d654e1a` |
-| Python suite | 3902 passed / 3 skipped — **now 3970 / 3**, after C4/C23/C1/C2 and `2d654e1a` (six promotion tests removed) |
+| Python suite | 3902 passed / 3 skipped — **now 3975 / 3** at `38935d59`, after C4/C23/C1/C2, `2d654e1a` (six promotion tests removed) and C17a (five tests added in this scope) |
 | `./validate.sh` | 0 errors / 0 warnings |
 | Hook integration tests | 66/66 passed, 1 skipped |
-| `register_entity`/`upsert_entity`/`register_entities_batch`/`_register_entity_no_display` call sites | **13 external production · 3 internal · 1,151 test** across 48 files (a 3-name census undercounts by 25; `scripts/census_register_sites.py`, step 0) |
+| `register_entity`/`upsert_entity`/`register_entities_batch`/`_register_entity_no_display` call sites | **13 external production · 3 internal · 1,152 test** across 48 files at `38935d59` (a 3-name census undercounts by 25; `scripts/census_register_sites.py`, step 0) |
 | Tests that fail once identity is mandatory (`STRICT_ID_FORMAT=1`) | **751** (707 failed + 44 errors) across 26 files — **693** `EntityIdFormatError`, 14 assertion-shaped (13 downstream of it, **1 a second class**) |
 | Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 is already in the live plugin and applies at the next pd MCP start; rehearsed on a copy 2026-09-23 (see the gate, step 4) |
 | Brainstorms | 100 · **97 carry display rows** (all non-legacy) · 3 without, all `is_legacy=1` |
@@ -122,7 +122,7 @@ Found while scoping. Each changes what a task must do, so each is listed before 
 
 6. **The parent plan miscites `TERMINAL_STATUSES`, twice over.** It reads *"production's own `TERMINAL_STATUSES = {promoted, abandoned, archived}` (`entity_status.py:10`)"*. Actual: `entity_status.py:21`, and the set is `{"promoted", "abandoned"}` — `archived` was removed when archival became a flag. B5's cross-workspace blocker was cleared using `clean_break.py:81`'s `is_live` predicate; under the authority B5 actually cites, the clearance does not follow. The blocker's *conclusion* still holds on the evidence recorded in B5, but its stated basis does not.
 
-7. **Neither plan ever sized Wave 2's test surface.** The parent plan's *"roughly 15 production sites"* is accurate (16 measured). What no revision counted is **1,153 test call sites across 49 files** (1,151 across 48 since `2d654e1a` deleted a test file) (a three-name census undercounts by 25 — `_register_entity_no_display` is a fourth), or the **751 tests** that fail the moment structured identity becomes mandatory, which itself cannot see those 25. Wave 2's cost is in the suite, not in production. Re-planned in full below.
+7. **Neither plan ever sized Wave 2's test surface.** The parent plan's *"roughly 15 production sites"* is accurate (16 measured). What no revision counted is **1,153 test call sites across 49 files** (1,151 across 48 once `2d654e1a` deleted a test file, 1,152 at `38935d59`) (a three-name census undercounts by 25 — `_register_entity_no_display` is a fourth), or the **751 tests** that fail the moment structured identity becomes mandatory, which itself cannot see those 25. Wave 2's cost is in the suite, not in production. Re-planned in full below.
 
 8. **C5 removes two parameters too many.** `project_id` and `parent_type_id` appear nowhere in `_KNOWN_INFERENCE_SITES` and involve no schema change, so they split out as **C5b**. The justification is design risk, not edit count — 7 of 13 external production sites pass `project_id` with no `workspace_uuid`, and in git worktrees `project_id` resolves to the parent repository's workspace (decision 6, C17a). (Rev 1 of Wave 2 argued from an edit count of 1,072; that figure double-counted two overlapping sets — the union is 973, and 960 of those ride along on lines C5 already rewrites — three-name counts; over all four names it is 996 and 983, the same 98.7%. Withdrawn.) See Wave 2 / D1.
 
@@ -312,11 +312,11 @@ Call sites counted by AST walk over `plugins/pd/**/*.py` across **four** names �
 |---|---|
 | Production, external callers | **13** |
 | Production, internal delegations | 3 — `:7814` (inside **`_register_entity_no_display`**, a test-only helper living in production code), `:7874` (`upsert_entity`), `:10698` (`register_entities_batch`) |
-| Test / conftest | **1,151** across 48 files — 1,153 / 49 until `2d654e1a` deleted `test_atomic_promotion.py` and its two sites |
+| Test / conftest | **1,152** across 48 files at `38935d59`, where C17a's reader fix added one — 1,153 / 49 until `2d654e1a` deleted `test_atomic_promotion.py` and its two sites |
 
 | Parameter | External prod | Internal | Test |
 |---|---|---|---|
-| `entity_id` | 13 | **3** | 1,136 (150 keyword + 986 positional) |
+| `entity_id` | 13 | **3** | 1,137 (151 keyword + 986 positional) |
 | `project_id` | **13 — every one** | 2 | 996 |
 | `parent_type_id` | **0** | 2 | 99 — **a subset of the 996, not additive** |
 | `_strict_id_format` | 1 | 2 | 7 explicit + **25 via `_register_entity_no_display`** |
@@ -405,7 +405,7 @@ Exactly one of `(seq, slug)` or `display_id`; both or neither raises.
 
 `backfill.py:837` is a mechanical edit (`entity_id=stem` → `display_id=stem`). Its parent is set by a separate `_safe_set_parent` call after the upsert, not through a `register_entity` parameter, so D1's deferral does not touch it. (Rev 2 called it a design decision; calvin L7.)
 
-`entity_type` keeps its name — `kind` equals the old `entity_type` value and result dicts carry both as aliases, so renaming would churn 1,151 sites for nothing.
+`entity_type` keeps its name — `kind` equals the old `entity_type` value and result dicts carry both as aliases, so renaming would churn 1,152 sites for nothing.
 
 ### D3 — B8's invariant must be restated, and its enforcers swept
 
@@ -444,32 +444,34 @@ Under D2 a brainstorm registered after cutover has no display row and is not leg
 
 | | Category | Sites | Treatment |
 |---|---|---|---|
-| **A** | round-trips exactly through `render_display_id` | **298** | Pure codemod; id unchanged. |
-| **C** | non-sequence kind (brainstorm) | **42** | `display_id=` at step 3. **6** pass the strict regex and stay byte-identical; **36** (31 distinct) do not, and would turn step 2 red, so step 1 rewrites them to `{BRAINSTORM_FIXTURE_DATE}-{n:06d}-{slug}` — the shape production brainstorm stems have — through the same mapping and sweep as B (calvin L9). |
+| **A** | round-trips exactly through `render_display_id` | **299** | Pure codemod; id unchanged. |
+| **C** | non-sequence kind (brainstorm) | **42** | `display_id=` at step 3. **6** pass the strict regex and stay byte-identical; **36** (31 distinct) do not, and would turn step 2 red, so step 1 rewrites them to `20260101-{n:06d}-{slug}` — the shape production brainstorm stems have — through the same mapping and sweep as B (calvin L9). |
 | **B** | id must change | **675** | Codemod + reference sweep. |
-| **D** | dynamic (f-string / variable / expr) | **96** | Hand review. |
-| **E** | no `entity_id` argument | **15** | Inspect. |
+| **D** | dynamic (f-string / variable / expr) | **96** | Step 1 rewrites the ids strict rejects, from the expressions census 1a emits; call shape by hand at step 3. |
+| **E** | no `entity_id` argument | **15** | 13 `register_entities_batch` calls, ids in dicts: step 1 rewrites those strict rejects (census 1a emits them), step 3 swaps the dict keys. 2 MCP `auto_id` calls, which carry no id. |
 | **F** | **via `_register_entity_no_display`** | **25** | **New in rev 2.** All in `ui/tests/test_entities.py`; 25 distinct ids, none matching the strict regex, 92 in-file references. They become ordinary registrations via rule 3 at step 1. They are UI tests and never reach `_read_entity_display`, so they are not the fallback's coverage (calvin L8). |
 
-Total **1,151**. A (298) and 6 C sites keep their ids byte for byte. Only A carries no downstream risk: the 6 C ids get a display row once strict is on at step 2 and lose it at step 3, and any test reading it goes red at step 3 and is updated there (calvin L12).
+Total **1,152** at `38935d59` (C17a's reader fix added one A site). A (299) and 6 C sites keep their ids byte for byte. Only A carries no downstream risk: every C id — the 6 kept and the 36 step 1 rewrites, since both then pass the strict regex — gets a display row once strict is on at step 2 (`if strict:` writes one for any kind, `database.py:7708`) and loses it at step 3, and any test reading it goes red at step 3 and is updated there (calvin L12).
 
-**Rule 3 is the majority case** — of the literal-id sites, **665 have no leading digit** (`P001`, `bs-mixed`, `''`). **The mapping (calvin L3):** built once, repo-wide, over the sorted distinct literals, so one old literal gets one new id in every file. No per-file counter — that would hand one literal two ids in two files. A new id that equals another literal in the tree, or an id already assigned, steps its seq up until it does not. Uniqueness is checked against literals only; a collision with an id built at runtime (96 D sites) or minted by the allocator goes red at step 1 and is fixed by hand.
+**9 of the 1,152 call the MCP `register_entity` tool, not the database method** — `entity_server.register_entity(…)` in `hooks/lib/entity_registry/test_entity_server.py` at `:77`, `:213`, `:228`, `:243`, `:273`, `:946`, `:959`, `:972`, `:1005` (6 B, 2 E, 1 A). Step 1 treats their ids like any other. Step 3's call-shape codemod skips them: the tool keeps `entity_id` until C7 changes its surface at step 4.
+
+**Rule 3 is the majority case** — of the literal-id sites, **665 have no leading digit** (`P001`, `bs-mixed`, `''`). **The mapping (calvin L3, revised by the stage review):** built once, repo-wide, keyed on **(kind, literal)** over the sorted distinct pairs, so a literal registered under one kind gets one new id in every file. No per-file counter — that would hand one literal two ids in two files. Five step-1 literals are registered under more than one kind — `'a'`, `'b1'`, `'chk-null'`, `'e0'`, `'solo'` — so their call-site arguments map per kind and their bare references go to hand review. A new id steps its seq up while it equals an id already assigned, or a literal registered in a file that also registers the old one. A match only in other files is no collision, and stepping would change the seq the test's id implies; at `38935d59` that steps 24 same-file cases and leaves 38 cross-file-only ones alone. Uniqueness is checked against literals only; a collision with an id built at runtime or minted by the allocator goes red at step 1 and is fixed by hand.
 
 | Old shape | Example | New | Precondition |
 |---|---|---|---|
 | `^(\d+)-(.+)$` | `1-a`, `00010-existing` | `001-a`, `010-existing` | **`seq >= 1`** |
 | `^(\d+)$` | `00042` (backlog) | `042-backlog` — `{seq:03d}-{kind}` | `seq >= 1`; the call's kind is a literal |
 | no leading digits (**majority, 665**) | `P001`, `bs-mixed` | `001-p001`, `001-bs-mixed` — `001-{slug}`, slug lowercased, each run outside `[a-z0-9]` → `-`, trimmed | slug non-empty |
-| brainstorm, rejected by the strict regex | `bs-mixed` (kind brainstorm) | `{BRAINSTORM_FIXTURE_DATE}-{n:06d}-{slug}` | — |
+| brainstorm, rejected by the strict regex | `bs-mixed` (kind brainstorm) | `20260101-{n:06d}-{slug}` — `n` is the literal's 1-based position among the 31 distinct rejected brainstorm literals, sorted; slug as rule 3 | slug non-empty |
 
 A literal that fails its precondition — seq 0, an empty slug (`''`), a non-literal kind under rule 2 — is **refused and listed for hand review**. Hand review is an outcome of the codemod, not a category.
 
 **`seq >= 1` is load-bearing:** `test_database.py:9317` registers `backlog` with `'000-v1'`. Rule 1 maps it to itself, but `render_display_id('backlog', 0, 'v1')` raises `seq must be a positive int` (`id_generator.py:85`). It stays category **B**, and the codemod refuses it for hand review; an occurrence-only gate would pass it silently because the literal never changed. (Rev 2 said "route it to category D"; D is dynamic ids. Calvin L11.)
 
-**The completeness gate is repo-wide, not per-file.** 86.0% of literal ids are referenced elsewhere in their own file (872 of 1,014 non-empty literals; the 1,015th is the empty string `''`, which no sweep can key on and which therefore goes to hand review), **and 33 distinct literals are registered in two or more files** — `'001-test'` in four, `'f1'` in four, `'child'` in three, `'P001'` in `test_database.py` + `test_frontmatter_sync.py`. A per-file gate cannot see those, and a per-file counter would hand the same literal two different new ids. The repo-wide mapping makes the 33 consistent by construction — independent fixtures and a shared contract both keep working when one literal gets one id everywhere. **What the codemod rewrites and what the gate checks are different (calvin L4).**
+**The completeness gate is repo-wide, not per-file.** 86.0% of literal ids are referenced elsewhere in their own file (872 of 1,014 non-empty literals in the 1,151-site census; the 1,015th is the empty string `''`, which no sweep can key on and which therefore goes to hand review), **and 33 distinct literals are registered in two or more files** — `'001-test'` in four, `'f1'` in four, `'child'` in three, `'P001'` in `test_database.py` + `test_frontmatter_sync.py`. A per-file gate cannot see those, and a per-file counter would hand the same literal two different new ids. The repo-wide mapping makes the 33 consistent by construction — independent fixtures and a shared contract both keep working when one literal gets one id everywhere. **What the codemod rewrites and what the gate checks are different (calvin L4).**
 
-- **Rewrite:** string constants in test and conftest files that equal the old literal, or equal `{kind}:{literal}`.
-- **Gate:** afterwards, a token-bounded match (the neighbouring characters are not `[A-Za-z0-9_-]`) over every string constant in those files must find **zero** hits for old literals containing a digit or hyphen. Hits for plain-word literals (`child`, `older`) go to hand review, because ordinary English in assertion messages matches too.
+- **Rewrite — test and conftest files under `plugins/pd` only** (repo-root `scripts/` is out of scope), in three positions: (1) the id argument of a family call, counting batch-dict values and a literal a test passes to a helper that forwards it to a family call (first hop only); (2) a string constant exactly equal to `{kind}:{literal}`; (3) a bare string constant equal to the literal, only in a file that registers it, only if the literal contains a digit or hyphen, and only if that file registers it under one kind. Every other occurrence goes to a **committed hand-review list**. Rev 2's rule, every constant equal to the literal in every test file, was too broad: at `38935d59` it hits 880 constants in the files that register the literal and **794 in files that do not** (`''` 238, `'a'` 56, `'f1'` 43, `'p1'` 42, …), and `test_clean_break.py`'s `'P001'` is a legacy-id parse input that must keep its text.
+- **Gate:** afterwards, a token-bounded match (the neighbouring characters are not `[A-Za-z0-9_-]`) over every string constant in those files must find **zero** hits for old literals containing a digit or hyphen, outside a reviewed allowlist recorded as `file:line` plus a one-line reason. Hits for plain-word literals (`child`, `older`) go to hand review, because ordinary English in assertion messages matches too.
 - **Non-`.py` files** under `plugins/pd` are scanned as raw text and listed for hand review.
 - **Production files** are out of scope: they hold no test ids.
 
@@ -492,11 +494,12 @@ After C6 there is no flag to set, so a green suite with the flag absent is green
 
 The hazard is a process on the **old build** writing display-less rows once the new build is in place.
 
-**Corrected 2026-09-23 — where the code lives decides what is live, not which branch it is on.** Rev 2 said "branch commits touch no live state". False for anything checked out in the main working tree: `plugins/pd/hooks/sync-cache.sh` runs on every SessionStart (startup, resume, `/clear`) and rsyncs the working tree's `plugins/pd/` into the installed plugin (`~/.claude/plugins/cache/pedantic-drip-marketplace/pd/6.0.0`), which every workspace's hooks and MCP servers load. The live build is the main working tree as of its last session start. Verified 2026-09-23: the cache matched the working tree byte for byte, down to a test file renamed but not yet committed.
+**Corrected 2026-09-23 — where the code lives decides what is live, not which branch it is on.** Rev 2 said "branch commits touch no live state". False for anything checked out in the main working tree: `plugins/pd/hooks/sync-cache.sh` runs on every SessionStart (startup, resume, `/clear`) and rsyncs the working tree's `plugins/pd/` into the installed plugin (`~/.claude/plugins/cache/pedantic-drip-marketplace/pd/6.0.0`), which every workspace's hooks and MCP servers load. The live build is the main working tree as of its last sync. **SessionStart is not the only publisher** (stage review, 2026-09-23): Test 12 of `plugins/pd/hooks/tests/test-hooks.sh` runs `sync-cache.sh` with the real `HOME`, from the first ancestor of the hooks directory that holds a `.git` directory. That is how C17a reached the live plugin before any session restarted. Rev 2's evidence, a cache matching the working tree byte for byte, is withdrawn: `rsync -a` copies source mtimes, so a matching cache cannot say which sync wrote it.
 
 - **Steps 0–2 change tests only** (walker, test-id codemod, strict default in the two conftests). Nothing in production runs tests, so they are built in the main working tree on develop.
 - **Steps 3–5 change production code.** Build them in `.pd-worktrees/wave2`, a linked worktree nested inside the main checkout. `detect_project_root` only matches a `.git` *directory*, so a session started there, or a `/clear` in this one, resolves to the main checkout and keeps syncing develop. A sibling directory is **not** safe: there the walk finds no `.git` directory and falls back to the worktree itself, which then syncs its own unmerged code.
-- The gate runs **before merging steps 3–5 into the main working tree**. The world stays stopped until the first SessionStart in pedantic-drip after the merge has synced the new build and a pd MCP server has started on it.
+- The gate runs **before merging steps 3–5 into the main working tree**. The world stays stopped until the new build is published — by the first SessionStart in pedantic-drip or the first hook-gate run after the merge, whichever comes first — and a pd MCP server has started on it.
+- **The hook gate publishes.** `test-hooks.sh` run from anywhere in this repository, `.pd-worktrees/wave2` included, syncs the **main checkout's** `plugins/pd/` into the live plugin. While the main checkout holds only steps 0–2, which change tests, that is harmless. After the steps 3–5 merge it *is* the cutover, so from the merge on, run the hook gate only inside the stopped world.
 
 **1. Cue the operator.** Person-in-the-loop by design (decision 4).
 
@@ -509,7 +512,12 @@ lsof ~/.claude/pd/entities/entities.db                                      # ex
 
 `lsof` alone is insufficient — servers connect on demand. **Verified 2026-09-22 21:31, and again 2026-09-23 before each live write: 0 processes, 0 file holders.** The executing session cannot stop itself; stated exception.
 
-**3. Snapshot after the world is stopped.** `.backup`, never `cp`; verify it **read-only** (`file:…?mode=ro`). Opening a snapshot read-write is what left `-shm`/`-wal` siblings beside six existing ones.
+**3. Snapshot after the world is stopped.** `.backup`, never `cp`: the live file is in WAL mode, and on 2026-09-23 its `-wal` still held uncheckpointed writes, which a `cp` of the main file would miss. Verify the snapshot through `file:…?mode=ro&immutable=1`. Plain `mode=ro` is not enough on a WAL-mode file: Python's `sqlite3` (3.53.4) creates `-shm`/`-wal` beside it, and the macOS `sqlite3` CLI (3.51.0) will not open it at all while no `-shm` exists — both reproduced 2026-09-23 on a scratch WAL file. Given a bare path, the CLI opens a snapshot read-write: a `sqlite3 <snapshot> ".backup …"` rehearsal did exactly that and left `-shm`/`-wal` beside `entities.db.pre-c17a-20260923`, and six older snapshots carry them too. To copy a snapshot, back it up from an immutable open:
+
+```python
+src = sqlite3.connect('file:<snapshot>?mode=ro&immutable=1', uri=True)
+src.backup(sqlite3.connect('<copy>'))
+```
 
 **4. Restart normally.** Migration 7 (B8's `is_legacy` trigger) does not wait for Wave 2. It reached the live plugin with B8, and the live file is still at `schema_version 6` only because no pd MCP server has started since; the next one to start, in any workspace, applies it. **Rehearsed 2026-09-23** by opening a `.backup` copy of the live registry with `EntityDatabase`, the same open an MCP start performs: schema 6 → 7; entities 579, `is_legacy` 180 and display rows 399 all unchanged; trigger installed and refusing an `is_legacy` UPDATE; integrity ok; 0 foreign-key violations.
 
@@ -521,30 +529,21 @@ Each step below diffs against a green predecessor, so every failure is attributa
 
 | # | Step | Gate |
 |---|---|---|
-| **0** ✓ | **DONE 2026-09-23.** Walker `scripts/census_register_sites.py`, checked by `scripts/test_census_register_sites.py`: a synthetic fixture with one call site per category A–F, and each of four mutants (every id round-trips, no F check, positional ids ignored, delegations counted as callers) fails it. The headline counts are measurements, not the check: they already moved once, 1,153 → 1,151, when `2d654e1a` deleted a test file. Baseline captured at `3305e0e8` in `agent_sandbox/2026-09-23/wave2-step0/` (gitignored — regenerate from `COMMIT` if lost): `collected.txt` (4,025), `outcomes.txt` (4,022 passed, 3 skipped), `strict-all.txt` (746 failures and errors under forced strict), `strict-nonformat.txt` (14 whose message is not `EntityIdFormatError` — the named list calvin L13 refers to). | green, unchanged |
-| **1** | Codemod ids to **round-trip form** — exactly `render_display_id`'s output, seq ≥ 1 (B, F, and 36 of C) — plus the repo-wide reference sweep. **No signature change.** "Conformant" is the weaker strict regex: `'1-a'` passes it and still becomes `'001-a'` here, so step 3 changes no id (calvin L2). | green |
-| **2** | Delete both conftest `setdefault`s so strict defaults on. Expected residue: the experiment's 14 non-format failures plus display-row expectations; any failure outside those 14 (named in the step-0 baseline) that is not a display-row expectation **stops the step** (calvin L13). Add the one deliberate test for `_read_entity_display`'s fallback — a legacy feature row with no display row, asserting the WARN and the metadata fallback — since strict mode removes the accidental coverage it has today (calvin L8). | green |
-| **3** | **Opens with the import probe:** a planted `raise RuntimeError` at the top of the worktree's `database.py` must turn the worktree suite red at import, then comes out — if it stays green, the tests run the main checkout's code and nothing after counts (calvin L5). Then **C5** — signature, unconditional display write, **D3's restated invariant + its eight sweep targets + the fixture extension** — **and, in the same commit, the call-shape codemod**: every call site to `seq=`/`slug=` (C to `display_id=`), `name` as a keyword, `register_entities_batch` dicts the same way; D and E by hand (calvin L1). Record the `plugins/pd/scripts/` scan-root decision (calvin L15). | green |
-| **4** | **C7-prod** — 13 external sites + the 3 upstream contracts. | green |
+| **0** ✓ | **DONE 2026-09-23.** Walker `scripts/census_register_sites.py`, checked by `scripts/test_census_register_sites.py`: a synthetic fixture with one call site per category A–F, and each of four mutants (every id round-trips, no F check, positional ids ignored, delegations counted as callers) fails it. The headline counts are measurements, not the check: they have already moved twice: 1,153 → 1,151 when `2d654e1a` deleted a test file, and 1,151 → 1,152 when `38935d59` added one. Baseline **re-captured at `38935d59`** by `scripts/capture_test_manifest.sh` into `agent_sandbox/2026-09-23/wave2-step0/` (gitignored — regenerate from `COMMIT` if lost; `ENV` records cwd, rootdir and the python/pytest/sqlite versions): `collected.txt` (4,027), `outcomes.txt` (4,024 passed, 3 skipped), `strict-all.txt` (746 failures and errors under forced strict, 732 naming `EntityIdFormatError`), `strict-nonformat.txt` (the other 14 — the same 14 as the first capture at `3305e0e8`; 13 are id-format fallout whose message does not name the error). | green, unchanged |
+| **1** | **Make every test id valid under strict, before strict is on.** **No signature change.** Rewriting call-site literals is not enough: at `38935d59`, **136** of the 732 forced-strict `EntityIdFormatError` failures name an id that is no B/F/C call-site literal — built at a D site (`f"perf-{i:03d}"`, `test_workflow_state_server.py:1133`), carried in a `register_entities_batch` dict (`'batch-001'`, `test_register_upsert_split.py:340`), or handed to a test helper that forwards it (`_register(db, "initiative", "i1", …)`, `test_rollup.py:260`). By file: `test_entity_engine.py` 53, `test_database.py` 17, `test_workflow_state_server.py` 16, and `test_entity_lifecycle.py`, `test_event_sourced_state.py` and `test_rollup.py` 10 each. **1a** — extend the census to emit batch-dict ids, D-site expressions and first-hop helper literals, and to mark the 9 MCP-tool calls (D4). **1b** — codemod to **round-trip form**, exactly `render_display_id`'s output with seq ≥ 1, over B, F, 36 of C, and every D/E/helper id strict rejects, plus D4's reference sweep. "Conformant" is the weaker strict regex: `'1-a'` passes it and still becomes `'001-a'` here, so step 3 changes no id (calvin L2). **Exit:** suite green; the forced-strict run has no failure caused by an id format, and every failure left is listed with its reason — that list is step 2's; D4's gate clean outside its allowlist; the census test passes; a new manifest captured. | green |
+| **2** | Delete both conftest `setdefault`s so strict defaults on. The residue is exactly the list step 1's exit left; fix each entry, and any failure outside that list **stops the step** (calvin L13, revised: the step-0 baseline's 14 were measured before step 1, and 13 of them are id-format fallout step 1 removes). Add the one deliberate test for `_read_entity_display`'s fallback — a legacy feature row with no display row, asserting the WARN and the metadata fallback — since strict mode removes the accidental coverage it has today (calvin L8). | green |
+| **3** | **Opens with the import probe:** a planted `raise RuntimeError` at the top of the worktree's `database.py` must turn the worktree suite red at import, then comes out — if it stays green, the tests run the main checkout's code and nothing after counts (calvin L5). Then **C5** — signature, unconditional display write, **D3's restated invariant + its eight sweep targets + the fixture extension** — **and, in the same commit, the call-shape codemod**: every call site to `seq=`/`slug=` (C to `display_id=`), `name` as a keyword, `register_entities_batch` dicts the same way; D and E by hand (calvin L1). It skips the 9 calls to the MCP `register_entity` tool, which keeps `entity_id` until step 4 (D4). Record the `plugins/pd/scripts/` scan-root decision (calvin L15). | green |
+| **4** | **C7-prod** — 13 external sites + the 3 upstream contracts; with the tool surface, the 9 MCP-tool test calls step 3 skipped. | green |
 | **5** | **C6** — delete the 4 inference lines, the strict flag, and `_register_entity_no_display`. | green |
-| **6** | Gates + D5's grep + manifest comparison. | green |
+| **6** | Gates + D5's grep + the end-to-end manifest check, step 0 → step 5. | green |
 
-**The node-id manifest is not optional, and it is the one place the Risks section's "assert shapes, not counts" is suspended.** After a machine rewrite of 675+ call sites, "suite green" is satisfiable by a suite that tests strictly less — a codemod that deletes, renames, or collapses a test passes step 6 exactly as well as a correct one. At step 6 assert `passed_after ⊇ passed_before` **by node id**, and `collected_after == collected_before` modulo an enumerated delta with a one-line reason per entry. These are counts diffed against a manifest taken on the same tree, not measurements of the shared live registry, which is what that Risks rule actually governs.
+**The node-id manifest is not optional, and it is the one place the Risks section's "assert shapes, not counts" is suspended.** After a machine rewrite of 675+ call sites, "suite green" is satisfiable by a suite that tests strictly less — a codemod that deletes, renames, or collapses a test passes step 6 exactly as well as a correct one. Every step from 1 on captures a manifest and compares it with its predecessor's: `passed_after ⊇ passed_before` **by node id**, and `collected_after == collected_before`, both modulo an enumerated delta with a one-line reason per entry. Step 6 repeats the check from step 0's manifest to step 5's, against the concatenated deltas. Deltas are expected where steps 3 and 5 delete tests along with the code they cover. None are expected at step 1: the 5 collected node ids that contain a step-1 literal (under loose token bounds; 0 under strict ones) are all in files step 1 does not rewrite. These are counts diffed against a manifest taken on the same tree, not measurements of the shared live registry, which is what that Risks rule actually governs.
 
-Capture, identical at step 0 and step 6 — list the four scopes literally: zsh does not word-split an unquoted variable, so `$SCOPES` becomes one nonexistent path and pytest reports "no tests ran" (it did, once, at step 0):
-
-```bash
-pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests plugins/pd/scripts/tests -q -p no:randomly --tb=no -rA \
-  | grep -E '^(PASSED|FAILED|ERROR|SKIPPED) ' | sort > outcomes.txt
-pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests plugins/pd/scripts/tests --collect-only -q -p no:randomly \
-  | grep '::' | sort > collected.txt
-```
-
-The strict capture adds `COLUMNS=1000 PD_REGISTER_ENTITY_STRICT_ID_FORMAT=1` and `--tb=line -rfE`. pytest cuts short-summary lines to the terminal width — 80 when piped — and every node id here is longer than that, so without `COLUMNS` the exception text is dropped and nothing can be filtered by cause (it was, twice, at step 0).
+Capture with `scripts/capture_test_manifest.sh <out-dir>` at every step — the one definition, as the census walker is for call sites. It runs the four scopes in **one** pytest process from the repo root, because the conftests' strict-off default is session-scoped and process-wide: `ui/tests` or `scripts/tests` run on their own are strict, so their outcomes are not comparable. It also records `COMMIT` and `ENV`. It fixes the two capture bugs step 0 hit: zsh does not word-split `$SCOPES`, which once gave "no tests ran", and piped pytest cuts summary lines at 80 columns, which twice dropped the exception text (hence `COLUMNS=1000`). `collected.txt` node ids are rootdir-relative and the other files cwd-relative, so compare like with like. `scripts/test_census_register_sites.py` is outside the four scopes; run it separately.
 
 **`_KNOWN_INFERENCE_SITES` needs an explicit rebase step, twice.** It is an EXACT-SET lint on `(path, lineno, idiom)` (`test_audit_writes.py:573`) — it fails on any line shift, not only on added or removed sites. Steps 3 and 4 shift `workflow_state_server.py:485/:707/:1147/:1429` and `backfill.py:756`. Step 5 must additionally strike the four C6 tuples and **lower `_INVENTORY_HIGH_WATER` from 28 to 24** (`:626`), whose comment says it moves down when a site is removed and never back up. Run `pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q` after **each** of steps 3, 4 and 5 — the same rebase was already required for C23 and again for C1/C2 in this campaign.
 
-**Every step's gate includes `plugins/pd/scripts/tests`.** Six family call sites live under `plugins/pd/scripts` — `parse_backlog_md.py:262` plus 5 test sites — and that directory is outside the 3-path suite the Gates section flags as historically missed. A codemod regression there would otherwise surface only at step 6.
+**Every step's gate includes `plugins/pd/scripts/tests`.** Seven family call sites live under `plugins/pd/scripts` — `parse_backlog_md.py:262` plus 6 test sites (5 before `38935d59`) — and that directory is outside the 3-path suite the Gates section flags as historically missed. A codemod regression there would otherwise surface only at step 6.
 
 C7's upstream contracts — the parent plan's three, plus `register_entities_batch`, whose dicts carry an `entity_id` key (calvin L1):
 - `generate_entity_id()` (`id_generator.py:92`) returns a string and discards `seq`/`slug`. It must return both.
@@ -611,6 +610,14 @@ Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author 
 
 ☑ 15 resolved · 4 open · 0 dismissed
 
+**Revised 2026-09-23 by the stage review** — a subagent review of the step-0 stage summary, each checkable claim verified against the tree before it was absorbed:
+
+- **L13** — step 2's stop rule keys on the list step 1's exit leaves, not the step-0 baseline's 14; 13 of those 14 are id-format fallout step 1 removes.
+- **L3** — the mapping keys on (kind, literal), and seq stepping is scoped to files that register the literal.
+- **L4** — the rewrite is narrowed to three positions plus a committed hand-review list; the gate allows only a reviewed allowlist.
+- **L9** — `{BRAINSTORM_FIXTURE_DATE}` was never defined; the rule is written out as `20260101-{n:06d}-{slug}`.
+- **L1** — step 3's call-shape codemod skips the 9 MCP-tool calls, which move with the tool surface at step 4.
+
 ## Wave 3 — census, allocator, guard
 
 **C1 → C2 → C3**, with C3 also waiting on C6. C3's predicate is now `is_legacy`, and **B8** is what keeps its precondition true across Wave 2.
@@ -623,7 +630,7 @@ Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author 
 
 Parallel once Wave 2 lands: **C8–C12**, **C13**, **C14**, **C15–C16**, **C17**, **C18**, **C19/C20b**.
 
-**C17a — a git worktree resolves to its repository's workspace** (decision 6). **SHIPPED 2026-09-23 (`833095a9`).** `_repository_root()` maps a linked worktree to its main checkout before any path-keyed resolution, in both `resolve_workspace_uuid` and `resolve_startup_workspace_uuid`. A dry run over all 23 live workspace roots moved exactly the three worktrees, all to project_illium's workspace. Their rows were then retired (snapshot `entities.db.pre-c17a-20260923`; each row printed in full, so it can be re-inserted verbatim). The worktrees' own `.claude/pd/workspace.json` files are left in place: nothing reads them after C17a, and `illium-golive` is protected. Independent of Wave 2 — no schema change and no `register_entity` signature change.
+**C17a — a git worktree resolves to its repository's workspace** (decision 6). **SHIPPED 2026-09-23 (`833095a9`).** `_repository_root()` maps a linked worktree to its main checkout before any path-keyed resolution, in both `resolve_workspace_uuid` and `resolve_startup_workspace_uuid`. A dry run over all 23 live workspace roots moved exactly the three worktrees, all to project_illium's workspace. Their rows were then retired (snapshot `entities.db.pre-c17a-20260923`; each row printed in full, so it can be re-inserted verbatim). The worktrees' own `.claude/pd/workspace.json` files are left in place: nothing reads them after C17a, and `illium-golive` is protected. Independent of Wave 2 — no schema change and no `register_entity` signature change. **Two readers were missed and fixed in `38935d59`** (stage review): the UI's startup board lookup (`ui/__init__.py`) and `cleanup_backlog.py`'s re-projection both keyed on the raw path, so from a worktree they missed the repository's workspace; both now go through `_repository_root` first, each with a real-git worktree test. `illium-golive`, the protected live-deploy worktree, now resolves to project_illium's workspace; its directory and `live-deploy` branch were not touched.
 
 - **Contract.** `resolve_workspace_uuid` maps a worktree to the workspace of its `git rev-parse --git-common-dir`, not its root commit, which separate clones share. A working tree whose git directory lives in a bare repository (terry_agent: `/Users/terry_agent` → `~/projects/terry_agent-control/terry_agent.git`) is that repository's only workspace.
 - **Scope.** Retire the three empty worktree **workspace rows** — `illium-golive`, `illium-live-debug`, `illium-architecture-re-build`, 0 entities each. Registry rows only; the directories stay, and `illium-golive` is protected. Correct `_compute_legacy_project_id`'s docstring (`project_identity.py:811`).
@@ -694,12 +701,12 @@ B8 is not a formal predecessor of C3 — C3 would compile without it — but shi
 
 ## Gates
 
-Every task re-runs all four. **`plugins/pd/scripts/` is outside the standard suite scope**, which is how a live archival regression shipped unnoticed: `cleanup_backlog.py` kept writing `status='archived'` after the reader moved to the `is_archived` flag, and no gate covered it. Any task touching that directory — B7 touches four files in it — must run its tests explicitly. **Only two gates run in CI** — `.github/workflows/ci.yml` invokes `./validate.sh` and `test-hooks.sh` and nothing else, so the full suite and the audit are local-only. A task that ships green on CI has had its two weakest gates checked. Baseline **re-derived 2026-09-23**, after C4/C23/C1/C2 and `2d654e1a` (the 3902 figure this plan was written with predates them; a 4024 figure recorded mid-session was never reproducible):
+Every task re-runs all four. **`plugins/pd/scripts/` is outside the standard suite scope**, which is how a live archival regression shipped unnoticed: `cleanup_backlog.py` kept writing `status='archived'` after the reader moved to the `is_archived` flag, and no gate covered it. Any task touching that directory — B7 touches four files in it — must run its tests explicitly. **Only two gates run in CI** — `.github/workflows/ci.yml` invokes `./validate.sh` and `test-hooks.sh` and nothing else, so the full suite and the audit are local-only. A task that ships green on CI has had its two weakest gates checked. Baseline **re-derived 2026-09-23** — the three pytest figures at `38935d59`, after C4/C23/C1/C2, `2d654e1a` and C17a (the 3902 figure this plan was written with predates them; a 4024 figure recorded mid-session was never reproducible, and is not the step-0 manifest's 4,024, which counts all four scopes in one process):
 
 ```bash
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests -q   # 3970 passed / 3 skipped  (the standard 3-path scope every recorded pd figure uses)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests -q                                  # 48 passed             (OUTSIDE the 3-path scope — see note)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q         # scripts + audit together: 55 passed
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests -q   # 3975 passed / 3 skipped  (the standard 3-path scope every recorded pd figure uses)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests -q                                  # 49 passed             (OUTSIDE the 3-path scope — see note)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q         # scripts + audit together: 56 passed
 ./validate.sh                                                                                       # 0 / 0
 bash plugins/pd/hooks/tests/test-hooks.sh                                                                                 # 66/66 passed, 1 skipped
 ```
@@ -708,7 +715,7 @@ Snapshot before any task that writes to the live registry — WAL mode means `.b
 
 ```bash
 sqlite3 ~/.claude/pd/entities/entities.db ".backup '$HOME/.claude/pd/entities/entities.db.pre-<task>-$(date +%Y%m%d)'"
-sqlite3 <snapshot> "PRAGMA integrity_check; SELECT COUNT(*) FROM entities;"
+sqlite3 'file:<snapshot>?mode=ro&immutable=1' "PRAGMA integrity_check; SELECT COUNT(*) FROM entities;"   # a bare path opens it read-write
 ```
 
 ---
