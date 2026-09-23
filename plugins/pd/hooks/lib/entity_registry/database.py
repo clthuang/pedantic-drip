@@ -7470,8 +7470,8 @@ class EntityDatabase:
     def register_entity(
         self,
         entity_type: str,
-        name: str | None = None,
         *,
+        name: str,
         seq: int | None = None,
         slug: str | None = None,
         display_id: str | None = None,
@@ -7761,8 +7761,8 @@ class EntityDatabase:
     def upsert_entity(
         self,
         entity_type: str,
-        name: str | None = None,
         *,
+        name: str,
         seq: int | None = None,
         slug: str | None = None,
         display_id: str | None = None,
@@ -7791,6 +7791,12 @@ class EntityDatabase:
         Does NOT update ``name``, ``parent_uuid``, or ``metadata`` on the
         conflict branch — callers needing those use :meth:`update_entity`.
 
+        A conflict is found by the rendered type_id alone. A row stored under
+        an older text form of the same ``(seq, slug)`` (``feature:66-x`` where
+        the render is ``066-x``) is not found, and a second entity would be
+        inserted; backfill, the one caller that meets such rows, checks for
+        them first (``_registered_by_display``).
+
         Returns
         -------
         str
@@ -7808,7 +7814,7 @@ class EntityDatabase:
                 # Try the insert branch via register_entity. On success,
                 # it emits entity_created and returns the new uuid.
                 return self.register_entity(
-                    entity_type, name,
+                    entity_type, name=name,
                     seq=seq, slug=slug, display_id=display_id,
                     workspace_uuid=workspace_uuid,
                     project_id=project_id,
@@ -10634,7 +10640,7 @@ class EntityDatabase:
 
                 # F12 audit: idempotent bulk backfill → upsert_entity
                 row_uuid = self.upsert_entity(
-                    entity_type, name,
+                    entity_type, name=name,
                     seq=ent.get("seq"), slug=ent.get("slug"), display_id=ent.get("display_id"),
                     workspace_uuid=ws_uuid,
                     status=status,

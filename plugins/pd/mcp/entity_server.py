@@ -445,6 +445,9 @@ def _process_add_okr_alignment(
     return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
 
 
+# A retry re-runs the allocation, so a locked write can leave a gap in the
+# key_result sequence; allocate_entity_id accepts the same (its errors burn a
+# number too). Gaps are harmless, a reused number is not.
 @with_retry("entity")
 def _process_create_key_result(
     db: EntityDatabase,
@@ -657,12 +660,8 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     ----------
     entity_type:
         The entity type to allocate a sequence value for (e.g. 'feature').
-        Required. ``'project'`` is accepted like any other kind (feature
-        132 D6.9 cutover — the backfill seeds the `sequences` table from
-        the live census max, so callers building ``P{NNN}`` ids use the
-        returned ``seq`` directly and discard the ``entity_id`` field,
-        which is shaped ``{seq:03d}-{slug}`` for every kind including
-        ``project``).
+        Required. ``'project'`` is accepted like any other kind; every
+        kind's id is shaped ``{seq:03d}-{slug}``.
     name:
         Human-readable name; slugified into the id's suffix. Must slugify
         to a non-empty string.
@@ -670,9 +669,10 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     Returns
     -------
     str
-        JSON ``{"seq": <int>, "entity_id": "<seq:03d>-<slug>"}`` on
-        success, or a structured error envelope (``workspace_unresolved``,
-        ``invalid_input``) on failure.
+        JSON ``{"seq": <int>, "slug": "<slug>", "entity_id": "<seq:03d>-<slug>"}``
+        on success: register with ``seq`` and ``slug``; ``entity_id`` names the
+        directory and branch. On failure, a structured error envelope
+        (``workspace_unresolved``, ``invalid_input``).
     """
     err = _check_db_available()
     if err:

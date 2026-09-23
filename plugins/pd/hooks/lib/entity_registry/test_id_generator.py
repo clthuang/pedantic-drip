@@ -176,7 +176,7 @@ class TestRegistrationIdentity:
     def test_a_round_tripping_id_splits(self):
         assert registration_identity("backlog", "001-first") == {"seq": 1, "slug": "first"}
 
-    @pytest.mark.parametrize("legacy", ["00019", "P001", "00019-slug", "1-a", "000-a", "001-", "abc"])
+    @pytest.mark.parametrize("legacy", ["00019", "P001", "00019-slug", "1-a", "000-a", "001-", "abc", "²-a"])
     def test_an_id_with_no_structured_form_is_none(self, legacy):
         assert registration_identity("backlog", legacy) is None
 

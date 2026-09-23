@@ -249,6 +249,23 @@ class TestInitFeatureState:
 # _promote_brainstorm (via init_feature_state)
 # ===========================================================================
 
+    def test_an_unallocated_feature_id_is_refused_before_any_write(
+            self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        with pytest.raises(ValueError, match="not an allocated id"):
+            init_feature_state(
+                db=mock_db,
+                engine=mock_engine,
+                artifacts_root=tmp_artifacts,
+                feature_dir=feature_dir,
+                feature_id="1",
+                slug="my-feature",
+                mode="standard",
+                branch="feature/1",
+            )
+        mock_db.register_entity.assert_not_called()
+        assert not os.path.exists(os.path.join(feature_dir, ".meta.json"))
+
+
 class TestPromoteBrainstorm:
     """Tests for brainstorm promotion when creating a feature."""
 

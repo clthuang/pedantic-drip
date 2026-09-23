@@ -375,6 +375,14 @@ class TestProcessRegisterEntity:
         )
         assert isinstance(result, str)
 
+    def test_an_empty_display_id_is_reported_as_one(self, db: EntityDatabase):
+        result = _process_register_entity(
+            db, "brainstorm", {"display_id": ""}, "Idea",
+            artifact_path=None, status=None,
+            parent_type_id=None, metadata=None,
+        )
+        assert "display_id must not be empty" in result
+
     def test_orphan_workspace_uuid_returns_error_envelope(
         self, db: EntityDatabase
     ):

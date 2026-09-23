@@ -534,7 +534,7 @@ _INFERENCE_SCAN_ROOTS = [
 #                          that deliberately and fixture it, not let the join
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
-    ("entity_registry/backfill.py",           795, "split",       "C13 missing-parent policy"),
+    ("entity_registry/backfill.py",           804, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
@@ -542,6 +542,7 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/database.py",           2756, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4163, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4226, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/id_generator.py",       107, "split",       "SANCTIONED - round-trip gate for ids read as text"),
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
@@ -621,11 +622,15 @@ def test_identity_inference_inventory_is_exact() -> None:
 #   28  promote_entity deleted (2026-09-23), taking its type_id split (C12) with it
 #   24  Wave 2 step 5 (C6) deleted register_entity's strict regex and the
 #       slice parse that filled the display row from the text form
+#   25  Wave 2 review: registration_identity (step 4) parses ids that arrive
+#       as text from files and tool arguments; its receiver name hid it from
+#       the scanner. Renamed so the scanner sees it, and declared: a new
+#       parser, raised in the diff that adds it, as this table requires
 #
 # Raising this is a deliberate act with a line in that table, not a way to
 # quiet a red test. If the number rose because production grew a NEW parser,
 # the entry belongs in the diff being reviewed, not here.
-_INVENTORY_HIGH_WATER = 24
+_INVENTORY_HIGH_WATER = 25
 
 
 def test_inventory_shrinks_to_zero_eventually() -> None:

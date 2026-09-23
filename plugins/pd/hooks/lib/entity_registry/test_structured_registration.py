@@ -68,3 +68,11 @@ def test_batch_entries_take_seq_and_slug_or_display_id(db):
     assert db.get_entity("feature:003-gamma")["uuid"] == feature_uuid
     assert _display_row(db, feature_uuid)["seq"] == 3
     assert _display_row(db, brainstorm_uuid) is None
+
+
+@pytest.mark.parametrize("method", ["register_entity", "upsert_entity"])
+def test_name_is_keyword_only(db, method):
+    """A stale call with the old entity_id in second place fails when it is
+    made, not as a confusing identity error further in."""
+    with pytest.raises(TypeError):
+        getattr(db, method)("feature", "001-a", project_id="__unknown__")

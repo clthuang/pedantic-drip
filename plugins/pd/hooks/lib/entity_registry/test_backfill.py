@@ -2211,6 +2211,8 @@ class TestBackfillLeavesTheRegistryAlone:
             db.register_entity("feature", name="Kept", seq=29, slug="kept", project_id="__unknown__")
             db.set_parent("feature:029-kept", "project:001-owner")
             run_backfill(db, str(tmp_path))
+            # The replacement candidate existed, so the guard, not its absence, kept the parent.
+            assert db.get_entity("brainstorm:20260101-idea") is not None
             assert db.get_entity("feature:029-kept")["parent_type_id"] == "project:001-owner"
         finally:
             db.close()
@@ -2287,5 +2289,78 @@ class TestBackfillLeavesTheRegistryAlone:
             run_backfill(db, str(tmp_path))
             assert db.get_entity(f"{kind}:066-old-form") is None
             assert db.get_entity(f"{kind}:66-old-form")["uuid"] == entity_uuid
+        finally:
+            db.close()
+
+    def test_a_parent_registered_only_in_another_workspace_is_not_linked(self, tmp_path):
+        """fractorg's brainstorms cite #00015. Once legacy ids were skipped, the
+        only backlog:00015 left was pedantic-drip's, and the unscoped lookup
+        linked across workspaces."""
+        from entity_registry.backfill import run_backfill
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        self._empty_tree(tmp_path)
+        (tmp_path / "brainstorms" / "20260101-idea.prd.md").write_text(
+            "# Idea\n\n*Source: Backlog #019-elsewhere*\n")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            bootstrap_test_workspace(db, "ours")
+            theirs = bootstrap_test_workspace(db, "theirs")
+            db.register_entity("backlog", name="Elsewhere", seq=19, slug="elsewhere",
+                               workspace_uuid=theirs)
+            run_backfill(db, str(tmp_path), project_id="ours")
+            assert db.get_entity("brainstorm:20260101-idea")["parent_uuid"] is None
+        finally:
+            db.close()
+
+    def test_a_parent_in_two_workspaces_links_to_this_workspaces_row(self, tmp_path):
+        """The unscoped lookup returned None for a type_id in two workspaces,
+        silently dropping a link backfill should make."""
+        from entity_registry.backfill import run_backfill
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        self._empty_tree(tmp_path)
+        (tmp_path / "brainstorms" / "20260101-idea.prd.md").write_text(
+            "# Idea\n\n*Source: Backlog #019-shared*\n")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            ours = bootstrap_test_workspace(db, "ours")
+            theirs = bootstrap_test_workspace(db, "theirs")
+            db.register_entity("backlog", name="Shared", seq=19, slug="shared", workspace_uuid=theirs)
+            ours_backlog = db.register_entity("backlog", name="Shared", seq=19, slug="shared",
+                                              workspace_uuid=ours)
+            run_backfill(db, str(tmp_path), project_id="ours")
+            assert db.get_entity("brainstorm:20260101-idea")["parent_uuid"] == ours_backlog
+        finally:
+            db.close()
+
+    def test_an_absolute_in_repo_source_that_is_not_a_brainstorm_is_no_parent(self, tmp_path):
+        """terry_agent names its project PRD by absolute path. Every absolute path
+        counted as external, which minted brainstorm:prd."""
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        self._feature(tmp_path, 32, "from-a-project",
+                      brainstorm_source=str(tmp_path / "projects" / "001-x" / "prd.md"))
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("brainstorm:prd") is None
+            assert db.get_entity("feature:032-from-a-project")["parent_type_id"] is None
+        finally:
+            db.close()
+
+    def test_a_missing_brainstorm_named_by_an_absolute_in_repo_path_is_orphaned(self, tmp_path):
+        """An in-repo brainstorm that is gone from disk is orphaned, not external."""
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        self._feature(tmp_path, 33, "lost-source",
+                      brainstorm_source=str(tmp_path / "brainstorms" / "20260101-gone.prd.md"))
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("brainstorm:20260101-gone")["status"] == "orphaned"
+            assert db.get_entity("feature:033-lost-source")["parent_type_id"] == "brainstorm:20260101-gone"
         finally:
             db.close()

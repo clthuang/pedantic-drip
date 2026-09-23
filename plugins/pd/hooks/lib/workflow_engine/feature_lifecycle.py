@@ -179,7 +179,9 @@ def init_feature_state(
     Optionally includes projection_warning (not set here — added by MCP wrapper).
 
     Raises:
-        ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only.
+        ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only,
+            or if feature_id with slug is not an id the allocator issues
+            (``invalid_input: … is not an allocated id``); nothing is written.
     """
     # Field validation — reject None, empty string, whitespace-only
     for field_name, field_value in [
@@ -290,6 +292,11 @@ def init_project_state(
     """Create initial project state in DB + .meta.json.
 
     Returns dict with keys: created, project_type_id, meta_json_path.
+
+    Raises:
+        ValueError: if project_id with slug is not an id the allocator issues
+            (``invalid_input: … is not an allocated id``), or project_dir is
+            invalid; nothing is written.
     """
     # Path traversal validation
     if "\0" in project_dir:

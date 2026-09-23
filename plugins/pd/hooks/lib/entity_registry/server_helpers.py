@@ -242,8 +242,10 @@ def _process_register_entity(
         Never raises exceptions.
     """
     try:
-        display = identity.get("display_id") or render_display_id(
-            entity_type, identity.get("seq"), identity.get("slug"))
+        if "display_id" in identity:
+            display = identity["display_id"]
+        else:
+            display = render_display_id(entity_type, identity.get("seq"), identity.get("slug"))
         type_id = f"{entity_type}:{display}"
         existing = db.get_entity(type_id)
         existing_parent = existing["parent_type_id"] if existing else None
