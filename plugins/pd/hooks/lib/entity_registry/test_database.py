@@ -26,7 +26,7 @@ from entity_registry.database import (
 
 
 from entity_registry.database import EXPORT_SCHEMA_VERSION
-from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry.test_helpers import TEST_PROJECT_ID, identity_kwargs
 from entity_registry import schema_v2
 # Feature 132 Task 3: imported at MODULE (collection) time, not lazily
 # inside the v2_db fixture below -- this is load-bearing, not stylistic.
@@ -4304,7 +4304,6 @@ class TestUpdateWorkflowPhaseWorkspaceUuidAssertion:
 # ---------------------------------------------------------------------------
 
 import time as time_mod
-from entity_registry.test_helpers import identity_kwargs
 
 
 class TestExportEntitiesJson:

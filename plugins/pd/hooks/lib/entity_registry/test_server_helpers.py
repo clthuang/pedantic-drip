@@ -23,6 +23,7 @@ from entity_registry.server_helpers import (
     render_tree,
     resolve_output_path,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 ENTITY_UUIDS = {
@@ -1025,7 +1026,6 @@ class TestProcessGetLineageUuidRoot:
 # ---------------------------------------------------------------------------
 
 from entity_registry.server_helpers import _process_export_entities
-from entity_registry.test_helpers import identity_kwargs
 
 
 class TestProcessExportEntities:

@@ -7,6 +7,7 @@ import os
 import pytest
 
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -1129,7 +1130,6 @@ from entity_registry.backfill import (
     _resolve_meta_path,
     backfill_workflow_phases,
 )
-from entity_registry.test_helpers import identity_kwargs
 
 
 class TestWorkflowPhaseBackfill:

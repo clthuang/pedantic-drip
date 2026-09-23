@@ -12,6 +12,7 @@ import time
 import pytest
 
 from doctor.models import CheckResult, DiagnosticReport, Issue
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +187,9 @@ def _register_live_feature(
     Uses ``EntityDatabase.register_entity`` — never a raw INSERT (uuid-PK
     gotcha). ``workspace_uuid`` defaults to the canonical unknown-workspace
     bucket, which EntityDatabase auto-bootstraps, so callers that don't care
-    about scoping need not pre-insert a workspaces row. Any non-seq-slug
-    entity_id (e.g. ``'bs-001'``) is accepted via ``_strict_id_format=False``.
+    about scoping need not pre-insert a workspaces row. ``entity_id`` is
+    display text (``'001-a'``) that must round-trip for a sequence kind;
+    ``identity_kwargs`` splits it.
     Returns the ``type_id``.
     """
     from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
@@ -2220,7 +2222,6 @@ class TestCheckStaleWorktreesMultipleOrphans:
 
 
 from doctor.checks import check_display_row_invariant  # noqa: E402
-from entity_registry.test_helpers import identity_kwargs
 
 
 class TestDisplayRowInvariant:

@@ -31,6 +31,7 @@ from workflow_engine.reconciliation import (
 )
 
 from workflow_engine.router import ENTITY_MACHINES
+from entity_registry.test_helpers import identity_kwargs
 
 
 def _bootstrap_test_workspace(db, legacy_id: str) -> str:
@@ -93,7 +94,6 @@ from workflow_state_server import (
     _check_artifact_completeness,
     _EXPECTED_ARTIFACTS,
 )
-from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
