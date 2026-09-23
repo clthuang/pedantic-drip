@@ -5,7 +5,9 @@ module instead of writing its own walker: two ad-hoc walkers disagreed by
 one site during the Wave 2 review. Categories are the plan's D4 table
 (docs/plans/2026-09-22-structural-identity-completion-plan.md).
 
-    plugins/pd/.venv/bin/python scripts/census_register_sites.py
+    plugins/pd/.venv/bin/python scripts/census_register_sites.py [--list]
+
+``--list`` adds every dynamic id and every indirect id not yet in round-trip form.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import os
 import re
 import sys
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "pd"
@@ -35,66 +38,163 @@ CALLEES = frozenset({
 # Calls inside the module that defines the family are delegations between
 # its own methods, not callers.
 DEFINING_MODULE = "hooks/lib/entity_registry/database.py"
+# Tests reach the MCP register_entity tool through this module; the tool keeps
+# entity_id until C7 changes its surface, so these calls move separately.
+MCP_TOOL_MODULE = "entity_server"
 # The strict gate's own regex; C6 deletes it, after which C no longer splits.
 STRICT_ID_RE = getattr(database, "_ENTITY_ID_FORMAT_RE", None)
 _SEQ_SLUG = re.compile(r"^(\d+)-(.+)$")
 
 
+def _is_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return name.startswith("test_") or name == "conftest.py" or "/tests/" in f"/{path}"
+
+
 @dataclasses.dataclass(frozen=True)
 class Site:
-    path: str                   # relative to plugins/pd
+    path: str                    # relative to plugins/pd
     line: int
-    callee: str
-    kind: str | None            # the entity_type literal, else None
-    entity_id: ast.expr | None  # positional second argument or keyword
+    callee: str                  # the name called; for an entry, "dict" or the helper
+    kind: str | None             # the entity_type literal, else None
+    entity_id: ast.expr | None   # positional second argument or keyword
+    receiver: str | None = None  # what the call is made on, e.g. "db"
+    route: str = "call"          # "call", or how find_entries saw the id arrive
 
     @property
     def is_test(self) -> bool:
-        name = self.path.rsplit("/", 1)[-1]
-        return (name.startswith("test_") or name == "conftest.py"
-                or "/tests/" in f"/{self.path}")
+        return _is_test_path(self.path)
 
     @property
     def is_internal(self) -> bool:
         return self.path == DEFINING_MODULE
 
     @property
+    def is_mcp_tool(self) -> bool:
+        return self.receiver == MCP_TOOL_MODULE
+
+    @property
     def literal(self) -> str | None:
-        arg = self.entity_id
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
-        return None
+        return _literal(self.entity_id)
+
+
+def _literal(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _parse(root: Path, tests_only: bool = False) -> Iterator[tuple[str, ast.Module]]:
+    """(path relative to root, tree) for every .py file under ``root``."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in {".venv", "__pycache__"}]
+        for filename in filenames:
+            path = Path(dirpath, filename)
+            rel = path.relative_to(root).as_posix()
+            if not filename.endswith(".py") or (tests_only and not _is_test_path(rel)):
+                continue
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                yield rel, ast.parse(path.read_text(encoding="utf-8"), str(path))
+
+
+def _called_name(call: ast.Call) -> str | None:
+    func = call.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+
+
+def _family_calls(tree: ast.AST) -> Iterator[tuple[ast.Call, ast.expr | None, ast.expr | None]]:
+    """(call, kind argument, entity_id argument) for every CALLEES call in ``tree``."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _called_name(node) in CALLEES:
+            kw = {k.arg: k.value for k in node.keywords if k.arg}
+            kind = node.args[0] if node.args else kw.get("entity_type")
+            entity_id = node.args[1] if len(node.args) >= 2 else kw.get("entity_id")
+            yield node, kind, entity_id
 
 
 def find_sites(root: Path = PLUGIN) -> list[Site]:
     """Every call to a CALLEES name under ``root``, in (path, line) order."""
     sites = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in {".venv", "__pycache__"}]
-        for filename in filenames:
-            if not filename.endswith(".py"):
-                continue
-            path = Path(dirpath, filename)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-            rel = path.relative_to(root).as_posix()
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-                if name not in CALLEES:
-                    continue
-                kw = {k.arg: k.value for k in node.keywords if k.arg}
-                kind = node.args[0] if node.args else kw.get("entity_type")
-                entity_id = node.args[1] if len(node.args) >= 2 else kw.get("entity_id")
-                sites.append(Site(
-                    rel, node.lineno, name,
-                    kind.value if isinstance(kind, ast.Constant) and isinstance(kind.value, str) else None,
-                    entity_id,
-                ))
+    for rel, tree in _parse(root):
+        for call, kind, entity_id in _family_calls(tree):
+            func = call.func
+            sites.append(Site(
+                rel, call.lineno, _called_name(call), _literal(kind), entity_id,
+                ast.unparse(func.value) if isinstance(func, ast.Attribute) else None,
+            ))
     return sorted(sites, key=lambda s: (s.path, s.line))
+
+
+@dataclasses.dataclass(frozen=True)
+class _Param:
+    position: int | None  # None for a keyword-only parameter
+    name: str
+    default: str | None   # its default, when that is a string literal
+
+
+def _helpers(tree: ast.Module) -> dict[str, tuple[_Param, str | _Param | None]]:
+    """Test functions that forward one of their parameters to a family call as its id.
+
+    name -> (id parameter, kind), where kind is the family call's literal or
+    the parameter the helper forwards as kind.
+    """
+    helpers = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        positional = fn.args.posonlyargs + fn.args.args
+        defaults = dict(zip([a.arg for a in positional[len(positional) - len(fn.args.defaults):]],
+                            fn.args.defaults))
+        defaults.update((a.arg, d) for a, d in zip(fn.args.kwonlyargs, fn.args.kw_defaults) if d)
+        names = [a.arg for a in positional]
+        if names[:1] in (["self"], ["cls"]):
+            names = names[1:]
+        params = {name: _Param(i, name, _literal(defaults.get(name))) for i, name in enumerate(names)}
+        params.update((a.arg, _Param(None, a.arg, _literal(defaults.get(a.arg)))) for a in fn.args.kwonlyargs)
+        for _, kind, entity_id in _family_calls(fn):
+            if isinstance(entity_id, ast.Name) and entity_id.id in params:
+                forwarded = _literal(kind)
+                if forwarded is None and isinstance(kind, ast.Name):
+                    forwarded = params.get(kind.id)
+                helpers[fn.name] = (params[entity_id.id], forwarded)
+    return helpers
+
+
+def _argument(call: ast.Call, param: _Param) -> ast.expr | None:
+    if param.position is not None and len(call.args) > param.position:
+        return call.args[param.position]
+    return next((k.value for k in call.keywords if k.arg == param.name), None)
+
+
+def find_entries(root: Path = PLUGIN) -> list[Site]:
+    """Test ids that reach registration without being a family call's argument.
+
+    ``dict``: a dict display with an ``entity_id`` key — register_entities_batch
+    entries, and the records tests hand to a production registrar. ``helper``:
+    an argument to a test function that forwards it to a family call as the id,
+    first hop and same file only. Deeper routes show up only when the suite runs.
+    """
+    entries = []
+    for rel, tree in _parse(root, tests_only=True):
+        helpers = _helpers(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                keys = [_literal(k) for k in node.keys]
+                if "entity_id" in keys:
+                    kind = node.values[keys.index("entity_type")] if "entity_type" in keys else None
+                    entries.append(Site(rel, node.lineno, "dict", _literal(kind),
+                                        node.values[keys.index("entity_id")], route="dict"))
+            elif isinstance(node, ast.Call) and _called_name(node) in helpers:
+                id_param, kind = helpers[_called_name(node)]
+                entity_id = _argument(node, id_param)
+                if isinstance(kind, _Param):
+                    passed = _argument(node, kind)
+                    kind = _literal(passed) if passed is not None else kind.default
+                if entity_id is not None:
+                    entries.append(Site(rel, node.lineno, _called_name(node), kind, entity_id,
+                                        route="helper"))
+    return sorted(entries, key=lambda s: (s.path, s.line))
 
 
 def round_trips(entity_id: str) -> bool:
@@ -131,7 +231,7 @@ def multi_file_literals(sites: list[Site]) -> dict[str, list[str]]:
     return {lit: sorted(paths) for lit, paths in files.items() if len(paths) > 1}
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     sites = find_sites()
     prod = [s for s in sites if not s.is_test]
     test = [s for s in sites if s.is_test]
@@ -143,12 +243,22 @@ def main() -> int:
     if STRICT_ID_RE is not None:
         rejected = sum(1 for s in test if category(s) == "C" and not STRICT_ID_RE.match(s.literal))
         print(f"            C: {cats['C'] - rejected} pass the strict regex, {rejected} rewritten at step 1")
+    print(f"            {sum(s.is_mcp_tool for s in test)} call the MCP register_entity tool, not the database")
+    entries = find_entries()
+    routes = collections.Counter(s.route for s in entries)
+    kinds = collections.Counter(category(s) for s in entries)
+    print(f"entries     {routes['dict']} via a dict, {routes['helper']} via a helper  "
+          + "  ".join(f"{c}={kinds[c]}" for c in "ABCD"))
     multi = multi_file_literals(sites)
     print(f"test literals registered in 2+ files: {len(multi)}")
     for lit, paths in sorted(multi.items()):
         print(f"  {lit!r:30} {', '.join(p.rsplit('/', 1)[-1] for p in paths)}")
+    if "--list" in argv:
+        pending = [s for s in test if category(s) == "D"] + [s for s in entries if category(s) != "A"]
+        for s in sorted(pending, key=lambda s: (s.path, s.line)):
+            print(f"  {category(s)} {s.route:6} {s.path}:{s.line}  {s.kind or '?'}  {ast.unparse(s.entity_id)[:60]}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
