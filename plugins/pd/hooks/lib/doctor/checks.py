@@ -8,6 +8,7 @@ import subprocess
 import time
 
 from doctor.models import CheckResult, Issue
+from entity_registry.id_generator import NON_SEQUENCE_KINDS
 
 
 def _get_expected_entity_version() -> int:
@@ -567,10 +568,13 @@ def _not_applicable(reason: str, start: float) -> CheckResult:
 def check_display_row_invariant(
     entities_conn: sqlite3.Connection, **_
 ) -> CheckResult:
-    """Every entity has an ``entity_display`` row unless ``is_legacy = 1``.
+    """Every entity has an ``entity_display`` row unless ``is_legacy = 1`` or its
+    kind is in ``NON_SEQUENCE_KINDS``.
 
-    This states a fact that is already exactly true — 180 legacy rows and the
-    same 180 display-less rows, set equality — and holds it true from here on.
+    When B8 added it this stated a fact already exactly true — 180 legacy rows
+    and the same 180 display-less rows, set equality — and it holds it true
+    from here on. Wave 2 (D3) added the kind clause: a brainstorm's identity is
+    its stem, registered through ``display_id`` with no display row by design.
 
     **Why not backfill display rows for the legacy set instead.** That was the
     original proposal and the data killed it: 176 of 180 legacy ids yield a
@@ -581,12 +585,13 @@ def check_display_row_invariant(
     ambiguous rows and make every future seq -> entity lookup non-deterministic.
 
     **Why it has to exist before C3.** C3 refuses allocation for a bucket
-    holding non-legacy entities that lack display rows. Until C6 lands,
-    ``init_project_state`` still passes ``_strict_id_format=False`` and
-    ``register_entity`` writes the display row only ``if strict:``, so every
-    project created in any of the 24 workspaces adds a fresh violation and C3
-    would then refuse that bucket forever. This turns a silent accumulation
-    into a visible one the moment it starts.
+    holding non-legacy entities that lack display rows. Until C7 moves it to
+    seq/slug (Wave 2 step 4), ``init_project_state`` passes the ``entity_id``
+    text form with ``_strict_id_format=False``, and that form writes the
+    display row only ``if strict:``, so every project it creates in any
+    workspace adds a fresh violation and C3 would then refuse that bucket
+    forever. This turns a silent accumulation into a visible one the moment
+    it starts.
 
     Severity is ``error``: a violation is a write-path bug, not drift. Note
     that doctor's exit code is always 0 regardless (see ``doctor/__main__``),
@@ -611,6 +616,10 @@ def check_display_row_invariant(
             return _not_applicable(
                 "entities lacks uuid/type_id", start
             )
+        # kind arrived in migration 12; before it the same value lived in
+        # entity_type. A synthetic table with neither exempts no kind and so
+        # reports every display-less row: a false alarm, never a silent pass.
+        kind_column = next((c for c in ("kind", "entity_type") if c in cols), None)
         if "entity_display" not in {
             row[0] for row in entities_conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -625,12 +634,19 @@ def check_display_row_invariant(
         for flag in ("is_legacy", "is_deleted"):
             if flag in cols:
                 where.append(f"NOT COALESCE(e.{flag}, 0)")
+        # Unlike the flags, a file predating the kind column still holds
+        # brainstorms, so the clause falls back to entity_type, never away.
+        exempt_kinds = sorted(NON_SEQUENCE_KINDS)
+        if kind_column:
+            where.append(f"COALESCE(e.{kind_column}, '') NOT IN "
+                         f"({', '.join('?' for _ in exempt_kinds)})")
 
         cursor = entities_conn.execute(
             "SELECT e.uuid, e.type_id "
             "FROM entities e "
             "LEFT JOIN entity_display d ON d.uuid = e.uuid "
-            "WHERE " + " AND ".join(where)
+            "WHERE " + " AND ".join(where),
+            exempt_kinds if kind_column else (),
         )
         for entity_uuid, type_id in cursor:
             issues.append(Issue(
@@ -639,16 +655,17 @@ def check_display_row_invariant(
                 entity=type_id,
                 message=(
                     f"Entity '{entity_uuid}' ({type_id}) has no entity_display "
-                    "row and is not marked is_legacy. Its sequence number and "
-                    "slug exist only inside its entity_id text, which is the "
-                    "condition this effort removes."
+                    "row, is not marked is_legacy, and its kind has a sequence. "
+                    "Its sequence number and slug exist only inside its "
+                    "entity_id text, which is the condition this effort removes."
                 ),
                 fix_hint=(
                     "Write the entity_display row from the seq/slug the "
                     "registrar already had. Do NOT set is_legacy to silence "
                     "this - is_legacy means 'predates the structural model', "
                     "and using it as a mute button makes C3 permit exactly "
-                    "the bucket it exists to refuse."
+                    "the bucket it exists to refuse. Re-kinding the row "
+                    "into a non-sequence kind is the same mute button."
                 ),
             ))
     except sqlite3.Error as exc:

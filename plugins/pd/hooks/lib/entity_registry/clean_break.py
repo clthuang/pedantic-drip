@@ -98,7 +98,9 @@ def select_legacy_entities(
     populations: an entity whose identity predates the structural model,
     and an entity a buggy non-strict write failed to give a display row.
     Those now differ visibly: the second has ``is_legacy = 0`` and no
-    display row, which is a bug, not history.
+    display row, which is a bug, not history — unless its kind has no
+    sequence, like a brainstorm, whose identity is its stem and which has
+    no display row by design (Wave 2 D3).
 
     Status cannot be the discriminator either: 165 of the 176 were already
     terminal, so status cannot distinguish "archived by the break" from
