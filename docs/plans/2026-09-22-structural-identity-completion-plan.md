@@ -5,7 +5,7 @@
 **RCA:** [../rca/20260920-display-id-ownership.md](../rca/20260920-display-id-ownership.md)
 **Related, shipped:** [2026-09-22-soft-delete-design-and-plan.md](./2026-09-22-soft-delete-design-and-plan.md) (#081, `76c4a4cc`)
 
-**Before executing any task below, run `calvin` on this document** (per `~/.claude/CLAUDE.md`). It carries no ledger yet.
+**Before executing any task below, run `calvin` on this document** (per `~/.claude/CLAUDE.md`). It Wave 2 carries a ledger as of 2026-09-23 (*Calvin ledger*, end of the Wave 2 section); the rest of the document still carries none.
 
 ---
 
@@ -293,6 +293,15 @@ Task definitions are in the parent plan. This section only sequences them and ma
 
 Rev 1 of this section stopped at the pre-flight gate and re-planned the wave around a measured test surface. Review found three blockers in rev 1 and two wrong claims of its own; rev 2 records the corrected measurement, drops the red-window build order for one that is never red, and states the errors rather than quietly fixing them. Line numbers are as of `2d654e1a`, which shifted `database.py` and `entity_server.py`.
 
+**What Wave 2 solves** (calvin L10). Production already registers strictly — with the env var unset, `strict = True` (`database.py:7566-7571`) — so it is not a flood of display-less rows. It is four things, one of them live:
+
+- **Registration reads identity out of text on every call** — the four C6 inference lines. Removing them is the point of the effort.
+- **`init_project_state` passes `_strict_id_format=False`** (`feature_lifecycle.py:326`), so every project it creates is display-less and turns B8's check red. **Live.**
+- **Brainstorm registration raises `EntityIdFormatError`** for any filename stem that doesn't start with a number.
+- **The suite has never run the production path.**
+
+**Solved when** the four C6 tuples are struck (`_KNOWN_INFERENCE_SITES` 28 → 24), D5's grep is clean, and `check_display_row_invariant` still reports 0 after real registrations on the new build.
+
 ### Measured 2026-09-23 — re-derive before execution
 
 Call sites counted by AST walk over `plugins/pd/**/*.py` across **four** names — `register_entity`, `upsert_entity`, `register_entities_batch`, **and `_register_entity_no_display`**. Rev 1 counted three and was wrong by 25 sites.
@@ -350,7 +359,7 @@ So there is a **second class**, small but real: tests whose expectations encode 
 - **`project_id` resolves to the wrong workspace in git worktrees.** Rev 2 said it "cannot address 10 of 24 workspaces"; corrected 2026-09-23. Of the 10 with no `project_id_legacy`, 7 are deleted directories. The other 3 are live worktrees of project_illium, and `_compute_legacy_project_id` gives every one of them the repository's root-commit id, so each `project_id`-only write resolves to **project_illium's** workspace. Startup backfill (`entity_server.py:276`) would register a worktree's artifacts there, and MCP `register_entity` with `auto_id` (`entity_server.py:597-624`) takes the number from project_illium's counter but registers the row in the worktree's own workspace. Nothing is damaged yet — the three worktree workspaces are empty. Decision 6 settles which workspace is right; **C17a** implemented it (`833095a9`).
 - **`project_id` is not only a workspace alias.** At `database.py:7635-7645` the explicit kwarg is *also* the `entity_created` phase-event label, falling back to `workspaces.project_id_legacy` only when absent. Dropping it changes event metadata on an append-only table. C5b's Verify must assert those labels are byte-unchanged at all 13 sites.
 
-Design risk of that shape is exactly what does not belong in the irreversible wave. Edit count was never the argument.
+Design work of that shape does not belong in a mechanical codemod wave: its failures would be indistinguishable from the codemod's. Edit count was never the argument. (Rev 2 said "the irreversible wave"; the code is revertible — only data an old build writes during the mixed-version window is not. Calvin L6. The worktree reason in the second bullet is retired: C17a fixed it.)
 
 **C5b scope and dependencies (rev 1 under-scoped both):**
 
@@ -392,7 +401,7 @@ Exactly one of `(seq, slug)` or `display_id`; both or neither raises.
 | `entity_status.py:190` | `.prd.md` stem from the brainstorms directory scan |
 | `backfill.py:837` (`_register_brainstorm`) | `_brainstorm_stem`, same shape |
 
-`backfill.py:837` additionally carries `_derive_parent` → `_safe_set_parent` handling, so it is a design decision, not a mechanical edit.
+`backfill.py:837` is a mechanical edit (`entity_id=stem` → `display_id=stem`). Its parent is set by a separate `_safe_set_parent` call after the upsert, not through a `register_entity` parameter, so D1's deferral does not touch it. (Rev 2 called it a design decision; calvin L7.)
 
 `entity_type` keeps its name — `kind` equals the old `entity_type` value and result dicts carry both as aliases, so renaming would churn 1,153 sites for nothing.
 
@@ -434,25 +443,33 @@ Under D2 a brainstorm registered after cutover has no display row and is not leg
 | | Category | Sites | Treatment |
 |---|---|---|---|
 | **A** | round-trips exactly through `render_display_id` | **298** | Pure codemod; id unchanged. |
-| **C** | non-sequence kind (brainstorm) | **42** | `display_id=` verbatim; id unchanged. |
+| **C** | non-sequence kind (brainstorm) | **42** | `display_id=` at step 3. **6** pass the strict regex and stay byte-identical; **36** (31 distinct) do not, and would turn step 2 red, so step 1 rewrites them to `{BRAINSTORM_FIXTURE_DATE}-{n:06d}-{slug}` — the shape production brainstorm stems have — through the same mapping and sweep as B (calvin L9). |
 | **B** | id must change | **675** | Codemod + reference sweep. |
 | **D** | dynamic (f-string / variable / expr) | **98** | Hand review. |
 | **E** | no `entity_id` argument | **15** | Inspect. |
-| **F** | **via `_register_entity_no_display`** | **25** | **New in rev 2.** All in `ui/tests/test_entities.py`; 25 distinct ids, **0 conformant**, 92 in-file references. C6 deletes the helper, so these become ordinary registrations — decide per site whether the display-less fallback in `workflow_state_server.py:371` keeps a fixture or loses its only coverage. |
+| **F** | **via `_register_entity_no_display`** | **25** | **New in rev 2.** All in `ui/tests/test_entities.py`; 25 distinct ids, none matching the strict regex, 92 in-file references. They become ordinary registrations via rule 3 at step 1. They are UI tests and never reach `_read_entity_display`, so they are not the fallback's coverage (calvin L8). |
 
-Total **1,153**. A + C = 340 byte-identical rewrites carrying no downstream risk.
+Total **1,153**. A (298) and 6 C sites keep their ids byte for byte. Only A carries no downstream risk: the 6 C ids get a display row once strict is on at step 2 and lose it at step 3, and any test reading it goes red at step 3 and is updated there (calvin L12).
 
-**Rule 3 dominates and rev 1 left it undefined.** Of the literal-id sites, **665 have no leading digit** — `P001`, `bs-mixed`, `''` — so the "per-file counter + slug from the old text" rule is the majority case, not the footnote rev 1's table implied. It must specify counter seed, slug derivation, and collision policy against ids already present in the file. A per-file counter is also **not deterministic across files**, which the word "deterministic" in rev 1 wrongly implied.
+**Rule 3 is the majority case** — of the literal-id sites, **665 have no leading digit** (`P001`, `bs-mixed`, `''`). **The mapping (calvin L3):** built once, repo-wide, over the sorted distinct literals, so one old literal gets one new id in every file. No per-file counter — that would hand one literal two ids in two files. A new id that equals another literal in the tree, or an id already assigned, steps its seq up until it does not. Uniqueness is checked against literals only; a collision with an id built at runtime (98 D sites) or minted by the allocator goes red at step 1 and is fixed by hand.
 
 | Old shape | Example | New | Precondition |
 |---|---|---|---|
 | `^(\d+)-(.+)$` | `1-a`, `00010-existing` | `001-a`, `010-existing` | **`seq >= 1`** |
-| `^(\d+)$` | `00042` | `042-<stable token>` | `seq >= 1` |
-| no leading digits (**majority, 665**) | `P001`, `bs-mixed`, `''` | per-file counter + slug from old text | — |
+| `^(\d+)$` | `00042` (backlog) | `042-backlog` — `{seq:03d}-{kind}` | `seq >= 1`; the call's kind is a literal |
+| no leading digits (**majority, 665**) | `P001`, `bs-mixed` | `001-p001`, `001-bs-mixed` — `001-{slug}`, slug lowercased, each run outside `[a-z0-9]` → `-`, trimmed | slug non-empty |
+| brainstorm, rejected by the strict regex | `bs-mixed` (kind brainstorm) | `{BRAINSTORM_FIXTURE_DATE}-{n:06d}-{slug}` | — |
 
-**`seq >= 1` is load-bearing:** `test_database.py:9317` registers `backlog` with `'000-v1'`. Rule 1 maps it to itself, but `render_display_id('backlog', 0, 'v1')` raises `seq must be a positive int` (`id_generator.py:85`). Route it to category D; a per-file gate would pass it silently because the literal never changed.
+A literal that fails its precondition — seq 0, an empty slug (`''`), a non-literal kind under rule 2 — is **refused and listed for hand review**. Hand review is an outcome of the codemod, not a category.
 
-**The completeness gate is repo-wide, not per-file.** 86.0% of literal ids are referenced elsewhere in their own file (872 of 1,014 non-empty literals; the 1,015th is the empty string `''`, which no sweep can key on and which therefore goes to hand review), **and 33 distinct literals are registered in two or more files** — `'001-test'` in four, `'f1'` in four, `'child'` in three, `'P001'` in `test_database.py` + `test_frontmatter_sync.py`. A per-file gate cannot see those, and a per-file counter would hand the same literal two different new ids. After all files are rewritten, assert zero occurrences of each old literal **across the whole `plugins/pd` tree**, and pre-compute the 33 so the executor decides per id whether the two uses are independent fixtures or one contract.
+**`seq >= 1` is load-bearing:** `test_database.py:9317` registers `backlog` with `'000-v1'`. Rule 1 maps it to itself, but `render_display_id('backlog', 0, 'v1')` raises `seq must be a positive int` (`id_generator.py:85`). It stays category **B**, and the codemod refuses it for hand review; an occurrence-only gate would pass it silently because the literal never changed. (Rev 2 said "route it to category D"; D is dynamic ids. Calvin L11.)
+
+**The completeness gate is repo-wide, not per-file.** 86.0% of literal ids are referenced elsewhere in their own file (872 of 1,014 non-empty literals; the 1,015th is the empty string `''`, which no sweep can key on and which therefore goes to hand review), **and 33 distinct literals are registered in two or more files** — `'001-test'` in four, `'f1'` in four, `'child'` in three, `'P001'` in `test_database.py` + `test_frontmatter_sync.py`. A per-file gate cannot see those, and a per-file counter would hand the same literal two different new ids. The repo-wide mapping makes the 33 consistent by construction — independent fixtures and a shared contract both keep working when one literal gets one id everywhere. **What the codemod rewrites and what the gate checks are different (calvin L4).**
+
+- **Rewrite:** string constants in test and conftest files that equal the old literal, or equal `{kind}:{literal}`.
+- **Gate:** afterwards, a token-bounded match (the neighbouring characters are not `[A-Za-z0-9_-]`) over every string constant in those files must find **zero** hits for old literals containing a digit or hyphen. Hits for plain-word literals (`child`, `older`) go to hand review, because ordinary English in assertion messages matches too.
+- **Non-`.py` files** under `plugins/pd` are scanned as raw text and listed for hand review.
+- **Production files** are out of scope: they hold no test ids.
 
 **Substring hazard:** `'1-a'` is a substring of `'1-alpha'`; category F adds `'lim'`, `'older'`, `'newer'`. Replace string **constants** and `f"{kind}:{id}"` composites **via AST**, never `str.replace` over file text.
 
@@ -503,9 +520,9 @@ Each step below diffs against a green predecessor, so every failure is attributa
 | # | Step | Gate |
 |---|---|---|
 | **0** | Commit the census walker (`scripts/census_register_sites.py`) with the four headline counts as its self-check. Capture the **node-id manifest** for all gate scopes. | green, unchanged |
-| **1** | Codemod ids to conformant form (A, B, F) + repo-wide reference sweep. **No signature change.** | green |
-| **2** | Delete both conftest `setdefault`s so strict defaults on; fix the now-small attributable residue. | green |
-| **3** | **C5** — signature, unconditional display write, **D3's restated invariant + its eight sweep targets + the fixture extension**. | green |
+| **1** | Codemod ids to **round-trip form** — exactly `render_display_id`'s output, seq ≥ 1 (B, F, and 36 of C) — plus the repo-wide reference sweep. **No signature change.** "Conformant" is the weaker strict regex: `'1-a'` passes it and still becomes `'001-a'` here, so step 3 changes no id (calvin L2). | green |
+| **2** | Delete both conftest `setdefault`s so strict defaults on. Expected residue: the experiment's 14 non-format failures plus display-row expectations; any failure outside those 14 (named in the step-0 baseline) that is not a display-row expectation **stops the step** (calvin L13). Add the one deliberate test for `_read_entity_display`'s fallback — a legacy feature row with no display row, asserting the WARN and the metadata fallback — since strict mode removes the accidental coverage it has today (calvin L8). | green |
+| **3** | **Opens with the import probe:** a planted `raise RuntimeError` at the top of the worktree's `database.py` must turn the worktree suite red at import, then comes out — if it stays green, the tests run the main checkout's code and nothing after counts (calvin L5). Then **C5** — signature, unconditional display write, **D3's restated invariant + its eight sweep targets + the fixture extension** — **and, in the same commit, the call-shape codemod**: every call site to `seq=`/`slug=` (C to `display_id=`), `name` as a keyword, `register_entities_batch` dicts the same way; D and E by hand (calvin L1). Record the `plugins/pd/scripts/` scan-root decision (calvin L15). | green |
 | **4** | **C7-prod** — 13 external sites + the 3 upstream contracts. | green |
 | **5** | **C6** — delete the 4 inference lines, the strict flag, and `_register_entity_no_display`. | green |
 | **6** | Gates + D5's grep + manifest comparison. | green |
@@ -516,7 +533,7 @@ Each step below diffs against a green predecessor, so every failure is attributa
 
 **Every step's gate includes `plugins/pd/scripts/tests`.** Six family call sites live under `plugins/pd/scripts` — `parse_backlog_md.py:262` plus 5 test sites — and that directory is outside the 3-path suite the Gates section flags as historically missed. A codemod regression there would otherwise surface only at step 6.
 
-C7's three upstream contracts, unchanged from the parent plan:
+C7's upstream contracts — the parent plan's three, plus `register_entities_batch`, whose dicts carry an `entity_id` key (calvin L1):
 - `generate_entity_id()` (`id_generator.py:92`) returns a string and discards `seq`/`slug`. It must return both.
 - **Two** MCP tool surfaces expose `entity_id`, not one: `register_entity` (`entity_server.py:515`, param at `:517`) and `create_key_result` (`:1419`, param at `:1424`). Both become `seq`/`slug`. Rev 1 cited `:475`, which is a `db.register_entity(...)` **call site** inside `_process_create_key_result` (`:449`) — correct in the C7 drift table, wrong as a tool surface, and it hid the second tool entirely.
 - `upsert_entity`'s **conflict lookup** (`WHERE workspace_uuid = ? AND type_id = ?`) moves to structured identity without breaking three-branch insert-or-update semantics.
@@ -542,7 +559,7 @@ Re-derive with the step-0 walker rather than reading these literals. Rev 1 wrote
 
 `V2_MIGRATIONS` ends at **7**, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger, already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**. Code rollback is `git revert` in the main working tree, then a session start in pedantic-drip, which syncs the reverted build into the live plugin.
 
-The residual risk is data written by an **old build during the mixed-version window** — what the stop-the-world gate closes. Those rows are identifiable by the existing detector: non-legacy, non-exempt entities with no display row. Remediate only rows created after the cutover timestamp.
+The residual risk is data written by an **old build during the mixed-version window** — what the stop-the-world gate closes. Those rows are identifiable by the existing detector: non-legacy, non-exempt entities with no display row. Remediate only rows created after the cutover timestamp — the merge commit's committer time, which the operator records in this plan when the gate closes (calvin L14).
 
 **Do not restore the snapshot wholesale.** One file holds seven workspaces' entities; a full restore reverts ~153 rows in six uninvolved repos and resets `sequences.next_val` below numbers already materialised as directories and branches — feature counters as of 2026-09-23: 135 pedantic-drip, 115 project_illium, 80 fractorg, 51 terry_agent, 22 cast-below. project_illium's and terry_agent's were raised that day to clear drift, so restoring any earlier snapshot puts both back behind their disk. `/pd:create-feature` hard-stops on that (step 2 of the command); a path without that prose guard would re-mint a number that already owns a directory — the RCA's opening incident. The snapshot is forensic evidence, not a rollback plan.
 
@@ -552,6 +569,34 @@ Both pre-existing, neither caused by Wave 2, neither blocking it:
 
 - ~~**`promote_entity` is type-locked.**~~ **Resolved 2026-09-23 — deleted in `2d654e1a` (decision 5).** The framing here was wrong: its spec allowed only kind changes the `type`/`kind` CHECK permits, and its designed use, backlog → feature, worked. The defect was that it had never been called.
 - **`_compute_legacy_project_id`'s docstring is false** (`project_identity.py:811`). It says migration-only, but it is `project_id`'s live source in both MCP servers (`entity_server.py:235`, `workflow_state_server.py:237`) and in `reconciliation_orchestrator/__main__.py:104` and `task_promotion.py:354`. What it hid is D1's worktree misrouting. **Fixed with it in C17a (`833095a9`).**
+
+### Calvin ledger — Wave 2 (2026-09-23)
+
+Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author (the agent that wrote this section) adjudicating. Line numbers are the document's physical lines at the time of the run, before the answers below were written back. Every RESOLVED answer is applied in the text above.
+
+| # | Line | Quote | Category | Question | Status | Author's answer |
+|---|------|-------|----------|----------|--------|-----------------|
+| 1 | L508 | "**C5** — signature, unconditional display write" | completeness · blocker | Which step rewrites the 1,113 `entity_id` call sites, and how is step 3 green without that? | RESOLVED | Step 3 carries a second mechanical codemod in the same commit: every call site becomes `seq=`/`slug=` (C becomes `display_id=`), `name` becomes a keyword, `register_entities_batch` dicts swap their `entity_id` key the same way. Mechanical because step 1 already made every id round-trip. D and E by hand in the same commit. |
+| 2 | L506 | "Codemod ids to conformant form" | inconsistency · blocker | Is "conformant" the same as "round-trips"? What does step 1 leave `'1-a'` as? | RESOLVED | No. "Conformant" is the strict regex `^\d+-.+`; step 1 targets round-trip form (exactly `render_display_id`'s output, seq ≥ 1), so `'1-a'` becomes `'001-a'` at step 1 and step 3 changes no id. |
+| 3 | L445+L450+L451 | "per-file counter + slug from old text" | completeness · blocker | What exactly is the output for `'P001'`, `'bs-mixed'`, `''`, `'00042'`? | RESOLVED | One repo-wide mapping over sorted distinct literals. Rule 1 `{seq:03d}-{slug}`; rule 2 `{seq:03d}-{kind}`; rule 3 `001-{slug}` (lowercase, non-`[a-z0-9]` runs → `-`, trimmed); seq steps up on collision with a literal or an assigned id; seq 0, empty slug and a non-literal kind under rule 2 go to hand review. No per-file counter. Drill: uniqueness is checked against literals only; runtime collisions go red at step 1 and are fixed by hand. |
+| 4 | L455+L457 | "zero occurrences of each old literal" | ambiguity · blocker | What is an occurrence? | RESOLVED | Rewrite: test/conftest constants equal to the literal or to `{kind}:{literal}`. Gate: token-bounded match over those constants, zero hits for literals with a digit or hyphen, hand review for plain words; non-`.py` files are raw-scanned for hand review; production files are out of scope. |
+| 5 | L479 | "Build them in `.pd-worktrees/wave2`" | assumption · blocker | How do you know worktree runs import the worktree's code? | RESOLVED | Inferred, not known. Step 3 opens with a probe: a planted `raise RuntimeError` in the worktree's `database.py` must turn the worktree suite red at import. |
+| 6 | L353+L543 | "the irreversible wave" / "Code rollback is `git revert`" | inconsistency · blocker | Which is it, and does D1 stand? | RESOLVED | The code is revertible; mixed-window data isn't. "The irreversible wave" is inherited, wrong wording. D1 stands because C5b is design work (L349, L351) whose failures would be indistinguishable from a mechanical codemod's; the worktree reason (L350) is retired by C17a. |
+| 7 | L395 | "a design decision, not a mechanical edit" | completeness · blocker | What is the decision, and who makes it? | RESOLVED | There isn't one; L395 is wrong. The parent is set through a separate `_safe_set_parent` call, so `:837` is the mechanical edit `entity_id=stem` → `display_id=stem`. |
+| 8 | L441 | "decide per site whether the display-less fallback" | completeness · blocker | Who decides, by what criterion, at which step? | RESOLVED | Moot: F sites are UI tests that never reach `_read_entity_display`. Today the fallback is covered by accident (strict off); step 2 removes that, so step 2 adds one legacy-row test asserting the WARN and the fallback. F sites become ordinary registrations via rule 3 at step 1. |
+| 9 | L507+L437 | "strict defaults on" / "id unchanged" | assumption · blocker | Between steps 2 and 3, what does strict mode do with `'bs-mixed'`? | RESOLVED | It raises, which would turn 36 of 42 C sites red at step 2. Step 1 rewrites those 36 to `{BRAINSTORM_FIXTURE_DATE}-{n:06d}-{slug}` via the repo-wide mapping; the other 6 stay byte-identical; all 42 take `display_id=` at step 3. L437/L443 are wrong as written. |
+| 10 | doc | (no problem statement; D5 measures code shape) | completeness · blocker | What does Wave 2 solve, what happens without it, and what shows it's solved? | RESOLVED | It removes the four text parses, the `init_project_state` bypass (live: its projects break B8), the non-numeric brainstorm failure, and the untested production path. Solved when the inventory is 28 → 24, D5's grep is clean, and B8 stays at 0 after real registrations on the new build. |
+| 11 | L453 | "Route it to category D" | inconsistency · minor | Where does `'000-v1'` belong? | RESOLVED | It stays category B. Categories describe what the walker sees; hand review is a codemod outcome. L453 is wrong. |
+| 12 | L443 | "carrying no downstream risk" | reasoning · minor | How do you know no test reads the C display row lost at step 3? | RESOLVED | Not known. Readers go red at step 3 and are updated there. "No downstream risk" holds for A only. |
+| 13 | L507 | "now-small attributable residue" | vagueness · minor | How small, and what if it isn't? | RESOLVED | Expected: the experiment's 14 non-format failures plus display-row expectations. Drill: any step-2 failure outside the 14 named in the step-0 baseline that isn't a display-row expectation stops the step. |
+| 14 | L545 | "the cutover timestamp" | vagueness · minor | Recorded where, by whom? | RESOLVED | The merge commit's committer time, recorded in the plan by the operator when the gate closes. |
+| 15 | L539 | "still needs its declared decision" | completeness · minor | At which step? | RESOLVED | Recorded at step 3, before C7's step 4. |
+| 16 | L461+L464 | "from `database.py`, `hooks/lib/conftest.py:37`, `mcp/conftest.py:31`" | completeness · minor | The grep also matches `test_issue_spawn.py`'s fixture and conftest docstrings. Which list is the criterion? | OPEN | — (unasked) |
+| 17 | L480 | "a pd MCP server has started on it" | vagueness · minor | Observed how? | OPEN | — (unasked) |
+| 18 | L506 | "(A, B, F)" | ambiguity · minor | What does step 1 do to A sites, whose ids don't change? | OPEN | — (unasked) |
+| 19 | L335 | "small but real" | vagueness · minor | Small by what measure? | OPEN | — (unasked) |
+
+☑ 15 resolved · 4 open · 0 dismissed
 
 ## Wave 3 — census, allocator, guard
 
@@ -660,7 +705,7 @@ sqlite3 <snapshot> "PRAGMA integrity_check; SELECT COUNT(*) FROM entities;"
 - **The registry is shared and live.** 24 workspaces write to one file. Every literal in this document is a measurement with a timestamp, not a constant. Re-derive at execution; assert shapes and invariants, not counts.
 - **~~Wave 2 is the only irreversible step.~~ Corrected 2026-09-22 (Wave 2 re-plan).** Checked: `V2_MIGRATIONS` ends at 7, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger — already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**, so the code rollback is `git revert`. What is genuinely irreversible is data written by an *old build during the mixed-version window*, which is what the stop-the-world gate closes. There is still no `V2_MIGRATIONS_DOWN`, so this reasoning must be re-checked for any later wave that does add one.
 - **`.backup` is not a rollback, and Gates prescribes it anyway.** One file, seven workspaces with entities. A restore reverts ~153 rows in six uninvolved repos and resets `feature next_val` below numbers already materialised as directories and branches — feature counters as of 2026-09-23: 135 pedantic-drip, 115 project_illium, 80 fractorg, 51 terry_agent, 22 cast-below. Nothing in code compares `sequences.next_val` to what is on disk; only `/pd:create-feature`'s prose hard stop does, and on 2026-09-23 it would have fired — see *Counter drift* below. **Closed 2026-09-22** — see *Rollback* at the end of Wave 2: detect via `check_display_row_invariant`, remediate only rows created after the cutover timestamp, never restore the file wholesale. Note also that `~/.claude/pd/entities/` already holds `.db.pre-*` snapshots with `-shm`/`-wal` siblings — made with `cp`, which Gates forbids — and restoring one of those is a torn read on top of all the above.
-- **The gap between now and C6 keeps producing display-less rows.** B8 makes that visible; it does not stop it. Only C5/C6 stop it.
+- **The gap between now and C6 keeps producing display-less rows — through `init_project_state` only.** Production otherwise registers strictly (env unset → `strict = True`), so every other registration already writes a display row (calvin L10). B8 makes the remaining source visible; it does not stop it. Only C5/C6 stop it.
 - **The suite has never exercised the display-row write.** Both conftests default `PD_REGISTER_ENTITY_STRICT_ID_FORMAT=0`, so the `if strict:` branch at `database.py:7708` is reached only by the 13 tests of `mcp/test_issue_spawn.py`, via a module-scope autouse fixture at `:54`. Forcing the flag on today fails 751 of them. C5 makes that branch unconditional, which is why D5 makes *deleting* the flag the exit criterion.
 - **Counter drift, found 2026-09-23.** A read-only scan of all 24 workspaces found project_illium's feature counter at 57 with directories up to 114, and terry_agent's at 36 with directories up to 50; both would have hard-stopped `/pd:create-feature`. Raised to 115 and 51 (snapshot `entities.db.pre-counterfix-20260923`), written with plain `sqlite3` so the live file stayed at schema 6 rather than being migrated as a side effect. Behind it are **152 feature directories the registry has never seen** (project_illium 78, fractorg 57, terry_agent 16, pedantic-drip 1). project_illium's 53 numbered 057–114 are in no snapshot back to May and have no event: pd stopped recording that repository's features in June 2026, the weeks its worktrees appeared. The census cannot protect numbers it cannot see, so C19/C20 (seed from disk) is the systematic fix, and C17a stops worktrees issuing numbers outside their repository's sequence.
 - **Reviewer claims are not self-verifying.** Verify any claim about a symbol against `file:line` before absorbing it here.
