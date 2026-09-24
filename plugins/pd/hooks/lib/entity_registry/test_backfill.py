@@ -245,101 +245,6 @@ class TestParentDerivation:
 
 
 # ---------------------------------------------------------------------------
-# Task 3.6: Orphaned backlog and external brainstorm tests
-# ---------------------------------------------------------------------------
-
-
-class TestOrphanedAndExternal:
-    def test_orphaned_backlog_gets_synthetic_entity(self, tmp_path):
-        """Feature referencing non-existent backlog_source creates orphaned synthetic."""
-        # No backlog.md at all -- backlog:099-orphan-item won't be found
-        (tmp_path / "brainstorms").mkdir()
-        (tmp_path / "projects").mkdir()
-        feat_dir = tmp_path / "features" / "031-orphan-test"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "id": "031",
-            "slug": "orphan-test",
-            "backlog_source": "099-orphan-item",
-        }))
-
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-
-            run_backfill(db, str(tmp_path))
-
-            # Synthetic orphaned backlog should exist
-            orphan = db.get_entity("backlog:099-orphan-item")
-            assert orphan is not None
-            assert orphan["status"] == "orphaned"
-            assert "099-orphan-item" in orphan["name"]
-
-            # Feature should be parented to the synthetic backlog
-            feature = db.get_entity("feature:031-orphan-test")
-            assert feature is not None
-            assert feature["parent_type_id"] == "backlog:099-orphan-item"
-        finally:
-            db.close()
-
-    def test_external_brainstorm_gets_synthetic_entity(self, tmp_path):
-        """Feature referencing external brainstorm_source creates external synthetic."""
-        (tmp_path / "brainstorms").mkdir()
-        (tmp_path / "projects").mkdir()
-        feat_dir = tmp_path / "features" / "032-external-test"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "id": "032",
-            "slug": "external-test",
-            "brainstorm_source": "~/.claude/plans/some-plan.md",
-        }))
-
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-
-            run_backfill(db, str(tmp_path))
-
-            # Synthetic external brainstorm should exist
-            stem = "some-plan"
-            external = db.get_entity(f"brainstorm:{stem}")
-            assert external is not None
-            assert external["status"] == "external"
-            assert "External:" in external["name"]
-
-            # Feature should be parented to the synthetic brainstorm
-            feature = db.get_entity("feature:032-external-test")
-            assert feature is not None
-            assert feature["parent_type_id"] == f"brainstorm:{stem}"
-        finally:
-            db.close()
-
-    def test_external_absolute_path_detection(self, tmp_path):
-        """Absolute paths should be detected as external."""
-        (tmp_path / "brainstorms").mkdir()
-        (tmp_path / "projects").mkdir()
-        feat_dir = tmp_path / "features" / "033-abs-test"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "id": "033",
-            "slug": "abs-test",
-            "brainstorm_source": "/home/user/plans/plan.prd.md",
-        }))
-
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-
-            run_backfill(db, str(tmp_path))
-
-            external = db.get_entity("brainstorm:plan")
-            assert external is not None
-            assert external["status"] == "external"
-        finally:
-            db.close()
-
-
-# ---------------------------------------------------------------------------
 # Task 3.8: Idempotency and .prd.md/.md priority tests
 # ---------------------------------------------------------------------------
 
@@ -589,43 +494,6 @@ class TestMetaJsonExtraFieldsAccepted:
             entity = db.get_entity("feature:042-extra-fields")
             assert entity is not None
             assert entity["name"] == "Extra Fields Feature"
-        finally:
-            db.close()
-
-
-class TestParentReferenceToNonexistentEntity:
-    """Error propagation: parent reference to nonexistent entity produces warning.
-    derived_from: dimension:error_propagation, spec:AC-9
-    """
-
-    def test_parent_reference_to_nonexistent_entity_creates_synthetic(self, tmp_path):
-        # Given a feature referencing a brainstorm that does not exist on disk
-        (tmp_path / "brainstorms").mkdir()
-        (tmp_path / "projects").mkdir()
-        feat_dir = tmp_path / "features" / "043-orphan-parent"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "id": "043",
-            "slug": "orphan-parent",
-            "brainstorm_source": "docs/brainstorms/20260301-missing.prd.md",
-        }))
-
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-
-            # When running backfill
-            run_backfill(db, str(tmp_path))
-
-            # Then a synthetic orphaned brainstorm is created
-            synthetic = db.get_entity("brainstorm:20260301-missing")
-            assert synthetic is not None
-            assert synthetic["status"] == "orphaned"
-
-            # And the feature is parented to it
-            feature = db.get_entity("feature:043-orphan-parent")
-            assert feature is not None
-            assert feature["parent_type_id"] == "brainstorm:20260301-missing"
         finally:
             db.close()
 
@@ -2350,8 +2218,10 @@ class TestBackfillLeavesTheRegistryAlone:
         finally:
             db.close()
 
-    def test_a_missing_brainstorm_named_by_an_absolute_in_repo_path_is_orphaned(self, tmp_path):
-        """An in-repo brainstorm that is gone from disk is orphaned, not external."""
+    def test_a_missing_brainstorm_named_by_an_absolute_in_repo_path_is_reported_not_minted(
+            self, tmp_path, capsys):
+        """An in-repo brainstorm that is gone from disk is reported and left
+        unset. Until C13 (design D8) it was minted as an orphaned placeholder."""
         from entity_registry.backfill import run_backfill
 
         self._empty_tree(tmp_path)
@@ -2360,7 +2230,9 @@ class TestBackfillLeavesTheRegistryAlone:
         db = EntityDatabase(str(tmp_path / "test.db"))
         try:
             run_backfill(db, str(tmp_path))
-            assert db.get_entity("brainstorm:20260101-gone")["status"] == "orphaned"
-            assert db.get_entity("feature:033-lost-source")["parent_type_id"] == "brainstorm:20260101-gone"
+            assert db.get_entity("brainstorm:20260101-gone") is None
+            assert db.get_entity("feature:033-lost-source")["parent_type_id"] is None
+            assert ("set_parent feature:033-lost-source->brainstorm:20260101-gone skipped: "
+                    "parent is not registered in this workspace") in capsys.readouterr().err
         finally:
             db.close()

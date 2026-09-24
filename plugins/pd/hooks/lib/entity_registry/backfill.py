@@ -13,7 +13,7 @@ import os
 import re
 import sys
 
-from entity_registry.database import EntityDatabase, EntityExistsError
+from entity_registry.database import EntityDatabase
 from entity_registry.id_generator import registration_identity, render_display_id
 
 logger = logging.getLogger(__name__)
@@ -664,27 +664,21 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         if existing and " " not in existing["name"]:
             db.update_entity(type_id=type_id, name=name, workspace_uuid=workspace_uuid)
 
-        # Derive and set parent
+        # Derive and set parent. One this workspace has not registered is
+        # reported and left unset, never minted (_safe_set_parent, design D8).
         parent_type_id = _derive_parent("feature", meta, None, artifacts_root=artifacts_root)
         if parent_type_id:
-            # Ensure parent exists in this workspace (register synthetic if needed)
-            if _in_workspace(db, parent_type_id, workspace_uuid) is None:
-                _register_synthetic_for_missing_parent(
-                    db, parent_type_id, meta, project_id=project_id,
-                    artifacts_root=artifacts_root,
-                )
             _safe_set_parent(db, type_id, parent_type_id, workspace_uuid)
 
         # Handle backlog_source for direct backlog link (if no other parent set)
         if not parent_type_id and meta.get("backlog_source"):
             bl_id = meta["backlog_source"]
             bl_type_id = f"backlog:{bl_id}"
-            if _in_workspace(db, bl_type_id, workspace_uuid) is None:
-                _register_synthetic(
-                    db, "backlog", bl_id,
-                    f"Backlog #{bl_id} (orphaned)", "orphaned",
-                    project_id=project_id,
-                )
+            # A legacy id (``00019``) is logged as the backlog scan logs it: no
+            # scan registers one, so only a row already here can resolve it.
+            if registration_identity("backlog", bl_id) is None and \
+                    _in_workspace(db, bl_type_id, workspace_uuid) is None:
+                _log_skipped("backlog", bl_id)
             _safe_set_parent(db, type_id, bl_type_id, workspace_uuid)
 
 
@@ -698,6 +692,10 @@ def _derive_parent(
     *, artifacts_root: str | None = None,
 ) -> str | None:
     """Derive the parent type_id for an entity.
+
+    The type_id is only a lookup key: the parent is linked if this workspace
+    has registered it, and reported otherwise. Nothing is minted from it
+    (design D8).
 
     Parameters
     ----------
@@ -747,91 +745,6 @@ def _derive_parent(
         return None
 
     return None
-
-
-# ---------------------------------------------------------------------------
-# Synthetic entity helpers
-# ---------------------------------------------------------------------------
-
-
-def _register_synthetic(
-    db: EntityDatabase,
-    entity_type: str,
-    entity_id: str,
-    name: str,
-    status: str,
-    project_id: str = "__unknown__",
-) -> str | None:
-    """Register a synthetic entity (orphaned/external).
-
-    Returns the constructed type_id, or None when ``entity_id`` has no
-    seq/slug form and is skipped.
-    """
-    identity = registration_identity(entity_type, entity_id)
-    if identity is None:
-        _log_skipped(entity_type, entity_id)
-        return None
-    # F12 audit: conflict-is-error → register_entity, EntityExistsError handled.
-    # Only when absent: the caller's get_entity(type_id) sees nothing when the
-    # id exists in two workspaces, and an upsert would then rewrite this
-    # workspace's real row (its status became 'orphaned').
-    try:
-        db.register_entity(
-            entity_type=entity_type,
-            **identity,
-            name=name,
-            status=status,
-            project_id=project_id,
-        )
-    except EntityExistsError:
-        pass
-    return f"{entity_type}:{entity_id}"
-
-
-def _register_synthetic_for_missing_parent(
-    db: EntityDatabase,
-    parent_type_id: str,
-    meta: dict,
-    project_id: str = "__unknown__",
-    artifacts_root: str | None = None,
-) -> None:
-    """Register a synthetic entity for a missing parent reference.
-
-    Handles two cases:
-    - Brainstorm parent with external path -> status="external"
-    - Backlog parent not found -> status="orphaned"
-    """
-    parts = parent_type_id.split(":", 1)
-    if len(parts) != 2:
-        return
-    p_type, p_id = parts
-
-    if p_type == "brainstorm":
-        bs_source = meta.get("brainstorm_source", "")
-        if _is_external_path(bs_source, artifacts_root):
-            _register_synthetic(
-                db, "brainstorm", p_id,
-                f"External: {bs_source}", "external",
-                project_id=project_id,
-            )
-        else:
-            _register_synthetic(
-                db, "brainstorm", p_id,
-                f"Brainstorm {p_id} (orphaned)", "orphaned",
-                project_id=project_id,
-            )
-    elif p_type == "backlog":
-        _register_synthetic(
-            db, "backlog", p_id,
-            f"Backlog #{p_id} (orphaned)", "orphaned",
-            project_id=project_id,
-        )
-    elif p_type == "project":
-        _register_synthetic(
-            db, "project", p_id,
-            f"Project {p_id} (orphaned)", "orphaned",
-            project_id=project_id,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -901,8 +814,9 @@ def _brainstorm_parent(bs_source: str | None, artifacts_root: str | None = None)
     (``brainstorm:20260710-…``), used as-is. A path inside the repository —
     relative, or absolute under ``artifacts_root`` — names a brainstorm only
     if it is in a ``brainstorms`` directory; any other file (a project's
-    ``prd.md``) is not one, and inventing a brainstorm for it mints a phantom
-    entity. External paths keep their placeholder.
+    ``prd.md``) is not one and names no parent. An external path names a
+    brainstorm by its stem, linked only if this workspace registered one;
+    nothing is minted for it.
     """
     if not bs_source:
         return None
@@ -1010,21 +924,28 @@ def _log_skipped(kind: str, text_id: str) -> None:
 def _safe_set_parent(
     db: EntityDatabase, type_id: str, parent_type_id: str, workspace_uuid: str
 ) -> None:
-    """Fill a missing parent, logging a warning if the operation fails.
+    """Fill a missing parent, reporting on stderr one it cannot fill.
 
     A parent already set is left alone: backfill derives parents from files
     on disk, which are older than what the registry has since recorded. Both
-    ends are looked up in this workspace only.
+    ends are looked up in this workspace only. A parent the files name that
+    this workspace has not registered is reported and left unset; it is never
+    minted from the text that names it (design D8).
     """
     child = _in_workspace(db, type_id, workspace_uuid)
     if child is None or child["parent_uuid"] is not None:
         return
-    if _in_workspace(db, parent_type_id, workspace_uuid) is not None:
+    if _in_workspace(db, parent_type_id, workspace_uuid) is None:
+        reason = "parent is not registered in this workspace"
+    else:
         try:
             db.set_parent(type_id, parent_type_id, workspace_uuid=workspace_uuid)
+            return
         except ValueError as exc:
-            print(
-                f"entity-server: backfill: set_parent {type_id}->{parent_type_id} "
-                f"skipped: {exc}",
-                file=sys.stderr,
-            )
+            reason = str(exc)
+    # The child's stored type_id: a caller may hold its uuid instead.
+    print(
+        f"entity-server: backfill: set_parent {child['type_id']}->{parent_type_id} "
+        f"skipped: {reason}",
+        file=sys.stderr,
+    )
