@@ -14,6 +14,10 @@ come from the row in this server's workspace. With a feature there, the
 kanban moves as it did before C8; with a backlog there, the kanban stays,
 although the text and the other workspace's row both say feature.
 
+The soft-deleted class covers an entity ``delete_entity`` has hidden from
+the live ``get_entity`` read. Its transition still goes through, so the
+kind must come from the deleted row's kind column, in both server scopes.
+
 Non-vacuity: each test first asserts that the transition or completion went
 through, so the kanban step was reached. Each fixture starts in ``backlog``,
 and the phase it lands on maps to ``prioritised``, so a write that
@@ -224,3 +228,67 @@ class TestTransitionPhaseKanbanOnTheCrossWorkspaceEdge:
 
         assert result["transitioned"] is True
         assert db.get_workflow_phase(type_id)["kanban_column"] == "backlog"
+
+
+class TestTransitionPhaseKanbanForASoftDeletedEntity:
+    """A soft-deleted entity: ``delete_entity`` sets ``is_deleted = 1`` and
+    keeps both its entities row and its workflow_phases row (#081).
+
+    Nothing blocks ``transition_phase`` on it: the frozen engine reads
+    workflow_phases and ``update_entity`` does not filter ``is_deleted``, so
+    the phase moves. The live ``get_entity`` read hides the row, so the kind
+    must come from the deleted row's ``kind`` column, in both server scopes.
+    Before C8 the text check moved a soft-deleted feature's kanban column;
+    these tests pin that the kind-column read still moves it.
+    """
+
+    @pytest.fixture(params=["unscoped", "scoped"])
+    def server_scope(self, request) -> str:
+        return request.param
+
+    def _soft_delete(self, db, monkeypatch, type_id: str, server_scope: str) -> None:
+        db.delete_entity(type_id)
+        assert db.get_entity(type_id) is None  # the live read hides the row
+        assert db.get_entity(type_id, include_deleted=True)["is_deleted"] == 1
+        if server_scope == "scoped":
+            workspace_uuid = bootstrap_test_workspace(db, "c8-workflow-state-kind")
+            monkeypatch.setattr(wss, "_workspace_uuid", workspace_uuid)
+
+    def test_soft_deleted_feature_moves_its_kanban_column(
+        self, db, tmp_path, monkeypatch, server_scope,
+    ):
+        # Registered the normal way, so its type_id and kind agree.
+        workspace_uuid = bootstrap_test_workspace(db, "c8-workflow-state-kind")
+        feature_dir = tmp_path / "features" / "301-soft-deleted"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / ".meta.json").write_text(
+            json.dumps({"id": "301", "slug": "soft-deleted", "status": "active", "mode": "standard"})
+        )
+        (feature_dir / "shape.md").write_text("# Shape\n")
+        db.register_entity(
+            "feature", name="Soft-deleted feature", seq=301, slug="soft-deleted",
+            workspace_uuid=workspace_uuid, artifact_path=str(feature_dir),
+            status="active",
+        )
+        type_id = "feature:301-soft-deleted"
+        db.create_workflow_phase(type_id, workflow_phase="specify", kanban_column="backlog")
+        self._soft_delete(db, monkeypatch, type_id, server_scope)
+
+        result = _transition_to_design(db, tmp_path, type_id)
+
+        assert result["transitioned"] is True
+        assert db.get_workflow_phase(type_id)["workflow_phase"] == "design"
+        assert db.get_workflow_phase(type_id)["kanban_column"] == "prioritised"
+
+    def test_soft_deleted_feature_kind_under_a_backlog_prefix_moves_its_kanban_column(
+        self, db, tmp_path, monkeypatch, server_scope,
+    ):
+        # The text says backlog and the deleted row's kind column says
+        # feature: the kanban moves only if the kind is read from the row.
+        type_id = _seed_disagreeing_entity(db, tmp_path, FEATURE_KIND_UNDER_BACKLOG_PREFIX)
+        self._soft_delete(db, monkeypatch, type_id, server_scope)
+
+        result = _transition_to_design(db, tmp_path, type_id)
+
+        assert result["transitioned"] is True
+        assert db.get_workflow_phase(type_id)["kanban_column"] == "prioritised"

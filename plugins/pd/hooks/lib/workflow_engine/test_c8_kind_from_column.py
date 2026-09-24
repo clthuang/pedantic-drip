@@ -15,7 +15,8 @@ Sites covered:
   entity uuid (no ``:``), which ``get_entity`` resolves.
 - **``router.transition_entity_phase``**: the lifecycle-kind gate. Deliberate
   error-order change: the entity is fetched BEFORE the kind gate, so an
-  unregistered id is ``entity_not_found`` whatever kind its text spells.
+  id with no live entity row (unregistered, or soft-deleted) is
+  ``entity_not_found`` whatever kind its text spells.
   Today's ``invalid_entity_type`` answer for such an id came from parsing
   the id. The malformed-id guard (no ``:``) still runs first, unchanged.
 - **``reconciliation.check_workflow_drift``** (bulk path): which
@@ -237,6 +238,24 @@ class TestTransitionEntityPhaseReadsKindColumn:
             transition_entity_phase(db, "feature:001-never-registered", "reviewing")
 
         assert str(excinfo.value) == "entity_not_found: feature:001-never-registered"
+
+    def test_soft_deleted_entity_is_entity_not_found_whatever_its_kind(self, db):
+        # get_entity hides a soft-deleted row (#081), so there is no kind to
+        # read. A soft-deleted brainstorm or backlog already answered
+        # entity_not_found before C8; a soft-deleted feature answered
+        # "invalid_entity_type: feature ...", parsed from its text.
+        db.register_entity(
+            entity_type="feature", seq=2, slug="soft-deleted", name="Soft-deleted",
+            status="active", project_id="__unknown__",
+        )
+        type_id = "feature:002-soft-deleted"
+        db.delete_entity(type_id)
+        assert db.get_entity(type_id, include_deleted=True)["is_deleted"] == 1
+
+        with pytest.raises(ValueError) as excinfo:
+            transition_entity_phase(db, type_id, "reviewing")
+
+        assert str(excinfo.value) == f"entity_not_found: {type_id}"
 
     def test_malformed_id_is_rejected_before_any_lookup(self, db):
         # Unchanged: the no-":" guard still runs first. So a registered

@@ -73,7 +73,13 @@ class WorkflowMismatch:
 
 @dataclass(frozen=True)
 class WorkflowDriftReport:
-    """Drift assessment for a single feature's workflow state."""
+    """Drift assessment for a single feature's workflow state.
+
+    A ``db_only`` report can also carry an ORPHAN workflow_phases row (no
+    entities row, so no kind), whatever its type_id prefix: since C8 the
+    db_only filter in ``check_workflow_drift`` reads the joined kind column
+    and keeps orphans visible.
+    """
 
     feature_type_id: str
     status: str  # "in_sync"|"meta_json_ahead"|"db_ahead"|"meta_json_only"|"db_only"|"error"

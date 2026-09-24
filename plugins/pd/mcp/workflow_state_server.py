@@ -1022,21 +1022,31 @@ def _transitioned_entity_kind(
     """Kind of the entity a transition just wrote, from its ``kind`` column
     (C8), never from the type_id text.
 
-    *entity* is the caller's unscoped ``get_entity`` read. That read is None
-    when the type_id exists in more than one workspace (the qa-server H2
-    edge). The row written is then the one in this server's workspace, the
-    scope ``update_entity`` used, so the kind is read from that row. Returns
-    None when no row is found: the kind is unknown.
+    *entity* is the caller's live, unscoped ``get_entity`` read. It is None
+    in two cases where the transition still went through:
+
+    * the type_id exists in more than one workspace (the qa-server H2
+      edge), so the unscoped read is ambiguous;
+    * the entity is soft-deleted (#081). ``delete_entity`` keeps its
+      entities row and its workflow_phases row, and ``update_entity`` does
+      not filter ``is_deleted``.
+
+    The row is then re-read the way ``update_entity`` resolved it: in this
+    server's workspace when one is set, otherwise by the globally unique
+    type_id, soft-deleted rows included. Returns None when no row is found:
+    the kind is unknown.
     """
     if entity is not None:
         return entity["kind"]
-    if not _workspace_uuid:
-        return None
-    scoped_uuid, _ = db.resolve_entity_uuid(_workspace_uuid, feature_type_id)
-    if scoped_uuid is None:
-        return None
-    scoped = db.get_entity_by_uuid(scoped_uuid)
-    return scoped["kind"] if scoped is not None else None
+    if _workspace_uuid:
+        scoped_uuid, _ = db.resolve_entity_uuid(_workspace_uuid, feature_type_id)
+        row = (
+            db.get_entity_by_uuid(scoped_uuid, include_deleted=True)
+            if scoped_uuid is not None else None
+        )
+    else:
+        row = db.get_entity(feature_type_id, include_deleted=True)
+    return row["kind"] if row is not None else None
 
 
 @_with_error_handling
@@ -1168,8 +1178,9 @@ def _process_transition_phase(
 
                 # Update kanban_column for features based on phase. The kind
                 # is the transitioned row's kind column (C8), never the type_id
-                # text; the helper covers the cross-workspace unscoped-read
-                # edge noted below.
+                # text. When the live read above is None (the cross-workspace
+                # unscoped-read edge noted below, or a soft-deleted entity),
+                # the helper re-reads the row the transition wrote.
                 if _transitioned_entity_kind(db, feature_type_id, entity) == "feature":
                     kanban = _kanban_column_for("active", target_phase)
                     db.update_workflow_phase(feature_type_id, kanban_column=kanban)
@@ -1178,7 +1189,8 @@ def _process_transition_phase(
                 # INSIDE this transaction; an append failure aborts the whole
                 # transition (fail loud, no reconcile-later). entity can be
                 # None on the cross-workspace unscoped-read edge (qa-server
-                # H2) — same guard as the F10 closure block.
+                # H2) or for a soft-deleted entity — same guard as the F10
+                # closure block.
                 project_id = _resolve_project_id(entity) if entity else "__unknown__"
                 db.append_phase_event(
                     type_id=feature_type_id,

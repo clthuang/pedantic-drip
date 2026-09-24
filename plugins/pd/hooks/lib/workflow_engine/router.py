@@ -418,9 +418,10 @@ def transition_entity_phase(
     - workflow_phases update: forward sets last_completed_phase, backward preserves it
 
     The kind is the entity row's ``kind`` column (C8), never the type_id
-    text. The entity is therefore fetched BEFORE the kind gate. An
-    unregistered id is ``entity_not_found`` whatever kind its text spells
-    (before C8 a non-lifecycle prefix answered ``invalid_entity_type``).
+    text. The entity is therefore fetched BEFORE the kind gate. An id with
+    no live entity row (unregistered, or soft-deleted) is
+    ``entity_not_found`` whatever kind its text spells (before C8 a
+    non-lifecycle prefix answered ``invalid_entity_type``).
 
     Returns dict (caller serializes to JSON).
     Raises ValueError for validation failures.
