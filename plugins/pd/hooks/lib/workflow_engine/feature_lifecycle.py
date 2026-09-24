@@ -318,8 +318,10 @@ def _resumable_registration(
     ``.meta.json`` (a completed one re-runs, rewriting ``.meta.json``). The
     row must be:
 
-    - **Live** — deletion is soft, so a deleted project still holds its id,
-      and sequence drift can re-issue that id to a new project.
+    - **Live** — deletion is soft, so a deleted project still holds its id.
+      The allocator never re-issues a spent number (C1/C2), so a conflict
+      with a deleted row means the call reused an earlier id; resuming it
+      would hand the new project a deleted row.
     - **Same directory** — its ``artifact_path`` is this ``project_dir``.
       Another registrar records none (the MCP ``register_entity`` tool,
       unless given one) or its own.

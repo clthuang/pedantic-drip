@@ -246,11 +246,11 @@ def test_a_retry_under_the_same_parent_resumes(db, artifacts_root, monkeypatch):
 
 
 def test_a_deleted_project_holding_the_id_is_refused_before_the_directory(db, artifacts_root, monkeypatch):
-    """Sequence drift can re-issue a deleted project's id once its directory
-    is gone. Deletion is soft, so the row still holds the id and
-    registration conflicts; resuming it would hand the new project a
-    deleted row. The row is this very call's earlier attempt, so its
-    deletion is the only thing that differs."""
+    """Deletion is soft, so a deleted project still holds its id, and a call
+    that reuses that id conflicts with it (the allocator itself never
+    re-issues a spent number, C1/C2); resuming it would hand the new
+    project a deleted row. The row is this very call's earlier attempt, so
+    its deletion is the only thing that differs."""
     project_dir = _project_dir(artifacts_root)
     _register_then_fail_the_directory(db, artifacts_root, project_dir, monkeypatch)
     db.delete_entity(PROJECT_TYPE_ID)
@@ -284,7 +284,7 @@ def test_a_row_registered_for_another_directory_is_refused_before_the_directory(
 
 def test_a_row_registered_under_another_parent_is_refused_before_the_directory(db, artifacts_root, monkeypatch):
     """Same directory, another brainstorm: an earlier project that stopped
-    after registering, whose id drift has re-issued, is not this call's."""
+    after registering, whose id a later call reuses, is not this call's."""
     project_dir = _project_dir(artifacts_root)
     earlier_brainstorm = _register_brainstorm(db, "20260901-alpha")
     this_brainstorm = _register_brainstorm(db, "20260924-alpha")

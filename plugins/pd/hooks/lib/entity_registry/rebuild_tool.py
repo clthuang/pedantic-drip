@@ -1151,8 +1151,8 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
     * **A row breaks the display-row invariant** (not ``is_legacy``, and a
       sequence kind): C3's ``IncompleteBucketError``. The repair is writing
       that row's ``entity_display`` row.
-    * **Every row is exempt:** the counterless ``ValueError``, which names
-      ``establish_high_water``.
+    * **Every row is exempt** (legacy, or a kind with no sequence): the
+      counterless ``ValueError``, which names ``establish_high_water``.
     """
     stored: dict[tuple[str, str], int] = {}
     try:

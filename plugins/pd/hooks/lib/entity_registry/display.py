@@ -11,9 +11,10 @@ registers "events" into ``entity_registry.schema_v2.DDL_REGISTRY`` as a
 side effect of its ``entity_registry.events`` import below (the same
 mechanism events.py itself uses for "events").
 
-Ships dark: no live v17 code path imports this module, only its own
-tests do (mirrors schema_v2.py/events.py, design D1) — feature 132's
-cutover decides when a v2 database (and this allocator) comes online.
+Ships dark (design D1): no live code path imports this module, only its
+own tests do. Feature 132's cutover brought a v2 database online without
+it; ``EntityDatabase.next_sequence_value`` is the live allocator (see
+``next_display_seq``).
 """
 from __future__ import annotations
 
@@ -30,9 +31,18 @@ def next_display_seq(conn: sqlite3.Connection, *, workspace_uuid: str, kind: str
 
     A bare ``int`` — no ``{seq:03d}-{slug}`` composition here (design
     D7); that continuity is the live ``allocate_entity_id`` MCP tool's
-    job (feature 121 D1). Feature 132 seeds ``sequences.current_value``
-    per (workspace, kind) from the v1 census before this becomes the
-    live path.
+    job (feature 121 D1).
+
+    Not the live allocator, and nothing seeds the ``current_value``
+    column this reads: feature 132's rebuild seeds ``sequences.next_val``
+    (``rebuild_tool._seed_sequences``), the counter
+    ``EntityDatabase.next_sequence_value`` issues from. That allocator
+    has two guards this function lacks:
+
+    - **C1/C2:** it never issues a number at or below the highest
+      ``entity_display.seq`` registered in the bucket.
+    - **C3:** it refuses a bucket holding an entity with no display row
+      that the display-row invariant does not exempt.
 
     Composes on ``conn.in_transaction`` (design D5), same discipline as
     ``entity_registry.events.append_event``:
