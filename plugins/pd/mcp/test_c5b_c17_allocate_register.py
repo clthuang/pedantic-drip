@@ -146,6 +146,34 @@ def test_auto_id_without_a_server_workspace_resolves_the_legacy_id_once(registry
     assert _created_label(db, "feature:001-legacy-numbered") == LEGACY_A
 
 
+def test_auto_id_with_a_stale_server_workspace_returns_the_base_error_and_burns_no_number(
+    registry, monkeypatch,
+):
+    """A server workspace with no workspaces row (the split-brain) is refused
+    before allocating. The tool returns the string the pre-C17 build returned
+    when its registration refused that workspace; that build had already
+    taken a number from the legacy id's workspace (A), which now stays
+    untouched."""
+    db, ws_a, ws_b = registry
+    stale_workspace_uuid = "01900000-0000-7000-8000-00000000dead"
+    monkeypatch.setattr(entity_server, "_workspace_uuid", stale_workspace_uuid)
+    allocations = _record_calls(monkeypatch, db, "next_sequence_value")
+
+    reply = _run(entity_server.register_entity(entity_type="feature", name="Split Brain",
+                                               auto_id=True))
+
+    assert reply == (
+        f"Error registering entity: register_entity(): workspace_uuid="
+        f"{stale_workspace_uuid!r} not present in the workspaces table — "
+        f"workspace.json/DB split-brain detected. Run pd:doctor --fix, then "
+        f"restart the session (MCP servers cache the workspace UUID at startup)."
+    )
+    assert allocations == []
+    assert _counter(db, ws_a, "feature") is None
+    assert _counter(db, ws_b, "feature") is None
+    assert db.get_entity("feature:001-split-brain") is None
+
+
 # ---------------------------------------------------------------------------
 # issue_spawn
 # ---------------------------------------------------------------------------

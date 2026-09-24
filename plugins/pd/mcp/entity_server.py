@@ -644,6 +644,15 @@ async def register_entity(
             resolved_workspace_uuid = _db._resolve_optional_workspace_filter(
                 None, resolved_project_id, _caller="register_entity"
             )
+        # A workspace with no workspaces row (the split-brain) is refused
+        # before a number is taken, with the string _process_register_entity
+        # returns when register_entity refuses it.
+        try:
+            _db._validated_provided_workspace_uuid(
+                resolved_workspace_uuid, "register_entity"
+            )
+        except ValueError as refusal:
+            return f"Error registering entity: {refusal}"
         try:
             seq, slug = generate_entity_id(
                 _db, entity_type, name, workspace_uuid=resolved_workspace_uuid

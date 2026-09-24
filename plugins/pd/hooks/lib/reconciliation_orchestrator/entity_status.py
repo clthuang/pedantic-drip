@@ -171,9 +171,9 @@ def _sync_brainstorm_entities(
     effective_project_id = project_id if workspace_uuid is None else None
     # Registration takes one workspace (C5b): the given one, else the one the
     # legacy project_id names, resolved as register_entity resolved that alias.
-    registration_workspace_uuid = db._resolve_optional_workspace_filter(
-        workspace_uuid, effective_project_id, _caller="register_entity"
-    )
+    # Resolved at the first registration, so a sync that registers nothing
+    # reports an unknown project_id from the read in Part 2, as before.
+    registration_workspace_uuid = None
 
     # Part 1: scan filesystem for .prd.md files, register new entities
     seen_on_disk = set()  # entity_ids with files present on disk
@@ -191,6 +191,10 @@ def _sync_brainstorm_entities(
             continue
 
         artifact_path = os.path.join(artifacts_root, "brainstorms", filename)
+        if registration_workspace_uuid is None:
+            registration_workspace_uuid = db._resolve_optional_workspace_filter(
+                workspace_uuid, effective_project_id, _caller="register_entity"
+            )
         # F12 audit: idempotent reconciliation → upsert_entity
         db.upsert_entity(
             entity_type="brainstorm",

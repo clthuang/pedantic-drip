@@ -6904,8 +6904,8 @@ class EntityDatabase:
 
         Originally a read-path-only variant of the Feature 108 Migration 11
         transition shim (the dedicated (workspace_uuid, project_id) resolver
-        method retired at feature 132 D6.4). Two call-site shapes now share
-        it:
+        method retired at feature 132 D6.4). Three call-site shapes now
+        share it:
 
         * Read paths (``list_entities``, ``search_entities``,
           ``_resolve_identifier``, ``resolve_ref``, etc.) use the return
@@ -6920,6 +6920,13 @@ class EntityDatabase:
           fail-loud guard the retired shim used to apply directly. This
           reproduces the old shim's exact behavior (same messages, same
           ``stacklevel``) without a dedicated wrapper.
+        * Caller boundaries (C5b/C17): production code outside this class
+          that holds only a legacy ``project_id`` (the entity server's
+          tools, ``server_helpers``, the reconciler, ``task_promotion``,
+          backfill) resolves it here once and passes the uuid as
+          ``workspace_uuid`` to each allocation and registration that
+          follows, so they all use one workspace. The write methods those
+          calls reach validate the value.
 
         Resolution rules
         ----------------
@@ -6963,44 +6970,6 @@ class EntityDatabase:
                 f"workspace_uuid directly or pre-register the workspace."
             )
         return row["uuid"]
-
-    def _resolve_parent_alias(
-        self,
-        parent_uuid: str | None,
-        parent_type_id: str | None,
-        workspace_uuid: str,
-        *,
-        _caller: str,
-    ) -> str | None:
-        """``parent_uuid`` once the deprecated ``parent_type_id`` alias is
-        applied (C5b deletes the alias).
-
-        Shared by ``register_entity`` and ``upsert_entity``, which resolves
-        its aliases itself before delegating. The alias resolves to an
-        entity in *workspace_uuid*. Pre-Migration-11 stored parent_type_id
-        as a denormalized string even when the parent did not exist
-        (parent_uuid NULL); the column is gone, so an alias naming no entity
-        leaves the parent NULL rather than raising. Given both,
-        ``parent_uuid`` wins and a DeprecationWarning is emitted.
-        """
-        if parent_type_id is None:
-            return parent_uuid
-        if parent_uuid is not None:
-            warnings.warn(
-                f"{_caller}() received both parent_uuid and "
-                "parent_type_id; parent_uuid wins. parent_type_id is "
-                "deprecated.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            return parent_uuid
-        try:
-            resolved_parent_uuid, _ = self._resolve_identifier(
-                parent_type_id, workspace_uuid=workspace_uuid,
-            )
-        except ValueError:
-            return None
-        return resolved_parent_uuid
 
     # ------------------------------------------------------------------
     # Internal: identifier resolution
@@ -7666,7 +7635,9 @@ class EntityDatabase:
             :meth:`_resolve_identifier` (workspace-scoped). Provided for
             test-fixture compatibility during the Feature 108 transition.
             If both ``parent_uuid`` and ``parent_type_id`` are supplied,
-            ``parent_uuid`` wins and a DeprecationWarning is emitted.
+            ``parent_uuid`` wins and a DeprecationWarning is emitted. An
+            alias naming no entity leaves the parent NULL; it does not
+            raise.
         metadata:
             Optional dict stored as JSON TEXT.
 
@@ -7679,7 +7650,8 @@ class EntityDatabase:
         ------
         ValueError
             If neither ``workspace_uuid`` nor ``project_id`` is provided,
-            or if ``parent_type_id`` cannot be resolved to an entity.
+            if ``project_id`` names no workspace, or if
+            ``workspace_uuid`` has no ``workspaces`` row.
         EntityExistsError
             If ``(workspace_uuid, type_id)`` already exists. Callers that
             relied on the pre-feature-109 silent no-op semantics must
@@ -7725,11 +7697,32 @@ class EntityDatabase:
             ws_uuid, "register_entity"
         )
 
-        # Compat shim (Feature 108 transition): the deprecated parent_type_id
-        # alias resolves to parent_uuid in this workspace.
-        parent_uuid = self._resolve_parent_alias(
-            parent_uuid, parent_type_id, ws_uuid, _caller="register_entity"
-        )
+        # Compat shim (Feature 108 transition): resolve deprecated
+        # parent_type_id alias to parent_uuid. workspace-scoped resolution.
+        # Pre-Migration-11 stored parent_type_id as a denormalized string even
+        # when the parent did not exist (parent_uuid NULL). Post-migration the
+        # column is gone, so we keep parent_uuid NULL on resolution failure
+        # rather than raising.
+        if parent_type_id is not None:
+            if parent_uuid is not None:
+                warnings.warn(
+                    "register_entity() received both parent_uuid and "
+                    "parent_type_id; parent_uuid wins. parent_type_id is "
+                    "deprecated.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            else:
+                try:
+                    resolved_parent_uuid, _ = self._resolve_identifier(
+                        parent_type_id,
+                        workspace_uuid=ws_uuid,
+                    )
+                    parent_uuid = resolved_parent_uuid
+                except ValueError:
+                    # Parent does not exist; preserve pre-Migration-11
+                    # tolerant behaviour by leaving parent_uuid as NULL.
+                    parent_uuid = None
 
         # F11 derivation (feature 109 Group 6): the legacy ``entity_type``
         # kwarg maps to (type, kind, lifecycle_class) via the FR-1 mapping.
@@ -7927,34 +7920,23 @@ class EntityDatabase:
 
         type_id = f"{entity_type}:{self._structured_identity(entity_type, seq, slug, display_id)[0]}"
         with self.transaction():
-            # C5b: the deprecated aliases resolve here, once, for both
-            # branches; the insert branch hands register_entity the resolved
-            # workspace and parent, never the aliases. Its entity_created
-            # label is then the workspace's project_id_legacy -- the same
-            # string as a project_id that found the workspace through it.
-            ws_uuid = self._resolve_optional_workspace_filter(
-                workspace_uuid, project_id, _caller="upsert_entity"
-            )
-            if ws_uuid is None:
-                raise ValueError(
-                    "upsert_entity() requires workspace_uuid or project_id"
-                )
-            ws_uuid = self._validated_provided_workspace_uuid(
-                ws_uuid, "upsert_entity"
-            )
-            parent_uuid = self._resolve_parent_alias(
-                parent_uuid, parent_type_id, ws_uuid, _caller="upsert_entity"
-            )
             try:
                 # Try the insert branch via register_entity. On success,
                 # it emits entity_created and returns the new uuid.
+                # The deprecated aliases are forwarded unchanged (C5b step
+                # 1): an explicit project_id is also the entity_created
+                # label, so register_entity must see the caller's own value
+                # to label the row as before. The step that deletes the
+                # aliases deletes this forwarding.
                 return self.register_entity(
                     entity_type, name=name,
                     seq=seq, slug=slug, display_id=display_id,
-                    workspace_uuid=ws_uuid,
+                    workspace_uuid=workspace_uuid,
+                    project_id=project_id,
                     artifact_path=artifact_path,
                     status=status,
                     parent_uuid=parent_uuid,
+                    parent_type_id=parent_type_id,
                     metadata=metadata,
                 )
             except EntityExistsError:
@@ -7963,6 +7945,16 @@ class EntityDatabase:
                 # that helper raises ValueError on cross-workspace ambiguity
                 # (database.py get_entity body); upsert knows the workspace
                 # so we scope the lookup explicitly.
+                ws_uuid = self._resolve_optional_workspace_filter(
+                    workspace_uuid, project_id, _caller="upsert_entity"
+                )
+                if ws_uuid is None:
+                    raise ValueError(
+                        "upsert_entity() requires workspace_uuid or project_id"
+                    )
+                ws_uuid = self._validated_provided_workspace_uuid(
+                    ws_uuid, "upsert_entity"
+                )
                 row = self._conn.execute(
                     "SELECT uuid, status FROM entities "
                     "WHERE workspace_uuid = ? AND type_id = ?",

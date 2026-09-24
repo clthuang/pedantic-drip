@@ -7,6 +7,14 @@ production caller resolves ONE workspace at its boundary and passes
 ``workspace_uuid`` instead, and the allocator ``generate_entity_id`` takes
 ``workspace_uuid`` too.
 
+One internal call keeps the aliases: ``upsert_entity`` forwards its own
+``project_id`` and ``parent_type_id`` to ``register_entity`` unchanged. An
+explicit ``project_id`` is the ``entity_created`` label, so resolving it in
+``upsert_entity`` and handing ``register_entity`` only the workspace would
+relabel ``upsert_entity(workspace_uuid=W, project_id=P)`` with W's
+``project_id_legacy`` when that is not P. The step that deletes the aliases
+deletes this forwarding with them.
+
 Two facts are pinned per converted site:
 
 * **The alias no longer reaches registration** — a spy on the registration
@@ -42,6 +50,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 _REGISTRATION_CALLS = frozenset({"register_entity", "upsert_entity", "register_entities_batch"})
 _REGISTRATION_ALIASES = frozenset({"project_id", "parent_type_id"})
 _SKIPPED_DIRECTORIES = frozenset({".venv", "tests", "__pycache__", "node_modules"})
+_UPSERT_FORWARDING_FILE = Path("hooks", "lib", "entity_registry", "database.py")
 
 
 @pytest.fixture
@@ -129,6 +138,25 @@ def _called_name(call: ast.Call) -> str | None:
     return None
 
 
+def _upsert_forwarding_keywords(tree: ast.AST, where: Path) -> set[int]:
+    """ids of the keywords by which ``upsert_entity`` hands ``register_entity``
+    its own alias parameters (``project_id=project_id``) — the one sanctioned
+    alias-passing call (module docstring)."""
+    if where != _UPSERT_FORWARDING_FILE:
+        return set()
+    forwarding = set()
+    for function in ast.walk(tree):
+        if not (isinstance(function, ast.FunctionDef) and function.name == "upsert_entity"):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and _called_name(node) == "register_entity":
+                forwarding |= {id(keyword) for keyword in node.keywords
+                               if keyword.arg in _REGISTRATION_ALIASES
+                               and isinstance(keyword.value, ast.Name)
+                               and keyword.value.id == keyword.arg}
+    return forwarding
+
+
 def _alias_passing_calls(path: Path) -> list[str]:
     with warnings.catch_warnings():
         # Parsing is all this needs; a module's own invalid-escape
@@ -136,6 +164,7 @@ def _alias_passing_calls(path: Path) -> list[str]:
         warnings.simplefilter("ignore", SyntaxWarning)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     where = path.relative_to(_PLUGIN_ROOT)
+    forwarding = _upsert_forwarding_keywords(tree, where)
     found = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -143,7 +172,8 @@ def _alias_passing_calls(path: Path) -> list[str]:
         called = _called_name(node)
         if called in _REGISTRATION_CALLS:
             found += [f"{where}:{node.lineno} {called}({keyword.arg}=...)"
-                      for keyword in node.keywords if keyword.arg in _REGISTRATION_ALIASES]
+                      for keyword in node.keywords
+                      if keyword.arg in _REGISTRATION_ALIASES and id(keyword) not in forwarding]
         elif called == "generate_entity_id":
             if len(node.args) >= 4:
                 found.append(f"{where}:{node.lineno} generate_entity_id(<4th positional project_id>)")
@@ -155,8 +185,10 @@ def _alias_passing_calls(path: Path) -> list[str]:
 def test_no_production_call_passes_a_registration_alias():
     """C5b step 1's exit check: no production call hands registration the
     ``project_id`` or ``parent_type_id`` alias, or the allocator ``project_id``
-    (keyword or 4th positional). (A ``**splat`` argument is not inspected;
-    production splats carry identity keywords only.)"""
+    (keyword or 4th positional), except ``upsert_entity`` forwarding its own
+    alias parameters to ``register_entity`` (module docstring). (A
+    ``**splat`` argument is not inspected; production splats carry identity
+    keywords only.)"""
     offending = [site for path in _production_sources() for site in _alias_passing_calls(path)]
     assert offending == []
 
@@ -177,11 +209,14 @@ def test_generate_entity_id_allocates_from_the_workspace_uuid_it_is_given(two_wo
 
 
 # ---------------------------------------------------------------------------
-# database.py: upsert_entity resolves its own aliases before delegating
+# database.py: upsert_entity forwards its own aliases, so its labels and
+# refusals are the base's
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_resolves_its_aliases_before_delegating_to_register(two_workspaces, monkeypatch):
+def test_upsert_forwards_its_own_aliases_to_register_unchanged(two_workspaces, monkeypatch):
+    """The sanctioned alias-passing call the exit check exempts: it exists,
+    and register_entity resolves what it forwards as before."""
     db, ws_a, _ws_b = two_workspaces
     parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent",
                                      workspace_uuid=ws_a)
@@ -190,21 +225,59 @@ def test_upsert_resolves_its_aliases_before_delegating_to_register(two_workspace
     db.upsert_entity("feature", name="Child", seq=7, slug="child",
                      project_id=LEGACY_A, parent_type_id="project:001-parent")
 
-    _assert_no_alias(delegated, ws_a)
-    assert delegated[0]["parent_uuid"] == parent_uuid
+    assert len(delegated) == 1, delegated
+    assert delegated[0].get("project_id") == LEGACY_A, delegated[0]
+    assert delegated[0].get("parent_type_id") == "project:001-parent", delegated[0]
     child = db.get_entity("feature:007-child")
     assert child["workspace_uuid"] == ws_a
     assert child["parent_uuid"] == parent_uuid
     assert _created_label(db, "feature:007-child") == LEGACY_A
 
 
-def test_upsert_with_the_unknown_alias_registers_in_the_unknown_workspace(monkeypatch):
+def test_upsert_given_both_workspace_aliases_keeps_the_base_label(two_workspaces):
+    """workspace_uuid=B with project_id=A's legacy id: the row goes to B
+    (workspace_uuid wins) and entity_created carries the explicit project_id,
+    A's legacy id, as before C5b. Handing register_entity only B would label
+    it B's legacy id."""
+    db, _ws_a, ws_b = two_workspaces
+
+    with pytest.warns(DeprecationWarning, match="workspace_uuid wins"):
+        db.upsert_entity("feature", name="Both", seq=9, slug="both",
+                         workspace_uuid=ws_b, project_id=LEGACY_A)
+
+    assert _row_workspace(db, "feature:009-both") == ws_b
+    assert _created_label(db, "feature:009-both") == LEGACY_A
+
+
+@pytest.mark.parametrize("aliases, message", [
+    ({}, "register_entity() requires workspace_uuid or project_id"),
+    ({"project_id": "no-such-legacy-id"},
+     "register_entity(): project_id='no-such-legacy-id' has no matching "
+     "workspaces.project_id_legacy row. Either pass workspace_uuid directly or "
+     "pre-register the workspace."),
+    ({"workspace_uuid": "01900000-0000-7000-8000-00000000dead"},
+     "register_entity(): workspace_uuid='01900000-0000-7000-8000-00000000dead' not "
+     "present in the workspaces table — workspace.json/DB split-brain detected. Run "
+     "pd:doctor --fix, then restart the session (MCP servers cache the workspace UUID "
+     "at startup)."),
+])
+def test_upsert_insert_branch_refusals_are_the_base_messages(two_workspaces, aliases, message):
+    """The insert branch resolves its workspace inside register_entity, so a
+    refusal names register_entity() as before C5b; the reconciler records
+    these strings as its warnings."""
+    db, _ws_a, _ws_b = two_workspaces
+
+    with pytest.raises(ValueError) as refusal:
+        db.upsert_entity("feature", name="Refused", seq=10, slug="refused", **aliases)
+
+    assert str(refusal.value) == message
+
+
+def test_upsert_with_the_unknown_alias_registers_in_the_unknown_workspace():
     db = EntityDatabase(":memory:")
-    delegated = _record_calls(monkeypatch, db, "register_entity")
 
     db.upsert_entity("feature", name="Orphan", seq=3, slug="orphan", project_id=UNKNOWN_LABEL)
 
-    _assert_no_alias(delegated, _UNKNOWN_WORKSPACE_UUID)
     assert _row_workspace(db, "feature:003-orphan") == _UNKNOWN_WORKSPACE_UUID
     assert _created_label(db, "feature:003-orphan") == UNKNOWN_LABEL
 
