@@ -1162,9 +1162,34 @@ class TestIdempotentRerun:
 # ---------------------------------------------------------------------------
 # D6.9 seed-half: sequences seeded at census max per kind x workspace.
 # ---------------------------------------------------------------------------
+def _build_pathological_corpus_with_display_rows(path) -> str:
+    """The pathological corpus plus the display rows its numbered ids would
+    carry on a real file (migration 13's backfill, then registration). The
+    census is structural since C19/C20b, and the raw-SQL corpus has none."""
+    old_db_path = _build_pathological_corpus(path)
+    conn = sqlite3.connect(old_db_path)
+    conn.executemany(
+        "INSERT INTO entity_display (uuid, seq, slug) VALUES (?, ?, ?)",
+        [
+            ("dup-loser", 3, "dup-feature"),
+            ("dup-winner", 3, "dup-feature"),
+            ("cycle-a", 5, "cycle-a"),
+            ("cycle-b", 6, "cycle-b"),
+            ("orphan-child", 7, "orphan"),
+            ("bug-1", 8, "a-bug"),
+            ("full-history-feature", 9, "full-history"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return old_db_path
+
+
 class TestSequencesSeeded:
     def test_seeded_rows_match_census_max_per_kind_workspace(self, tmp_path):
-        _, staging_path, report = _build_and_backfill(tmp_path, _build_pathological_corpus)
+        _, staging_path, report = _build_and_backfill(
+            tmp_path, _build_pathological_corpus_with_display_rows
+        )
         conn = _new_conn(staging_path)
         rows = {
             (r["workspace_uuid"], r["entity_type"]): r["next_val"]
@@ -1172,44 +1197,52 @@ class TestSequencesSeeded:
         }
         conn.close()
 
-        # feature: max numbered id is 009-full-history -> next_val 10.
+        # feature: max display seq is 009-full-history's 9 -> next_val 10.
         assert rows[("ws-alpha", "feature")] == 10
-        # task: 007-orphan is the only numbered id (blank-id contributes 0).
+        # task: 007-orphan is the only display-bearing row (blank-id has none).
         assert rows[("ws-alpha", "task")] == 8
         # backlog: 006-cycle-b is the max.
         assert rows[("ws-alpha", "backlog")] == 7
         # bug: 008-a-bug.
         assert rows[("ws-alpha", "bug")] == 9
-        # project: the fixture's ids are LEGACY "P001" rows, and C4 deleted
-        # the kind='project' special-case that used to parse the leading "P".
-        # The generic pattern does not match it, so the census derives 0 and
-        # the seed is 1 — not 2.
+        # project: the "P001" rows carry no display row and the corpus no
+        # counter, so structure cannot know their numbers — only their id
+        # text holds them, and the seed does not read text. No row is
+        # seeded, so next_sequence_value refuses these buckets and names the
+        # repair, instead of issuing 1 over P001 (the pre-C19 seed of 1).
         #
-        # That is correct, and it is not the whole protection. This fixture
-        # carries no `sequences` rows, so only the derived half runs. On a
-        # real file the stored counter is the guard: B4 raised every live
-        # bucket above its true max precisely because legacy ids are opaque
-        # to the census. test_live_incident_shape_does_not_lower_the_project
-        # _counter pins that half, with the real P004 shape and next_val=5.
-        assert rows[("ws-alpha", "project")] == 1
-        assert rows[("ws-beta", "project")] == 1
-
-        assert report["sequences_seeded"]["project"]["ws-alpha"] == 1
-        assert report["sequences_seeded"]["project"]["ws-beta"] == 1
+        # On a real file the stored counter is the guard: B4 raised every
+        # live bucket above its true max precisely because legacy ids are
+        # opaque to the census. test_live_incident_shape_does_not_lower_the
+        # _project_counter pins that half, with the real P004 shape and
+        # next_val=5; test_c19_c20b_rebuild_structure.py pins the refusal.
+        assert ("ws-alpha", "project") not in rows
+        assert ("ws-beta", "project") not in rows
+        assert "project" not in report["sequences_seeded"]
 
 
 def _seed_pair(entities, sequences):
     """Build (old_conn, new_conn) for a direct _seed_sequences call.
 
-    entities:  list of (workspace_uuid, kind, entity_id)
+    entities:  list of (workspace_uuid, kind, entity_id), optionally extended
+               with (seq, slug) — that entity's display row. The census reads
+               only structure (C19/C20b), so an entity without one is
+               invisible to it, exactly as a legacy row is.
     sequences: list of (workspace_uuid, entity_type, next_val)
     """
     old = sqlite3.connect(":memory:")
     old.row_factory = sqlite3.Row
     old.execute(
-        "CREATE TABLE entities (workspace_uuid TEXT, kind TEXT, entity_id TEXT)"
+        "CREATE TABLE entities (uuid TEXT, workspace_uuid TEXT, kind TEXT, entity_id TEXT)"
     )
-    old.executemany("INSERT INTO entities VALUES (?, ?, ?)", entities)
+    old.execute("CREATE TABLE entity_display (uuid TEXT, seq INTEGER, slug TEXT)")
+    for index, (ws, kind, entity_id, *display) in enumerate(entities):
+        old_uuid = f"old-{index}"
+        old.execute(
+            "INSERT INTO entities VALUES (?, ?, ?, ?)", (old_uuid, ws, kind, entity_id)
+        )
+        if display:
+            old.execute("INSERT INTO entity_display VALUES (?, ?, ?)", (old_uuid, *display))
     if sequences is not None:
         old.execute(
             "CREATE TABLE sequences (workspace_uuid TEXT, entity_type TEXT, next_val INTEGER)"
@@ -1236,19 +1269,19 @@ def _seeded_rows(new_conn):
 class TestSequencesSeedNeverLowersAReservation:
     """C20a: rebuild must not hand back a number the old file reserved.
 
-    ``_seed_sequences`` derives its floor by parsing entity_id TEXT via
-    ``_display_number``, which returns 0 for anything its regex misses.
-    ``_PROJECT_DISPLAY_RE`` is end-anchored, so every slug-suffixed project
-    id misses. Before C20a the stored ``sequences`` table was ignored
-    entirely, so the derived value won unconditionally — including when it
-    was LOWER.
+    Before C20a the stored ``sequences`` table was ignored entirely, so the
+    census-derived value won unconditionally — including when it was LOWER.
+    The census then parsed entity_id TEXT, and its end-anchored project
+    pattern missed every slug-suffixed project id. Since C19/C20b it reads
+    ``entity_display`` instead, which a legacy row does not have: the stored
+    counter is still what protects those numbers.
     """
 
     def test_live_incident_shape_does_not_lower_the_project_counter(self):
         """The exact live shape: P004-entity-db-redesign with next_val=5.
 
-        Derived max is 3 (only the bare P001/P002/P003 parse), so the
-        pre-C20a seed wrote 4 — reissuing the number already carried by
+        The text census read only the bare P001/P002/P003, so the pre-C20a
+        seed wrote 4 — reissuing the number already carried by
         P004-entity-db-redesign.
         """
         ws = "69696982-0e18-46f1-acf2-18a3edc6bbb7"
@@ -1262,20 +1295,10 @@ class TestSequencesSeedNeverLowersAReservation:
             ],
             sequences=[(ws, "project", 5)],
         )
-        # Fixture precondition. Pre-C4 this was 0 only for SLUG-SUFFIXED ids,
-        # because ^P(\d+)$ matched bare P001 and missed P004-entity-db-
-        # redesign. C4 deleted that pattern, so now EVERY P-prefixed id reads
-        # 0 — legacy projects are entirely opaque to the census and the
-        # stored counter is their sole protection. Both are asserted so a
-        # future change to _display_number cannot quietly alter either.
-        assert rebuild_tool._display_number("project", "P004-entity-db-redesign") == 0
-        assert rebuild_tool._display_number("project", "P001") == 0, (
-            "post-C4 the generic pattern must not parse a leading 'P'"
-        )
-        assert rebuild_tool._display_number("project", "004-entity-db-redesign") == 4, (
-            "the CURRENT project shape must parse, or the census is blind to "
-            "every project C4 onward creates"
-        )
+        # Fixture precondition: legacy projects carry no display row, so the
+        # structural census sees nothing in this bucket and the stored
+        # counter is their sole protection.
+        assert database._census_max(old, kind="project", workspace_uuid=ws) is None
 
         rebuild_tool._seed_sequences(old, new)
 
@@ -1309,7 +1332,7 @@ class TestSequencesSeedNeverLowersAReservation:
         that never bumped it) must still be raised, not preserved.
         """
         old, new = _seed_pair(
-            entities=[("ws-a", "feature", "009-nine")],
+            entities=[("ws-a", "feature", "009-nine", 9, "nine")],
             sequences=[("ws-a", "feature", 2)],
         )
 
@@ -1318,9 +1341,9 @@ class TestSequencesSeedNeverLowersAReservation:
         assert _seeded_rows(new)[("ws-a", "feature")] == 10
 
     def test_pre_118_file_without_a_sequences_table_still_seeds(self):
-        """Files predating the sequences table fall back to derived-only."""
+        """Files predating the sequences table fall back to census-only."""
         old, new = _seed_pair(
-            entities=[("ws-a", "feature", "007-seven")],
+            entities=[("ws-a", "feature", "007-seven", 7, "seven")],
             sequences=None,
         )
 
@@ -1990,7 +2013,7 @@ class TestVerifyCountsExplainedDirect:
         state = rebuild_tool._ImportState(
             counts={"feature": {"ws-1": {"old": 3, "new": 1}}},  # delta=2
             anomalies={"duplicate_type_id": [
-                {"type_id": "feature:001-x", "workspace_uuid": "ws-1"},
+                {"type_id": "feature:001-x", "kind": "feature", "workspace_uuid": "ws-1"},
             ]},  # explains only 1 of the 2
         )
         with pytest.raises(rebuild_tool.BackfillIntegrityError, match="unexplained"):
@@ -2000,7 +2023,7 @@ class TestVerifyCountsExplainedDirect:
         state = rebuild_tool._ImportState(
             counts={"feature": {"ws-1": {"old": 3, "new": 2}}},  # delta=1
             anomalies={"duplicate_type_id": [
-                {"type_id": "feature:001-x", "workspace_uuid": "ws-1"},
+                {"type_id": "feature:001-x", "kind": "feature", "workspace_uuid": "ws-1"},
             ]},  # explains exactly 1
         )
         rebuild_tool._verify_counts_explained(state)  # must not raise
