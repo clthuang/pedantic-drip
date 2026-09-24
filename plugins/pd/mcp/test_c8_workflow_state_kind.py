@@ -18,8 +18,8 @@ The soft-deleted class covers an entity ``delete_entity`` has hidden from
 the live ``get_entity`` read. Its transition still goes through, so the
 kind must come from the deleted row's kind column, in both server scopes.
 
-The phase-timing class covers the other read of the written row on those
-two edges: the ``phase_timing`` merge and the reply's ``started_at``.
+The phase-timing class covers the written row's other two reads on those
+edges: the ``phase_timing`` merge and the reply's ``started_at``.
 
 Non-vacuity: each test first asserts that the transition or completion went
 through, so the kanban step was reached. Each fixture starts in ``backlog``,

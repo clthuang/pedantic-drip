@@ -1031,13 +1031,16 @@ def _transitioned_entity_row(
     server's workspace when one is set, otherwise by the globally unique
     type_id, soft-deleted rows included. Returns None when no row is found.
 
-    Every read of the written row goes through this:
+    The transition reads the written row through this for:
 
     * the ``phase_timing`` merge. ``update_entity`` merges metadata one
       level deep, so a merge started from the None read's empty metadata
       would replace every earlier phase's timing;
     * the kind (C8), from the row's ``kind`` column, never the type_id text;
     * the reply's ``started_at``.
+
+    The phase events' legacy ``project_id`` still comes from the live read,
+    so it is ``__unknown__`` on these two edges.
     """
     if entity is not None:
         return entity
