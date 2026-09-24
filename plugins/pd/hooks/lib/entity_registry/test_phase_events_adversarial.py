@@ -55,7 +55,7 @@ class TestBackfillEdgeCases:
     def test_empty_phase_timing_dict(self, db):
         """Entity with phase_timing={} should produce 0 backfill rows, no crash."""
         db.register_entity(
-            "feature", "001-empty-timing", "Empty Timing",
+            "feature", name="Empty Timing", seq=1, slug="empty-timing",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {}},
         )
@@ -71,7 +71,7 @@ class TestBackfillEdgeCases:
         """Mid-phase entity: started exists but completed missing.
         Should produce only a 'started' event, not crash."""
         db.register_entity(
-            "feature", "001-mid-phase", "Mid Phase",
+            "feature", name="Mid Phase", seq=1, slug="mid-phase",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {"design": {"started": "2026-03-01T00:00:00Z"}}},
         )
@@ -88,7 +88,7 @@ class TestBackfillEdgeCases:
         """backward_history entry missing source_phase, target_phase, reason.
         Migration should handle gracefully (defaults or skip)."""
         db.register_entity(
-            "feature", "001-bad-bh", "Bad Backward History",
+            "feature", name="Bad Backward History", seq=1, slug="bad-bh",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},
@@ -117,7 +117,7 @@ class TestBackfillEdgeCases:
         The migration iterates over it; iterating a string yields characters.
         BUG CANDIDATE: 'for skipped in "design"' yields 'd', 'e', 's', 'i', 'g', 'n'."""
         db.register_entity(
-            "feature", "001-str-skip", "String Skip",
+            "feature", name="String Skip", seq=1, slug="str-skip",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},
@@ -154,7 +154,7 @@ class TestBackfillEdgeCases:
         assert len(json.dumps(meta)) > 50000, "Metadata should be >50KB"
 
         db.register_entity(
-            "feature", "001-big-meta", "Big Metadata",
+            "feature", name="Big Metadata", seq=1, slug="big-meta",
             project_id=TEST_PROJECT_ID,
             metadata=meta,
         )
@@ -169,7 +169,7 @@ class TestBackfillEdgeCases:
     def test_extra_unknown_fields_in_metadata(self, db):
         """Metadata with unknown fields alongside phase_timing. Should not crash."""
         db.register_entity(
-            "feature", "001-extra-fields", "Extra Fields",
+            "feature", name="Extra Fields", seq=1, slug="extra-fields",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}},
@@ -189,7 +189,7 @@ class TestBackfillEdgeCases:
         """phase_timing where a phase value is a string instead of dict.
         BUG CANDIDATE: timing.get("started") on a string will crash."""
         db.register_entity(
-            "feature", "001-bad-timing-val", "Bad Timing Value",
+            "feature", name="Bad Timing Value", seq=1, slug="bad-timing-val",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {
@@ -267,7 +267,7 @@ class TestMigrationSafety:
         """Verify backfill timestamps use consistent format.
         Spec says ISO-8601 UTC. Check for Z suffix vs +00:00 mixing."""
         db.register_entity(
-            "feature", "001-ts-check", "Timestamp Check",
+            "feature", name="Timestamp Check", seq=1, slug="ts-check",
             project_id=TEST_PROJECT_ID,
             metadata={"phase_timing": {"brainstorm": {
                 "started": "2026-01-01T00:00:00+00:00",  # +00:00 format
@@ -519,7 +519,7 @@ class TestCombinationAttacks:
         """Entity with all edge cases combined: empty phase_timing,
         string skipped_phases, empty backward_history entry."""
         db.register_entity(
-            "feature", "001-combo", "Combo Edge Case",
+            "feature", name="Combo Edge Case", seq=1, slug="combo",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {},

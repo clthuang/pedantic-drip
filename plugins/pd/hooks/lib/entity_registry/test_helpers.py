@@ -5,7 +5,51 @@ import sqlite3
 import uuid as _uuid
 from pathlib import Path
 
+from entity_registry.id_generator import registration_identity
+
 TEST_PROJECT_ID = "__test__"
+
+
+def identity_kwargs(kind: str, display_text: str) -> dict:
+    """``register_entity``'s identity keywords for a test id written as display text.
+
+    Fixtures write ids the way they display (``"001-f1"``); registration takes
+    them as data. Literal ids are written out as ``seq=``/``slug=`` instead;
+    this is for ids a test builds or forwards. Unlike production's
+    ``registration_identity``, an id with no structured form is a fixture
+    bug here, so it raises.
+    """
+    identity = registration_identity(kind, display_text)
+    if identity is None:
+        raise ValueError(f"{display_text!r} does not round-trip as a {kind} id")
+    return identity
+
+
+def seed_legacy_entity(db, kind: str, legacy_id: str, name: str, *,
+                       workspace_uuid: str | None = None, status: str | None = None) -> str:
+    """Insert a pre-cutover row as history left it: ``is_legacy = 1``, no display row.
+
+    Registration takes only structured identity, so a legacy id (``00019``,
+    ``P001``) can no longer be registered; and ``is_legacy`` cannot change
+    after insert, so the row is written whole here. Returns its uuid.
+    """
+    from entity_registry.database import _derive_type_and_lifecycle
+
+    if workspace_uuid is None:
+        db._ensure_unknown_workspace_row()
+        workspace_uuid = get_test_workspace_uuid()
+    entity_type, lifecycle_class = _derive_type_and_lifecycle(kind)
+    entity_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, name, status, "
+        "created_at, updated_at, type, kind, lifecycle_class, is_legacy) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        (entity_uuid, workspace_uuid, f"{kind}:{legacy_id}", legacy_id, name, status,
+         now, now, entity_type, kind, lifecycle_class),
+    )
+    db._conn.commit()
+    return entity_uuid
 
 
 def bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:

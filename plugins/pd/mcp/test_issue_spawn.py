@@ -83,8 +83,8 @@ def parent_feature(db):
     """
     db.register_entity(
         "feature",
-        "111-issue-lifecycle-closure",
-        "Issue Lifecycle Closure",
+        name="Issue Lifecycle Closure",
+        seq=111, slug="issue-lifecycle-closure",
         status="active",
         project_id="__unknown__",
     )
@@ -324,8 +324,8 @@ class TestAC95ParentValidation:
         # Register a brainstorm entity as the "parent" — disallowed kind.
         db.register_entity(
             "brainstorm",
-            "001-bs-fixture",
-            "Brainstorm Fixture",
+            name="Brainstorm Fixture",
+            display_id="001-bs-fixture",
             status="active",
             project_id="__unknown__",
         )
@@ -366,7 +366,7 @@ class TestAC95ParentValidation:
         # Register a feature parent inside workspace_B.
         parent_uuid_ws_b = db.register_entity(
             entity_type="feature",
-            entity_id="222-foreign-feature",
+            seq=222, slug="foreign-feature",
             name="Foreign Feature",
             status="active",
             workspace_uuid=ws_b_uuid,

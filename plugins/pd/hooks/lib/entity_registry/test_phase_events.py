@@ -85,15 +85,15 @@ def seeded_db():
     }
 
     database.register_entity(
-        "feature", "001-alpha", "Alpha",
+        "feature", name="Alpha", seq=1, slug="alpha",
         project_id=TEST_PROJECT_ID, metadata=meta1,
     )
     database.register_entity(
-        "feature", "002-beta", "Beta",
+        "feature", name="Beta", seq=2, slug="beta",
         project_id=TEST_PROJECT_ID, metadata=meta2,
     )
     database.register_entity(
-        "feature", "003-gamma", "Gamma",
+        "feature", name="Gamma", seq=3, slug="gamma",
         project_id=TEST_PROJECT_ID, metadata=meta3,
     )
 
@@ -172,7 +172,7 @@ class TestMigration10:
         """AC-9: entity with malformed metadata produces 0 rows."""
         # Register entity then corrupt its metadata
         db.register_entity(
-            "feature", "001-bad-meta", "Bad Meta",
+            "feature", name="Bad Meta", seq=1, slug="bad-meta",
             project_id=TEST_PROJECT_ID, metadata={"phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}}},
         )
         # The entity was registered after migration 10 ran, so its phase_timing
@@ -500,7 +500,7 @@ class TestFeature088Migration10Hardening:
         def seed_entities(database):
             # Three entities with phase_timing metadata.
             database.register_entity(
-                "feature", "001-alpha", "Alpha",
+                "feature", name="Alpha", seq=1, slug="alpha",
                 project_id=TEST_PROJECT_ID,
                 metadata={
                     "phase_timing": {
@@ -515,7 +515,7 @@ class TestFeature088Migration10Hardening:
                 },
             )
             database.register_entity(
-                "feature", "002-beta", "Beta",
+                "feature", name="Beta", seq=2, slug="beta",
                 project_id=TEST_PROJECT_ID,
                 metadata={
                     "phase_timing": {
@@ -604,7 +604,7 @@ class TestFeature088Migration10Hardening:
         _bootstrap_test_workspace(database)
         # Seed an entity with an unparseable timestamp in metadata.phase_timing.
         database.register_entity(
-            "feature", "001-bad-ts", "Bad Timestamp",
+            "feature", name="Bad Timestamp", seq=1, slug="bad-ts",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {
@@ -646,7 +646,7 @@ class TestFeature088Migration10Hardening:
         database = EntityDatabase(":memory:")
         _bootstrap_test_workspace(database)
         database.register_entity(
-            "feature", "001-trunc-001", "Trunc",
+            "feature", name="Trunc", seq=1, slug="trunc-001",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "backward_history": [{
@@ -836,7 +836,7 @@ class TestFeature088BundleH4PhaseEvents:
         database = EntityDatabase(":memory:")
         _bootstrap_test_workspace(database)
         database.register_entity(
-            "feature", "001-rerun-001", "Rerun",
+            "feature", name="Rerun", seq=1, slug="rerun-001",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {
@@ -907,7 +907,7 @@ class TestFeature090Migration10Atomicity:
         _bootstrap_test_workspace(database)
         try:
             database.register_entity(
-                "feature", "090-atom-001", "Atomic Test",
+                "feature", name="Atomic Test", seq=90, slug="atom-001",
                 project_id=TEST_PROJECT_ID,
                 metadata={
                     "phase_timing": {
@@ -1105,7 +1105,7 @@ class TestFeature089BundleE:
         seed_db = EntityDatabase(db_path)
         _bootstrap_test_workspace(seed_db)
         seed_db.register_entity(
-            "feature", "089-e24", "E24",
+            "feature", name="E24", seq=89, slug="e24",
             project_id=TEST_PROJECT_ID,
             metadata={
                 "phase_timing": {

@@ -39,6 +39,7 @@ from workflow_engine.entity_engine import CompletionResult, EntityWorkflowEngine
 from workflow_engine.models import TransitionResponse, WorkflowDBUnavailableError
 from workflow_engine.notifications import Notification, NotificationQueue
 from workflow_engine.rollup import compute_progress
+from entity_registry.test_helpers import identity_kwargs
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +75,7 @@ def _register(
     """Register an entity and return its UUID."""
     return db.register_entity(
         entity_type=entity_type,
-        entity_id=entity_id,
+        **identity_kwargs(entity_type, entity_id),
         name=name,
         status=status,
         parent_type_id=parent_type_id,

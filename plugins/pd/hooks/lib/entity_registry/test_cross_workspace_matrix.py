@@ -31,6 +31,7 @@ import uuid as uuid_mod
 import pytest
 
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +80,11 @@ def _seed_feature_and_backlog(
     feature_id = f"001-feat-{suffix}"
     backlog_id = f"002-bl-{suffix}"
     feature_uuid = db.register_entity(
-        "feature", feature_id, f"Feature {suffix}",
+        "feature", name=f"Feature {suffix}", **identity_kwargs("feature", feature_id),
         workspace_uuid=workspace_uuid,
     )
     backlog_uuid = db.register_entity(
-        "backlog", backlog_id, f"Backlog {suffix}",
+        "backlog", name=f"Backlog {suffix}", **identity_kwargs("backlog", backlog_id),
         workspace_uuid=workspace_uuid,
     )
     return {

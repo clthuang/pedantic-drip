@@ -12,6 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from entity_registry.database import EntityDatabase, EntityExistsError
+from entity_registry.id_generator import registration_identity
 from workflow_engine.engine import WorkflowStateEngine
 
 
@@ -143,6 +144,20 @@ def _promote_brainstorm(db: EntityDatabase, brainstorm_source: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _allocated_identity(kind: str, text_id: str, slug: str) -> dict:
+    """seq/slug for an id the allocator issued, refusing one it would not render.
+
+    The caller names the entity ``{text_id}-{slug}``; registering anything
+    else would leave its type_id and its display row disagreeing.
+    """
+    identity = registration_identity(kind, f"{text_id}-{slug}")
+    if identity is None:
+        raise ValueError(
+            f"invalid_input: {kind} id {text_id!r} with slug {slug!r} is not an "
+            "allocated id (allocate_entity_id issues them)")
+    return identity
+
+
 def init_feature_state(
     db: EntityDatabase,
     engine: WorkflowStateEngine | None,
@@ -164,7 +179,9 @@ def init_feature_state(
     Optionally includes projection_warning (not set here — added by MCP wrapper).
 
     Raises:
-        ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only.
+        ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only,
+            or if feature_id with slug is not an id the allocator issues
+            (``invalid_input: … is not an allocated id``); nothing is written.
     """
     # Field validation — reject None, empty string, whitespace-only
     for field_name, field_value in [
@@ -176,6 +193,7 @@ def init_feature_state(
             raise ValueError(f"invalid_input: {field_name} must be a non-empty string")
 
     feature_type_id = f"feature:{feature_id}-{slug}"
+    identity = _allocated_identity("feature", feature_id, slug)
 
     # Validate feature_type_id for path traversal defense
     _validate_feature_type_id(feature_type_id, artifacts_root)
@@ -204,7 +222,7 @@ def init_feature_state(
         try:
             db.register_entity(
                 entity_type="feature",
-                entity_id=f"{feature_id}-{slug}",
+                **identity,
                 name=slug.replace("-", " ").title(),
                 artifact_path=feature_dir,
                 status=status,
@@ -274,6 +292,11 @@ def init_project_state(
     """Create initial project state in DB + .meta.json.
 
     Returns dict with keys: created, project_type_id, meta_json_path.
+
+    Raises:
+        ValueError: if project_id with slug is not an id the allocator issues
+            (``invalid_input: … is not an allocated id``), or project_dir is
+            invalid; nothing is written.
     """
     # Path traversal validation
     if "\0" in project_dir:
@@ -283,6 +306,7 @@ def init_project_state(
         raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
 
     project_type_id = f"project:{project_id}-{slug}"
+    identity = _allocated_identity("project", project_id, slug)
 
     # Parse JSON params (raises ValueError/JSONDecodeError on malformed input)
     features_list = json.loads(features)
@@ -303,27 +327,19 @@ def init_project_state(
         # Use ``project_id="__unknown__"`` so the canonical workspaces row is
         # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
         # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
-        # C4 dropped the project "P" prefix: projects now render
-        # "{NNN}-{slug}" like every other sequence-numbered kind, so the
-        # strict gate's numeric-prefix requirement no longer rejects them.
-        #
-        # _strict_id_format=False REMAINS, for a different reason than
-        # before: strict mode also writes the entity_display row, and this
-        # caller has no seq to write — it receives project_id as text and
-        # composes "{project_id}-{slug}". C5/C6/C7 give it structured
-        # identity and remove this flag; until then, flipping it here would
-        # mint display-less rows that B8's invariant reports and C3 refuses.
+        # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
+        # like every other sequence-numbered kind, so the allocated id splits
+        # into seq and slug and the display row is written.
         try:
             db.register_entity(
                 entity_type="project",
-                entity_id=f"{project_id}-{slug}",
+                **identity,
                 name=slug.replace("-", " ").title(),
                 artifact_path=project_dir,
                 status=status,
                 metadata=metadata,
                 workspace_uuid=workspace_uuid,
                 project_id="__unknown__" if workspace_uuid is None else None,
-                _strict_id_format=False,
             )
         except EntityExistsError as e:
             raise RuntimeError(

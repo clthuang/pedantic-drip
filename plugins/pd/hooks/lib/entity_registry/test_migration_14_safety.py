@@ -280,13 +280,13 @@ def test_ac_mr_8_composite_unique(tmp_path):
         # Insert two real entities so FK constraints are satisfied.
         eid_a = db.register_entity(
             entity_type="feature",
-            entity_id="111-foo",
+            seq=111, slug="foo",
             name="A",
             project_id="__unknown__",
         )
         eid_b = db.register_entity(
             entity_type="feature",
-            entity_id="222-bar",
+            seq=222, slug="bar",
             name="B",
             project_id="__unknown__",
         )
@@ -345,7 +345,7 @@ def test_ac_mr_10_down_refuses_when_bug_entities_exist(tmp_path):
     try:
         db.register_entity(
             entity_type="bug",
-            entity_id="001-foo",
+            seq=1, slug="foo",
             name="A bug",
             status="open",
             project_id="__unknown__",
@@ -371,13 +371,13 @@ def test_ac_mr_11_down_refuses_when_entity_relations_exist(tmp_path):
     try:
         eid_a = db.register_entity(
             entity_type="feature",
-            entity_id="111-foo",
+            seq=111, slug="foo",
             name="A",
             project_id="__unknown__",
         )
         eid_b = db.register_entity(
             entity_type="feature",
-            entity_id="222-bar",
+            seq=222, slug="bar",
             name="B",
             project_id="__unknown__",
         )

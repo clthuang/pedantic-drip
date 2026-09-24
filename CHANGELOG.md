@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Registration takes structured identity (structural-identity Wave 2)** — `register_entity`, `upsert_entity` and `register_entities_batch` take `seq` and `slug` for sequence kinds (the display row is always written) or `display_id` for brainstorms; nothing parses an id string any more. The MCP `register_entity` tool takes the same parameters; `allocate_entity_id` also returns `slug`; `generate_entity_id` returns `(seq, slug)`. `create-feature` and `create-project` register with the allocated `seq`/`slug`.
+- **Backfill skips legacy ids** (`00019`, `P001`) with a log line instead of stopping at the first one, and no longer marks other workspaces' phases finished, replaces parents set since, mints phantom brainstorms, overwrites a real row's status with a placeholder, or registers a second copy of a row stored under an unpadded id.
+
+### Fixed
+
+- **`create_key_result`** — it had never registered anything: it passed `validate_metadata` a JSON string, and its name-derived id failed the id check. Key results now take a real allocation.
+
 ### Removed
 
+- **The `entity_id` text form, `_strict_id_format`, `PD_REGISTER_ENTITY_STRICT_ID_FORMAT`, `EntityIdFormatError` and `_register_entity_no_display`** — with every caller on structured identity, the strict gate and its escape hatches have nothing left to guard.
 - **`promote_entity` and `PromotionConflictError`** — feature 109 built them to replace the backlog→feature promotion path, but no caller was ever switched over: the only non-test commit to touch them was the one that added them. Nothing is lost — promotion registers a new feature entity (`/pd:create-feature`), and every status/phase change goes through `append_phase_event()`. `promote_entity` was the only runtime writer of `entities.kind`, so the kind-based exemption in the display-row invariant no longer depends on an accident of the `type`/`kind` CHECK; it also held one identity-inference site (`type_id.split(":", 1)`, owned by C12), so the inventory drops to 28. Its six tests go with it; the three trigger-removal tests that shared the file move to `test_immutable_trigger_removal.py`. The unused `PromotionConflictError` import in `entity_server.py` is removed.
 
 ## [6.0.0] - 2026-07-25

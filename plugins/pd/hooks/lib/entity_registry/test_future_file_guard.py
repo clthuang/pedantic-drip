@@ -85,8 +85,8 @@ class TestFutureFileIsReadOnly:
         db = EntityDatabase(str(_future_file(tmp_path)))
         with pytest.raises(Exception):
             db.register_entity(
-                "feature", entity_id="001-x", name="x",
-                workspace_uuid="w", _strict_id_format=False,
+                "feature", seq=1, slug="x", name="x",
+                workspace_uuid="w",
             )
 
     def test_the_version_is_not_advanced(self, tmp_path):

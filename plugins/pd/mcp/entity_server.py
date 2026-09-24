@@ -445,11 +445,13 @@ def _process_add_okr_alignment(
     return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
 
 
+# A retry re-runs the allocation, so a locked write can leave a gap in the
+# key_result sequence; allocate_entity_id accepts the same (its errors burn a
+# number too). Gaps are harmless, a reused number is not.
 @with_retry("entity")
 def _process_create_key_result(
     db: EntityDatabase,
     parent_type_id: str,
-    eid: str,
     name: str,
     status: str | None,
     metadata_json: str,
@@ -469,15 +471,19 @@ def _process_create_key_result(
         # at entity_server.py:1136-1137 → returns JSON error to caller.
         raise ValueError(f"Parent entity not found: {parent_type_id!r}")
     parent_uuid = parent_entity["uuid"]
+    # Allocated after the parent check, so a missing parent burns no number.
+    seq, slug = generate_entity_id(db, "key_result", name, project_id)
+    type_id = f"key_result:{render_display_id('key_result', seq, slug)}"
     # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
     try:
         uuid = db.register_entity(
             entity_type="key_result",
-            entity_id=eid,
+            seq=seq,
+            slug=slug,
             name=name,
             status=status,
             parent_uuid=parent_uuid,
-            metadata=metadata_json,
+            metadata=parse_metadata(metadata_json),
             project_id=project_id,
         )
     except EntityExistsError as e:
@@ -492,7 +498,7 @@ def _process_create_key_result(
                 "workspace context."
             ),
         })
-    return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
+    return json.dumps({"uuid": uuid, "type_id": type_id, "weight": weight})
 
 
 @with_retry("entity")
@@ -514,7 +520,9 @@ mcp = FastMCP("entity-registry", lifespan=lifespan)
 @mcp.tool()
 async def register_entity(
     entity_type: str,
-    entity_id: str | None = None,
+    seq: int | None = None,
+    slug: str | None = None,
+    display_id: str | None = None,
     name: str = "",
     artifact_path: str | None = None,
     status: str | None = None,
@@ -529,9 +537,14 @@ async def register_entity(
     ----------
     entity_type:
         One of: backlog, brainstorm, project, feature.
-    entity_id:
-        Unique identifier within the entity_type namespace
-        (e.g. '029-entity-lineage-tracking'). Required unless auto_id=True.
+    seq, slug:
+        The identity of a sequence-numbered kind, as ``allocate_entity_id``
+        returned them (e.g. ``29``, ``'entity-lineage-tracking'``); the
+        registry renders ``029-entity-lineage-tracking``. Required unless
+        auto_id=True or display_id is given.
+    display_id:
+        The identity of a kind with no sequence (a brainstorm's file stem),
+        stored as given.
     name:
         Human-readable name (e.g. 'Entity Lineage Tracking'). Must be
         non-blank — a blank/whitespace-only name returns an
@@ -552,8 +565,8 @@ async def register_entity(
         resolves it via the lazy ``_workspace_uuid`` global populated at
         server startup from ``.claude/pd/workspace.json``.
     auto_id:
-        If True, auto-generate entity_id from name. Cannot be used
-        together with an explicit entity_id.
+        If True, allocate seq and derive slug from name. Cannot be used
+        together with seq, slug or display_id.
 
     Returns confirmation message or error.
     """
@@ -596,12 +609,16 @@ async def register_entity(
     # which database.py's register_entity(project_id=...) still accepts.
     resolved_project_id = _project_id or "__unknown__"
 
-    if auto_id and entity_id:
-        return "Error: cannot specify both auto_id=True and entity_id"
+    identity = {key: value for key, value in
+                (("seq", seq), ("slug", slug), ("display_id", display_id))
+                if value is not None}
+    if auto_id and identity:
+        return "Error: cannot specify both auto_id=True and seq/slug/display_id"
     if auto_id:
-        entity_id = generate_entity_id(_db, entity_type, name, resolved_project_id)
-    elif not entity_id:
-        return "Error: entity_id is required (or use auto_id=True)"
+        seq, slug = generate_entity_id(_db, entity_type, name, resolved_project_id)
+        identity = {"seq": seq, "slug": slug}
+    elif not identity:
+        return "Error: seq and slug (display_id for a brainstorm) are required, or use auto_id=True"
 
     if isinstance(metadata, dict):
         metadata = json.dumps(metadata)
@@ -615,7 +632,7 @@ async def register_entity(
     # server_helpers.py — see design §3.5 for the structured JSON shape used
     # by other MCP tool sites.)
     return _process_register_entity(
-        _db, entity_type, entity_id, name,
+        _db, entity_type, identity, name,
         artifact_path, status, None,  # parent_type_id removed (FR-13 AC).
         parse_metadata(metadata),
         project_id=resolved_project_id,
@@ -643,12 +660,8 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     ----------
     entity_type:
         The entity type to allocate a sequence value for (e.g. 'feature').
-        Required. ``'project'`` is accepted like any other kind (feature
-        132 D6.9 cutover — the backfill seeds the `sequences` table from
-        the live census max, so callers building ``P{NNN}`` ids use the
-        returned ``seq`` directly and discard the ``entity_id`` field,
-        which is shaped ``{seq:03d}-{slug}`` for every kind including
-        ``project``).
+        Required. ``'project'`` is accepted like any other kind; every
+        kind's id is shaped ``{seq:03d}-{slug}``.
     name:
         Human-readable name; slugified into the id's suffix. Must slugify
         to a non-empty string.
@@ -656,9 +669,10 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     Returns
     -------
     str
-        JSON ``{"seq": <int>, "entity_id": "<seq:03d>-<slug>"}`` on
-        success, or a structured error envelope (``workspace_unresolved``,
-        ``invalid_input``) on failure.
+        JSON ``{"seq": <int>, "slug": "<slug>", "entity_id": "<seq:03d>-<slug>"}``
+        on success: register with ``seq`` and ``slug``; ``entity_id`` names the
+        directory and branch. On failure, a structured error envelope
+        (``workspace_unresolved``, ``invalid_input``).
     """
     err = _check_db_available()
     if err:
@@ -693,7 +707,8 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
         })
     seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
     return json.dumps(
-        {"seq": seq, "entity_id": render_display_id(entity_type, seq, slug)}
+        {"seq": seq, "slug": slug,
+         "entity_id": render_display_id(entity_type, seq, slug)}
     )
 
 
@@ -839,11 +854,8 @@ async def issue_spawn(
     # values cannot leak into entities.metadata.
     caller_meta.pop("parent_uuid", None)
 
-    # FR-9.2: auto_id path via generate_entity_id produces conformant
-    # `{seq:03d}-{slug}` ids, so EntityIdFormatError cannot fire (AC-9.6).
-    entity_id = generate_entity_id(
-        _db, kind, summary, resolved_project_id
-    )
+    # FR-9.2: generate_entity_id allocates the seq and derives the slug.
+    seq, slug = generate_entity_id(_db, kind, summary, resolved_project_id)
 
     # FR-9.2: direct db.register_entity call (mirrors entity_server.py:502+
     # pattern). The internal _derive_type_and_lifecycle mapping (Group B)
@@ -857,7 +869,8 @@ async def issue_spawn(
     # preferred over INSERT OR IGNORE per feature 109 FR-4.
     new_uuid = _db.register_entity(
         entity_type=kind,
-        entity_id=entity_id,
+        seq=seq,
+        slug=slug,
         name=summary,
         workspace_uuid=ws_uuid_kwarg,
         project_id=resolved_project_id if ws_uuid_kwarg is None else None,
@@ -1421,7 +1434,6 @@ async def create_key_result(
     name: str,
     metric_type: str,
     weight: float = 1.0,
-    entity_id: str | None = None,
     status: str | None = None,
 ) -> str:
     """Register a key_result entity with parent linkage, metric_type, and weight.
@@ -1436,8 +1448,6 @@ async def create_key_result(
         One of: milestone, binary, baseline_target.
     weight:
         Relative weight for weighted scoring (default 1.0).
-    entity_id:
-        Optional explicit ID; auto-generated if omitted.
     status:
         Optional initial status.
     """
@@ -1454,10 +1464,9 @@ async def create_key_result(
             _db, None, parent_ref, is_mutation=True,
             project_id=_effective_project_id(),
         )
-        eid = entity_id or name.lower().replace(" ", "-")[:30]
         metadata_json = json.dumps({"metric_type": metric_type, "weight": weight})
         return _process_create_key_result(
-            _db, parent_type_id, eid, name, status, metadata_json, weight,
+            _db, parent_type_id, name, status, metadata_json, weight,
             project_id=_project_id or "__unknown__",
         )
     except Exception as exc:

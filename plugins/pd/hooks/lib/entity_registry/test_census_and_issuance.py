@@ -12,6 +12,7 @@ import uuid as _uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, _census_max
+from entity_registry.test_helpers import identity_kwargs
 
 
 def _db(tmp_path, name="e.db"):
@@ -29,13 +30,15 @@ def _db(tmp_path, name="e.db"):
 
 def _seed(db, ws, kind, entity_id, *, seq=None, slug="s", status="active",
           is_archived=0):
-    db.register_entity(kind, entity_id=entity_id, name=entity_id,
-                       workspace_uuid=ws, status=status,
-                       _strict_id_format=False)
+    db.register_entity(kind, **identity_kwargs(kind, entity_id), name=entity_id,
+                       workspace_uuid=ws, status=status)
     row = db._conn.execute(
         "SELECT uuid FROM entities WHERE type_id=? AND workspace_uuid=?",
         (f"{kind}:{entity_id}", ws)).fetchone()
-    if seq is not None:
+    if seq is None:
+        # The legacy rows' shape. Registration always writes a display row.
+        db._conn.execute("DELETE FROM entity_display WHERE uuid=?", (row[0],))
+    else:
         db._conn.execute(
             "INSERT OR REPLACE INTO entity_display(uuid, seq, slug) VALUES(?,?,?)",
             (row[0], seq, slug))

@@ -99,7 +99,7 @@ class TestFullRunOutputsValidJson:
         db = EntityDatabase(entity_db_path)
         db.register_entity(
             entity_type="feature",
-            entity_id="001-test-feature",
+            seq=1, slug="test-feature",
             name="001-test-feature",
             status="active",
             project_id="__unknown__",
@@ -418,7 +418,7 @@ class TestWorkflowReconcileAppliesDrift:
         db = EntityDatabase(entity_db_path)
         db.register_entity(
             entity_type="feature",
-            entity_id="099-drift-test",
+            seq=99, slug="drift-test",
             name="099-drift-test",
             status="active",
             project_id="__unknown__",

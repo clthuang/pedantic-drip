@@ -1382,7 +1382,7 @@ class TestIncidentReplay:
             )
             # And a governed write (register_entity) now resolves the FK.
             uuid_out = db.register_entity(
-                "feature", "001-replayed", "Replayed Feature",
+                "feature", name="Replayed Feature", seq=1, slug="replayed",
                 workspace_uuid=_UUID_B,
             )
             assert _uuid.UUID(uuid_out)

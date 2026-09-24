@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from entity_registry.database import EntityExistsError
 from entity_registry.dependencies import DependencyManager
-from entity_registry.id_generator import generate_entity_id
+from entity_registry.id_generator import generate_entity_id, render_display_id
 from entity_registry.project_identity import _compute_legacy_project_id
 
 if TYPE_CHECKING:
@@ -352,8 +352,8 @@ def promote_task(
 
     # 7. Generate task entity ID
     _project_id = _compute_legacy_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
-    task_entity_id = generate_entity_id(db, "task", matched_heading, project_id=_project_id)
-    task_type_id = f"task:{task_entity_id}"
+    seq, slug = generate_entity_id(db, "task", matched_heading, project_id=_project_id)
+    task_type_id = f"task:{render_display_id('task', seq, slug)}"
 
     # 8. Register task entity
     task_metadata = {"source_heading": matched_heading}
@@ -366,7 +366,8 @@ def promote_task(
     try:
         task_uuid = db.register_entity(
             entity_type="task",
-            entity_id=task_entity_id,
+            seq=seq,
+            slug=slug,
             name=matched_heading,
             status="planned",
             parent_uuid=parent_uuid,

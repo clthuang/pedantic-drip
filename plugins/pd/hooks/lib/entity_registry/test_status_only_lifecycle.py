@@ -96,7 +96,7 @@ def test_ac_bl_4_register_bug_no_workflow_phases(db):
     """
     db.register_entity(
         entity_type="bug",
-        entity_id="001-foo",
+        seq=1, slug="foo",
         name="A bug",
         status="open",
         project_id="__unknown__",
@@ -128,7 +128,7 @@ def test_ac_bl_5_direct_update_entity_status(db):
     """entities.status has no CHECK; direct update accepts any string."""
     db.register_entity(
         entity_type="bug",
-        entity_id="002-bar",
+        seq=2, slug="bar",
         name="Another bug",
         status="open",
         project_id="__unknown__",
@@ -158,7 +158,7 @@ def test_ac_bl_5_direct_update_entity_status(db):
 def test_ac_bl_6_status_only_close_does_not_create_workflow_phases(db):
     db.register_entity(
         entity_type="bug",
-        entity_id="003-baz",
+        seq=3, slug="baz",
         name="Close-me bug",
         status="open",
         project_id="__unknown__",
@@ -188,7 +188,7 @@ def test_ac_bl_7_transition_entity_phase_rejects_bug(db):
     # place so the INSERT succeeds; Group A established this).
     db.register_entity(
         entity_type="bug",
-        entity_id="004-defensive",
+        seq=4, slug="defensive",
         name="Defensive raise check",
         status="open",
         project_id="__unknown__",

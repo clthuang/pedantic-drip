@@ -12,6 +12,7 @@ import time
 import pytest
 
 from doctor.models import CheckResult, DiagnosticReport, Issue
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +187,9 @@ def _register_live_feature(
     Uses ``EntityDatabase.register_entity`` — never a raw INSERT (uuid-PK
     gotcha). ``workspace_uuid`` defaults to the canonical unknown-workspace
     bucket, which EntityDatabase auto-bootstraps, so callers that don't care
-    about scoping need not pre-insert a workspaces row. Any non-seq-slug
-    entity_id (e.g. ``'bs-001'``) is accepted via ``_strict_id_format=False``.
+    about scoping need not pre-insert a workspaces row. ``entity_id`` is
+    display text (``'001-a'``) that must round-trip for a sequence kind;
+    ``identity_kwargs`` splits it.
     Returns the ``type_id``.
     """
     from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
@@ -198,12 +200,11 @@ def _register_live_feature(
         name = f"{kind.title()} {entity_id}"
     db.register_entity(
         kind,
-        entity_id,
-        name,
+        name=name,
+        **identity_kwargs(kind, entity_id),
         workspace_uuid=workspace_uuid,
         artifact_path=artifact_path,
         status=status,
-        _strict_id_format=False,
     )
     return f"{kind}:{entity_id}"
 
@@ -2224,17 +2225,20 @@ from doctor.checks import check_display_row_invariant  # noqa: E402
 
 
 class TestDisplayRowInvariant:
-    """B8: every entity has an entity_display row unless is_legacy."""
+    """B8: every entity has an entity_display row unless is_legacy or its kind
+    has no sequence (Wave 2 D3)."""
 
     def _conn(self, tmp_path):
         return sqlite3.connect(_make_db(tmp_path))
 
     @staticmethod
-    def _entity(conn, uuid, type_id, *, is_legacy=0, is_deleted=0, display=True):
+    def _entity(conn, uuid, type_id, *, kind="feature", is_legacy=0, is_deleted=0,
+                display=True):
+        # This fixture predates the kind column, so kind lives in entity_type.
         conn.execute(
             "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, "
             "is_legacy, is_deleted) VALUES (?,?,?,?,?,?,?)",
-            (uuid, type_id, "feature", type_id.split(":")[1], type_id,
+            (uuid, type_id, kind, type_id.split(":")[1], type_id,
              is_legacy, is_deleted),
         )
         if display:
@@ -2267,7 +2271,7 @@ class TestDisplayRowInvariant:
         assert result.issues[0].severity == "error"
 
     def test_legacy_rows_are_exempt(self, tmp_path):
-        """The 180 legacy rows are the whole reason the invariant has an 'unless'."""
+        """The 180 legacy rows are why the invariant has its first 'unless'."""
         conn = self._conn(tmp_path)
         self._entity(conn, "u1", "feature:001-a", is_legacy=1, display=False)
         assert check_display_row_invariant(conn).passed
@@ -2276,6 +2280,34 @@ class TestDisplayRowInvariant:
         conn = self._conn(tmp_path)
         self._entity(conn, "u1", "feature:001-a", is_deleted=1, display=False)
         assert check_display_row_invariant(conn).passed
+
+    def test_a_display_less_brainstorm_is_exempt(self, tmp_path):
+        """Wave 2 D3: a brainstorm's identity is its stem; it has no display row."""
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "brainstorm:20260101-000001-idea", kind="brainstorm",
+                     display=False)
+        assert check_display_row_invariant(conn).passed
+
+    def test_the_kind_exemption_leaves_a_display_less_feature_red(self, tmp_path):
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "brainstorm:20260101-000001-idea", kind="brainstorm",
+                     display=False)
+        self._entity(conn, "u2", "feature:001-a", display=False)
+        assert [i.entity for i in check_display_row_invariant(conn).issues] == ["feature:001-a"]
+
+    def test_kind_cannot_be_used_to_silence_a_violation(self, tmp_path):
+        """The kind exemption is not a second mute button: the entities CHECK
+        pairs type with kind, so no single-column write moves a row into a
+        non-sequence kind. A pin - green since migration 12 made the pairing."""
+        from entity_registry.database import EntityDatabase
+
+        db = EntityDatabase(str(tmp_path / "live.db"))
+        entity_uuid = db.register_entity("feature", name="F", seq=1, slug="f",
+                                         project_id="__unknown__")
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute("UPDATE entities SET kind = 'brainstorm' WHERE uuid = ?",
+                             (entity_uuid,))
+        db.close()
 
     def test_is_legacy_cannot_be_used_to_silence_a_violation(self, tmp_path):
         """The escape hatch, closed.
@@ -2304,7 +2336,8 @@ class TestDisplayRowInvariantSchemaProbes:
     any older file because the except swallowed the error. Dropping e.kind
     fixed that instance and left two worse ones — is_legacy (migration 22)
     and is_deleted (migration 24), both strictly later and so strictly more
-    likely to be missing. These pin all three.
+    likely to be missing. These pin all three, and the kind exemption reads
+    whichever of kind and entity_type the file has (Wave 2 D3).
     """
 
     BASE = (
@@ -2329,6 +2362,17 @@ class TestDisplayRowInvariantSchemaProbes:
             "column this schema lacks and the error was swallowed."
         )
         assert [i.entity for i in result.issues] == ["feature:001-a"]
+
+    @pytest.mark.parametrize("kind_column", ["kind", "entity_type"])
+    def test_kind_exemption_reads_whichever_kind_column_exists(self, kind_column):
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            "CREATE TABLE entity_display (uuid TEXT PRIMARY KEY, seq INTEGER, slug TEXT);"
+            f"CREATE TABLE entities (uuid TEXT PRIMARY KEY, type_id TEXT NOT NULL, {kind_column} TEXT);"
+            f"INSERT INTO entities (uuid, type_id, {kind_column}) VALUES "
+            "('u1', 'feature:001-a', 'feature'), ('u2', 'brainstorm:idea', 'brainstorm');"
+        )
+        assert [i.entity for i in check_display_row_invariant(conn).issues] == ["feature:001-a"]
 
     def test_missing_entity_display_table_is_info_not_silent(self):
         """Pre-migration-13 files are genuinely out of scope — but say so."""

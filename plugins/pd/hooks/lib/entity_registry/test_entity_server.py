@@ -17,6 +17,7 @@ if _mcp_dir not in sys.path:
 import entity_server
 from entity_registry.database import EntityDatabase
 from entity_registry.test_helpers import bootstrap_test_workspace
+from entity_registry.test_helpers import identity_kwargs
 
 _UUID_V4_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -37,8 +38,8 @@ async def test_set_parent_handler_concise_message(db):
     """set_parent handler returns concise message with only type_ids, no UUIDs.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    parent_uuid = db.register_entity("project", "001-parent", "Parent Project", status="active", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", "001-child", "Child Feature", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", project_id="__unknown__")
+    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", project_id="__unknown__")
 
     result = await entity_server.set_parent("feature:001-child", "project:001-parent")
 
@@ -54,7 +55,7 @@ async def test_update_entity_handler_concise_message(db):
     """update_entity handler returns concise message with only type_id, no UUID.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    entity_uuid = db.register_entity("feature", "001-f1", "Feature One", status="active", project_id="__unknown__")
+    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", project_id="__unknown__")
 
     result = await entity_server.update_entity("feature:001-f1", status="completed")
 
@@ -76,7 +77,7 @@ async def test_register_entity_handler_concise_message(db):
     """
     result = await entity_server.register_entity(
         entity_type="feature",
-        entity_id="001-reg-test",
+        seq=1, slug="reg-test",
         name="Registration Test",
     )
     assert isinstance(result, str)
@@ -92,8 +93,8 @@ async def test_set_parent_handler_uses_uuid_identifiers(db):
     dual-read resolution, UUID input would fail.
     derived_from: spec:R27, dimension:adversarial
     """
-    parent_uuid = db.register_entity("project", "001-parent2", "Parent", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", "001-child2", "Child", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", project_id="__unknown__")
+    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", project_id="__unknown__")
     # Use UUID for child and type_id for parent
     result = await entity_server.set_parent(child_uuid, "project:001-parent2")
     assert isinstance(result, str)
@@ -110,7 +111,7 @@ async def test_get_entity_handler_compact_output(db):
     know the type_id they queried with, and uuid/parent_uuid are internal.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C2
     """
-    db.register_entity("feature", "001-get-test", "Get Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Get Test", seq=1, slug="get-test", status="active", project_id="__unknown__")
     result = await entity_server.get_entity("feature:001-get-test")
     assert isinstance(result, str)
     parsed = json.loads(result)
@@ -160,8 +161,8 @@ async def test_set_parent_delegates_to_server_helpers(db):
     by the MCP tool. This test verifies the delegation chain works end-to-end.
     """
     # Given parent and child entities
-    db.register_entity("project", "002-p1", "Parent Project", status="active", project_id="__unknown__")
-    db.register_entity("feature", "001-c1", "Child Feature", status="active", project_id="__unknown__")
+    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", project_id="__unknown__")
     # When setting parent via MCP handler
     result = await entity_server.set_parent("feature:001-c1", "project:002-p1")
     # Then success message is returned
@@ -184,7 +185,7 @@ async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
     import workflow_state_server as ws_mod
 
     # Given a brainstorm entity but NO workflow_phases row
-    db.register_entity("brainstorm", "20260101-000016-err-test", "Error Test", status="draft", project_id="__unknown__")
+    db.register_entity("brainstorm", name="Error Test", display_id="20260101-000016-err-test", status="draft", project_id="__unknown__")
 
     # When attempting to transition without initializing workflow first
     result = ws_mod._process_transition_entity_phase(
@@ -211,7 +212,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-dict-001",
+                entity_type="feature", seq=1, slug="meta-dict-001",
                 name="Dict Test", metadata={"description": "test value"},
             )
         )
@@ -226,7 +227,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-str-001",
+                entity_type="feature", seq=1, slug="meta-str-001",
                 name="String Test", metadata='{"key": "val"}',
             )
         )
@@ -241,7 +242,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-none-001",
+                entity_type="feature", seq=1, slug="meta-none-001",
                 name="None Test", metadata=None,
             )
         )
@@ -249,7 +250,7 @@ class TestMetadataDictCoercion:
 
     def test_update_entity_metadata_dict(self, db: EntityDatabase):
         """AC-2: Dict metadata accepted by update_entity, stored as JSON string."""
-        db.register_entity("feature", "001-meta-upd-001", "Update Test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", project_id="__unknown__")
         entity_server._db = db
         import asyncio
         result = asyncio.run(
@@ -271,7 +272,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-bad-001",
+                entity_type="feature", seq=1, slug="meta-bad-001",
                 name="Bad JSON Test", metadata="{bad json}",
             )
         )
@@ -329,7 +330,7 @@ class TestProjectStartup:
 
         # Register an entity with __unknown__ project_id and matching artifact_path
         db.register_entity(
-            "feature", "001-bf-test", "Backfill Test",
+            "feature", name="Backfill Test", seq=1, slug="bf-test",
             artifact_path="/tmp/my-project/docs/features/test/design.md",
             project_id="__unknown__",
         )
@@ -393,11 +394,11 @@ class TestSearchProjectFiltering:
         bootstrap_test_workspace(db, "project_bbb")
         # Register entities under different projects
         db.register_entity(
-            "feature", "001-proj-a-feat", "Project A Feature",
+            "feature", name="Project A Feature", seq=1, slug="proj-a-feat",
             status="active", project_id="project_aaa",
         )
         db.register_entity(
-            "feature", "001-proj-b-feat", "Project B Feature",
+            "feature", name="Project B Feature", seq=1, slug="proj-b-feat",
             status="active", project_id="project_bbb",
         )
 
@@ -434,12 +435,34 @@ class TestCreateKeyResultMissingParent:
             _process_create_key_result(
                 db,
                 parent_type_id="objective:nonexistent",
-                eid="missing-parent-kr",
                 name="KR Without Parent",
                 status="active",
                 metadata_json=json.dumps({"score": 0.0}),
                 weight=1.0,
             )
+
+    def test_create_key_result_registers_under_its_parent(self, db):
+        """The registration itself: C7 moves this call, so it is covered first."""
+        from entity_server import _process_create_key_result
+
+        objective_uuid = db.register_entity("objective", name="Grow", seq=1, slug="grow",
+                                            project_id="__unknown__")
+        result = json.loads(_process_create_key_result(
+            db,
+            parent_type_id="objective:001-grow",
+            name="Double revenue",
+            status="active",
+            metadata_json=json.dumps({"score": 0.0}),
+            weight=0.5,
+        ))
+        # A real allocation: the first key result takes seq 1.
+        assert result["type_id"] == "key_result:001-double-revenue"
+        row = db.get_entity(result["type_id"])
+        assert row["uuid"] == result["uuid"]
+        assert row["kind"] == "key_result"
+        assert row["parent_uuid"] == objective_uuid
+        assert row["name"] == "Double revenue"
+        assert result["weight"] == 0.5
 
 
 def _upsert(db, project_id, project_root, workspace_uuid=None, name="p"):
@@ -533,7 +556,7 @@ class TestBackfillWorkspaceTarget:
 
     def _register_unknown(self, db, eid, root):
         db.register_entity(
-            "feature", eid, eid.title(),
+            "feature", name=eid.title(), **identity_kwargs("feature", eid),
             artifact_path=f"{root}/docs/features/{eid}/design.md",
             project_id="__unknown__",
         )
@@ -665,7 +688,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="Atomic Display Id Allocation"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-atomic-display-id-allocation"}
+        assert parsed == {"seq": 1, "slug": "atomic-display-id-allocation", "entity_id": "001-atomic-display-id-allocation"}
 
     @pytest.mark.asyncio
     async def test_same_workspace_two_connections_distinct(self, tmp_path, monkeypatch):
@@ -695,8 +718,8 @@ class TestAllocateEntityId:
 
         parsed_a = json.loads(result_a)
         parsed_b = json.loads(result_b)
-        assert parsed_a == {"seq": 1, "entity_id": "001-connection-a"}
-        assert parsed_b == {"seq": 2, "entity_id": "002-connection-b"}
+        assert parsed_a == {"seq": 1, "slug": "connection-a", "entity_id": "001-connection-a"}
+        assert parsed_b == {"seq": 2, "slug": "connection-b", "entity_id": "002-connection-b"}
 
     @pytest.mark.asyncio
     async def test_cross_workspace_independent_sequences(self, ws_db, monkeypatch):
@@ -785,7 +808,7 @@ class TestAllocateEntityId:
             entity_type="project", name="Post Cutover Project"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 5, "entity_id": "005-post-cutover-project"}
+        assert parsed == {"seq": 5, "slug": "post-cutover-project", "entity_id": "005-post-cutover-project"}
 
         # A second, distinct allocation in the same workspace continues
         # sequentially -- two concurrent-ish allocations land distinct,
@@ -855,7 +878,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="- a -"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-a"}
+        assert parsed == {"seq": 1, "slug": "a", "entity_id": "001-a"}
 
     @pytest.mark.asyncio
     async def test_long_name_truncates_on_hyphen_boundary_through_tool_wiring(
@@ -874,7 +897,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="enterprise reliability platform"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-enterprise-reliability"}
+        assert parsed == {"seq": 1, "slug": "enterprise-reliability", "entity_id": "001-enterprise-reliability"}
         assert not parsed["entity_id"].endswith("-")
 
     @pytest.mark.asyncio
@@ -902,7 +925,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="Boundary Seq"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1000, "entity_id": "1000-boundary-seq"}
+        assert parsed == {"seq": 1000, "slug": "boundary-seq", "entity_id": "1000-boundary-seq"}
 
     @pytest.mark.asyncio
     async def test_next_sequence_value_operational_error_propagates_unhandled(
@@ -957,7 +980,7 @@ class TestRegisterEntityBlankNameGuard:
         explicit-id call with a blank name reached the DB-layer raise
         unguarded."""
         result = await entity_server.register_entity(
-            entity_type="feature", entity_id="001-explicit-blank", name="   ",
+            entity_type="feature", seq=1, slug="explicit-blank", name="   ",
         )
         parsed = json.loads(result)
         assert parsed["error"] is True
@@ -1003,6 +1026,6 @@ class TestRegisterEntityToolProjectIdKwargRemoved:
     def test_project_id_kwarg_raises_type_error_not_silently_accepted(self):
         with pytest.raises(TypeError, match="project_id"):
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-x", name="X",
+                entity_type="feature", seq=1, slug="x", name="X",
                 project_id="should-not-exist",
             )

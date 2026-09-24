@@ -22,6 +22,7 @@ from workflow_engine.secretary_intelligence import (
     get_parent_context,
     recommend_weight,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -216,21 +217,21 @@ class TestFindParentCandidates:
         # Register some entities for search
         db.register_entity(
             entity_type="objective",
-            entity_id="001-reliability",
+            seq=1, slug="reliability",
             name="Platform Reliability",
             status="active",
             project_id="__unknown__",
         )
         db.register_entity(
             entity_type="key_result",
-            entity_id="001-p0-incidents",
+            seq=1, slug="p0-incidents",
             name="Reduce P0 Incidents",
             status="active",
             project_id="__unknown__",
         )
         db.register_entity(
             entity_type="feature",
-            entity_id="042-auth-service",
+            seq=42, slug="auth-service",
             name="Authentication Service Rewrite",
             status="active",
             project_id="__unknown__",
@@ -280,21 +281,21 @@ class TestCheckDuplicates:
         db = EntityDatabase(db_path)
         db.register_entity(
             entity_type="feature",
-            entity_id="042-auth-service",
+            seq=42, slug="auth-service",
             name="Authentication Service",
             status="active",
             project_id="__unknown__",
         )
         db.register_entity(
             entity_type="feature",
-            entity_id="043-auth-rewrite",
+            seq=43, slug="auth-rewrite",
             name="Auth Service Rewrite",
             status="active",
             project_id="__unknown__",
         )
         db.register_entity(
             entity_type="project",
-            entity_id="010-monitoring",
+            seq=10, slug="monitoring",
             name="Monitoring Dashboard",
             status="active",
             project_id="__unknown__",
@@ -520,12 +521,12 @@ class TestCheckKrCount:
     def test_five_krs_no_warning(self, db):
         """5 KRs is within limit → no warning."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-o1",
+            entity_type="objective", seq=1, slug="o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(5):
             db.register_entity(
-                entity_type="key_result", entity_id=f"001-kr{i}",
+                entity_type="key_result", **identity_kwargs("key_result", f"001-kr{i}"),
                 project_id="__unknown__",
                 name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
@@ -535,12 +536,12 @@ class TestCheckKrCount:
     def test_six_krs_triggers_warning(self, db):
         """AC-33: 6th KR on objective → warning."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-o1",
+            entity_type="objective", seq=1, slug="o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(6):
             db.register_entity(
-                entity_type="key_result", entity_id=f"001-kr{i}",
+                entity_type="key_result", **identity_kwargs("key_result", f"001-kr{i}"),
                 project_id="__unknown__",
                 name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
@@ -550,12 +551,12 @@ class TestCheckKrCount:
 
     def test_seven_krs_triggers_warning(self, db):
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-o1",
+            entity_type="objective", seq=1, slug="o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(7):
             db.register_entity(
-                entity_type="key_result", entity_id=f"001-kr{i}",
+                entity_type="key_result", **identity_kwargs("key_result", f"001-kr{i}"),
                 project_id="__unknown__",
                 name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
 
@@ -564,7 +565,7 @@ class TestCheckKrCount:
 
     def test_zero_krs_no_warning(self, db):
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-o1",
+            entity_type="objective", seq=1, slug="o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
 
@@ -578,17 +579,17 @@ class TestCheckKrCount:
     def test_abandoned_krs_excluded_from_count(self, db):
         """Abandoned KRs should not count toward the limit."""
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-o1",
+            entity_type="objective", seq=1, slug="o1",
             project_id="__unknown__",
             name="Test Objective", status="active")
         for i in range(5):
             db.register_entity(
-                entity_type="key_result", entity_id=f"001-kr{i}",
+                entity_type="key_result", **identity_kwargs("key_result", f"001-kr{i}"),
                 project_id="__unknown__",
                 name=f"KR {i}", parent_type_id="objective:001-o1", status="active")
         # 6th KR is abandoned — should not count
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-abandoned",
+            entity_type="key_result", seq=1, slug="kr-abandoned",
             name="KR Abandoned", parent_type_id="objective:001-o1",
             project_id="__unknown__",
             status="abandoned")
@@ -614,7 +615,7 @@ class TestGetParentContext:
     def test_returns_context_for_parent_with_workflow(self, db):
         """Parent with workflow phase + progress in metadata -> full context."""
         proj_uuid = db.register_entity(
-            entity_type="project", entity_id="003-platform",
+            entity_type="project", seq=3, slug="platform",
             name="Platform Project", status="active",
             metadata={"progress": 67},
             project_id="__unknown__",
@@ -632,7 +633,7 @@ class TestGetParentContext:
     def test_returns_context_without_progress(self, db):
         """Parent with workflow phase but no progress metadata -> progress is None."""
         db.register_entity(
-            entity_type="project", entity_id="004-infra",
+            entity_type="project", seq=4, slug="infra",
             name="Infrastructure", status="active",
             project_id="__unknown__",
         )
@@ -647,7 +648,7 @@ class TestGetParentContext:
     def test_returns_context_without_workflow_phase(self, db):
         """Parent entity exists but has no workflow_phases row -> phase is None."""
         db.register_entity(
-            entity_type="project", entity_id="005-legacy",
+            entity_type="project", seq=5, slug="legacy",
             name="Legacy Project", status="active",
             metadata={"progress": 30},
             project_id="__unknown__",
@@ -666,7 +667,7 @@ class TestGetParentContext:
     def test_traffic_light_green(self, db):
         """Progress >= 70 -> GREEN."""
         db.register_entity(
-            entity_type="project", entity_id="006-green",
+            entity_type="project", seq=6, slug="green",
             name="Green Project", status="active",
             metadata={"progress": 70},
             project_id="__unknown__",
@@ -677,7 +678,7 @@ class TestGetParentContext:
     def test_traffic_light_yellow(self, db):
         """Progress 40-69 -> YELLOW."""
         db.register_entity(
-            entity_type="project", entity_id="007-yellow",
+            entity_type="project", seq=7, slug="yellow",
             name="Yellow Project", status="active",
             metadata={"progress": 50},
             project_id="__unknown__",
@@ -688,7 +689,7 @@ class TestGetParentContext:
     def test_traffic_light_red(self, db):
         """Progress < 40 -> RED."""
         db.register_entity(
-            entity_type="project", entity_id="008-red",
+            entity_type="project", seq=8, slug="red",
             name="Red Project", status="active",
             metadata={"progress": 20},
             project_id="__unknown__",
@@ -699,7 +700,7 @@ class TestGetParentContext:
     def test_traffic_light_none_when_no_progress(self, db):
         """No progress -> no traffic light."""
         db.register_entity(
-            entity_type="project", entity_id="009-nolight",
+            entity_type="project", seq=9, slug="nolight",
             name="No Progress Project", status="active",
             project_id="__unknown__",
         )
@@ -709,7 +710,7 @@ class TestGetParentContext:
     def test_traffic_light_boundary_40(self, db):
         """Progress == 40 -> YELLOW (not RED)."""
         db.register_entity(
-            entity_type="project", entity_id="010-boundary",
+            entity_type="project", seq=10, slug="boundary",
             name="Boundary 40", status="active",
             metadata={"progress": 40},
             project_id="__unknown__",
@@ -720,7 +721,7 @@ class TestGetParentContext:
     def test_traffic_light_boundary_70(self, db):
         """Progress == 70 -> GREEN (not YELLOW)."""
         db.register_entity(
-            entity_type="project", entity_id="011-boundary",
+            entity_type="project", seq=11, slug="boundary",
             name="Boundary 70", status="active",
             metadata={"progress": 70},
             project_id="__unknown__",
@@ -835,7 +836,7 @@ class TestCLI:
         db = EntityDatabase(db_path)
         db.register_entity(
             entity_type="objective",
-            entity_id="001-reliability",
+            seq=1, slug="reliability",
             name="Platform Reliability",
             status="active",
             project_id="__unknown__",

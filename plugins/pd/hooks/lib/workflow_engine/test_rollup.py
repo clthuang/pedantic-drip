@@ -24,6 +24,7 @@ from workflow_engine.rollup import (
     get_ancestor_progress,
     rollup_parent,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def _register(db, entity_type, entity_id, name, *, status=None,
     """Register entity and return its uuid."""
     return db.register_entity(
         entity_type=entity_type,
-        entity_id=entity_id,
+        **identity_kwargs(entity_type, entity_id),
         name=name,
         status=status,
         parent_type_id=parent_type_id,

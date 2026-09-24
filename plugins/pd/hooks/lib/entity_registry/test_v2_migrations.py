@@ -161,7 +161,7 @@ class TestBacklogRegisterRegression060:
         db._conn.commit()
 
         result = _process_register_entity(
-            db, "backlog", "060-regression-pin", "Regression pin",
+            db, "backlog", {"seq": 60, "slug": "regression-pin"}, "Regression pin",
             None, None, None, None,
             project_id="__unknown__", workspace_uuid=ws_uuid,
         )
@@ -213,7 +213,7 @@ class TestV2Migration3StateOnlyViews:
             (str(tmp_path), now, now),
         )
         db._conn.commit()
-        db.register_entity("feature", "300-v", "V", status="active", project_id="P-v")
+        db.register_entity("feature", name="V", seq=300, slug="v", status="active", project_id="P-v")
         db.create_workflow_phase(
             "feature:300-v", workflow_phase="brainstorm",
             last_completed_phase=None, mode="standard",

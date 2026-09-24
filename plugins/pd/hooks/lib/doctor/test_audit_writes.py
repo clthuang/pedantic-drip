@@ -502,6 +502,10 @@ _INFERENCE_SCAN_ROOTS = [
     # B2: the UI is where a wrongly-inferred kind becomes something a person
     # acts on, so templates are in scope exactly as .py files are.
     _PLUGIN_PD_DIR / "ui" / "templates",
+    # Wave 2 step 3 (calvin L15): scripts/ holds a registrar,
+    # parse_backlog_md.py, that no root reached. It had no inference site when
+    # added, so covering it cost nothing and keeps the next one visible.
+    _PLUGIN_PD_DIR / "scripts",
 ]
 
 # (relative path, lineno, idiom, owning task)
@@ -513,7 +517,7 @@ _INFERENCE_SCAN_ROOTS = [
 #                          text at migration time. Same class as :2756, :4199
 #                          and :4262. Sanctioned; relabelled, not fixed.
 #
-#   feature_lifecycle.py:97  _validate_feature_type_id splits type_id on ":"
+#   feature_lifecycle.py:98  _validate_feature_type_id splits type_id on ":"
 #                          to build {artifacts_root}/features/{slug}. The path
 #                          belongs in entities.artifact_path -> C11. NOTE it is
 #                          a TRUST BOUNDARY: it rejects NUL and does a realpath
@@ -530,32 +534,29 @@ _INFERENCE_SCAN_ROOTS = [
 #                          that deliberately and fixture it, not let the join
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
-    ("entity_registry/backfill.py",           756, "split",       "C13 missing-parent policy"),
+    ("entity_registry/backfill.py",           804, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/database.py",           929, "split",       "migration internal - sanctioned"),
     ("entity_registry/database.py",           2756, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4199, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4262, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           7577, "regex",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7711, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7712, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7713, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           4163, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4226, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/id_generator.py",       107, "split",       "SANCTIONED - round-trip gate for ids read as text"),
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
     ("entity_registry/rebuild_tool.py",       1060, "regex",       "C19/C20b rebuild seeds from structure"),
     ("entity_registry/rebuild_tool.py",       1169, "split",       "C19 rebuild seeds from structure"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
-    ("workflow_engine/feature_lifecycle.py",  97, "split",       "C11 artifact path"),
+    ("workflow_engine/feature_lifecycle.py",  98, "split",       "C11 artifact path"),
     ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             358, "split",       "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             421, "split",       "C8 kind from entities.kind"),
-    ("../mcp/workflow_state_server.py",       485, "split",       "C9 seq/slug from entity_display"),
-    ("../mcp/workflow_state_server.py",       707, "split",       "C9 seq/slug from entity_display"),
-    ("../mcp/workflow_state_server.py",       1147, "startswith",  "C8 kind from entities.kind"),
-    ("../mcp/workflow_state_server.py",       1429, "startswith",  "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",       484, "split",       "C9 seq/slug from entity_display"),
+    ("../mcp/workflow_state_server.py",       706, "split",       "C9 seq/slug from entity_display"),
+    ("../mcp/workflow_state_server.py",       1146, "startswith",  "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",       1428, "startswith",  "C8 kind from entities.kind"),
     ("../ui/templates/_card.html",            4, "split",       "C8 kind - template, view must pass kind"),
     ("../ui/templates/_card.html",            10, "split",       "C8 kind - template, view must pass kind"),
 ]
@@ -619,11 +620,17 @@ def test_identity_inference_inventory_is_exact() -> None:
 #   30  B2 (2026-09-22) added ui/templates, surfacing _card.html:4 and :10
 #   29  C2 (2026-09-22) removed next_sequence_value's text parse; not lowered until 2026-09-23
 #   28  promote_entity deleted (2026-09-23), taking its type_id split (C12) with it
+#   24  Wave 2 step 5 (C6) deleted register_entity's strict regex and the
+#       slice parse that filled the display row from the text form
+#   25  Wave 2 review: registration_identity (step 4) parses ids that arrive
+#       as text from files and tool arguments; its receiver name hid it from
+#       the scanner. Renamed so the scanner sees it, and declared: a new
+#       parser, raised in the diff that adds it, as this table requires
 #
 # Raising this is a deliberate act with a line in that table, not a way to
 # quiet a red test. If the number rose because production grew a NEW parser,
 # the entry belongs in the diff being reviewed, not here.
-_INVENTORY_HIGH_WATER = 28
+_INVENTORY_HIGH_WATER = 25
 
 
 def test_inventory_shrinks_to_zero_eventually() -> None:
