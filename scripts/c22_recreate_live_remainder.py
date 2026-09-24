@@ -851,13 +851,16 @@ def _project_directory_numbers(artifacts_root: str) -> dict[str, int]:
 
 def _refuse_numbers_at_or_below_directories(artifacts_root: str, seq: int) -> None:
     """/pd:create-project step 4: a number at or below an existing project
-    directory's is sequence drift. Stop before anything is created with it."""
+    directory's is a hard stop. The allocator reads neither the disk nor
+    legacy id text, so only the counter reserves a legacy project's number
+    and a directory the registry has no row for is invisible to it. Stop
+    before anything is created with the number."""
     blocking = sorted(name for name, number in _project_directory_numbers(artifacts_root).items()
                       if number >= seq)
     if blocking:
         raise Refusal(f"project number {seq} is at or below existing project directories "
-                      f"{blocking} under {artifacts_root}/projects: sequence drift; correct the "
-                      f"workspace's project counter first")
+                      f"{blocking} under {artifacts_root}/projects, which the allocator does not "
+                      f"read; correct the workspace's project counter first")
 
 
 def preflight(plan: Plan) -> None:
@@ -1031,8 +1034,8 @@ def _create_project(context: Context, group: Group) -> Row:
                          f"{group.new['slug']!r}; number {reply['seq']} is spent, nothing registered")
     try:
         _refuse_numbers_at_or_below_directories(context.artifacts_root, reply["seq"])
-    except Refusal as drift:
-        raise ApplyError(f"{drift}; number {reply['seq']} is spent, nothing registered") from None
+    except Refusal as refusal:
+        raise ApplyError(f"{refusal}; number {reply['seq']} is spent, nothing registered") from None
     project_uuid = _init_project(context, group, reply["entity_id"], reply["slug"])
     _record_replacement(context, project_uuid, group.originals)
     return _find_replacement(context, group)
