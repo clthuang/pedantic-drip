@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from workflow_engine.router import (
     ENTITY_MACHINES,
     init_entity_workflow,
@@ -39,7 +39,7 @@ def _create_brainstorm(db: EntityDatabase, entity_id: str = "20260101-000019-ide
         **identity_kwargs("brainstorm", entity_id),
         name=f"Test brainstorm {entity_id}",
         status="draft",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     return type_id
 
@@ -52,7 +52,7 @@ def _create_backlog(db: EntityDatabase, entity_id: str = "001-item-1") -> str:
         **identity_kwargs("backlog", entity_id),
         name=f"Test backlog {entity_id}",
         status="open",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     return type_id
 
@@ -117,7 +117,7 @@ class TestInitEntityWorkflow:
             seq=1, slug="feat-1",
             name="Test feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         with pytest.raises(ValueError, match="invalid_entity_type.*feature"):
             init_entity_workflow(db, "feature:001-feat-1", "ideation", "backlog")
@@ -128,7 +128,7 @@ class TestInitEntityWorkflow:
             seq=1, slug="proj-1",
             name="Test project",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         with pytest.raises(ValueError, match="invalid_entity_type.*project"):
             init_entity_workflow(db, "project:001-proj-1", "active", "wip")
@@ -215,7 +215,7 @@ class TestTransitionEntityPhase:
             seq=1, slug="feat-1",
             name="Test feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         with pytest.raises(ValueError, match="invalid_entity_type.*feature"):
             transition_entity_phase(db, "feature:001-feat-1", "reviewing")
@@ -445,7 +445,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
             seq=1, slug="defensive-bug",
             name="Defensive raise check",
             status="open",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(ValueError) as excinfo:
@@ -462,7 +462,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
             seq=2, slug="defensive-task",
             name="Defensive raise check task",
             status="open",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(ValueError) as excinfo:

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from workflow_engine.router import (
     ENTITY_MACHINES,
     transition_entity_phase,
@@ -99,7 +99,7 @@ def test_ac_bl_4_register_bug_no_workflow_phases(db):
         seq=1, slug="foo",
         name="A bug",
         status="open",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
     row = db._conn.execute(
@@ -131,7 +131,7 @@ def test_ac_bl_5_direct_update_entity_status(db):
         seq=2, slug="bar",
         name="Another bug",
         status="open",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
     db.update_entity("bug:002-bar", status="resolved", project_id="__unknown__")
@@ -161,7 +161,7 @@ def test_ac_bl_6_status_only_close_does_not_create_workflow_phases(db):
         seq=3, slug="baz",
         name="Close-me bug",
         status="open",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
     db.update_entity("bug:003-baz", status="closed", project_id="__unknown__")
@@ -191,7 +191,7 @@ def test_ac_bl_7_transition_entity_phase_rejects_bug(db):
         seq=4, slug="defensive",
         name="Defensive raise check",
         status="open",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
     with pytest.raises(ValueError) as excinfo:

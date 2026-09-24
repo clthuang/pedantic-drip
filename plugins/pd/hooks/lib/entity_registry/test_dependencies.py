@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.dependencies import CycleError, DependencyManager
 from entity_registry import schema_v2
 # Feature 132 Task 3: imported at MODULE (collection) time -- load-bearing,
@@ -56,7 +56,7 @@ def _reg(db, suffix: str, *, status: str | None = None) -> str:
     """Register a feature and return its uuid."""
     return db.register_entity(
         "feature", name=f"Feature {suffix}", **identity_kwargs("feature", f"001-{suffix}"),
-        status=status, project_id="__unknown__",
+        status=status, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 
@@ -566,7 +566,7 @@ class TestPerformance:
         nodes = []
         for i in range(1000):
             nodes.append(
-                db.register_entity("feature", name=f"Perf {i}", **identity_kwargs("feature", f"001-perf-{i:04d}"), project_id="__unknown__")
+                db.register_entity("feature", name=f"Perf {i}", **identity_kwargs("feature", f"001-perf-{i:04d}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             )
         start = time.time()
         for i in range(999):

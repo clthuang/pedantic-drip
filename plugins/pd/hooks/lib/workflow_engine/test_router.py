@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from transition_gate import PHASE_SEQUENCE
 from workflow_engine.router import (
     ENTITY_MACHINES,
@@ -61,7 +61,7 @@ class TestSC4BrainstormReviewingWritesWip:
     def test_draft_to_reviewing_writes_wip(self, db):
         db.register_entity(
             entity_type="brainstorm", display_id="20260101-000034-sc4-probe",
-            name="SC4 probe", status="draft", project_id="__unknown__",
+            name="SC4 probe", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = "brainstorm:20260101-000034-sc4-probe"
         init_entity_workflow(db, type_id, "draft", "wip")
@@ -536,7 +536,7 @@ class TestTransitionEntityPhaseDelegatesToMachineValidate:
         # Given an entity parked at a real current phase
         db.register_entity(
             entity_type=kind, **identity_kwargs(kind, entity_id), name="Probe",
-            status=current, project_id="__unknown__",
+            status=current, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = f"{kind}:{entity_id}"
         init_entity_workflow(

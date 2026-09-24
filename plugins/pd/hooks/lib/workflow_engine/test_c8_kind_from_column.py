@@ -34,7 +34,7 @@ import uuid as _uuid
 
 import pytest
 
-from entity_registry.database import EntityDatabase, _derive_type_and_lifecycle
+from entity_registry.database import EntityDatabase, _derive_type_and_lifecycle, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import bootstrap_test_workspace
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.reconciliation import check_workflow_drift
@@ -175,7 +175,7 @@ class TestInitEntityWorkflowReadsKindColumn:
         # upsert_workflow_phase, with an unstructured "not found" error.
         feature_uuid = db.register_entity(
             entity_type="feature", seq=1, slug="by-uuid", name="By uuid",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(ValueError) as excinfo:
@@ -246,7 +246,7 @@ class TestTransitionEntityPhaseReadsKindColumn:
         # "invalid_entity_type: feature ...", parsed from its text.
         db.register_entity(
             entity_type="feature", seq=2, slug="soft-deleted", name="Soft-deleted",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = "feature:002-soft-deleted"
         db.delete_entity(type_id)
@@ -263,7 +263,7 @@ class TestTransitionEntityPhaseReadsKindColumn:
         # malformed instead of being used as a workflow_phases key.
         backlog_uuid = db.register_entity(
             entity_type="backlog", seq=1, slug="by-uuid", name="By uuid",
-            status="open", project_id="__unknown__",
+            status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(ValueError) as excinfo:
@@ -327,7 +327,7 @@ class TestDriftDbOnlyReadsKindColumn:
         # its kind column says it is not a feature.
         db.register_entity(
             entity_type="brainstorm", display_id="20260924-000003-live",
-            name="Live brainstorm", status="draft", project_id="__unknown__",
+            name="Live brainstorm", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "brainstorm:20260924-000003-live", workflow_phase="draft",

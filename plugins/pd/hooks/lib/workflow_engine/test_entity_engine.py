@@ -26,7 +26,7 @@ import pytest
 
 from transition_gate import Severity
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.dependencies import DependencyManager
 from entity_registry import schema_v2
 # Test-deepening addition: imported at MODULE (collection) time -- see
@@ -72,14 +72,21 @@ def _register(
     status: str | None = "active",
     parent_type_id: str | None = None,
 ) -> str:
-    """Register an entity and return its UUID."""
+    """Register an entity and return its UUID.
+
+    ``parent_type_id`` names an already-registered parent; it is looked up
+    and passed as ``parent_uuid``.
+    """
+    parent_uuid = (
+        db.get_entity(parent_type_id)["uuid"] if parent_type_id is not None else None
+    )
     return db.register_entity(
         entity_type=entity_type,
         **identity_kwargs(entity_type, entity_id),
         name=name,
         status=status,
-        parent_type_id=parent_type_id,
-        project_id="__unknown__",
+        parent_uuid=parent_uuid,
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 

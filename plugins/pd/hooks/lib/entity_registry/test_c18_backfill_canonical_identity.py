@@ -19,7 +19,7 @@ import json
 import pytest
 
 from entity_registry.backfill import run_backfill
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.id_generator import NON_SEQUENCE_KINDS, render_display_id
 from entity_registry.test_helpers import bootstrap_test_workspace, seed_legacy_entity
 
@@ -127,10 +127,10 @@ def test_a_rerun_over_projects_with_display_rows_leaves_the_project_row_count_un
     _write_meta(tmp_path, "projects", "P006-y", {"id": "P006", "slug": "y"})
     _write_meta(tmp_path, "projects", "P008-w", {"id": "P008", "slug": "w"})
     _write_meta(tmp_path, "projects", "007-z", {"id": "007", "slug": "z"})
-    db.register_entity("project", name="X", seq=5, slug="x", project_id="__unknown__")
-    _register_under(db, "project", 6, "y", "P006", project_id="__unknown__")
-    _register_under(db, "project", 8, "w", "P008-w", project_id="__unknown__")
-    _register_under(db, "project", 7, "z", "7-z", project_id="__unknown__")
+    db.register_entity("project", name="X", seq=5, slug="x", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    _register_under(db, "project", 6, "y", "P006", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    _register_under(db, "project", 8, "w", "P008-w", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    _register_under(db, "project", 7, "z", "7-z", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     projects_before = _uuids(db, "project")
     assert len(projects_before) == 4
 
@@ -168,6 +168,6 @@ def test_the_invariant_check_is_not_vacuous(db):
     no_display_row = seed_legacy_entity(db, "project", "P001", "Old")
     with pytest.raises(AssertionError, match="has no entity_display row"):
         _assert_canonical(db, {no_display_row})
-    unrendered = _register_under(db, "feature", 66, "x", "66-x", project_id="__unknown__")
+    unrendered = _register_under(db, "feature", 66, "x", "66-x", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     with pytest.raises(AssertionError, match="does not render from its display row"):
         _assert_canonical(db, {unrendered})

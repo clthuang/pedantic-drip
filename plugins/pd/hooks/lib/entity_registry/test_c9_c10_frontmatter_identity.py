@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 from entity_registry import frontmatter_inject, frontmatter_sync
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.frontmatter import read_frontmatter
 from entity_registry.frontmatter_sync import stamp_header
 from entity_registry.test_helpers import seed_legacy_entity
@@ -118,7 +118,7 @@ class TestFeatureFieldsFromTheDisplayRow:
     def _disagreeing_feature(db) -> str:
         entity_uuid = db.register_entity(
             "feature", name="Display Slug", seq=42, slug="display-slug",
-            metadata={"id": "0000007", "slug": "meta-slug"}, project_id="__unknown__",
+            metadata={"id": "0000007", "slug": "meta-slug"}, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         return _store_id_under(db, entity_uuid, "feature", "5-textual-slug")
 
@@ -138,7 +138,7 @@ class TestFeatureFieldsFromTheDisplayRow:
         ``.meta.json``."""
         entity_uuid = db.register_entity(
             "feature", name="Sse Event Stream", seq=74, slug="sse-event-stream",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = _store_id_under(db, entity_uuid, "feature", "74-sse-event-stream")
 
@@ -176,7 +176,7 @@ class TestFeatureFieldsFromTheDisplayRow:
 class TestKindFromTheKindColumn:
     def test_a_feature_stored_under_a_project_prefix_still_gets_feature_fields(self, db, tmp_path):
         entity_uuid = db.register_entity(
-            "feature", name="Feat", seq=3, slug="feat", project_id="__unknown__",
+            "feature", name="Feat", seq=3, slug="feat", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         _store_under(db, entity_uuid, "project:003-feat")
 
@@ -186,7 +186,7 @@ class TestKindFromTheKindColumn:
 
     def test_a_project_stored_under_a_feature_prefix_gets_no_feature_fields(self, db, tmp_path):
         entity_uuid = db.register_entity(
-            "project", name="Proj", seq=4, slug="proj", project_id="__unknown__",
+            "project", name="Proj", seq=4, slug="proj", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         _store_under(db, entity_uuid, "feature:004-proj")
 
@@ -204,7 +204,7 @@ class TestKindFromTheKindColumn:
 def _child_of(db: EntityDatabase, parent_uuid: str, *, seq: int = 2, slug: str = "child") -> str:
     db.register_entity(
         "feature", name=slug.title(), seq=seq, slug=slug, status="active",
-        parent_uuid=parent_uuid, project_id="__unknown__",
+        parent_uuid=parent_uuid, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     return f"feature:{seq:03d}-{slug}"
 
@@ -214,7 +214,7 @@ class TestProjectIdFromTheParentRow:
         """A project parent whose type_id text says ``brainstorm:``: the old
         split found no project and wrote no ``project_id``."""
         parent_uuid = db.register_entity(
-            "project", name="Real Parent", seq=1, slug="real-parent", project_id="__unknown__",
+            "project", name="Real Parent", seq=1, slug="real-parent", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         _store_under(db, parent_uuid, "brainstorm:001-real-parent")
         child_type_id = _child_of(db, parent_uuid)
@@ -228,7 +228,7 @@ class TestProjectIdFromTheParentRow:
         old split wrote ``project_id: P999``."""
         parent_uuid = db.register_entity(
             "brainstorm", name="Idea", display_id="20260924-120000-idea",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         _store_under(db, parent_uuid, "project:P999")
         child_type_id = _child_of(db, parent_uuid)
@@ -242,7 +242,7 @@ class TestProjectIdFromTheParentRow:
         ``entity_id`` column says ``001-real-parent``. The column is the
         identity."""
         parent_uuid = db.register_entity(
-            "project", name="Real Parent", seq=1, slug="real-parent", project_id="__unknown__",
+            "project", name="Real Parent", seq=1, slug="real-parent", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         _store_under(db, parent_uuid, "project:P777-text")
         child_type_id = _child_of(db, parent_uuid)
@@ -256,7 +256,7 @@ class TestProjectIdFromTheParentRow:
         ``is_deleted``, so a soft-deleted parent project still named its
         children's ``project_id``. The parent-row read keeps that."""
         parent_uuid = db.register_entity(
-            "project", name="Gone Parent", seq=1, slug="gone-parent", project_id="__unknown__",
+            "project", name="Gone Parent", seq=1, slug="gone-parent", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         child_type_id = _child_of(db, parent_uuid)
         db._conn.execute("UPDATE entities SET is_deleted = 1 WHERE uuid = ?", (parent_uuid,))

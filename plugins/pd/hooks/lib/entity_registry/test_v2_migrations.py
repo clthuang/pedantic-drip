@@ -13,6 +13,7 @@ import pytest
 from entity_registry import schema_v2
 from entity_registry.database import EntityDatabase, _upsert_metadata
 from entity_registry.server_helpers import _process_register_entity
+from entity_registry.test_helpers import workspace_uuid_for
 
 
 def _make_v2_version1_file(path: str) -> None:
@@ -213,7 +214,7 @@ class TestV2Migration3StateOnlyViews:
             (str(tmp_path), now, now),
         )
         db._conn.commit()
-        db.register_entity("feature", name="V", seq=300, slug="v", status="active", project_id="P-v")
+        db.register_entity("feature", name="V", seq=300, slug="v", status="active", workspace_uuid=workspace_uuid_for(db, "P-v"))
         db.create_workflow_phase(
             "feature:300-v", workflow_phase="brainstorm",
             last_completed_phase=None, mode="standard",

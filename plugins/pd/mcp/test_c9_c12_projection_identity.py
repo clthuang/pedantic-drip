@@ -28,7 +28,7 @@ _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hoo
 if _hooks_lib not in sys.path:
     sys.path.insert(0, _hooks_lib)
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import seed_legacy_entity
 
 import workflow_state_server as wss
@@ -89,7 +89,7 @@ class TestFeatureProjection:
         entity_uuid = db.register_entity(
             "feature", name="Display Slug", seq=42, slug="display-slug",
             metadata={"id": "0000007", "slug": "meta-slug"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = _store_under(db, entity_uuid, "feature", "5-textual-slug")
 
@@ -112,7 +112,7 @@ class TestFeatureProjection:
         stored_entity_id = f"{seq}-{slug}"
         unpadded_uuid = db.register_entity(
             "feature", name=slug.title(), seq=seq, slug=slug,
-            metadata={"mode": "standard"}, project_id="__unknown__",
+            metadata={"mode": "standard"}, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = _store_under(db, unpadded_uuid, "feature", stored_entity_id)
 
@@ -128,7 +128,7 @@ class TestFeatureProjection:
         else — the canonical registration of seq 74 projects ``074``."""
         db.register_entity(
             "feature", name="Sse Event Stream", seq=74, slug="sse-event-stream",
-            metadata={"mode": "standard"}, project_id="__unknown__",
+            metadata={"mode": "standard"}, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         meta = _projected(db, "feature:074-sse-event-stream", tmp_path / "features" / "074")
         assert (meta["id"], meta["slug"]) == ("074", "sse-event-stream")
@@ -139,7 +139,7 @@ class TestFeatureProjection:
         missing one — metadata id/slug, and a stderr warning."""
         entity_uuid = db.register_entity(
             "feature", name="X", seq=7, slug="x",
-            metadata={"id": "meta-7", "slug": "meta-x"}, project_id="__unknown__",
+            metadata={"id": "meta-7", "slug": "meta-x"}, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db._conn.execute("UPDATE entity_display SET seq = 0 WHERE uuid = ?", (entity_uuid,))
         db._conn.commit()
@@ -163,7 +163,7 @@ class TestProjectProjection:
         entity_uuid = db.register_entity(
             "project", name="Widget", seq=1, slug="p02-widget",
             metadata={"id": "P09", "slug": "meta-slug", "features": [], "milestones": []},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         type_id = _store_under(db, entity_uuid, "project", "005-text-slug")
 
@@ -218,9 +218,9 @@ class TestBacklogProjectionOrder:
         """``001-alpha`` holds display seq 50 and ``002-beta`` display seq 7:
         text order and seq order disagree, and seq order wins."""
         alpha = db.register_entity("backlog", name="Alpha", seq=50, slug="alpha",
-                                   status="open", project_id="__unknown__")
+                                   status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         beta = db.register_entity("backlog", name="Beta", seq=7, slug="beta",
-                                  status="open", project_id="__unknown__")
+                                  status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         _store_under(db, alpha, "backlog", "001-alpha")
         _store_under(db, beta, "backlog", "002-beta")
 
@@ -233,9 +233,9 @@ class TestBacklogProjectionOrder:
         in seq order and the legacy rows follow, ordered by their own ids
         compared whole."""
         db.register_entity("backlog", name="Ninety", seq=90, slug="n",
-                           status="open", project_id="__unknown__")
+                           status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("backlog", name="Five", seq=5, slug="e",
-                           status="open", project_id="__unknown__")
+                           status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         seed_legacy_entity(db, "backlog", "00081", "Legacy eighty-one", status="open")
         seed_legacy_entity(db, "backlog", "00003", "Legacy three", status="open")
 

@@ -4,7 +4,7 @@ Verifies all AC-10.1 through AC-10.11 plus AC-EX.2 (MCP error envelope).
 
 Setup pattern: each test uses an in-memory ``EntityDatabase``, sets the
 module-level ``_workspace_uuid`` to the canonical unknown-workspace UUID
-(matching ``project_id='__unknown__'`` registrations), and drives
+(matching ``workspace_uuid=_UNKNOWN_WORKSPACE_UUID`` registrations), and drives
 ``_process_complete_phase`` directly via the existing seeded-engine fixture
 pattern from ``test_workflow_state_server.py``.
 """
@@ -79,11 +79,11 @@ def seeded(db, engine, entity_engine, tmp_path):
     """Seed a feature at workflow_phase='finish' so complete_phase('finish')
     succeeds (re-invocations stay at finish — terminal phase). Sets
     workflow_state_server._workspace_uuid to _UNKNOWN_WORKSPACE_UUID so F10's
-    caller resolution matches features registered with project_id='__unknown__'.
+    caller resolution matches features registered in that workspace.
     """
     db.register_entity(
         "feature", name="Feature 111 closer test", seq=111, slug="closer",
-        status="active", project_id="__unknown__",
+        status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     db.create_workflow_phase("feature:111-closer", workflow_phase="finish")
 
@@ -104,36 +104,36 @@ def seeded(db, engine, entity_engine, tmp_path):
 
 
 def _register_bug(db, entity_id: str, name: str = "A bug",
-                  project_id: str = "__unknown__", status: str = "open") -> str:
+                  workspace_uuid: str = _UNKNOWN_WORKSPACE_UUID, status: str = "open") -> str:
     """Register a bug entity; returns its uuid."""
     return db.register_entity(
         entity_type="bug",
         **identity_kwargs("bug", entity_id),
         name=name,
         status=status,
-        project_id=project_id,
+        workspace_uuid=workspace_uuid,
     )
 
 
 def _register_task(db, entity_id: str, name: str = "A task",
-                   project_id: str = "__unknown__", status: str = "open") -> str:
+                   workspace_uuid: str = _UNKNOWN_WORKSPACE_UUID, status: str = "open") -> str:
     return db.register_entity(
         entity_type="task",
         **identity_kwargs("task", entity_id),
         name=name,
         status=status,
-        project_id=project_id,
+        workspace_uuid=workspace_uuid,
     )
 
 
 def _register_backlog(db, entity_id: str, name: str = "A backlog item",
-                      project_id: str = "__unknown__", status: str = "open") -> str:
+                      workspace_uuid: str = _UNKNOWN_WORKSPACE_UUID, status: str = "open") -> str:
     return db.register_entity(
         entity_type="backlog",
         **identity_kwargs("backlog", entity_id),
         name=name,
         status=status,
-        project_id=project_id,
+        workspace_uuid=workspace_uuid,
     )
 
 
@@ -245,7 +245,7 @@ class TestAc10_3AtomicRollbackOnInvalidTarget:
         # Register a sibling feature; lifecycle_class='feature_flow' → not closable.
         u_other_feature = db.register_entity(
             "feature", name="Sibling feature", seq=111, slug="sibling",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Capture state before invocation.
@@ -351,7 +351,7 @@ class TestAc10_5CrossCloserConflict:
         # Register a DIFFERENT closer feature.
         db.register_entity(
             "feature", name="Other feature", seq=112, slug="other",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:112-other", workflow_phase="implement")
 
@@ -548,7 +548,7 @@ class TestAc10_10FeatureNotClosableViaCloses:
         # Register another feature; its lifecycle_class is feature_flow.
         db.register_entity(
             "feature", name="Target feature", seq=111, slug="target-feat",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         u_feature = _get_uuid(db, "feature:111-target-feat")
 

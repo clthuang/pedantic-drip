@@ -15,7 +15,7 @@ if _mcp_dir not in sys.path:
     sys.path.insert(0, _mcp_dir)
 
 import entity_server
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import bootstrap_test_workspace
 from entity_registry.test_helpers import identity_kwargs
 
@@ -38,8 +38,8 @@ async def test_set_parent_handler_concise_message(db):
     """set_parent handler returns concise message with only type_ids, no UUIDs.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     result = await entity_server.set_parent("feature:001-child", "project:001-parent")
 
@@ -55,7 +55,7 @@ async def test_update_entity_handler_concise_message(db):
     """update_entity handler returns concise message with only type_id, no UUID.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", project_id="__unknown__")
+    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     result = await entity_server.update_entity("feature:001-f1", status="completed")
 
@@ -93,8 +93,8 @@ async def test_set_parent_handler_uses_uuid_identifiers(db):
     dual-read resolution, UUID input would fail.
     derived_from: spec:R27, dimension:adversarial
     """
-    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     # Use UUID for child and type_id for parent
     result = await entity_server.set_parent(child_uuid, "project:001-parent2")
     assert isinstance(result, str)
@@ -111,7 +111,7 @@ async def test_get_entity_handler_compact_output(db):
     know the type_id they queried with, and uuid/parent_uuid are internal.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C2
     """
-    db.register_entity("feature", name="Get Test", seq=1, slug="get-test", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Get Test", seq=1, slug="get-test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     result = await entity_server.get_entity("feature:001-get-test")
     assert isinstance(result, str)
     parsed = json.loads(result)
@@ -161,8 +161,8 @@ async def test_set_parent_delegates_to_server_helpers(db):
     by the MCP tool. This test verifies the delegation chain works end-to-end.
     """
     # Given parent and child entities
-    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", project_id="__unknown__")
-    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", project_id="__unknown__")
+    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     # When setting parent via MCP handler
     result = await entity_server.set_parent("feature:001-c1", "project:002-p1")
     # Then success message is returned
@@ -185,7 +185,7 @@ async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
     import workflow_state_server as ws_mod
 
     # Given a brainstorm entity but NO workflow_phases row
-    db.register_entity("brainstorm", name="Error Test", display_id="20260101-000016-err-test", status="draft", project_id="__unknown__")
+    db.register_entity("brainstorm", name="Error Test", display_id="20260101-000016-err-test", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     # When attempting to transition without initializing workflow first
     result = ws_mod._process_transition_entity_phase(
@@ -250,7 +250,7 @@ class TestMetadataDictCoercion:
 
     def test_update_entity_metadata_dict(self, db: EntityDatabase):
         """AC-2: Dict metadata accepted by update_entity, stored as JSON string."""
-        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         entity_server._db = db
         import asyncio
         result = asyncio.run(
@@ -332,7 +332,7 @@ class TestProjectStartup:
         db.register_entity(
             "feature", name="Backfill Test", seq=1, slug="bf-test",
             artifact_path="/tmp/my-project/docs/features/test/design.md",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Verify starts as __unknown__
         entity = db.get_entity("feature:001-bf-test")
@@ -387,19 +387,19 @@ class TestSearchProjectFiltering:
     @pytest.mark.asyncio
     async def test_search_filters_by_project(self, db, monkeypatch):
         """Search with project_id filters results to that project."""
-        # Feature 108 Migration 11: project_id alias requires a matching
-        # workspaces row. Pre-register both legacy ids.
+        # One workspace per legacy project id: the search below scopes by
+        # the server's project_id, resolved through workspaces.
         from entity_registry.test_helpers import bootstrap_test_workspace
-        bootstrap_test_workspace(db, "project_aaa")
-        bootstrap_test_workspace(db, "project_bbb")
+        ws_aaa = bootstrap_test_workspace(db, "project_aaa")
+        ws_bbb = bootstrap_test_workspace(db, "project_bbb")
         # Register entities under different projects
         db.register_entity(
             "feature", name="Project A Feature", seq=1, slug="proj-a-feat",
-            status="active", project_id="project_aaa",
+            status="active", workspace_uuid=ws_aaa,
         )
         db.register_entity(
             "feature", name="Project B Feature", seq=1, slug="proj-b-feat",
-            status="active", project_id="project_bbb",
+            status="active", workspace_uuid=ws_bbb,
         )
 
         monkeypatch.setattr(entity_server, "_project_id", "project_aaa")
@@ -446,7 +446,7 @@ class TestCreateKeyResultMissingParent:
         from entity_server import _process_create_key_result
 
         objective_uuid = db.register_entity("objective", name="Grow", seq=1, slug="grow",
-                                            project_id="__unknown__")
+                                            workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(_process_create_key_result(
             db,
             parent_type_id="objective:001-grow",
@@ -558,7 +558,7 @@ class TestBackfillWorkspaceTarget:
         db.register_entity(
             "feature", name=eid.title(), **identity_kwargs("feature", eid),
             artifact_path=f"{root}/docs/features/{eid}/design.md",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
     def test_kwarg_orphan_claims_into_root_row(self, db):
@@ -1014,13 +1014,12 @@ class TestRegisterEntityBlankNameGuard:
 # Test-deepening addition (feature 132 D6.4): the register_entity MCP
 # tool's caller-facing project_id passthrough kwarg was dropped from the
 # signature (only entity_server's OWN legacy-project-id global is
-# consulted internally now). No existing test proves REMOVAL -- every
-# `project_id=` reference in this file targets EntityDatabase.
-# register_entity (the DB method, which retains the kwarg per the
-# amended FR132-5b reading), never this MCP tool function. Proves the
-# structural removal non-vacuously: passing project_id= must raise
-# TypeError synchronously (argument binding fails before the coroutine
-# is even scheduled), the same as any other unknown kwarg would.
+# consulted internally now). No other test in this file proves REMOVAL --
+# none of its other `project_id=` references calls this MCP tool
+# function. Proves the structural removal non-vacuously: passing
+# project_id= must raise TypeError synchronously (argument binding fails
+# before the coroutine is even scheduled), the same as any other unknown
+# kwarg would.
 # dimension:adversarial
 # ---------------------------------------------------------------------------
 class TestRegisterEntityToolProjectIdKwargRemoved:

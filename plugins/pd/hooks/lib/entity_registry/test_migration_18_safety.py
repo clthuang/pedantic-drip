@@ -32,6 +32,7 @@ from entity_registry.database import (
     MIGRATIONS,
     EntityDatabase,
     _migration_18_unify_dependency_store,
+    _UNKNOWN_WORKSPACE_UUID,
 )
 from entity_registry.dependencies import CycleError, DependencyManager
 
@@ -665,9 +666,9 @@ def test_sc4_cycle_detected_on_new_store(tmp_path):
     db = EntityDatabase(db_path)
     try:
         mgr = DependencyManager()
-        a = db.register_entity("feature", name="A", seq=1, slug="sc4-a", project_id="__unknown__")
-        b = db.register_entity("feature", name="B", seq=1, slug="sc4-b", project_id="__unknown__")
-        c = db.register_entity("feature", name="C", seq=1, slug="sc4-c", project_id="__unknown__")
+        a = db.register_entity("feature", name="A", seq=1, slug="sc4-a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        b = db.register_entity("feature", name="B", seq=1, slug="sc4-b", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        c = db.register_entity("feature", name="C", seq=1, slug="sc4-c", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         mgr.add_dependency(db, a, b)  # A blocked by B
         mgr.add_dependency(db, b, c)  # B blocked by C
         with pytest.raises(CycleError):
@@ -684,9 +685,9 @@ def test_sc4_no_false_positive_on_new_store(tmp_path):
     db = EntityDatabase(db_path)
     try:
         mgr = DependencyManager()
-        a = db.register_entity("feature", name="D", seq=1, slug="sc4-d", project_id="__unknown__")
-        b = db.register_entity("feature", name="E", seq=1, slug="sc4-e", project_id="__unknown__")
-        c = db.register_entity("feature", name="F", seq=1, slug="sc4-f", project_id="__unknown__")
+        a = db.register_entity("feature", name="D", seq=1, slug="sc4-d", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        b = db.register_entity("feature", name="E", seq=1, slug="sc4-e", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        c = db.register_entity("feature", name="F", seq=1, slug="sc4-f", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         mgr.add_dependency(db, a, b)
         mgr.add_dependency(db, a, c)  # diamond shape, no cycle
     finally:
@@ -700,7 +701,7 @@ def test_sc4_self_dependency_rejected_on_new_store(tmp_path):
 
     db = EntityDatabase(db_path)
     try:
-        a = db.register_entity("feature", name="G", seq=1, slug="sc4-g", project_id="__unknown__")
+        a = db.register_entity("feature", name="G", seq=1, slug="sc4-g", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert db.check_dependency_cycle(a, a) is True
     finally:
         db.close()

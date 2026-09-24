@@ -13,6 +13,7 @@ import pytest
 
 from doctor.models import CheckResult, DiagnosticReport, Issue
 from entity_registry.test_helpers import identity_kwargs
+from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
 
 
 # ---------------------------------------------------------------------------
@@ -2308,7 +2309,7 @@ class TestDisplayRowInvariant:
 
         db = EntityDatabase(str(tmp_path / "live.db"))
         entity_uuid = db.register_entity("feature", name="F", seq=1, slug="f",
-                                         project_id="__unknown__")
+                                         workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute("UPDATE entities SET kind = 'brainstorm' WHERE uuid = ?",
                              (entity_uuid,))

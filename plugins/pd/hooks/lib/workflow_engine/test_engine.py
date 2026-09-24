@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import bootstrap_test_workspace
 from transition_gate import PHASE_SEQUENCE
 from transition_gate.constants import COMMAND_PHASES, HARD_PREREQUISITES
@@ -47,7 +47,7 @@ def _register_feature(
         **identity_kwargs("feature", slug),
         name=f"Test Feature {slug}",
         status=status,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     return type_id
 
@@ -1022,7 +1022,7 @@ class TestIntegration:
             **identity_kwargs("feature", slug),
             name="Lifecycle Test Feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Create .meta.json (active, no completed phases)
@@ -1109,7 +1109,7 @@ class TestIntegration:
             **identity_kwargs("feature", slug),
             name="Gate Coverage Test",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         feature_dir = tmp_path / "features" / slug
@@ -1201,7 +1201,7 @@ class TestIntegration:
             **identity_kwargs("feature", slug),
             name="Hydration Transition Test",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Create .meta.json with design completed
@@ -3110,7 +3110,7 @@ class TestIntegrationDegradation:
             **identity_kwargs("feature", slug),
             name="Integration Get State Test",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             type_id,
@@ -3164,7 +3164,7 @@ class TestIntegrationDegradation:
             **identity_kwargs("feature", slug),
             name="Integration Complete Phase Test",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             type_id,
@@ -3220,7 +3220,7 @@ class TestIntegrationDegradation:
                 **identity_kwargs("feature", slug),
                 name=f"Test {slug}",
                 status="active",
-                project_id="__unknown__",
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
             # Use the correct next-phase value matching what the meta.json will report
             next_phase = "specify" if last_completed == "brainstorm" else "design"
@@ -3274,7 +3274,7 @@ class TestIntegrationDegradation:
                 **identity_kwargs("feature", slug),
                 name=f"Test {slug}",
                 status=status,
-                project_id="__unknown__",
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
             _create_meta_json(
                 tmp_path,

@@ -26,7 +26,7 @@ import uuid as _uuid
 import pytest
 from starlette.testclient import TestClient
 
-from entity_registry.database import EntityDatabase, _derive_type_and_lifecycle
+from entity_registry.database import EntityDatabase, _derive_type_and_lifecycle, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import bootstrap_test_workspace
 from ui.routes.helpers import COOKIE_NAME
 
@@ -186,7 +186,7 @@ class TestNormalCardsUnchanged:
     def test_each_kind_renders_its_badge_and_entity_name(self, db, db_file):
         db.register_entity(
             entity_type="feature", seq=7, slug="plain-feature", name="Plain feature",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:007-plain-feature", workflow_phase="implement",
@@ -194,7 +194,7 @@ class TestNormalCardsUnchanged:
         )
         db.register_entity(
             entity_type="brainstorm", display_id="20260924-000005-plain-brainstorm",
-            name="Plain brainstorm", status="draft", project_id="__unknown__",
+            name="Plain brainstorm", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "brainstorm:20260924-000005-plain-brainstorm", workflow_phase="draft",
@@ -202,14 +202,14 @@ class TestNormalCardsUnchanged:
         )
         db.register_entity(
             entity_type="backlog", seq=8, slug="plain-backlog", name="Plain backlog",
-            status="open", project_id="__unknown__",
+            status="open", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "backlog:008-plain-backlog", workflow_phase="open", kanban_column="backlog",
         )
         db.register_entity(
             entity_type="project", seq=9, slug="plain-project", name="Plain project",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "project:009-plain-project", workflow_phase="discover", kanban_column="backlog",

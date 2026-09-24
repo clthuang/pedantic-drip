@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.reconciliation import (
     ReconcileAction,
@@ -49,7 +49,7 @@ def _register_feature(
         **identity_kwargs("feature", slug),
         name=f"Test Feature {slug}",
         status=status,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     return type_id
 
@@ -716,7 +716,7 @@ class TestCheckWorkflowDrift:
             entity_type="brainstorm",
             display_id="20260101-000036-some-brainstorm",
             name="Some Brainstorm",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Brainstorms normally don't have workflow_phases, but if one exists
         # it should be excluded from db_only detection
@@ -3048,7 +3048,7 @@ class TestDepthContextReporting:
             **identity_kwargs("feature", parent_slug),
             name="Parent Feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Register child entity with parent
         child_slug = "071-child"
@@ -3058,7 +3058,7 @@ class TestDepthContextReporting:
             **identity_kwargs("feature", child_slug),
             name="Child Feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.set_parent(child_tid, parent_tid)
 
@@ -3117,16 +3117,16 @@ class TestDepthContextReporting:
         # Create 3-level hierarchy: root -> parent -> child
         root_slug = "080-root"
         root_tid = f"feature:{root_slug}"
-        db.register_entity(entity_type="feature", **identity_kwargs("feature", root_slug), name="Root", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", root_slug), name="Root", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         parent_slug = "081-parent"
         parent_tid = f"feature:{parent_slug}"
-        db.register_entity(entity_type="feature", **identity_kwargs("feature", parent_slug), name="Parent", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", parent_slug), name="Parent", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.set_parent(parent_tid, root_tid)
 
         child_slug = "082-child"
         child_tid = f"feature:{child_slug}"
-        db.register_entity(entity_type="feature", **identity_kwargs("feature", child_slug), name="Child", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", child_slug), name="Child", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.set_parent(child_tid, parent_tid)
 
         # Create workflow phase for child
@@ -3300,7 +3300,7 @@ class TestRecoverPendingCascades:
         parent_uuid = db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug),
             name="Cascade Parent", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             f"feature:{slug}", workflow_phase="implement",
@@ -3310,8 +3310,8 @@ class TestRecoverPendingCascades:
         child_uuid = db.register_entity(
             entity_type="task", seq=1, slug="child",
             name="Child Task", status=child_status,
-            parent_type_id=f"feature:{slug}",
-            project_id="__unknown__",
+            parent_uuid=parent_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "task:001-child", workflow_phase="debrief",
@@ -3384,7 +3384,7 @@ class TestRecoverPendingCascades:
         db.register_entity(
             entity_type="feature", seq=30, slug="solo",
             name="Solo Feature", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         count = _recover_pending_cascades(db)
@@ -3422,15 +3422,15 @@ class TestOKRScoreReconciliation:
         obj_uuid = db.register_entity(
             entity_type="objective", seq=1, slug="obj-stale",
             name="Stale Objective", metadata={"score": 0.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Add KR child with baseline_target score=1.0 (compute_okr_score reads this)
         db.register_entity(
             entity_type="key_result", seq=1, slug="kr-done",
             name="Done KR", status="active",
-            parent_type_id="objective:001-obj-stale",
+            parent_uuid=obj_uuid,
             metadata={"metric_type": "baseline_target", "score": 1.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Objective score should be 1.0 but stored as 0.0 → mismatch
         count = _recover_pending_cascades(db)
@@ -3450,14 +3450,14 @@ class TestOKRScoreReconciliation:
         obj_uuid = db.register_entity(
             entity_type="objective", seq=1, slug="obj-correct",
             name="Correct Objective",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             entity_type="key_result", seq=1, slug="kr-ok",
             name="OK KR", status="active",
-            parent_type_id="objective:001-obj-correct",
+            parent_uuid=obj_uuid,
             metadata={"metric_type": "baseline_target", "score": 1.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Pre-set correct score AND progress (both checked by reconciliation)
         expected_score = compute_objective_score(db, obj_uuid)
@@ -3478,7 +3478,7 @@ class TestOKRScoreReconciliation:
         db.register_entity(
             entity_type="objective", seq=1, slug="obj-empty",
             name="Empty Objective",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         count = _recover_pending_cascades(db)
         assert count == 0
@@ -3491,13 +3491,13 @@ class TestOKRScoreReconciliation:
         obj_uuid = db.register_entity(
             entity_type="objective", seq=1, slug="obj-noscore",
             name="No Score Objective",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             entity_type="key_result", seq=1, slug="kr-new",
             name="New KR", status="active",
-            parent_type_id="objective:001-obj-noscore",
-            project_id="__unknown__",
+            parent_uuid=obj_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         count = _recover_pending_cascades(db)
         assert count >= 1
@@ -3514,21 +3514,21 @@ class TestOKRScoreReconciliation:
         obj_uuid = db.register_entity(
             entity_type="objective", seq=1, slug="obj-weighted",
             name="Weighted Objective", metadata={"score": 0.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             entity_type="key_result", seq=1, slug="kr-heavy",
             name="Heavy KR", status="active",
-            parent_type_id="objective:001-obj-weighted",
+            parent_uuid=obj_uuid,
             metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             entity_type="key_result", seq=1, slug="kr-light",
             name="Light KR", status="active",
-            parent_type_id="objective:001-obj-weighted",
+            parent_uuid=obj_uuid,
             metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         count = _recover_pending_cascades(db)
         assert count >= 1

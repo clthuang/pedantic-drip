@@ -16,7 +16,7 @@ _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hoo
 if _hooks_lib not in sys.path:
     sys.path.insert(0, _hooks_lib)
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from transition_gate.models import Severity, TransitionResult
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.entity_engine import EntityWorkflowEngine
@@ -152,7 +152,7 @@ def seeded_engine(engine, db, tmp_path):
     A feature directory with .meta.json is created so the engine
     can resolve artifact paths.
     """
-    db.register_entity("feature", name="Test Feature", seq=9, slug="test", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Test Feature", seq=9, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     db.create_workflow_phase("feature:009-test", workflow_phase="specify")
 
     # Create feature directory with minimal .meta.json for artifact resolution
@@ -761,7 +761,7 @@ class TestCompletePhaseEntityMetadata:
     def test_terminal_phase_finish_sets_completed_status(self, db, tmp_path):
         """Completing 'finish' phase sets entity status to 'completed'."""
         # Setup: feature at 'finish' phase
-        db.register_entity("feature", name="Finish Test", seq=1, slug="fin-test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Finish Test", seq=1, slug="fin-test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-fin-test", workflow_phase="finish")
 
         feat_dir = os.path.join(str(tmp_path), "features", "001-fin-test")
@@ -850,7 +850,7 @@ class TestCompletePhaseEntityMetadata:
 
     def test_finish_phase_projects_toplevel_completed(self, db, tmp_path):
         """AC1: complete_phase('finish') produces top-level completed in .meta.json."""
-        db.register_entity("feature", name="Completed Test", seq=40, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Completed Test", seq=40, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:040-test", workflow_phase="finish")
 
         feat_dir = os.path.join(str(tmp_path), "features", "040-test")
@@ -903,7 +903,7 @@ class TestCompletePhaseEntityMetadata:
 
     def test_abandoned_status_gets_completed_fallback(self, db, tmp_path):
         """AC5: Abandoned status with no finish timing gets completed via _iso_now() fallback."""
-        db.register_entity("feature", name="Abandoned Test", seq=41, slug="abandoned", status="abandoned", project_id="__unknown__")
+        db.register_entity("feature", name="Abandoned Test", seq=41, slug="abandoned", status="abandoned", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         feat_dir = os.path.join(str(tmp_path), "features", "041-abandoned")
         os.makedirs(feat_dir, exist_ok=True)
@@ -936,7 +936,7 @@ class TestCompletePhaseEntityMetadata:
     def test_finish_completed_timestamp_matches_phase_timing(self, db, tmp_path):
         """R1: completed timestamp comes from finish phase timing, not _iso_now()."""
         expected_ts = "2026-03-17T06:31:08.766797+00:00"
-        db.register_entity("feature", name="Timestamp Test", seq=42, slug="ts", status="completed", project_id="__unknown__")
+        db.register_entity("feature", name="Timestamp Test", seq=42, slug="ts", status="completed", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         feat_dir = os.path.join(str(tmp_path), "features", "042-ts")
         os.makedirs(feat_dir, exist_ok=True)
@@ -1132,7 +1132,7 @@ def perf_engine(tmp_path):
     """Engine with 50 seeded features for performance testing."""
     db = EntityDatabase(":memory:")
     for i in range(50):
-        db.register_entity("feature", name=f"Perf Test {i}", **identity_kwargs("feature", f"001-perf-{i:03d}"), status="active", project_id="__unknown__")
+        db.register_entity("feature", name=f"Perf Test {i}", **identity_kwargs("feature", f"001-perf-{i:03d}"), status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(f"feature:001-perf-{i:03d}", workflow_phase="specify")
 
         # Create feature directory with .meta.json
@@ -1599,7 +1599,7 @@ class TestIntegrationDegradation:
         The .meta.json is created before close so fallback reads succeed.
         Returns (engine, tmp_path) so tests can inspect the artifacts root.
         """
-        db.register_entity("feature", name="Test Feature", seq=9, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=9, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:009-test", workflow_phase="specify")
 
         feat_dir = os.path.join(str(tmp_path), "features", "009-test")
@@ -1968,7 +1968,7 @@ class TestCompletePhaseDegradedSourceValue:
         envelope, not a serialized state.
         """
         # Given: set up feature and close DB
-        db.register_entity("feature", name="Test Feature", seq=10, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=10, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:010-test", workflow_phase="specify")
 
         feat_dir = os.path.join(str(tmp_path), "features", "010-test")
@@ -2021,7 +2021,7 @@ class TestValidatePrerequisitesDegradedMode:
         """validate_prerequisites via MCP returns gate results with degraded DB.
         """
         # Given: set up feature and close DB
-        db.register_entity("feature", name="Test", seq=10, slug="val", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test", seq=10, slug="val", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:010-val", workflow_phase="specify")
 
         feat_dir = os.path.join(str(tmp_path), "features", "010-val")
@@ -2063,7 +2063,7 @@ class TestTransitionDegradedResponseShape:
         envelope key set, not the success-shaped transition key set.
         """
         # Given: set up feature and close DB
-        db.register_entity("feature", name="Test", seq=10, slug="shape", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test", seq=10, slug="shape", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:010-shape", workflow_phase="specify")
 
         feat_dir = os.path.join(str(tmp_path), "features", "010-shape")
@@ -2333,7 +2333,7 @@ class TestProcessReconcileCheck:
     def reconcile_env(self, db, tmp_path):
         """Set up a feature with .meta.json ahead of DB for reconcile tests."""
         # Register entity + workflow phase in DB
-        db.register_entity("feature", name="Reconcile Test", seq=11, slug="rec", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Reconcile Test", seq=11, slug="rec", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-rec",
             workflow_phase="specify",
@@ -2417,7 +2417,7 @@ class TestProcessReconcileApply:
     @pytest.fixture
     def reconcile_env(self, db, tmp_path):
         """Feature with .meta.json ahead of DB."""
-        db.register_entity("feature", name="Apply Test", seq=11, slug="app", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Apply Test", seq=11, slug="app", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-app",
             workflow_phase="specify",
@@ -2505,7 +2505,7 @@ class TestProcessReconcileFrontmatter:
     def test_single_feature_with_frontmatter(self, db, tmp_path):
         """Single in_sync feature is filtered out of reports (AC-11)."""
         # Register entity in DB
-        db.register_entity("feature", name="FM Test", seq=11, slug="fm", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="FM Test", seq=11, slug="fm", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Create feature dir with spec.md containing frontmatter
         feat_dir = os.path.join(str(tmp_path), "features", "011-fm")
@@ -2530,7 +2530,7 @@ class TestProcessReconcileFrontmatter:
 
     def test_no_frontmatter(self, db, tmp_path):
         """Feature with no frontmatter in files returns db_only reports (AC-12)."""
-        db.register_entity("feature", name="No FM", seq=11, slug="nofm", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="No FM", seq=11, slug="nofm", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         feat_dir = os.path.join(str(tmp_path), "features", "011-nofm")
         os.makedirs(feat_dir, exist_ok=True)
@@ -2549,7 +2549,7 @@ class TestProcessReconcileFrontmatter:
     def test_bulk_scan(self, db, tmp_path):
         """Bulk scan via scan_all returns envelope with total_scanned/drifted_count (AC-13)."""
         # Register entity
-        db.register_entity("feature", name="Bulk Test", seq=11, slug="bulk", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Bulk Test", seq=11, slug="bulk", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         entity = db.get_entity("feature:011-bulk")
 
         # Create feature dir
@@ -2617,7 +2617,7 @@ class TestProcessReconcileStatus:
     def test_healthy_when_all_in_sync(self, db, tmp_path):
         """All in sync -> healthy=true (AC-14)."""
         # Register entity and create matching .meta.json and DB state
-        db.register_entity("feature", name="Healthy", seq=11, slug="healthy", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Healthy", seq=11, slug="healthy", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-healthy",
             workflow_phase="specify",
@@ -2648,7 +2648,7 @@ class TestProcessReconcileStatus:
 
     def test_unhealthy_when_drift_exists(self, db, tmp_path):
         """Any drift -> healthy=false (AC-15)."""
-        db.register_entity("feature", name="Drift", seq=11, slug="drift", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Drift", seq=11, slug="drift", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-drift",
             workflow_phase="specify",
@@ -2703,7 +2703,7 @@ class TestProcessReconcileStatus:
     def test_summary_only_healthy(self, db, tmp_path):
         """summary_only=True returns exactly 3 fields when healthy."""
         # Set up an in-sync feature
-        db.register_entity("feature", name="SumH", seq=11, slug="sum-h", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="SumH", seq=11, slug="sum-h", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-sum-h",
             workflow_phase="specify",
@@ -2732,7 +2732,7 @@ class TestProcessReconcileStatus:
     def test_summary_only_unhealthy(self, db, tmp_path):
         """summary_only=True returns correct drift counts when drift exists."""
         # Set up a drifted feature (meta.json ahead of DB)
-        db.register_entity("feature", name="SumD", seq=11, slug="sum-d", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="SumD", seq=11, slug="sum-d", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-sum-d",
             workflow_phase="specify",
@@ -2830,7 +2830,7 @@ class TestReconciliationEndToEnd:
             ("011-e2e-b", "design", "create-plan"),
         ]
         for slug, db_last, meta_last in features:
-            db.register_entity("feature", name=f"E2E {slug}", **identity_kwargs("feature", slug), status="active", project_id="__unknown__")
+            db.register_entity("feature", name=f"E2E {slug}", **identity_kwargs("feature", slug), status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             db.create_workflow_phase(
                 f"feature:{slug}",
                 workflow_phase="specify",
@@ -2887,7 +2887,7 @@ class TestReconciliationEndToEnd:
     def test_reconcile_frontmatter_with_real_headers(self, db, tmp_path):
         """reconcile_frontmatter with real temp files containing frontmatter headers."""
         # Register entity and get UUID
-        db.register_entity("feature", name="Header Test", seq=11, slug="hdr", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Header Test", seq=11, slug="hdr", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         entity = db.get_entity("feature:011-hdr")
         entity_uuid = entity["uuid"]
 
@@ -3025,7 +3025,7 @@ class TestReconciliationBoundaryValues:
         or missing keys would break MCP clients.
         """
         # Given a feature in sync
-        db.register_entity("feature", name="Shape Test", seq=11, slug="shape", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Shape Test", seq=11, slug="shape", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-shape",
             workflow_phase="specify",
@@ -3157,7 +3157,7 @@ class TestReconciliationAdversarial:
         is intentionally excluded from serialization.
         """
         # Set up an in-sync feature
-        db.register_entity("feature", name="Shape2", seq=11, slug="shape2", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Shape2", seq=11, slug="shape2", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-shape2",
             workflow_phase="specify",
@@ -3188,7 +3188,7 @@ class TestReconciliationAdversarial:
         derived_from: dimension:adversarial (JSON shape contract)
         """
         # Set up a meta_json_ahead feature
-        db.register_entity("feature", name="Shape3", seq=11, slug="shape3", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Shape3", seq=11, slug="shape3", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-shape3",
             workflow_phase="specify",
@@ -3242,7 +3242,7 @@ class TestReconcilePhaseEventsDrift:
         type_id = f"feature:{slug}"
         db.register_entity(
             "feature", name=f"Drift Test {slug}", **identity_kwargs("feature", slug),
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             type_id,
@@ -3378,7 +3378,7 @@ class TestFeature089BundleBDetection:
         type_id = f"feature:{slug}"
         db.register_entity(
             "feature", name=f"B1 {slug}", **identity_kwargs("feature", slug),
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             type_id,
@@ -3484,7 +3484,7 @@ class TestFeature089BundleBDetection:
             type_id = f"feature:{slug}"
             db.register_entity(
                 "feature", name=f"Bulk {i}", **identity_kwargs("feature", slug),
-                status="active", project_id="__unknown__",
+                status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
             db.create_workflow_phase(
                 type_id, workflow_phase="finish",
@@ -3752,7 +3752,7 @@ class TestReconciliationMutationMindset:
         of AND, having clean frontmatter would mask workflow drift.
         """
         # Set up a feature with workflow drift (meta_json_ahead)
-        db.register_entity("feature", name="WF Only", seq=11, slug="wf-only", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="WF Only", seq=11, slug="wf-only", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-wf-only",
             workflow_phase="specify",
@@ -3791,7 +3791,7 @@ class TestReconciliationMutationMindset:
         (or `!= 0`), a single drifted feature would be missed.
         """
         # Set up a feature that is perfectly in sync
-        db.register_entity("feature", name="Perfect", seq=11, slug="perfect", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Perfect", seq=11, slug="perfect", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:011-perfect",
             workflow_phase="specify",
@@ -3829,7 +3829,7 @@ class TestReconciliationMutationMindset:
         not appear in the preview count.
         """
         # Set up a meta_json_only feature (entity exists, no workflow_phases row)
-        db.register_entity("feature", name="Create Test", seq=11, slug="create", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Create Test", seq=11, slug="create", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         feat_dir = os.path.join(str(tmp_path), "features", "011-create")
         os.makedirs(feat_dir, exist_ok=True)
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
@@ -4232,7 +4232,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:034-foo", workflow_phase="specify")
 
@@ -4283,7 +4283,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:035-noengine", feature_dir)
@@ -4315,7 +4315,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # feature_dir=None -- should resolve from entity["artifact_path"]
@@ -4351,7 +4351,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:037-timing", feature_dir)
@@ -4398,7 +4398,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with patch(
@@ -4431,7 +4431,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata_no_opt,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:039-optional", feature_dir)
@@ -4461,7 +4461,7 @@ class TestProjectMetaJson:
             artifact_path=feature_dir2,
             status="active",
             metadata=metadata_with_opt,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:040-withopt", feature_dir2)
@@ -4484,7 +4484,7 @@ class TestProjectMetaJson:
             "feature", name="nullmeta", seq=41, slug="nullmeta",
             artifact_path=feature_dir,
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:041-nullmeta", feature_dir)
@@ -4505,7 +4505,7 @@ class TestProjectMetaJson:
         entity_uuid = db.register_entity(
             "feature", name="legacy", seq=43, slug="legacy",
             metadata={"id": "7", "slug": "from-metadata"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db._conn.execute("DELETE FROM entity_display WHERE uuid = ?", (entity_uuid,))
 
@@ -4526,7 +4526,7 @@ class TestProjectMetaJson:
             "feature", name="nopath", seq=42, slug="nopath",
             status="active",
             metadata={"id": "042", "slug": "nopath"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:042-nopath", None)
@@ -4552,7 +4552,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-present", seq=75, slug="ps-present",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:075-ps-present", feature_dir)
@@ -4577,7 +4577,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-absent", seq=75, slug="ps-absent",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:075-ps-absent", feature_dir)
@@ -4600,7 +4600,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-empty", seq=75, slug="ps-empty",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:075-ps-empty", feature_dir)
@@ -4624,7 +4624,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-append", seq=75, slug="ps-append",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Append second entry via update_entity (simulating commitAndComplete Step 3a)
@@ -4654,7 +4654,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-merge", seq=75, slug="ps-merge",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Add phase_summaries via update_entity
@@ -4697,7 +4697,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-7fields", seq=75, slug="ps-7fields",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When _project_meta_json writes .meta.json
@@ -4735,7 +4735,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-multi", seq=75, slug="ps-multi",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When projected
@@ -4764,7 +4764,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-null", seq=75, slug="ps-null",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When projected
@@ -4794,7 +4794,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-strtype", seq=75, slug="ps-strtype",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When projected
@@ -4822,7 +4822,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-partial", seq=75, slug="ps-partial",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When projected
@@ -4857,7 +4857,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-overwrite", seq=75, slug="ps-overwrite",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When update_entity is called with empty list (simulating a bug)
@@ -4891,7 +4891,7 @@ class TestProjectMetaJson:
         db.register_entity(
             "feature", name="ps-refcopy", seq=75, slug="ps-refcopy",
             artifact_path=feature_dir, status="active",
-            metadata=metadata, project_id="__unknown__",
+            metadata=metadata, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When projected
@@ -4929,7 +4929,7 @@ class TestProjectMetaJson:
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "project:001-p02-widget", project_dir)
@@ -4959,7 +4959,7 @@ class TestProjectMetaJson:
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "project:001-p03-nosource", project_dir)
@@ -4981,7 +4981,7 @@ class TestProjectMetaJson:
             "task", name="noop", seq=1, slug="noop",
             artifact_path=task_dir,
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:001-noop", workflow_phase="define")
 
@@ -5021,7 +5021,7 @@ class TestProjectKindProjectionPreservesShape:
             artifact_path=project_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "project:001-p01-demo", workflow_phase=phase, mode="standard",
@@ -5377,7 +5377,7 @@ class TestActivateFeature:
             artifact_path=feature_dir,
             status="planned",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5415,7 +5415,7 @@ class TestActivateFeature:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5468,7 +5468,7 @@ class TestActivateFeature:
             artifact_path=feature_dir,
             status="planned",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5508,7 +5508,7 @@ class TestActivateFeature:
             artifact_path=feature_dir,
             status="planned",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5673,7 +5673,7 @@ class TestBoundaryValuesDeepened:
             "feature", name="Test Feature", seq=9, slug="test", status="active",
             artifact_path=feature_dir,
             metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:009-test", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5703,7 +5703,7 @@ class TestBoundaryValuesDeepened:
             "feature", name="empty-notes", seq=110, slug="empty-notes", status="active",
             artifact_path=feature_dir,
             metadata={"id": "110", "slug": "empty-notes", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:110-empty-notes", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5733,7 +5733,7 @@ class TestBoundaryValuesDeepened:
             "feature", name="Test Feature", seq=9, slug="test", status="active",
             artifact_path=feature_dir,
             metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:009-test", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5844,7 +5844,7 @@ class TestAdversarialDeepened:
             artifact_path=feature_dir,
             status="completed",
             metadata={"id": "120", "slug": "completed", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5871,7 +5871,7 @@ class TestAdversarialDeepened:
             artifact_path=feature_dir,
             status="planned",
             metadata={"id": "121", "slug": "double", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5905,7 +5905,7 @@ class TestAdversarialDeepened:
             "feature", name="Test Feature", seq=9, slug="test", status="active",
             artifact_path=feature_dir,
             metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:009-test", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5934,7 +5934,7 @@ class TestAdversarialDeepened:
             "feature", name="bad-notes", seq=122, slug="bad-notes", status="active",
             artifact_path=feature_dir,
             metadata={"id": "122", "slug": "bad-notes", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:122-bad-notes", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -5961,7 +5961,7 @@ class TestAdversarialDeepened:
             "feature", name="nonterminal", seq=123, slug="nonterminal", status="active",
             artifact_path=feature_dir,
             metadata={"id": "123", "slug": "nonterminal", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:123-nonterminal", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -6122,7 +6122,7 @@ class TestErrorPropagationDeepened:
             "feature", name="projfail", seq=133, slug="projfail", status="active",
             artifact_path=feature_dir,
             metadata={"id": "133", "slug": "projfail", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:133-projfail", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -6160,7 +6160,7 @@ class TestErrorPropagationDeepened:
             "feature", name="projfail", seq=134, slug="projfail", status="active",
             artifact_path=feature_dir,
             metadata={"id": "134", "slug": "projfail", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:134-projfail", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -6211,7 +6211,7 @@ class TestMutationMindsetDeepened:
             "feature", name="terminal", seq=140, slug="terminal", status="active",
             artifact_path=feature_dir,
             metadata={"id": "140", "slug": "terminal", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Need to set up workflow so complete_phase("finish") is valid
         # The engine needs the feature at the "finish" phase
@@ -6241,7 +6241,7 @@ class TestMutationMindsetDeepened:
             artifact_path=feature_dir,
             status="planned",
             metadata={"id": "141", "slug": "check", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -6280,7 +6280,7 @@ class TestMutationMindsetDeepened:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Set engine state to specify (more recent than metadata's "brainstorm")
         db.create_workflow_phase("feature:142-authority", workflow_phase="design")
@@ -6315,7 +6315,7 @@ class TestMutationMindsetDeepened:
             "feature", name="allvsany", seq=143, slug="allvsany", status="active",
             artifact_path=feature_dir,
             metadata={"id": "143", "slug": "allvsany", "mode": "standard", "branch": "", "phase_timing": {}},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:143-allvsany", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -6355,7 +6355,7 @@ class TestMutationMindsetDeepened:
             artifact_path=feature_dir,
             status="active",
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "feature:144-empty-phase", feature_dir)
@@ -6512,7 +6512,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_creates_row(self, db):
         """Register brainstorm entity, call init, verify workflow_phases row."""
-        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wip")
         )
@@ -6532,7 +6532,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_idempotent(self, db):
         """Call init twice, second returns created=false with existing values."""
-        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wip")
 
         result = json.loads(
@@ -6553,7 +6553,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_validates_phase_against_machine(self, db):
         """Invalid phase for brainstorm -> error_type=invalid_transition."""
-        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "invalid", "wip")
         )
@@ -6563,7 +6563,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_validates_kanban_column_consistency(self, db):
         """Mismatched kanban_column for brainstorm draft -> error_type=invalid_transition."""
-        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000039-test-idea", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_init_entity_workflow(db, "brainstorm:20260101-000039-test-idea", "draft", "wrong")
         )
@@ -6573,7 +6573,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_rejects_feature_entity_type(self, db):
         """Feature type_id -> error_type=invalid_entity_type."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_init_entity_workflow(db, "feature:001-test", "brainstorm", "wip")
         )
@@ -6583,7 +6583,7 @@ class TestInitEntityWorkflow:
 
     def test_init_entity_workflow_rejects_project_entity_type(self, db):
         """Project type_id -> error_type=invalid_entity_type."""
-        db.register_entity("project", name="Test Project", seq=1, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("project", name="Test Project", seq=1, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_init_entity_workflow(db, "project:001-test", "brainstorm", "wip")
         )
@@ -6603,7 +6603,7 @@ class TestTransitionEntityPhase:
     def _seed_entity_with_workflow(self, db, entity_type, entity_id, phase, kanban_column,
                                     last_completed_phase=None):
         """Helper: register entity and insert workflow_phases row directly."""
-        db.register_entity(entity_type, name=f"Test {entity_type}", **identity_kwargs(entity_type, entity_id), status=phase, project_id="__unknown__")
+        db.register_entity(entity_type, name=f"Test {entity_type}", **identity_kwargs(entity_type, entity_id), status=phase, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "INSERT INTO workflow_phases "
             "(type_id, workflow_phase, kanban_column, last_completed_phase, updated_at) "
@@ -6685,7 +6685,7 @@ class TestTransitionEntityPhase:
 
     def test_transition_feature_entity_rejected(self, db):
         """feature:xxx type_id -> invalid_entity_type."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = json.loads(
             _process_transition_entity_phase(db, "feature:001-test", "reviewing")
         )
@@ -6702,7 +6702,7 @@ class TestTransitionEntityPhase:
 
     def test_transition_null_current_phase_error(self, db):
         """Row with NULL workflow_phase -> invalid_transition with init hint."""
-        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000019-idea-1", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Test Idea", display_id="20260101-000019-idea-1", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, updated_at) "
             "VALUES (?, ?, ?, ?)",
@@ -6804,7 +6804,7 @@ class TestTransitionEntityPhaseDeepened:
     def _seed_entity_with_workflow(self, db, entity_type, entity_id, phase, kanban_column,
                                     last_completed_phase=None):
         """Helper: register entity and insert workflow_phases row directly."""
-        db.register_entity(entity_type, name=f"Test {entity_type}", **identity_kwargs(entity_type, entity_id), status=phase, project_id="__unknown__")
+        db.register_entity(entity_type, name=f"Test {entity_type}", **identity_kwargs(entity_type, entity_id), status=phase, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "INSERT INTO workflow_phases "
             "(type_id, workflow_phase, kanban_column, last_completed_phase, updated_at) "
@@ -6973,7 +6973,7 @@ class TestTransitionEntityPhaseDeepened:
         produce a confusing error.
         """
         # Given an entity registered but NO workflow_phases row
-        db.register_entity("brainstorm", name="No Workflow", display_id="20260101-000031-no-wp", status="draft", project_id="__unknown__")
+        db.register_entity("brainstorm", name="No Workflow", display_id="20260101-000031-no-wp", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When trying to transition
         result = json.loads(
             _process_transition_entity_phase(db, "brainstorm:20260101-000031-no-wp", "reviewing")
@@ -7074,7 +7074,7 @@ class TestKanbanColumnLifecycle:
                 "id": str(feature_num), "slug": slug, "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -7198,7 +7198,7 @@ class TestKanbanColumnLifecycleDeepened:
                 "id": str(feature_num), "slug": slug, "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -7392,7 +7392,7 @@ class TestCompletePhaseKanbanStoredValue:
                 "id": str(feat_num), "slug": slug, "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -8251,7 +8251,7 @@ class TestReconcileFrontmatterBulkBoundaryDeepened:
         # Given multiple features with perfectly matching frontmatter
         for i in range(3):
             slug = f"001-sync-{i:03d}"
-            db.register_entity("feature", name=f"Sync Feature {i}", **identity_kwargs("feature", slug), status="active", project_id="__unknown__")
+            db.register_entity("feature", name=f"Sync Feature {i}", **identity_kwargs("feature", slug), status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             entity = db.get_entity(f"feature:{slug}")
             feat_dir = os.path.join(str(tmp_path), "features", slug)
             os.makedirs(feat_dir, exist_ok=True)
@@ -8280,7 +8280,7 @@ class TestReconcileFrontmatterBulkBoundaryDeepened:
         # Given multiple features with NO frontmatter in spec files
         for i in range(3):
             slug = f"001-drift-{i:03d}"
-            db.register_entity("feature", name=f"Drift Feature {i}", **identity_kwargs("feature", slug), status="active", project_id="__unknown__")
+            db.register_entity("feature", name=f"Drift Feature {i}", **identity_kwargs("feature", slug), status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             entity = db.get_entity(f"feature:{slug}")
             feat_dir = os.path.join(str(tmp_path), "features", slug)
             os.makedirs(feat_dir, exist_ok=True)
@@ -8314,7 +8314,7 @@ class TestReconcileStatusHealthyWithFrontmatterDriftDeepened:
         does NOT affect the healthy boolean. Only workflow drift matters.
         """
         # Given a feature with workflow IN SYNC but frontmatter DRIFTED
-        db.register_entity("feature", name="FM Only Drift", seq=1, slug="fm-only-drift", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="FM Only Drift", seq=1, slug="fm-only-drift", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-fm-only-drift",
             workflow_phase="specify",
@@ -8367,7 +8367,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="complete", seq=200, slug="complete",
             artifact_path=feat_dir,
             metadata={"id": "200", "slug": "complete", "mode": "standard"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:200-complete", workflow_phase="finish", mode="standard",
@@ -8389,7 +8389,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="noretro", seq=201, slug="noretro",
             artifact_path=feat_dir,
             metadata={"id": "201", "slug": "noretro", "mode": "standard"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:201-noretro", workflow_phase="finish", mode="standard",
@@ -8410,7 +8410,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="partial", seq=202, slug="partial",
             artifact_path=feat_dir,
             metadata={"id": "202", "slug": "partial", "mode": "full"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:202-partial", workflow_phase="finish", mode="full",
@@ -8433,7 +8433,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="allfull", seq=203, slug="allfull",
             artifact_path=feat_dir,
             metadata={"id": "203", "slug": "allfull", "mode": "full"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:203-allfull", workflow_phase="finish", mode="full",
@@ -8454,7 +8454,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="norow", seq=204, slug="norow",
             artifact_path=feat_dir,
             metadata={"id": "204", "slug": "norow", "mode": "standard"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # No create_workflow_phase — mode should default to standard
 
@@ -8473,7 +8473,7 @@ class TestCheckArtifactCompleteness:
         db.register_entity(
             "feature", name="nopath", seq=205, slug="nopath",
             metadata={"id": "205", "slug": "nopath", "mode": "standard"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         warnings = _check_artifact_completeness(db, "feature:205-nopath")
         assert warnings == []
@@ -8491,7 +8491,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="unknown", seq=206, slug="unknown",
             artifact_path=feat_dir,
             metadata={"id": "206", "slug": "unknown", "mode": "standard"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Verify a truly unknown mode returns None from the dict
         assert _EXPECTED_ARTIFACTS.get("experimental") is None, (
@@ -8509,7 +8509,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="light-ok", seq=207, slug="light-ok",
             artifact_path=feat_dir,
             metadata={"id": "207", "slug": "light-ok", "mode": "light"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:207-light-ok", workflow_phase="finish", mode="light",
@@ -8528,7 +8528,7 @@ class TestCheckArtifactCompleteness:
             "feature", name="light-nospec", seq=208, slug="light-nospec",
             artifact_path=feat_dir,
             metadata={"id": "208", "slug": "light-nospec", "mode": "light"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:208-light-nospec", workflow_phase="finish", mode="light",
@@ -8565,7 +8565,7 @@ class TestCompletePhaseArtifactWarnings:
                 "id": "210", "slug": "warn", "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:210-warn", workflow_phase="finish", mode="standard",
@@ -8602,7 +8602,7 @@ class TestCompletePhaseArtifactWarnings:
                 "id": "211", "slug": "ok", "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:211-ok", workflow_phase="finish", mode="standard",
@@ -8630,7 +8630,7 @@ class TestCompletePhaseArtifactWarnings:
                 "id": "212", "slug": "specify", "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:212-specify", workflow_phase="specify", mode="standard",
@@ -8661,7 +8661,7 @@ class TestCompletePhaseArtifactWarnings:
                 "id": "213", "slug": "notblocked", "mode": "standard",
                 "branch": "", "phase_timing": {},
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:213-notblocked", workflow_phase="finish", mode="standard",
@@ -8745,7 +8745,7 @@ class TestTransitionPhaseAtomicRollback:
             "feature", name="Comp Feature", seq=10, slug="comp", status="active",
             artifact_path=feat_dir,
             metadata={"id": "010", "slug": "comp", "mode": "standard", "branch": "feature/010-comp"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:010-comp", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -8792,7 +8792,7 @@ class TestTransitionPhaseAtomicRollback:
         per spec)."""
         db.register_entity(
             "feature", name="Finish Rollback Test", seq=11, slug="finish-rollback",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "feature:011-finish-rollback",
@@ -9190,10 +9190,10 @@ class TestPhaseEventsDualWrite:
         """Provide db + engine with a feature at brainstorm phase."""
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
-        _bootstrap_test_workspace(db, "test-proj")
+        ws_uuid = _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", name="Dual Write Test", seq=1, slug="dw-001",
-            status="active", project_id="test-proj",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase("feature:001-dw-001", workflow_phase="brainstorm")
         feat_dir = os.path.join(str(tmp_path), "features", "001-dw-001")
@@ -9341,10 +9341,10 @@ class TestRecordBackwardEvent:
 
         db = EntityDatabase(":memory:")
         # Feature 088 FR-2.3: entity must exist; project_id resolved server-side.
-        _bootstrap_test_workspace(db, "P001")
+        ws_uuid = _bootstrap_test_workspace(db, "P001")
         db.register_entity(
             "feature", name="Test", seq=3, slug="test",
-            status="active", project_id="P001",
+            status="active", workspace_uuid=ws_uuid,
         )
         # Feature 088 AC-21: module-level autouse fixture restores _db on
         # teardown — no try/finally needed.
@@ -9716,10 +9716,10 @@ class TestFeature088BundleD:
         import workflow_state_server as wss
 
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P001")
+        ws_uuid = _bootstrap_test_workspace(db, "P001")
         db.register_entity(
             "feature", name="Trunc", seq=1, slug="trunc-001",
-            status="active", project_id="P001",
+            status="active", workspace_uuid=ws_uuid,
         )
         wss._db = db
         long_reason = "x" * 3000
@@ -9761,10 +9761,10 @@ class TestFeature088BundleE:
     def fresh_setup(self, tmp_path):
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
-        _bootstrap_test_workspace(db, "test-proj")
+        ws_uuid = _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", name="Bundle E Test", seq=1, slug="e-001",
-            status="active", project_id="test-proj",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase("feature:001-e-001", workflow_phase="brainstorm")
         feat_dir = os.path.join(str(tmp_path), "features", "001-e-001")
@@ -10159,10 +10159,10 @@ class TestFeature088BundleH4:
         """Provide db + engine with a feature at brainstorm phase."""
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
-        _bootstrap_test_workspace(db, "test-proj")
+        ws_uuid = _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", name="H4 Test", seq=1, slug="h4-001",
-            status="active", project_id="test-proj",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase("feature:001-h4-001", workflow_phase="brainstorm")
         feat_dir = os.path.join(str(tmp_path), "features", "001-h4-001")
@@ -10246,10 +10246,10 @@ class TestFeature088BundleH4:
         import workflow_state_server as wss
 
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-lock")
+        ws_uuid = _bootstrap_test_workspace(db, "P-lock")
         db.register_entity(
             "feature", name="Lock", seq=1, slug="lock-001",
-            status="active", project_id="P-lock",
+            status="active", workspace_uuid=ws_uuid,
         )
 
         def _raise_locked(**kwargs):
@@ -10425,10 +10425,10 @@ class TestFeature089BundleE:
         # Seed entity with a specific project_id.  We then set the
         # server's current-project to a DIFFERENT value so the two
         # cannot be confused; the inserted row MUST carry the entity's.
-        _bootstrap_test_workspace(db, "RealProject")
+        ws_uuid = _bootstrap_test_workspace(db, "RealProject")
         db.register_entity(
             "feature", name="E22 Test", seq=89, slug="e-22",
-            status="active", project_id="RealProject",
+            status="active", workspace_uuid=ws_uuid,
         )
         wss._db = db
         wss._project_id = "SomeOtherProject"  # intentionally different
@@ -10471,10 +10471,10 @@ class TestFeature089BundleE:
         "permanent gap" cannot exist on the atomic path.
         """
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-e23")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e23")
         db.register_entity(
             "feature", name="E23 Test", seq=89, slug="e-23",
-            status="active", project_id="P-e23",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-23", workflow_phase="brainstorm",
@@ -10555,10 +10555,10 @@ class TestFeature089BundleE:
         regardless of ``source`` suppresses the drift entry.
         """
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-e25")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e25")
         db.register_entity(
             "feature", name="E25 Test", seq=89, slug="e-25",
-            status="active", project_id="P-e25",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-25", workflow_phase="create-plan",
@@ -10644,10 +10644,10 @@ class TestFeature089BundleE:
         """
         db = EntityDatabase(":memory:")
         # Seed at least one entity so the detector reaches list_entities.
-        _bootstrap_test_workspace(db, "P-e27")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e27")
         db.register_entity(
             "feature", name="E27 Test", seq=89, slug="e-27",
-            status="active", project_id="P-e27",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-27", workflow_phase="design",
@@ -10707,10 +10707,10 @@ class TestFeature089BundleE:
         assertions, making this test a precise boundary guard.
         """
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-e28")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e28")
         db.register_entity(
             "feature", name="E28 Test", seq=89, slug="e-28",
-            status="active", project_id="P-e28",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-28", workflow_phase="brainstorm",
@@ -10748,10 +10748,10 @@ class TestFeature089BundleE:
         # in the right state (the first call completed brainstorm).
         db.close()
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-e28")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e28")
         db.register_entity(
             "feature", name="E28b Test", seq=89, slug="e-28b",
-            status="active", project_id="P-e28",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-28b", workflow_phase="brainstorm",
@@ -10802,10 +10802,10 @@ class TestFeature089BundleE:
         entry appears.
         """
         db = EntityDatabase(":memory:")
-        _bootstrap_test_workspace(db, "P-e29")
+        ws_uuid = _bootstrap_test_workspace(db, "P-e29")
         db.register_entity(
             "feature", name="E29 Test", seq=89, slug="e-29",
-            status="active", project_id="P-e29",
+            status="active", workspace_uuid=ws_uuid,
         )
         db.create_workflow_phase(
             "feature:089-e-29", workflow_phase="brainstorm",
@@ -11086,7 +11086,7 @@ class TestReprojectMetaJson:
                 "id": "099", "slug": "abandonme",
                 "mode": "standard", "branch": "feature/099-abandonme",
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:099-abandonme", workflow_phase="specify")
 
@@ -11143,7 +11143,7 @@ class TestReprojectMetaJson:
         db.register_entity(
             "feature", name="dbdown", seq=98, slug="dbdown",
             artifact_path=str(tmp_path), status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         wss._db = db
@@ -11189,7 +11189,7 @@ class TestReprojectMetaJson:
                 "id": "097", "slug": "directpath",
                 "mode": "standard", "branch": "feature/097-directpath",
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:097-directpath", workflow_phase="specify")
 
@@ -11232,7 +11232,7 @@ class TestReprojectMetaJson:
             "feature", name="winner", seq=95, slug="winner",
             artifact_path=feature_dir,
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:095-winner", workflow_phase="specify")
 
@@ -11268,7 +11268,7 @@ class TestReprojectMetaJson:
         db.register_entity(
             "feature", name="noartifact", seq=96, slug="noartifact",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         wss._db = db
@@ -11314,7 +11314,7 @@ class TestReprojectMetaJson:
                 "id": "222", "slug": "shapecheck",
                 "mode": "standard", "branch": "feature/222-shapecheck",
             },
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("feature:222-shapecheck", workflow_phase="specify")
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -11406,7 +11406,7 @@ class TestProjectMetaJsonKindDispatchDeepened:
             "brainstorm", name="noop", display_id="001-noop",
             artifact_path=brainstorm_dir,
             status="draft",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # When _project_meta_json is called for it
@@ -11435,7 +11435,7 @@ class TestProjectMetaJsonKindDispatchDeepened:
             artifact_path=project_dir,
             status="active",
             metadata={},  # no "features"/"milestones" keys at all
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = _project_meta_json(db, None, "project:001-p04-nokeys", project_dir)
@@ -11467,7 +11467,7 @@ class TestProjectMetaJsonKindDispatchDeepened:
             artifact_path=project_dir,
             status="active",
             metadata={"features": [], "milestones": []},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         real_get_entity = db.get_entity
@@ -11522,7 +11522,7 @@ class TestFiveDDbUnavailableEnvelope:
         # Given a project mid-5D-lifecycle
         db.register_entity(
             "project", name="envelopet", seq=105, slug="envelope-t",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "project:105-envelope-t", workflow_phase="discover", mode="standard",
@@ -11569,7 +11569,7 @@ class TestFiveDDbUnavailableEnvelope:
         # Given a project mid-5D-lifecycle
         db.register_entity(
             "project", name="envelopec", seq=106, slug="envelope-c",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "project:106-envelope-c", workflow_phase="discover", mode="standard",

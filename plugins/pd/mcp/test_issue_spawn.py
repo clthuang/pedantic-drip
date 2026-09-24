@@ -38,7 +38,7 @@ if _mcp_dir not in sys.path:
 
 import entity_server  # noqa: E402
 
-from entity_registry.database import EntityDatabase  # noqa: E402
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ def parent_feature(db):
         name="Issue Lifecycle Closure",
         seq=111, slug="issue-lifecycle-closure",
         status="active",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     db.create_workflow_phase(
         "feature:111-issue-lifecycle-closure",
@@ -327,7 +327,7 @@ class TestAC95ParentValidation:
             name="Brainstorm Fixture",
             display_id="001-bs-fixture",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         bs = db.get_entity("brainstorm:001-bs-fixture")
         result_raw = _run(server.issue_spawn(

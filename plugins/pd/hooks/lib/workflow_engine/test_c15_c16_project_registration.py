@@ -30,7 +30,7 @@ import sqlite3
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import bootstrap_test_workspace
 from workflow_engine import feature_lifecycle
 from workflow_engine.feature_lifecycle import init_project_state
@@ -101,7 +101,7 @@ def _creation_events(db, type_id: str = PROJECT_TYPE_ID) -> list[dict]:
 def _register_brainstorm(db, stem: str) -> str:
     return db.register_entity(
         "brainstorm", name=f"{stem} brainstorm", display_id=stem,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 
@@ -181,7 +181,7 @@ def test_the_project_registers_under_the_parent_it_is_given(db, artifacts_root):
     parent; the owner has to carry it now."""
     brainstorm_uuid = db.register_entity(
         "brainstorm", name="alpha brainstorm", display_id="20260924-alpha",
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
     _init(db, artifacts_root, _project_dir(artifacts_root), parent_uuid=brainstorm_uuid)
@@ -271,7 +271,7 @@ def test_a_row_registered_for_another_directory_is_refused_before_the_directory(
     belongs to another project. Resuming either would hide the duplicate."""
     project_dir = _project_dir(artifacts_root)
     db.register_entity(
-        "project", name="Alpha", seq=1, slug="alpha", project_id="__unknown__",
+        "project", name="Alpha", seq=1, slug="alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         artifact_path=None if recorded_dir is None else _project_dir(artifacts_root, recorded_dir),
     )
 

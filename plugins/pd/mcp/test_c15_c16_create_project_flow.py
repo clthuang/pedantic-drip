@@ -30,7 +30,7 @@ _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hoo
 if _hooks_lib not in sys.path:
     sys.path.insert(0, _hooks_lib)
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.id_generator import generate_entity_id, render_display_id
 from entity_registry.server_helpers import _process_register_entity
 
@@ -231,7 +231,7 @@ def test_a_soft_deleted_parent_is_refused_by_the_tool_before_any_registry_write(
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
     brainstorm_uuid = db.register_entity(
         "brainstorm", name=BRAINSTORM_STEM, display_id=BRAINSTORM_STEM,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     db.delete_entity(brainstorm_uuid)
     attempts = _record_registration_attempts(db, monkeypatch, project_dir)
