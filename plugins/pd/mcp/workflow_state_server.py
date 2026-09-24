@@ -1016,6 +1016,29 @@ def _process_get_phase(engine: WorkflowStateEngine, feature_type_id: str) -> str
     return json.dumps(_serialize_state(state))
 
 
+def _transitioned_entity_kind(
+    db: EntityDatabase, feature_type_id: str, entity: dict | None,
+) -> str | None:
+    """Kind of the entity a transition just wrote, from its ``kind`` column
+    (C8), never from the type_id text.
+
+    *entity* is the caller's unscoped ``get_entity`` read. That read is None
+    when the type_id exists in more than one workspace (the qa-server H2
+    edge). The row written is then the one in this server's workspace, the
+    scope ``update_entity`` used, so the kind is read from that row. Returns
+    None when no row is found: the kind is unknown.
+    """
+    if entity is not None:
+        return entity["kind"]
+    if not _workspace_uuid:
+        return None
+    scoped_uuid, _ = db.resolve_entity_uuid(_workspace_uuid, feature_type_id)
+    if scoped_uuid is None:
+        return None
+    scoped = db.get_entity_by_uuid(scoped_uuid)
+    return scoped["kind"] if scoped is not None else None
+
+
 @_with_error_handling
 @_with_retry()
 @_catch_value_error
@@ -1143,8 +1166,11 @@ def _process_transition_phase(
                     workspace_uuid=_workspace_uuid or None,
                 )
 
-                # Update kanban_column for features based on phase
-                if feature_type_id.startswith("feature:"):
+                # Update kanban_column for features based on phase. The kind
+                # is the transitioned row's kind column (C8), never the type_id
+                # text; the helper covers the cross-workspace unscoped-read
+                # edge noted below.
+                if _transitioned_entity_kind(db, feature_type_id, entity) == "feature":
                     kanban = _kanban_column_for("active", target_phase)
                     db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
@@ -1425,8 +1451,10 @@ def _process_complete_phase(
                 workspace_uuid=_workspace_uuid or None,
             )
 
-            # Update kanban_column for features based on completed phase
-            if feature_type_id.startswith("feature:"):
+            # Update kanban_column for features based on completed phase. The
+            # kind is the kind column of the entity row read above (C8; never
+            # None here, the guard above raised), not the type_id text.
+            if entity["kind"] == "feature":
                 status = "completed" if phase == "finish" else "active"
                 kanban = _kanban_column_for(status, state.current_phase)
                 db.update_workflow_phase(feature_type_id, kanban_column=kanban)

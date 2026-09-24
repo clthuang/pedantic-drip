@@ -249,9 +249,29 @@ class TestTemplateScanning:
         )
         assert scan_template(tpl) == []
 
-    def test_real_card_template_reports_both_known_sites(self):
+    def test_real_card_template_reports_no_sites_since_c8(self, tmp_path):
+        """B2 pinned the real card template's two sites (lines 4 and 10); C8
+        removed both, so the real template now reports nothing.
+
+        Non-vacuity: the same real template with one pre-C8 parse restored
+        is reported at exactly that line. So the empty result means the
+        template is clean, not that the scanner extracted nothing from it.
+        """
         card = (
             Path(__file__).resolve().parents[3] / "ui" / "templates" / "_card.html"
         )
         assert card.exists(), "the B2 fixture template moved"
-        assert sorted(s.lineno for s in scan_template(card)) == [4, 10]
+        assert scan_template(card) == []
+
+        text = card.read_text(encoding="utf-8")
+        kind_tag = "{% set entity_type = item.entity_type %}"
+        assert text.count(kind_tag) == 1
+        regressed = tmp_path / "_card.html"
+        regressed.write_text(
+            text.replace(kind_tag, "{% set entity_type = item.type_id.split(':')[0] %}"),
+            encoding="utf-8",
+        )
+        kind_tag_line = text[: text.index(kind_tag)].count("\n") + 1
+        assert [(s.lineno, s.idiom) for s in scan_template(regressed)] == [
+            (kind_tag_line, "split"),
+        ]

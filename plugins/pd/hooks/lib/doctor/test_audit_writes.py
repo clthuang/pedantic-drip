@@ -525,14 +525,11 @@ _INFERENCE_SCAN_ROOTS = [
 #                          more trustworthy than a parsed slug -- C11 must move
 #                          the source WITHOUT removing the containment check.
 #
-#   reconciliation.py:787  row["type_id"].startswith("feature:") filters
-#                          list_workflow_phases output by kind -> C8. NOTE the
-#                          query LEFT JOINs entities, so orphan rows (e.uuid IS
-#                          NULL, retained deliberately for anomaly visibility)
-#                          get entity_type=None while the current text check
-#                          still classifies them as features. C8 must decide
-#                          that deliberately and fixture it, not let the join
-#                          change it silently.
+#   reconciliation.py:787  RESOLVED by C8: the db_only filter reads the
+#                          joined kind (entity_type) instead of the type_id
+#                          text. An orphan row (entity_type None) stays a
+#                          db_only candidate whatever its type_id spells --
+#                          pinned in workflow_engine/test_c8_kind_from_column.py.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
@@ -547,15 +544,8 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
     ("workflow_engine/feature_lifecycle.py",  98, "split",       "C11 artifact path"),
-    ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),
-    ("workflow_engine/router.py",             358, "split",       "C8 kind from entities.kind"),
-    ("workflow_engine/router.py",             421, "split",       "C8 kind from entities.kind"),
     ("../mcp/workflow_state_server.py",       485, "split",       "C9 seq/slug from entity_display"),
     ("../mcp/workflow_state_server.py",       707, "split",       "C9 seq/slug from entity_display"),
-    ("../mcp/workflow_state_server.py",       1147, "startswith",  "C8 kind from entities.kind"),
-    ("../mcp/workflow_state_server.py",       1429, "startswith",  "C8 kind from entities.kind"),
-    ("../ui/templates/_card.html",            4, "split",       "C8 kind - template, view must pass kind"),
-    ("../ui/templates/_card.html",            10, "split",       "C8 kind - template, view must pass kind"),
 ]
 
 

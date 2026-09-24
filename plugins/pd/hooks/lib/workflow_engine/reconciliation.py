@@ -779,12 +779,19 @@ def check_workflow_drift(
                     message=str(exc),
                 ))
 
-        # Detect db_only features via set difference
-        # Only include feature: type_ids (exclude non-feature entities)
+        # Detect db_only features via set difference. The kind is the joined
+        # entities row's kind column (list_workflow_phases' ``e.kind AS
+        # entity_type``), never the type_id text (C8):
+        #   * a feature-kind row is a candidate; any other kind is excluded.
+        #   * an ORPHAN row (no entities row, so entity_type is None; the
+        #     query keeps orphans for anomaly visibility) has no kind, so it
+        #     stays a candidate whatever its type_id spells. Feature-prefixed
+        #     orphans keep their pre-C8 db_only status; orphans with any
+        #     other prefix are now reported too.
         all_wp_rows = db.list_workflow_phases(workspace_uuid=workspace_uuid)
         db_rows_by_id = {
             row["type_id"]: row for row in all_wp_rows
-            if row["type_id"].startswith("feature:")
+            if row["entity_type"] == "feature" or row["entity_type"] is None
         }
         db_only_ids = db_rows_by_id.keys() - meta_type_ids
 
