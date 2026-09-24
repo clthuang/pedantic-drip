@@ -11,7 +11,7 @@ import uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, _migration_10_phase_events
-from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry.test_helpers import TEST_PROJECT_ID, workspace_uuid_for
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ class TestBackfillEdgeCases:
         """Entity with phase_timing={} should produce 0 backfill rows, no crash."""
         db.register_entity(
             "feature", name="Empty Timing", seq=1, slug="empty-timing",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={"phase_timing": {}},
         )
         _reset_to_pre_migration_10(db)
@@ -72,7 +72,7 @@ class TestBackfillEdgeCases:
         Should produce only a 'started' event, not crash."""
         db.register_entity(
             "feature", name="Mid Phase", seq=1, slug="mid-phase",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={"phase_timing": {"design": {"started": "2026-03-01T00:00:00Z"}}},
         )
         _reset_to_pre_migration_10(db)
@@ -89,7 +89,7 @@ class TestBackfillEdgeCases:
         Migration should handle gracefully (defaults or skip)."""
         db.register_entity(
             "feature", name="Bad Backward History", seq=1, slug="bad-bh",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {},
                 "backward_history": [
@@ -118,7 +118,7 @@ class TestBackfillEdgeCases:
         BUG CANDIDATE: 'for skipped in "design"' yields 'd', 'e', 's', 'i', 'g', 'n'."""
         db.register_entity(
             "feature", name="String Skip", seq=1, slug="str-skip",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {},
                 "skipped_phases": "design",  # string, not list!
@@ -155,7 +155,7 @@ class TestBackfillEdgeCases:
 
         db.register_entity(
             "feature", name="Big Metadata", seq=1, slug="big-meta",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata=meta,
         )
         _reset_to_pre_migration_10(db)
@@ -170,7 +170,7 @@ class TestBackfillEdgeCases:
         """Metadata with unknown fields alongside phase_timing. Should not crash."""
         db.register_entity(
             "feature", name="Extra Fields", seq=1, slug="extra-fields",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}},
                 "some_unknown_field": {"nested": True},
@@ -190,7 +190,7 @@ class TestBackfillEdgeCases:
         BUG CANDIDATE: timing.get("started") on a string will crash."""
         db.register_entity(
             "feature", name="Bad Timing Value", seq=1, slug="bad-timing-val",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {
                     "brainstorm": "2026-01-01T00:00:00Z",  # string, not dict!
@@ -268,7 +268,7 @@ class TestMigrationSafety:
         Spec says ISO-8601 UTC. Check for Z suffix vs +00:00 mixing."""
         db.register_entity(
             "feature", name="Timestamp Check", seq=1, slug="ts-check",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={"phase_timing": {"brainstorm": {
                 "started": "2026-01-01T00:00:00+00:00",  # +00:00 format
                 "completed": "2026-01-01T01:00:00Z",     # Z format
@@ -520,7 +520,7 @@ class TestCombinationAttacks:
         string skipped_phases, empty backward_history entry."""
         db.register_entity(
             "feature", name="Combo Edge Case", seq=1, slug="combo",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {},
                 "skipped_phases": "design",  # string, not list

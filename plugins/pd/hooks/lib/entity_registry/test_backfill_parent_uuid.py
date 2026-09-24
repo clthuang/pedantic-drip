@@ -11,7 +11,7 @@ import os
 import pytest
 
 from entity_registry.backfill import backfill_workflow_phases
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.test_helpers import identity_kwargs
 
 
@@ -45,11 +45,11 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm with a child feature
-        bs_uuid = db.register_entity("brainstorm", name="Test Brainstorm", display_id="20260101-000038-test-bs", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Test Brainstorm", display_id="20260101-000038-test-bs", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         feat_uuid = db.register_entity(
             "feature", name="Child Feature", seq=1, slug="child",
-            parent_type_id="brainstorm:20260101-000038-test-bs",
-            project_id="__unknown__",
+            parent_uuid=bs_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Verify parent_uuid was set
@@ -89,13 +89,13 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm
-        bs_uuid = db.register_entity("brainstorm", name="Legacy BS", display_id="20260101-000025-legacy-bs", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Legacy BS", display_id="20260101-000025-legacy-bs", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Register child feature
         feat_uuid = db.register_entity(
             "feature", name="Legacy Child", seq=2, slug="legacy",
-            parent_type_id="brainstorm:20260101-000025-legacy-bs",
-            project_id="__unknown__",
+            parent_uuid=bs_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Manually clear parent_uuid to simulate legacy data
@@ -133,14 +133,14 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm parent
-        bs_uuid = db.register_entity("brainstorm", name="Parent BS", display_id="20260101-000033-parent-bs", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Parent BS", display_id="20260101-000033-parent-bs", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Register two child features with parent_uuid
         for i in range(1, 3):
             db.register_entity(
                 "feature", name=f"Child {i}", **identity_kwargs("feature", f"00{i}-c"),
-                parent_type_id="brainstorm:20260101-000033-parent-bs",
-                project_id="__unknown__",
+                parent_uuid=bs_uuid,
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
             db.update_entity(f"feature:00{i}-c", status="completed")
 
@@ -167,21 +167,21 @@ class TestParentUuidPreference:
         """Some children have parent_uuid, some only parent_type_id."""
         db, artifacts_root = db_and_root
 
-        bs_uuid = db.register_entity("brainstorm", name="Mixed BS", display_id="20260101-000028-mix-bs", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Mixed BS", display_id="20260101-000028-mix-bs", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Child 1: has parent_uuid (normal)
         feat1_uuid = db.register_entity(
             "feature", name="Mix Child 1", seq=1, slug="mix",
-            parent_type_id="brainstorm:20260101-000028-mix-bs",
-            project_id="__unknown__",
+            parent_uuid=bs_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.update_entity("feature:001-mix", status="completed")
 
         # Child 2: parent_uuid cleared (legacy)
         feat2_uuid = db.register_entity(
             "feature", name="Mix Child 2", seq=2, slug="mix",
-            parent_type_id="brainstorm:20260101-000028-mix-bs",
-            project_id="__unknown__",
+            parent_uuid=bs_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db._conn.execute(
             "UPDATE entities SET parent_uuid = NULL WHERE uuid = ?",

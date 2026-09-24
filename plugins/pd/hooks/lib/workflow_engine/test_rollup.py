@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from workflow_engine.rollup import (
     PHASE_WEIGHTS_5D,
     PHASE_WEIGHTS_7,
@@ -37,15 +37,22 @@ def db():
 
 def _register(db, entity_type, entity_id, name, *, status=None,
               parent_type_id=None, metadata=None):
-    """Register entity and return its uuid."""
+    """Register entity and return its uuid.
+
+    ``parent_type_id`` names an already-registered parent; it is looked up
+    and passed as ``parent_uuid``.
+    """
+    parent_uuid = (
+        db.get_entity(parent_type_id)["uuid"] if parent_type_id is not None else None
+    )
     return db.register_entity(
         entity_type=entity_type,
         **identity_kwargs(entity_type, entity_id),
         name=name,
         status=status,
-        parent_type_id=parent_type_id,
+        parent_uuid=parent_uuid,
         metadata=metadata,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 

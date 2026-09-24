@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 
 # Make MCP server modules importable.
 _mcp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp"))
@@ -33,9 +33,9 @@ from workflow_state_server import _resolve_ref_to_feature_type_id
 def db():
     """In-memory EntityDatabase with 3 features."""
     database = EntityDatabase(":memory:")
-    database.register_entity("feature", name="Alpha Feature", seq=50, slug="alpha", project_id="__unknown__")
-    database.register_entity("feature", name="Beta Feature", seq=51, slug="beta", project_id="__unknown__")
-    database.register_entity("feature", name="Reactive Entity", seq=52, slug="reactive-entity", project_id="__unknown__")
+    database.register_entity("feature", name="Alpha Feature", seq=50, slug="alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    database.register_entity("feature", name="Beta Feature", seq=51, slug="beta", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    database.register_entity("feature", name="Reactive Entity", seq=52, slug="reactive-entity", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     yield database
     database.close()
 

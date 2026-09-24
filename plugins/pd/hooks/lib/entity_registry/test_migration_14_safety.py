@@ -31,6 +31,7 @@ from entity_registry.database import (
     MigrationError,
     _migration_14_down,
     _migration_14_issue_lifecycle_closure,
+    _UNKNOWN_WORKSPACE_UUID,
 )
 from entity_registry.test_helpers import make_v12_db
 
@@ -282,13 +283,13 @@ def test_ac_mr_8_composite_unique(tmp_path):
             entity_type="feature",
             seq=111, slug="foo",
             name="A",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         eid_b = db.register_entity(
             entity_type="feature",
             seq=222, slug="bar",
             name="B",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         now = EntityDatabase._now_iso()
         db._conn.execute(
@@ -348,7 +349,7 @@ def test_ac_mr_10_down_refuses_when_bug_entities_exist(tmp_path):
             seq=1, slug="foo",
             name="A bug",
             status="open",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(MigrationError) as excinfo:
@@ -373,13 +374,13 @@ def test_ac_mr_11_down_refuses_when_entity_relations_exist(tmp_path):
             entity_type="feature",
             seq=111, slug="foo",
             name="A",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         eid_b = db.register_entity(
             entity_type="feature",
             seq=222, slug="bar",
             name="B",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         now = EntityDatabase._now_iso()
         db._conn.execute(

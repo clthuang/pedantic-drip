@@ -908,7 +908,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 
 
 class TestFrontmatterInjectCLI:
@@ -948,7 +948,7 @@ class TestFrontmatterInjectCLI:
             entity_type="feature",
             seq=2, slug="test-feature",
             name="Test Feature",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         return db, entity_uuid, db_path
 

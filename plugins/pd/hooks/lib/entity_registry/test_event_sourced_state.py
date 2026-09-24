@@ -27,6 +27,7 @@ from entity_registry.test_helpers import (
     TEST_PROJECT_ID,
     bootstrap_test_workspace,
     make_v12_db,
+    workspace_uuid_for,
 )
 from entity_registry.test_helpers import identity_kwargs
 
@@ -290,7 +291,7 @@ def _register_for_event(db, *, entity_id: str, status: str | None = None) -> tup
     type_id = f"feature:{entity_id}"
     db.register_entity(
         "feature", name=f"Test {entity_id}", **identity_kwargs("feature", entity_id),
-        project_id=TEST_PROJECT_ID, status=status,
+        workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID), status=status,
     )
     ws_row = db._conn.execute(
         "SELECT workspace_uuid FROM entities WHERE type_id = ?",

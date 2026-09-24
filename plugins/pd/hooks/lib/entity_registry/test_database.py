@@ -23,11 +23,12 @@ from entity_registry.database import (
     _migrate_to_uuid_pk,
     _migration_15_audit_emit_counter,
     _schema_expansion_v6,
+    _UNKNOWN_WORKSPACE_UUID,
 )
 
 
 from entity_registry.database import EXPORT_SCHEMA_VERSION
-from entity_registry.test_helpers import TEST_PROJECT_ID, identity_kwargs
+from entity_registry.test_helpers import TEST_PROJECT_ID, identity_kwargs, workspace_uuid_for
 from entity_registry import schema_v2
 # Feature 132 Task 3: imported at MODULE (collection) time, not lazily
 # inside the v2_db fixture below -- this is load-bearing, not stylistic.
@@ -713,7 +714,7 @@ class TestMetadata:
 class TestRegisterEntity:
     def test_happy_path(self, db: EntityDatabase):
         """Register a feature entity and retrieve it."""
-        result = db.register_entity("feature", name="My Feature", seq=1, slug="feat-001", project_id="__unknown__")
+        result = db.register_entity("feature", name="My Feature", seq=1, slug="feat-001", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
         cur = db._conn.execute(
             "SELECT * FROM entities WHERE type_id = 'feature:001-feat-001'"
@@ -727,7 +728,7 @@ class TestRegisterEntity:
 
     def test_type_id_auto_constructed(self, db: EntityDatabase):
         """type_id should be f'{entity_type}:{entity_id}'."""
-        result = db.register_entity("backlog", name="Backlog Item", seq=1, slug="item-42", project_id="__unknown__")
+        result = db.register_entity("backlog", name="Backlog Item", seq=1, slug="item-42", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
         # Verify the type_id was constructed correctly in the DB
         row = db._conn.execute(
@@ -743,8 +744,8 @@ class TestRegisterEntity:
         and AC-4.4, ``upsert_entity`` does NOT update ``name`` on conflict —
         callers needing a name update use ``update_entity``.
         """
-        uuid1 = db.upsert_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
-        uuid2 = db.upsert_entity("project", name="Project One Updated", seq=1, slug="proj-1", project_id="__unknown__")
+        uuid1 = db.upsert_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        uuid2 = db.upsert_entity("project", name="Project One Updated", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert _UUID_RE.match(uuid1)
         assert uuid1 == uuid2
         cur = db._conn.execute("SELECT COUNT(*) FROM entities")
@@ -758,19 +759,19 @@ class TestRegisterEntity:
     def test_entity_type_validation(self, db: EntityDatabase):
         """Invalid entity_type should raise ValueError."""
         with pytest.raises(ValueError, match="Invalid entity_type"):
-            db.register_entity("invalid_type", name="Bad Type", seq=2, slug="x", project_id="__unknown__")
+            db.register_entity("invalid_type", name="Bad Type", seq=2, slug="x", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     def test_all_valid_types(self, db: EntityDatabase):
         """All eight valid types should succeed."""
         for etype in EntityDatabase.VALID_ENTITY_TYPES:
-            result = db.register_entity(etype, name=f"Name {etype}", **identity_kwargs(etype, f"001-id-{etype}"), project_id="__unknown__")
+            result = db.register_entity(etype, name=f"Name {etype}", **identity_kwargs(etype, f"001-id-{etype}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             assert _UUID_RE.match(result), f"Expected a valid UUID for {etype}"
 
     def test_new_entity_types_register_successfully(self, db: EntityDatabase):
         """New entity types (initiative, objective, key_result, task) register."""
         new_types = ("initiative", "objective", "key_result", "task")
         for etype in new_types:
-            uuid_str = db.register_entity(etype, name=f"Test {etype}", **identity_kwargs(etype, f"001-test-{etype}"), project_id="__unknown__")
+            uuid_str = db.register_entity(etype, name=f"Test {etype}", **identity_kwargs(etype, f"001-test-{etype}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             assert _UUID_RE.match(uuid_str), f"{etype} should return valid UUID"
             # Verify entity is queryable
             # F11 (feature 109): entity_type column dropped; kind replaces it.
@@ -788,7 +789,7 @@ class TestRegisterEntity:
             artifact_path="/docs/features/f1",
             status="active",
             metadata={"priority": "high"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         cur = db._conn.execute(
             "SELECT * FROM entities WHERE uuid = ?", (entity_uuid,)
@@ -807,7 +808,7 @@ class TestRegisterEntity:
         """
         entity_uuid = db.register_entity(
             "feature", name="Child Feature", seq=1, slug="child",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         row = db._conn.execute(
             "SELECT parent_uuid FROM entities WHERE uuid = ?",
@@ -818,12 +819,12 @@ class TestRegisterEntity:
     def test_valid_parent_uuid(self, db: EntityDatabase):
         """Passing parent_uuid of an existing entity stores the link."""
         parent_uuid = db.register_entity(
-            "project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__"
+            "project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
         )
         entity_uuid = db.register_entity(
             "feature", name="Feature One", seq=1, slug="feat-1",
             parent_uuid=parent_uuid,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         cur = db._conn.execute(
             "SELECT parent_uuid FROM entities WHERE uuid = ?",
@@ -833,7 +834,7 @@ class TestRegisterEntity:
 
     def test_timestamps_set(self, db: EntityDatabase):
         """created_at and updated_at should be set automatically."""
-        entity_uuid = db.register_entity("brainstorm", name="Brainstorm One", display_id="001-b1", project_id="__unknown__")
+        entity_uuid = db.register_entity("brainstorm", name="Brainstorm One", display_id="001-b1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         cur = db._conn.execute(
             "SELECT created_at, updated_at FROM entities WHERE uuid = ?",
             (entity_uuid,),
@@ -844,7 +845,7 @@ class TestRegisterEntity:
 
     def test_returns_uuid_string(self, db: EntityDatabase):
         """register_entity should return a valid UUID string."""
-        result = db.register_entity("feature", name="Feature 99", seq=1, slug="f99", project_id="__unknown__")
+        result = db.register_entity("feature", name="Feature 99", seq=1, slug="f99", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert isinstance(result, str)
         assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
 
@@ -853,7 +854,7 @@ class TestRegisterEntity:
         db.register_entity(
             "feature", name="Feature", seq=1, slug="f1",
             metadata={"key": "value", "count": 42},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         cur = db._conn.execute(
             "SELECT metadata FROM entities WHERE type_id = 'feature:001-f1'"
@@ -881,34 +882,34 @@ class TestEntityNameValidation:
 
     def test_register_entity_empty_name_raises(self, db: EntityDatabase):
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
-            db.register_entity("feature", name="", seq=1, slug="f1", project_id="__unknown__")
+            db.register_entity("feature", name="", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     def test_register_entity_whitespace_name_raises(self, db: EntityDatabase):
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
-            db.register_entity("feature", name="   ", seq=1, slug="f1", project_id="__unknown__")
+            db.register_entity("feature", name="   ", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     def test_upsert_entity_empty_name_raises(self, db: EntityDatabase):
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
-            db.upsert_entity("feature", name="", seq=1, slug="f1", project_id="__unknown__")
+            db.upsert_entity("feature", name="", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     def test_upsert_entity_whitespace_name_raises(self, db: EntityDatabase):
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
-            db.upsert_entity("feature", name="   ", seq=1, slug="f1", project_id="__unknown__")
+            db.upsert_entity("feature", name="   ", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
     def test_update_entity_empty_name_raises(self, db: EntityDatabase):
-        db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
             db.update_entity("feature:001-f1", name="")
 
     def test_update_entity_whitespace_name_raises(self, db: EntityDatabase):
-        db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
             db.update_entity("feature:001-f1", name="   ")
 
     def test_update_entity_name_none_stays_legal(self, db: EntityDatabase):
         """Absent name (None) is not blank: update_entity(name=None) must
         not raise (name update is simply skipped)."""
-        db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity("feature:001-f1", name=None)
         result = db.get_entity("feature:001-f1")
         assert result["name"] == "Original"
@@ -916,7 +917,7 @@ class TestEntityNameValidation:
     def test_register_entity_real_name_canary(self, db: EntityDatabase):
         """Regression guard: a real non-blank name still registers fine."""
         result = db.register_entity(
-            "feature", name="A Real Name", seq=1, slug="f-canary", project_id="__unknown__"
+            "feature", name="A Real Name", seq=1, slug="f-canary", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
         )
         assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
 
@@ -935,7 +936,7 @@ class TestImmutableTriggers:
         removed on 2026-09-23 without ever having had a caller, and no
         trigger has been reinstated, so raw UPDATEs still succeed.
         """
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET type_id = 'feature:001-f2' "
             "WHERE type_id = 'feature:001-f1'"
@@ -957,7 +958,7 @@ class TestImmutableTriggers:
         was removed on 2026-09-23, so nothing at runtime writes ``kind``
         and this test inverts when an immutability trigger is added.
         """
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET kind = 'backlog' "
             "WHERE type_id = 'feature:001-f1'"
@@ -969,7 +970,7 @@ class TestImmutableTriggers:
 
     def test_created_at_immutable(self, db: EntityDatabase):
         """Attempting to change created_at should raise IntegrityError."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(sqlite3.IntegrityError, match="created_at is immutable"):
             db._conn.execute(
                 "UPDATE entities SET created_at = '2099-01-01T00:00:00Z' "
@@ -1011,7 +1012,7 @@ class TestImmutableTriggers:
         Feature 108 Migration 11: ``parent_type_id`` column dropped; the
         self-parent guard now lives on the ``parent_uuid`` triggers.
         """
-        uid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        uid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(sqlite3.IntegrityError, match="entity cannot be its own parent"):
             db._conn.execute(
                 "UPDATE entities SET parent_uuid = ? "
@@ -1021,7 +1022,7 @@ class TestImmutableTriggers:
 
     def test_name_is_mutable(self, db: EntityDatabase):
         """name should be updatable (not protected by triggers)."""
-        db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET name = 'Updated' WHERE type_id = 'feature:001-f1'"
         )
@@ -1033,7 +1034,7 @@ class TestImmutableTriggers:
 
     def test_status_is_mutable(self, db: EntityDatabase):
         """status should be updatable (not protected by triggers)."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", status="draft", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET status = 'active' WHERE type_id = 'feature:001-f1'"
         )
@@ -1064,14 +1065,14 @@ class TestRegisterEntityParentOnDuplicate:
 
     def test_apply_parent_via_catch_and_set_parent(self, db: EntityDatabase):
         """register raises on duplicate → caller catches and set_parent works."""
-        db.register_entity("project", name="Parent", seq=1, slug="parent-proj", project_id="__unknown__")
-        db.register_entity("feature", name="Child", seq=1, slug="child-feat", project_id="__unknown__")
+        db.register_entity("project", name="Parent", seq=1, slug="parent-proj", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Child", seq=1, slug="child-feat", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Re-register with parent: now raises EntityExistsError.
         with pytest.raises(EntityExistsError):
             db.register_entity(
                 "feature", name="Child", seq=1, slug="child-feat",
-                parent_type_id="project:001-parent-proj",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity("project:001-parent-proj")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         # New contract: caller applies parent explicitly via set_parent.
         db.set_parent("feature:001-child-feat", "project:001-parent-proj")
@@ -1080,39 +1081,44 @@ class TestRegisterEntityParentOnDuplicate:
 
     def test_existing_parent_preserved_on_register_conflict(self, db: EntityDatabase):
         """Once a parent is set, register conflict does not touch it."""
-        db.register_entity("project", name="A", seq=1, slug="proj-a", project_id="__unknown__")
-        db.register_entity("project", name="B", seq=1, slug="proj-b", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=1, slug="proj-a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("project", name="B", seq=1, slug="proj-b", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
             "feature", name="Child", seq=1, slug="child-feat",
-            parent_type_id="project:001-proj-a",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("project:001-proj-a")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Re-register with different parent now raises; existing parent untouched.
         with pytest.raises(EntityExistsError):
             db.register_entity(
                 "feature", name="Child", seq=1, slug="child-feat",
-                parent_type_id="project:001-proj-b",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity("project:001-proj-b")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         entity = db.get_entity("feature:001-child-feat")
         assert entity["parent_type_id"] == "project:001-proj-a"
 
     def test_upsert_no_parent_change_on_conflict(self, db: EntityDatabase):
         """upsert_entity is status-only on conflict — does NOT update parent_uuid."""
-        db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", project_id="__unknown__")
-        # Upsert again with a nonexistent parent_type_id: parent stays None.
+        db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        parent_uuid = db.register_entity(
+            "project", name="Parent", seq=1, slug="parent-proj",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+        )
+        # Upsert again naming a real parent: the conflict branch leaves the
+        # parent None (a nonexistent parent could not tell the two apart).
         db.upsert_entity(
             "feature", name="Child", seq=1, slug="child-feat",
-            parent_type_id="project:does-not-exist",
-            project_id="__unknown__",
+            parent_uuid=parent_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         entity = db.get_entity("feature:001-child-feat")
         assert entity["parent_type_id"] is None
 
     def test_idempotent_no_parent_via_upsert(self, db: EntityDatabase):
         """upsert_entity twice without parent → no error, no changes, same uuid."""
-        uuid1 = db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", project_id="__unknown__")
-        uuid2 = db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", project_id="__unknown__")
+        uuid1 = db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        uuid2 = db.upsert_entity("feature", name="Child", seq=1, slug="child-feat", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         entity = db.get_entity("feature:001-child-feat")
         assert entity["parent_type_id"] is None
         assert entity["uuid"] == uuid2
@@ -1126,8 +1132,8 @@ class TestRegisterEntityParentOnDuplicate:
 class TestSetParent:
     def test_happy_path(self, db: EntityDatabase):
         """Set parent on a child entity."""
-        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
-        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.set_parent("feature:001-f1", "project:001-proj-1")
         assert result == child_uuid
         # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
@@ -1139,35 +1145,35 @@ class TestSetParent:
 
     def test_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C, then setting C's parent to A should raise (circular)."""
-        db.register_entity("project", name="A", seq=2, slug="a", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:002-a", project_id="__unknown__")
-        db.register_entity("feature", name="C", seq=2, slug="c", parent_type_id="feature:002-b", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=2, slug="a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="C", seq=2, slug="c", parent_uuid=db.get_entity("feature:002-b")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="[Cc]ircular"):
             db.set_parent("project:002-a", "feature:002-c")
 
     def test_self_parent_rejected(self, db: EntityDatabase):
         """Setting an entity as its own parent should raise."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises((ValueError, sqlite3.IntegrityError)):
             db.set_parent("feature:001-f1", "feature:001-f1")
 
     def test_non_existent_child_rejected(self, db: EntityDatabase):
         """Setting parent on non-existent entity should raise."""
-        db.register_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
+        db.register_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="[Nn]ot found"):
             db.set_parent("feature:nonexistent", "project:001-proj-1")
 
     def test_non_existent_parent_rejected(self, db: EntityDatabase):
         """Setting non-existent entity as parent should raise."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="[Nn]ot found"):
             db.set_parent("feature:001-f1", "project:nonexistent")
 
     def test_reassign_parent(self, db: EntityDatabase):
         """Should be able to change parent from one entity to another."""
-        db.register_entity("project", name="Project 1", seq=2, slug="p1", project_id="__unknown__")
-        p2_uuid = db.register_entity("project", name="Project 2", seq=1, slug="p2", project_id="__unknown__")
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", parent_type_id="project:002-p1", project_id="__unknown__")
+        db.register_entity("project", name="Project 1", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        p2_uuid = db.register_entity("project", name="Project 2", seq=1, slug="p2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", parent_uuid=db.get_entity("project:002-p1")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.set_parent("feature:001-f1", "project:001-p2")
         # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
         # column dropped). Assert via UUID round-trip.
@@ -1178,10 +1184,10 @@ class TestSetParent:
 
     def test_deep_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C->D, then setting A's parent to D should be rejected."""
-        db.register_entity("project", name="A", seq=2, slug="a", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:002-a", project_id="__unknown__")
-        db.register_entity("feature", name="C", seq=2, slug="c", parent_type_id="feature:002-b", project_id="__unknown__")
-        db.register_entity("feature", name="D", seq=2, slug="d", parent_type_id="feature:002-c", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=2, slug="a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="C", seq=2, slug="c", parent_uuid=db.get_entity("feature:002-b")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="D", seq=2, slug="d", parent_uuid=db.get_entity("feature:002-c")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="[Cc]ircular"):
             db.set_parent("project:002-a", "feature:002-d")
 
@@ -1193,15 +1199,15 @@ class TestSetParent:
         Covers AC-1.3 and AC-1.4.
         """
         # Build chain: e0 <- e1 <- e2 <- ... <- e10 (11 entities, 10 hops)
-        db.register_entity("feature", name="Entity 0", seq=1, slug="e0", project_id="__unknown__")
+        db.register_entity("feature", name="Entity 0", seq=1, slug="e0", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         for i in range(1, 11):
             db.register_entity(
                 "feature", name=f"Entity {i}", **identity_kwargs("feature", f"001-e{i}"),
-                parent_type_id=f"feature:001-e{i - 1}",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity(f"feature:001-e{i - 1}")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         # Create 12th entity and set its parent to the end of the chain
-        db.register_entity("feature", name="Entity 11", seq=1, slug="e11", project_id="__unknown__")
+        db.register_entity("feature", name="Entity 11", seq=1, slug="e11", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # This must succeed — no cycle, depth guard terminates the CTE
         result = db.set_parent("feature:001-e11", "feature:001-e10")
         assert result is not None  # returns child_uuid on success
@@ -1212,12 +1218,12 @@ class TestSetParent:
         Covers AC-1.2.
         """
         # Build chain: e0 <- e1 <- e2 <- e3 <- e4 (5 entities, 4 hops)
-        db.register_entity("feature", name="Entity 0", seq=1, slug="e0", project_id="__unknown__")
+        db.register_entity("feature", name="Entity 0", seq=1, slug="e0", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         for i in range(1, 5):
             db.register_entity(
                 "feature", name=f"Entity {i}", **identity_kwargs("feature", f"001-e{i}"),
-                parent_type_id=f"feature:001-e{i - 1}",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity(f"feature:001-e{i - 1}")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         # Attempt to set e0's parent to e4 -> creates cycle: e0->e4->e3->e2->e1->e0
         with pytest.raises(ValueError, match="[Cc]ircular"):
@@ -1232,7 +1238,7 @@ class TestSetParent:
 class TestGetEntity:
     def test_returns_dict_for_existing(self, db: EntityDatabase):
         """get_entity should return a dict for an existing entity."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.get_entity("feature:001-f1")
         assert isinstance(result, dict)
         assert result["type_id"] == "feature:001-f1"
@@ -1253,7 +1259,7 @@ class TestGetEntity:
         db.register_entity(
             "feature", name="Feature", seq=1, slug="f1",
             metadata={"key": "value"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         result = db.get_entity("feature:001-f1")
         assert result["metadata"] is not None
@@ -1261,14 +1267,14 @@ class TestGetEntity:
 
     def test_includes_parent_type_id(self, db: EntityDatabase):
         """parent_type_id should be included in the dict."""
-        db.register_entity("project", name="Project", seq=2, slug="p1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", parent_type_id="project:002-p1", project_id="__unknown__")
+        db.register_entity("project", name="Project", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", parent_uuid=db.get_entity("project:002-p1")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.get_entity("feature:001-f1")
         assert result["parent_type_id"] == "project:002-p1"
 
     def test_null_optional_fields(self, db: EntityDatabase):
         """Optional fields should be None when not set."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.get_entity("feature:001-f1")
         assert result["status"] is None
         assert result["parent_type_id"] is None
@@ -1284,13 +1290,13 @@ class TestGetEntity:
 class TestGetLineage:
     def _setup_chain(self, db: EntityDatabase):
         """Create a chain: project:001-root -> feature:001-mid -> feature:001-leaf."""
-        db.register_entity("project", name="Root Project", seq=1, slug="root", project_id="__unknown__")
+        db.register_entity("project", name="Root Project", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("feature", name="Mid Feature", seq=1, slug="mid",
-                               project_id="__unknown__",
-                           parent_type_id="project:001-root")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("project:001-root")["uuid"])
         db.register_entity("feature", name="Leaf Feature", seq=1, slug="leaf",
-                               project_id="__unknown__",
-                           parent_type_id="feature:001-mid")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("feature:001-mid")["uuid"])
 
     def test_upward_traversal_root_first(self, db: EntityDatabase):
         """Upward traversal should return root first."""
@@ -1308,14 +1314,14 @@ class TestGetLineage:
 
     def test_single_entity_up(self, db: EntityDatabase):
         """An entity with no parent should return just itself."""
-        db.register_entity("project", name="Solo Project", seq=1, slug="solo", project_id="__unknown__")
+        db.register_entity("project", name="Solo Project", seq=1, slug="solo", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         lineage = db.get_lineage("project:001-solo", direction="up")
         assert len(lineage) == 1
         assert lineage[0]["type_id"] == "project:001-solo"
 
     def test_single_entity_down(self, db: EntityDatabase):
         """An entity with no children should return just itself."""
-        db.register_entity("project", name="Solo Project", seq=1, slug="solo", project_id="__unknown__")
+        db.register_entity("project", name="Solo Project", seq=1, slug="solo", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         lineage = db.get_lineage("project:001-solo", direction="down")
         assert len(lineage) == 1
         assert lineage[0]["type_id"] == "project:001-solo"
@@ -1339,7 +1345,7 @@ class TestGetLineage:
 
     def test_returns_list_of_dicts(self, db: EntityDatabase):
         """get_lineage should return a list of dicts."""
-        db.register_entity("project", name="Solo", seq=1, slug="solo", project_id="__unknown__")
+        db.register_entity("project", name="Solo", seq=1, slug="solo", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         lineage = db.get_lineage("project:001-solo")
         assert isinstance(lineage, list)
         assert all(isinstance(e, dict) for e in lineage)
@@ -1351,9 +1357,9 @@ class TestGetLineage:
 
     def test_downward_multiple_children(self, db: EntityDatabase):
         """Downward traversal should include all children."""
-        db.register_entity("project", name="Root", seq=1, slug="root", project_id="__unknown__")
-        db.register_entity("feature", name="A", seq=2, slug="a", parent_type_id="project:001-root", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:001-root", project_id="__unknown__")
+        db.register_entity("project", name="Root", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="A", seq=2, slug="a", parent_uuid=db.get_entity("project:001-root")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:001-root")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         lineage = db.get_lineage("project:001-root", direction="down")
         type_ids = [e["type_id"] for e in lineage]
         assert "project:001-root" in type_ids
@@ -1364,12 +1370,12 @@ class TestGetLineage:
     def test_max_depth_default_is_10(self, db: EntityDatabase):
         """Default max_depth should be 10."""
         # Build a chain of 12 entities
-        db.register_entity("project", name="E0", seq=1, slug="e0", project_id="__unknown__")
+        db.register_entity("project", name="E0", seq=1, slug="e0", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         for i in range(1, 12):
             db.register_entity(
                 "feature", name=f"E{i}", **identity_kwargs("feature", f"001-e{i}"),
-                parent_type_id=f"{'project' if i == 1 else 'feature'}:001-e{i-1}",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity(f"{'project' if i == 1 else 'feature'}:001-e{i-1}")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         # Go upward from e11 with default max_depth=10
         lineage = db.get_lineage("feature:001-e11", direction="up")
@@ -1385,21 +1391,21 @@ class TestGetLineage:
 class TestUpdateEntity:
     def test_update_name(self, db: EntityDatabase):
         """Updating name should work."""
-        db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity("feature:001-f1", name="Updated")
         result = db.get_entity("feature:001-f1")
         assert result["name"] == "Updated"
 
     def test_update_status(self, db: EntityDatabase):
         """Updating status should work."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", status="draft", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity("feature:001-f1", status="active")
         result = db.get_entity("feature:001-f1")
         assert result["status"] == "active"
 
     def test_updated_at_changes(self, db: EntityDatabase):
         """updated_at should be refreshed on update."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         original = db.get_entity("feature:001-f1")
         original_updated = original["updated_at"]
         # Small delay to ensure different timestamp
@@ -1413,7 +1419,7 @@ class TestUpdateEntity:
         db.register_entity(
             "feature", name="Feature", seq=1, slug="f1",
             metadata={"key1": "val1", "key2": "val2"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.update_entity("feature:001-f1", metadata={"key2": "new_val2", "key3": "val3"})
         result = db.get_entity("feature:001-f1")
@@ -1425,7 +1431,7 @@ class TestUpdateEntity:
         db.register_entity(
             "feature", name="Feature", seq=1, slug="f1",
             metadata={"key1": "val1"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.update_entity("feature:001-f1", metadata={})
         result = db.get_entity("feature:001-f1")
@@ -1438,14 +1444,14 @@ class TestUpdateEntity:
 
     def test_update_artifact_path(self, db: EntityDatabase):
         """Updating artifact_path should work."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity("feature:001-f1", artifact_path="/new/path")
         result = db.get_entity("feature:001-f1")
         assert result["artifact_path"] == "/new/path"
 
     def test_no_changes_still_updates_timestamp(self, db: EntityDatabase):
         """Calling update_entity with no changes should still update updated_at."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         original = db.get_entity("feature:001-f1")
         time.sleep(0.01)
         db.update_entity("feature:001-f1")
@@ -1454,7 +1460,7 @@ class TestUpdateEntity:
 
     def test_metadata_merge_with_none_existing(self, db: EntityDatabase):
         """Merging metadata when existing is None should just set."""
-        db.register_entity("feature", name="Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity("feature:001-f1", metadata={"key": "value"})
         result = db.get_entity("feature:001-f1")
         assert json.loads(result["metadata"]) == {"key": "value"}
@@ -1468,13 +1474,13 @@ class TestUpdateEntity:
 class TestExportLineageMarkdown:
     def test_single_tree(self, db: EntityDatabase):
         """Export a single tree with root and children."""
-        db.register_entity("project", name="Project Alpha", seq=2, slug="p1", project_id="__unknown__")
+        db.register_entity("project", name="Project Alpha", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("feature", name="Feature A", seq=1, slug="f1",
-                               project_id="__unknown__",
-                           parent_type_id="project:002-p1")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("project:002-p1")["uuid"])
         db.register_entity("feature", name="Feature B", seq=1, slug="f2",
-                               project_id="__unknown__",
-                           parent_type_id="project:002-p1")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("project:002-p1")["uuid"])
         md = db.export_lineage_markdown("project:002-p1")
         assert "Project Alpha" in md
         assert "Feature A" in md
@@ -1489,11 +1495,11 @@ class TestExportLineageMarkdown:
 
     def test_all_trees_export(self, db: EntityDatabase):
         """Export all trees (no type_id argument)."""
-        db.register_entity("project", name="Project Alpha", seq=2, slug="p1", project_id="__unknown__")
+        db.register_entity("project", name="Project Alpha", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("feature", name="Feature A", seq=1, slug="f1",
-                               project_id="__unknown__",
-                           parent_type_id="project:002-p1")
-        db.register_entity("project", name="Project Beta", seq=1, slug="p2", project_id="__unknown__")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("project:002-p1")["uuid"])
+        db.register_entity("project", name="Project Beta", seq=1, slug="p2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         md = db.export_lineage_markdown()
         assert "Project Alpha" in md
         assert "Feature A" in md
@@ -1506,13 +1512,13 @@ class TestExportLineageMarkdown:
 
     def test_markdown_format_uses_indentation(self, db: EntityDatabase):
         """Children should be indented relative to parents."""
-        db.register_entity("project", name="Root", seq=2, slug="p1", project_id="__unknown__")
+        db.register_entity("project", name="Root", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("feature", name="Child", seq=1, slug="f1",
-                               project_id="__unknown__",
-                           parent_type_id="project:002-p1")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("project:002-p1")["uuid"])
         db.register_entity("feature", name="Grandchild", seq=1, slug="f2",
-                               project_id="__unknown__",
-                           parent_type_id="feature:001-f1")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                           parent_uuid=db.get_entity("feature:001-f1")["uuid"])
         md = db.export_lineage_markdown("project:002-p1")
         lines = [l for l in md.split("\n") if l.strip()]
         # Find indentation levels
@@ -1526,7 +1532,7 @@ class TestExportLineageMarkdown:
 
     def test_includes_type_info(self, db: EntityDatabase):
         """Markdown should include entity type and/or status info."""
-        db.register_entity("project", name="Project One", seq=2, slug="p1", status="active", project_id="__unknown__")
+        db.register_entity("project", name="Project One", seq=2, slug="p1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         md = db.export_lineage_markdown("project:002-p1")
         # Should include either the type or the type_id
         assert "project" in md.lower()
@@ -1546,21 +1552,21 @@ class TestLineageFullAncestryChain:
         self, db: EntityDatabase,
     ):
         # Given a 4-level chain: backlog -> brainstorm -> project -> feature
-        db.register_entity("backlog", name="Lineage Tracking", seq=19, slug="backlog", status="promoted", project_id="__unknown__")
+        db.register_entity("backlog", name="Lineage Tracking", seq=19, slug="backlog", status="promoted", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
             "brainstorm", name="Entity Lineage", display_id="20260227-lineage",
-            parent_type_id="backlog:019-backlog",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("backlog:019-backlog")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             "project", name="Lineage Project", seq=1, slug="p001",
-            parent_type_id="brainstorm:20260227-lineage", status="active",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("brainstorm:20260227-lineage")["uuid"], status="active",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             "feature", name="Entity Lineage Tracking", seq=29, slug="entity-lineage-tracking",
-            parent_type_id="project:001-p001", status="active",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("project:001-p001")["uuid"], status="active",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When traversing upward from the feature
         lineage = db.get_lineage("feature:029-entity-lineage-tracking", direction="up")
@@ -1589,12 +1595,12 @@ class TestLineageOrphanedParent:
         # Given a synthetic orphaned backlog as parent of a feature
         db.register_entity(
             "backlog", name="Backlog #00099 (orphaned)", seq=99, slug="backlog", status="orphaned",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             "feature", name="Orphan Feature", seq=31, slug="orphan",
-            parent_type_id="backlog:099-backlog",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("backlog:099-backlog")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When traversing upward from the feature
         lineage = db.get_lineage("feature:031-orphan", direction="up")
@@ -1614,18 +1620,18 @@ class TestLineageDescendants:
         self, db: EntityDatabase,
     ):
         # Given a project with 2 features and 1 sub-feature
-        db.register_entity("project", name="Root Project", seq=1, slug="p1", project_id="__unknown__")
+        db.register_entity("project", name="Root Project", seq=1, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
-            "feature", name="Feature A", seq=1, slug="f1", parent_type_id="project:001-p1",
-            project_id="__unknown__",
+            "feature", name="Feature A", seq=1, slug="f1", parent_uuid=db.get_entity("project:001-p1")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
-            "feature", name="Feature B", seq=1, slug="f2", parent_type_id="project:001-p1",
-            project_id="__unknown__",
+            "feature", name="Feature B", seq=1, slug="f2", parent_uuid=db.get_entity("project:001-p1")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
-            "feature", name="Sub-Feature A1", seq=1, slug="f1-sub", parent_type_id="feature:001-f1",
-            project_id="__unknown__",
+            "feature", name="Sub-Feature A1", seq=1, slug="f1-sub", parent_uuid=db.get_entity("feature:001-f1")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When traversing downward from the project
         lineage = db.get_lineage("project:001-p1", direction="down")
@@ -1641,24 +1647,24 @@ class TestLineageDescendants:
         self, db: EntityDatabase,
     ):
         # Given a backlog -> brainstorm -> project -> features chain
-        db.register_entity("backlog", name="Idea", seq=1, slug="backlog", project_id="__unknown__")
+        db.register_entity("backlog", name="Idea", seq=1, slug="backlog", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
             "brainstorm", name="Brainstorm Idea", display_id="20260101-idea",
-            parent_type_id="backlog:001-backlog",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("backlog:001-backlog")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             "project", name="Alpha Project", seq=1, slug="proj-alpha",
-            parent_type_id="brainstorm:20260101-idea",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("brainstorm:20260101-idea")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
-            "feature", name="Feature A", seq=1, slug="fa", parent_type_id="project:001-proj-alpha",
-            project_id="__unknown__",
+            "feature", name="Feature A", seq=1, slug="fa", parent_uuid=db.get_entity("project:001-proj-alpha")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
-            "feature", name="Feature B", seq=1, slug="fb", parent_type_id="project:001-proj-alpha",
-            project_id="__unknown__",
+            "feature", name="Feature B", seq=1, slug="fb", parent_uuid=db.get_entity("project:001-proj-alpha")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When traversing downward from the project
         lineage = db.get_lineage("project:001-proj-alpha", direction="down")
@@ -1701,13 +1707,13 @@ class TestTraversalDepthGuard:
 
     def _build_chain(self, db: EntityDatabase, length: int):
         """Build a chain of entities of the given length."""
-        db.register_entity("project", name="E0", seq=1, slug="e0", project_id="__unknown__")
+        db.register_entity("project", name="E0", seq=1, slug="e0", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         for i in range(1, length):
             parent_type = "project" if i == 1 else "feature"
             db.register_entity(
                 "feature", name=f"E{i}", **identity_kwargs("feature", f"001-e{i}"),
-                parent_type_id=f"{parent_type}:001-e{i-1}",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity(f"{parent_type}:001-e{i-1}")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
 
     def test_traversal_depth_at_exactly_ten_hops_no_loop(
@@ -1753,7 +1759,7 @@ class TestTraversalDepthGuard:
         self, db: EntityDatabase,
     ):
         # Given a single entity with no parent
-        db.register_entity("project", name="Solo Project", seq=1, slug="solo", project_id="__unknown__")
+        db.register_entity("project", name="Solo Project", seq=1, slug="solo", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When traversing upward from it
         lineage = db.get_lineage("project:001-solo", direction="up")
         # Then only the entity itself is returned
@@ -1787,8 +1793,8 @@ class TestCircularReferenceTwoNodeLoop:
         self, db: EntityDatabase,
     ):
         # Given A -> B (A is parent of B)
-        db.register_entity("project", name="A", seq=2, slug="a", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:002-a", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=2, slug="a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When setting A's parent to B (would create A <-> B loop)
         with pytest.raises(ValueError, match="[Cc]ircular"):
             db.set_parent("project:002-a", "feature:002-b")
@@ -1808,7 +1814,7 @@ class TestBoundaryEntityIdEmpty:
         # Then registration refuses it before writing anything
         with pytest.raises(ValueError, match="slug"):
             db.register_entity("feature", name="Empty ID Feature", seq=1, slug="",
-                               project_id="__unknown__")
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert db.scan_entity_ids("feature") == []
 
 
@@ -1819,7 +1825,7 @@ class TestDescendantTreeEdgeCases:
 
     def test_descendant_tree_with_zero_children(self, db: EntityDatabase):
         # Given a leaf entity with no children
-        db.register_entity("feature", name="Leaf Feature", seq=1, slug="leaf", project_id="__unknown__")
+        db.register_entity("feature", name="Leaf Feature", seq=1, slug="leaf", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When traversing downward
         lineage = db.get_lineage("feature:001-leaf", direction="down")
         # Then only the entity itself is returned
@@ -1828,12 +1834,12 @@ class TestDescendantTreeEdgeCases:
 
     def test_descendant_tree_with_many_children(self, db: EntityDatabase):
         # Given a project with 5 direct children
-        db.register_entity("project", name="Root", seq=1, slug="root", project_id="__unknown__")
+        db.register_entity("project", name="Root", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         for i in range(5):
             db.register_entity(
                 "feature", name=f"Child {i}", **identity_kwargs("feature", f"001-child-{i}"),
-                parent_type_id="project:001-root",
-                project_id="__unknown__",
+                parent_uuid=db.get_entity("project:001-root")["uuid"],
+                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
             )
         # When traversing downward from root
         lineage = db.get_lineage("project:001-root", direction="down")
@@ -1850,10 +1856,10 @@ class TestUpwardTraversalOrder:
         self, db: EntityDatabase,
     ):
         # Given a 4-level chain: A -> B -> C -> D
-        db.register_entity("project", name="A", seq=2, slug="a", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:002-a", project_id="__unknown__")
-        db.register_entity("feature", name="C", seq=2, slug="c", parent_type_id="feature:002-b", project_id="__unknown__")
-        db.register_entity("feature", name="D", seq=2, slug="d", parent_type_id="feature:002-c", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=2, slug="a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="C", seq=2, slug="c", parent_uuid=db.get_entity("feature:002-b")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="D", seq=2, slug="d", parent_uuid=db.get_entity("feature:002-c")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When traversing upward from D
         lineage = db.get_lineage("feature:002-d", direction="up")
         # Then order is root-first: A, B, C, D
@@ -1869,7 +1875,7 @@ class TestTypeIdFormat:
 
     def test_type_id_format_is_colon_separated(self, db: EntityDatabase):
         # Given a feature entity with entity_id "my-feature"
-        entity_uuid = db.register_entity("feature", name="My Feature", seq=1, slug="my-feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="My Feature", seq=1, slug="my-feature", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Then the return is a UUID
         assert _UUID_RE.match(entity_uuid)
         # And the type_id in the DB uses a colon separator
@@ -1891,10 +1897,10 @@ class TestDescendantTraversalMultiLevel:
         self, db: EntityDatabase,
     ):
         # Given project -> feat-a -> feat-a1 -> feat-a1x
-        db.register_entity("project", name="Root", seq=1, slug="root", project_id="__unknown__")
-        db.register_entity("feature", name="A", seq=2, slug="a", parent_type_id="project:001-root", project_id="__unknown__")
-        db.register_entity("feature", name="A1", seq=1, slug="a1", parent_type_id="feature:002-a", project_id="__unknown__")
-        db.register_entity("feature", name="A1x", seq=1, slug="a1x", parent_type_id="feature:001-a1", project_id="__unknown__")
+        db.register_entity("project", name="Root", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="A", seq=2, slug="a", parent_uuid=db.get_entity("project:001-root")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="A1", seq=1, slug="a1", parent_uuid=db.get_entity("feature:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="A1x", seq=1, slug="a1x", parent_uuid=db.get_entity("feature:001-a1")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When traversing downward from root
         lineage = db.get_lineage("project:001-root", direction="down")
         # Then all 4 levels are included (not just direct children)
@@ -1912,9 +1918,9 @@ class TestRecursiveCTELineageDirection:
         self, db: EntityDatabase,
     ):
         # Given A -> B -> C chain
-        db.register_entity("project", name="A", seq=2, slug="a", project_id="__unknown__")
-        db.register_entity("feature", name="B", seq=2, slug="b", parent_type_id="project:002-a", project_id="__unknown__")
-        db.register_entity("feature", name="C", seq=2, slug="c", parent_type_id="feature:002-b", project_id="__unknown__")
+        db.register_entity("project", name="A", seq=2, slug="a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="B", seq=2, slug="b", parent_uuid=db.get_entity("project:002-a")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="C", seq=2, slug="c", parent_uuid=db.get_entity("feature:002-b")["uuid"], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When querying upward from C
         up_lineage = db.get_lineage("feature:002-c", direction="up")
         up_ids = [e["type_id"] for e in up_lineage]
@@ -1946,7 +1952,7 @@ class TestBacklogIdWithLeadingZeros:
         self, db: EntityDatabase,
     ):
         # Given a backlog entity with leading zeros in ID
-        entity_uuid = db.register_entity("backlog", name="Item with zeros", seq=19, slug="backlog", project_id="__unknown__")
+        entity_uuid = db.register_entity("backlog", name="Item with zeros", seq=19, slug="backlog", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Then the return is a UUID
         assert _UUID_RE.match(entity_uuid)
         # And the type_id preserves leading zeros
@@ -1968,8 +1974,8 @@ class TestConcurrentDatabaseAccess:
         db2 = EntityDatabase(db_path)
         try:
             # When both write entities
-            db1.register_entity("project", name="Project 1", seq=2, slug="p1", project_id="__unknown__")
-            db2.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
+            db1.register_entity("project", name="Project 1", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+            db2.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             # Then both entities are visible to both connections
             assert db1.get_entity("feature:001-f1") is not None
             assert db2.get_entity("project:002-p1") is not None
@@ -1987,13 +1993,13 @@ class TestConcurrentDatabaseAccess:
 class TestResolveIdentifier:
     def test_resolve_identifier_with_uuid(self, db: EntityDatabase):
         """_resolve_identifier should resolve a UUID to (uuid, type_id)."""
-        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test-id", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test-id", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db._resolve_identifier(entity_uuid)
         assert result == (entity_uuid, "feature:001-test-id")
 
     def test_resolve_identifier_with_type_id(self, db: EntityDatabase):
         """_resolve_identifier should resolve a type_id to (uuid, type_id)."""
-        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test-id", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test-id", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db._resolve_identifier("feature:001-test-id")
         assert result == (entity_uuid, "feature:001-test-id")
 
@@ -2007,13 +2013,13 @@ class TestResolveIdentifier:
 class TestRegisterEntityUUID:
     def test_register_returns_valid_uuid_format(self, db: EntityDatabase):
         """register_entity should return a valid UUID string."""
-        result = db.register_entity("feature", name="Test", seq=3, slug="test", project_id="__unknown__")
+        result = db.register_entity("feature", name="Test", seq=3, slug="test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
 
     def test_register_duplicate_returns_existing_uuid(self, db: EntityDatabase):
         """Upserting same entity twice returns the same UUID (F12 idempotent path)."""
-        uuid1 = db.upsert_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
-        uuid2 = db.upsert_entity("project", name="Project One Updated", seq=1, slug="proj-1", project_id="__unknown__")
+        uuid1 = db.upsert_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        uuid2 = db.upsert_entity("project", name="Project One Updated", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert uuid1 == uuid2
 
 
@@ -2021,8 +2027,8 @@ class TestRegisterEntityUUID:
 class TestSetParentUUID:
     def test_set_parent_mixed_identifiers(self, db: EntityDatabase):
         """set_parent should accept UUID for child and type_id for parent."""
-        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
-        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.set_parent(child_uuid, "project:001-proj-1")
         assert result == child_uuid
 
@@ -2032,8 +2038,8 @@ class TestSetParentUUID:
         Post-Migration-11: parent_type_id column is dropped; only
         parent_uuid is the system-of-record for the parent edge.
         """
-        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", project_id="__unknown__")
-        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", name="Project One", seq=1, slug="proj-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        child_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.set_parent(child_uuid, "project:001-proj-1")
         row = db._conn.execute(
             "SELECT parent_uuid FROM entities WHERE uuid = ?",
@@ -2046,14 +2052,14 @@ class TestSetParentUUID:
 class TestGetEntityUUID:
     def test_get_entity_by_uuid(self, db: EntityDatabase):
         """get_entity should accept UUID and return dict with uuid field."""
-        entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.get_entity(entity_uuid)
         assert result is not None
         assert result["uuid"] == entity_uuid
 
     def test_get_entity_by_type_id(self, db: EntityDatabase):
         """get_entity should accept type_id and return same entity."""
-        entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.get_entity("feature:001-f1")
         assert result is not None
         assert result["uuid"] == entity_uuid
@@ -2068,14 +2074,14 @@ class TestGetEntityUUID:
 class TestGetLineageUUID:
     def test_get_lineage_with_uuid(self, db: EntityDatabase):
         """get_lineage should accept UUID and return entities with uuid field."""
-        gp_uuid = db.register_entity("project", name="Grandparent", seq=1, slug="gp", project_id="__unknown__")
+        gp_uuid = db.register_entity("project", name="Grandparent", seq=1, slug="gp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         p_uuid = db.register_entity(
-            "feature", name="Parent", seq=1, slug="p", parent_type_id="project:001-gp",
-            project_id="__unknown__",
+            "feature", name="Parent", seq=1, slug="p", parent_uuid=gp_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         c_uuid = db.register_entity(
-            "feature", name="Child", seq=2, slug="c", parent_type_id="feature:001-p",
-            project_id="__unknown__",
+            "feature", name="Child", seq=2, slug="c", parent_uuid=p_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         lineage = db.get_lineage(c_uuid, direction="up")
         assert len(lineage) == 3
@@ -2091,7 +2097,7 @@ class TestGetLineageUUID:
 class TestUpdateEntityUUID:
     def test_update_entity_with_uuid(self, db: EntityDatabase):
         """update_entity should accept UUID as identifier."""
-        entity_uuid = db.register_entity("feature", name="Original", seq=1, slug="f1", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Original", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.update_entity(entity_uuid, name="New Name")
         result = db.get_entity(entity_uuid)
         assert result["name"] == "New Name"
@@ -2101,14 +2107,14 @@ class TestUpdateEntityUUID:
 class TestExportUUIDInternals:
     def test_export_uses_uuid_internally(self, db: EntityDatabase):
         """Export should show type_id strings, NOT raw UUIDs."""
-        gp_uuid = db.register_entity("project", name="Grandparent", seq=1, slug="gp", project_id="__unknown__")
+        gp_uuid = db.register_entity("project", name="Grandparent", seq=1, slug="gp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         p_uuid = db.register_entity(
-            "feature", name="Parent", seq=1, slug="p", parent_type_id="project:001-gp",
-            project_id="__unknown__",
+            "feature", name="Parent", seq=1, slug="p", parent_uuid=gp_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         c_uuid = db.register_entity(
-            "feature", name="Child", seq=2, slug="c", parent_type_id="feature:001-p",
-            project_id="__unknown__",
+            "feature", name="Child", seq=2, slug="c", parent_uuid=p_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         md = db.export_lineage_markdown()
         # Output should contain type_id components
@@ -2165,7 +2171,7 @@ class TestResolveIdentifierBoundary:
         derived_from: spec:R23 (C3 lowercase normalization)
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Case Test", seq=1, slug="case-test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Case Test", seq=1, slug="case-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When resolving with uppercase UUID
         upper_uuid = entity_uuid.upper()
         result = db._resolve_identifier(upper_uuid)
@@ -2317,7 +2323,7 @@ class TestEntityIdEdgeCases:
         """
         # Given a very long entity_id
         long_id = "001-" + "x" * 496
-        entity_uuid = db.register_entity("feature", name="Long ID Feature", **identity_kwargs("feature", long_id), project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Long ID Feature", **identity_kwargs("feature", long_id), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Then retrieval by type_id works
         expected_type_id = f"feature:{long_id}"
         entity = db.get_entity(expected_type_id)
@@ -2334,7 +2340,7 @@ class TestEntityIdEdgeCases:
         """
         # Given entity_ids with special characters
         special_id = "001-test-id_with.dots/slashes'quotes\"and\\backslash"
-        entity_uuid = db.register_entity("feature", name="Special", **identity_kwargs("feature", special_id), project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Special", **identity_kwargs("feature", special_id), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Then retrieval works correctly
         entity = db.get_entity(f"feature:{special_id}")
         assert entity is not None
@@ -2413,7 +2419,7 @@ class TestNonexistentUUIDOperations:
         derived_from: spec:R26
         """
         # Given a registered entity and a fake parent UUID
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         fake_parent = str(uuid.uuid4())
         # When setting parent to nonexistent UUID
         with pytest.raises(ValueError, match="Entity not found"):
@@ -2487,7 +2493,7 @@ class TestGetLineageInvalidDirection:
         might silently return empty or raise an unrelated error.
         """
         # Given a registered entity
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When calling get_lineage with invalid direction
         with pytest.raises(ValueError, match="[Ii]nvalid direction"):
             db.get_lineage("feature:001-f1", direction="sideways")
@@ -2497,7 +2503,7 @@ class TestGetLineageInvalidDirection:
         Anticipate: If implementation uses `if direction == 'up'` / `elif
         direction == 'down'` without else, None would fall through silently.
         """
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises((ValueError, AttributeError, TypeError)):
             db.get_lineage("feature:001-f1", direction=None)
 
@@ -2517,8 +2523,8 @@ class TestSetParentConsistencyAfterUpdate:
         is replaced by parent_uuid being a valid FK to entities.uuid.
         """
         # Given parent and child entities
-        parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent", project_id="__unknown__")
-        child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When setting parent
         db.set_parent("feature:001-child", "project:001-parent")
         # Then get_entity exposes parent_uuid pointing to the parent
@@ -2539,11 +2545,11 @@ class TestSetParentConsistencyAfterUpdate:
         derived_from: spec:AC-28
         """
         # Given a child with existing parent
-        p1_uuid = db.register_entity("project", name="Parent 1", seq=2, slug="p1", project_id="__unknown__")
-        p2_uuid = db.register_entity("project", name="Parent 2", seq=1, slug="p2", project_id="__unknown__")
+        p1_uuid = db.register_entity("project", name="Parent 1", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        p2_uuid = db.register_entity("project", name="Parent 2", seq=1, slug="p2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         child_uuid = db.register_entity(
-            "feature", name="Child", seq=1, slug="child", parent_type_id="project:002-p1",
-            project_id="__unknown__",
+            "feature", name="Child", seq=1, slug="child", parent_uuid=p1_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When reassigning parent
         db.set_parent("feature:001-child", "project:001-p2")
@@ -2564,7 +2570,7 @@ class TestRootEntityParentUuidIsNone:
         remains. A root entity has parent_uuid IS NULL.
         """
         # Given a root entity with no parent
-        entity_uuid = db.register_entity("project", name="Root Project", seq=1, slug="root", project_id="__unknown__")
+        entity_uuid = db.register_entity("project", name="Root Project", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When retrieving it
         entity = db.get_entity(entity_uuid)
         # Then parent_uuid is None
@@ -2588,7 +2594,7 @@ class TestExistingImmutabilityTriggersStillFire:
         rewrite the ``type_id`` prefix; ``promote_entity`` itself was
         removed on 2026-09-23 without ever having had a caller.
         """
-        entity_uuid = db.register_entity("feature", name="Immutable Test", seq=1, slug="immut", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Immutable Test", seq=1, slug="immut", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET type_id = 'feature:changed' WHERE uuid = ?",
             (entity_uuid,),
@@ -2607,7 +2613,7 @@ class TestExistingImmutabilityTriggersStillFire:
         trigger was added while ``promote_entity`` existed; it was removed
         on 2026-09-23, so this test inverts when one is.
         """
-        entity_uuid = db.register_entity("feature", name="Immutable Test 2", seq=1, slug="immut2", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Immutable Test 2", seq=1, slug="immut2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db._conn.execute(
             "UPDATE entities SET kind = 'backlog' WHERE uuid = ?",
             (entity_uuid,),
@@ -2622,7 +2628,7 @@ class TestExistingImmutabilityTriggersStillFire:
         """created_at trigger fires on UUID-identified entity.
         derived_from: spec:AC-8
         """
-        entity_uuid = db.register_entity("feature", name="Immutable Test 3", seq=1, slug="immut3", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Immutable Test 3", seq=1, slug="immut3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(
             sqlite3.IntegrityError, match="created_at is immutable"
         ):
@@ -2672,16 +2678,16 @@ class TestExportLineageWithUuidInput:
         without conversion, UUID strings might appear in the output.
         """
         # Given a parent-child tree
-        p_uuid = db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        p_uuid = db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1",
-            parent_type_id="project:002-p1",
-            project_id="__unknown__",
+            parent_uuid=p_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.register_entity(
             "feature", name="Feature Two", seq=1, slug="f2",
-            parent_type_id="project:002-p1",
-            project_id="__unknown__",
+            parent_uuid=p_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When exporting via UUID
         md = db.export_lineage_markdown(p_uuid)
@@ -2710,8 +2716,8 @@ class TestSetParentReturnValueIsMutationSafe:
         callers relying on the child UUID would get wrong data.
         """
         # Given distinct parent and child
-        parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent", project_id="__unknown__")
-        child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When setting parent
         result = db.set_parent("feature:001-child", "project:001-parent")
         # Then return is child UUID, not parent UUID
@@ -2730,7 +2736,7 @@ class TestResolveIdentifierBranchDiscrimination:
         type_id column), lookup would fail for valid UUIDs.
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="branch-test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="branch-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When resolving the UUID
         result_uuid, result_tid = db._resolve_identifier(entity_uuid)
         # Then correct uuid and type_id returned
@@ -2743,7 +2749,7 @@ class TestResolveIdentifierBranchDiscrimination:
         against uuid column and fail.
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Test 2", seq=1, slug="branch-test2", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test 2", seq=1, slug="branch-test2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When resolving the type_id
         result_uuid, result_tid = db._resolve_identifier("feature:001-branch-test2")
         # Then correct values returned
@@ -2758,7 +2764,7 @@ class TestResolveIdentifierBranchDiscrimination:
         they might return different results.
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Dual Test", seq=1, slug="dual-test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Dual Test", seq=1, slug="dual-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When resolving via both paths
         by_uuid = db._resolve_identifier(entity_uuid)
         by_tid = db._resolve_identifier("feature:001-dual-test")
@@ -2779,7 +2785,7 @@ class TestMigrationIdempotency:
         # Given a database file initialized once
         db_path = str(tmp_path / "double_init.db")
         db1 = EntityDatabase(db_path)
-        db1.register_entity("project", name="Project 1", seq=2, slug="p1", project_id="__unknown__")
+        db1.register_entity("project", name="Project 1", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         p1_uuid = db1.get_entity("project:002-p1")["uuid"]
         db1.close()
         # When opening it again
@@ -2805,7 +2811,7 @@ class TestSelfParentViaUuidInSetParent:
         bypass the check.
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Self Test", seq=1, slug="selfie", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Self Test", seq=1, slug="selfie", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When trying to set itself as parent via UUID
         with pytest.raises((ValueError, sqlite3.IntegrityError)):
             db.set_parent(entity_uuid, entity_uuid)
@@ -2822,7 +2828,7 @@ class TestGetEntityDictContainsBothIdentifiers:
         SELECT * results, or dict conversion might exclude columns.
         """
         # Given a registered entity
-        entity_uuid = db.register_entity("feature", name="Both IDs", seq=1, slug="both-ids", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Both IDs", seq=1, slug="both-ids", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When getting entity
         entity = db.get_entity(entity_uuid)
         # Then both fields are present and valid
@@ -2836,10 +2842,10 @@ class TestGetEntityDictContainsBothIdentifiers:
         derived_from: spec:R20
         """
         # Given a chain
-        db.register_entity("project", name="Root", seq=1, slug="root", project_id="__unknown__")
+        db.register_entity("project", name="Root", seq=1, slug="root", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
-            "feature", name="Child", seq=1, slug="child", parent_type_id="project:001-root",
-            project_id="__unknown__",
+            "feature", name="Child", seq=1, slug="child", parent_uuid=db.get_entity("project:001-root")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When getting lineage
         lineage = db.get_lineage("feature:001-child", direction="up")
@@ -2860,17 +2866,17 @@ class TestListEntities:
 
     def test_list_entities_returns_all(self, db: EntityDatabase):
         """list_entities() with no filter returns all registered entities."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature Two", seq=1, slug="f2", project_id="__unknown__")
-        db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature Two", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = db.list_entities()
         assert len(result) == 3
 
     def test_list_entities_filter_by_type(self, db: EntityDatabase):
         """list_entities(entity_type) returns only matching type."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = db.list_entities(entity_type="feature")
         assert len(result) == 1
@@ -2883,7 +2889,7 @@ class TestListEntities:
 
     def test_list_entities_unknown_type(self, db: EntityDatabase):
         """list_entities() with non-existent type returns empty list."""
-        db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = db.list_entities(entity_type="brainstorm")
         assert result == []
@@ -3020,7 +3026,7 @@ class TestMigration3:
     def test_trigger_prevents_type_id_update(self, db: EntityDatabase):
         """Updating type_id on workflow_phases should raise IntegrityError."""
         # First, insert an entity so FK is satisfied
-        db.register_entity("feature", name="Trigger Test", seq=1, slug="trig-test", project_id="__unknown__")
+        db.register_entity("feature", name="Trigger Test", seq=1, slug="trig-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         db._conn.execute(
             "INSERT INTO workflow_phases "
@@ -3041,7 +3047,7 @@ class TestMigration3:
 
     def test_invalid_workflow_phase_rejected(self, db: EntityDatabase):
         """Invalid workflow_phase value should raise IntegrityError."""
-        db.register_entity("feature", name="Check WP", seq=1, slug="chk-wp", project_id="__unknown__")
+        db.register_entity("feature", name="Check WP", seq=1, slug="chk-wp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
@@ -3053,7 +3059,7 @@ class TestMigration3:
 
     def test_invalid_kanban_column_rejected(self, db: EntityDatabase):
         """Invalid kanban_column value should raise IntegrityError."""
-        db.register_entity("feature", name="Check KC", seq=1, slug="chk-kc", project_id="__unknown__")
+        db.register_entity("feature", name="Check KC", seq=1, slug="chk-kc", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
@@ -3065,7 +3071,7 @@ class TestMigration3:
 
     def test_invalid_last_completed_phase_rejected(self, db: EntityDatabase):
         """Invalid last_completed_phase value should raise IntegrityError."""
-        db.register_entity("feature", name="Check LCP", seq=1, slug="chk-lcp", project_id="__unknown__")
+        db.register_entity("feature", name="Check LCP", seq=1, slug="chk-lcp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
@@ -3077,7 +3083,7 @@ class TestMigration3:
 
     def test_invalid_mode_rejected(self, db: EntityDatabase):
         """Invalid mode value should raise IntegrityError."""
-        db.register_entity("feature", name="Check Mode", seq=1, slug="chk-mode", project_id="__unknown__")
+        db.register_entity("feature", name="Check Mode", seq=1, slug="chk-mode", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
@@ -3089,7 +3095,7 @@ class TestMigration3:
 
     def test_null_nullable_columns_accepted(self, db: EntityDatabase):
         """NULL values for nullable columns should be accepted."""
-        db.register_entity("feature", name="Check Null", seq=1, slug="chk-null", project_id="__unknown__")
+        db.register_entity("feature", name="Check Null", seq=1, slug="chk-null", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         # INSERT with all nullable columns as NULL (only required: type_id,
         # kanban_column via DEFAULT, updated_at)
@@ -3119,7 +3125,7 @@ class TestMigration3:
         ]
         for i, phase in enumerate(valid_phases):
             entity_id = f"001-vwp-{i}"
-            db.register_entity("feature", name=f"Valid WP {i}", **identity_kwargs("feature", entity_id), project_id="__unknown__")
+            db.register_entity("feature", name=f"Valid WP {i}", **identity_kwargs("feature", entity_id), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             now = EntityDatabase._now_iso()
             db._conn.execute(
                 "INSERT INTO workflow_phases "
@@ -3141,7 +3147,7 @@ class TestMigration3:
         ]
         for i, col in enumerate(valid_columns):
             entity_id = f"001-vkc-{i}"
-            db.register_entity("feature", name=f"Valid KC {i}", **identity_kwargs("feature", entity_id), project_id="__unknown__")
+            db.register_entity("feature", name=f"Valid KC {i}", **identity_kwargs("feature", entity_id), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             now = EntityDatabase._now_iso()
             db._conn.execute(
                 "INSERT INTO workflow_phases "
@@ -3159,7 +3165,7 @@ class TestMigration3:
         """Valid mode values ('standard', 'full') should be accepted."""
         for i, mode in enumerate(["standard", "full"]):
             entity_id = f"001-vm-{i}"
-            db.register_entity("feature", name=f"Valid Mode {i}", **identity_kwargs("feature", entity_id), project_id="__unknown__")
+            db.register_entity("feature", name=f"Valid Mode {i}", **identity_kwargs("feature", entity_id), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             now = EntityDatabase._now_iso()
             db._conn.execute(
                 "INSERT INTO workflow_phases "
@@ -3250,7 +3256,7 @@ class TestMigration3:
         After migration 8, workflow_phases no longer has FK to entities.
         Cascade cleanup is handled at the application level (delete_entity method).
         """
-        db.register_entity("feature", name="FK Delete Test", seq=1, slug="fk-del", project_id="__unknown__")
+        db.register_entity("feature", name="FK Delete Test", seq=1, slug="fk-del", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         db._conn.execute(
             "INSERT INTO workflow_phases "
@@ -3291,7 +3297,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """create_workflow_phase for existing entity returns dict with 8 columns."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.create_workflow_phase(
             "feature:001-f1",
             kanban_column="wip",
@@ -3331,7 +3337,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_create_workflow_phase_duplicate_raises(self, db: EntityDatabase):
         """create_workflow_phase for entity that already has a row raises ValueError."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
         with pytest.raises(ValueError, match="already exists"):
             db.create_workflow_phase("feature:001-f1")
@@ -3340,13 +3346,13 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """create_workflow_phase with invalid kanban_column raises ValueError."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="Invalid value"):
             db.create_workflow_phase("feature:001-f1", kanban_column="not-a-column")
 
     def test_create_workflow_phase_defaults_applied(self, db: EntityDatabase):
         """create_workflow_phase with no optional args applies defaults."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.create_workflow_phase("feature:001-f1")
         assert result["kanban_column"] == "backlog"
         assert result["workflow_phase"] is None
@@ -3361,7 +3367,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """get_workflow_phase for existing row returns dict."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="wip")
         result = db.get_workflow_phase("feature:001-f1")
         assert isinstance(result, dict)
@@ -3377,7 +3383,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_get_workflow_phase_has_all_8_columns(self, db: EntityDatabase):
         """get_workflow_phase result dict has all 8 columns (uuid added in v6)."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-f1",
             kanban_column="wip",
@@ -3412,7 +3418,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_update_workflow_phase_single_field(self, db: EntityDatabase):
         """update_workflow_phase changing one field updates only that field."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         created = db.create_workflow_phase(
             "feature:001-f1", kanban_column="backlog", workflow_phase="brainstorm"
         )
@@ -3430,7 +3436,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_update_workflow_phase_multiple_fields(self, db: EntityDatabase):
         """update_workflow_phase changing multiple fields updates all."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
 
         result = db.update_workflow_phase(
@@ -3447,7 +3453,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """Passing None explicitly sets field to NULL."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-f1", workflow_phase="design", mode="standard"
         )
@@ -3462,7 +3468,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """Omitting a field (not passing it) keeps current value (_UNSET sentinel)."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-f1",
             kanban_column="wip",
@@ -3489,7 +3495,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """update_workflow_phase with invalid enum value raises ValueError."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
 
         with pytest.raises(ValueError, match="Invalid value"):
@@ -3501,7 +3507,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """update_workflow_phase with only type_id refreshes updated_at."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         created = db.create_workflow_phase("feature:001-f1")
         original_updated_at = created["updated_at"]
         time.sleep(0.01)
@@ -3516,7 +3522,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """Passing kanban_column=None explicitly raises ValueError (NOT NULL)."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
 
         with pytest.raises(ValueError):
@@ -3528,7 +3534,7 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """delete_workflow_phase removes the row from the table."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
 
         db.delete_workflow_phase("feature:001-f1")
@@ -3549,7 +3555,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_get_returns_none_after_delete(self, db: EntityDatabase):
         """get_workflow_phase returns None after delete_workflow_phase."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1")
 
         db.delete_workflow_phase("feature:001-f1")
@@ -3559,9 +3565,9 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_workflow_phases_returns_all(self, db: EntityDatabase):
         """list_workflow_phases with no filters returns all rows."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="backlog")
         db.create_workflow_phase("feature:001-f2", kanban_column="wip")
         db.create_workflow_phase("feature:001-f3", kanban_column="completed")
@@ -3574,9 +3580,9 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """list_workflow_phases with kanban_column filter returns matching rows."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="backlog")
         db.create_workflow_phase("feature:001-f2", kanban_column="wip")
         db.create_workflow_phase("feature:001-f3", kanban_column="backlog")
@@ -3589,9 +3595,9 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """list_workflow_phases with workflow_phase filter returns matching rows."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-f1", workflow_phase="design"
         )
@@ -3610,9 +3616,9 @@ class TestWorkflowPhaseCRUD:
         self, db: EntityDatabase
     ):
         """list_workflow_phases with both filters uses AND logic."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 3", seq=1, slug="f3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-f1", kanban_column="wip", workflow_phase="design"
         )
@@ -3635,7 +3641,7 @@ class TestWorkflowPhaseCRUD:
         assert result == []
 
         # Also test with filter that matches nothing
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="backlog")
         result = db.list_workflow_phases(kanban_column="completed")
         assert result == []
@@ -3644,7 +3650,7 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_wp_returns_entity_name_type_path(self, db: EntityDatabase):
         """list_workflow_phases returns entity_name, entity_type, entity_artifact_path."""
-        db.register_entity("feature", name="My Feature", seq=1, slug="f1", artifact_path="/path/f1", project_id="__unknown__")
+        db.register_entity("feature", name="My Feature", seq=1, slug="f1", artifact_path="/path/f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="wip")
 
         result = db.list_workflow_phases()
@@ -3679,8 +3685,8 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_wp_filter_with_join(self, db: EntityDatabase):
         """WHERE clauses still work correctly with JOIN."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="wip", workflow_phase="design")
         db.create_workflow_phase("feature:001-f2", kanban_column="backlog", workflow_phase="specify")
 
@@ -3690,14 +3696,13 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_wp_all_rows_preserved(self, db: EntityDatabase):
         """LEFT JOIN does not lose any workflow_phases rows."""
-        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-f1", kanban_column="wip")
         db.create_workflow_phase("feature:001-f2", kanban_column="backlog")
         # Add orphan row (disable FK to allow orphan; supply workspace_uuid
         # explicitly so the post-Migration-11 wp_reject_orphaned_insert
         # trigger does not fire).
-        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         db._conn.execute("PRAGMA foreign_keys = OFF")
         db._conn.execute(
             "INSERT INTO workflow_phases "
@@ -3973,7 +3978,7 @@ class TestUpdateWorkflowPhaseUnsetVsNone:
         self, db: EntityDatabase,
     ):
         # Given a workflow phase row with last_completed_phase set
-        db.register_entity("feature", name="UNSET LCP Test", seq=1, slug="unset-lcp", project_id="__unknown__")
+        db.register_entity("feature", name="UNSET LCP Test", seq=1, slug="unset-lcp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-unset-lcp",
             kanban_column="wip",
@@ -3994,7 +3999,7 @@ class TestUpdateWorkflowPhaseUnsetVsNone:
         self, db: EntityDatabase,
     ):
         # Given a row with backward_transition_reason set
-        db.register_entity("feature", name="UNSET BTR Test", seq=1, slug="unset-btr", project_id="__unknown__")
+        db.register_entity("feature", name="UNSET BTR Test", seq=1, slug="unset-btr", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-unset-btr",
             kanban_column="wip",
@@ -4013,7 +4018,7 @@ class TestUpdateWorkflowPhaseUnsetVsNone:
         self, db: EntityDatabase,
     ):
         # Given a row with last_completed_phase="design"
-        db.register_entity("feature", name="Omit LCP Test", seq=1, slug="omit-lcp", project_id="__unknown__")
+        db.register_entity("feature", name="Omit LCP Test", seq=1, slug="omit-lcp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-omit-lcp",
             last_completed_phase="design",
@@ -4030,7 +4035,7 @@ class TestUpdateWorkflowPhaseUnsetVsNone:
         self, db: EntityDatabase,
     ):
         # Given a row with backward_transition_reason set
-        db.register_entity("feature", name="Omit BTR Test", seq=1, slug="omit-btr", project_id="__unknown__")
+        db.register_entity("feature", name="Omit BTR Test", seq=1, slug="omit-btr", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase(
             "feature:001-omit-btr",
             backward_transition_reason="reviewer requested rework",
@@ -4066,7 +4071,7 @@ class TestCreateWorkflowPhaseErrorMessages:
         self, db: EntityDatabase,
     ):
         # Given a workflow phase already exists
-        db.register_entity("feature", name="Dup Message", seq=1, slug="dup-msg", project_id="__unknown__")
+        db.register_entity("feature", name="Dup Message", seq=1, slug="dup-msg", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-dup-msg")
         # When trying to create again
         # Then ValueError message includes "already exists"
@@ -4095,7 +4100,7 @@ class TestCreateWorkflowPhaseErrorMessages:
         self, db: EntityDatabase,
     ):
         # Given an entity exists
-        db.register_entity("feature", name="Bad Enum", seq=1, slug="bad-enum", project_id="__unknown__")
+        db.register_entity("feature", name="Bad Enum", seq=1, slug="bad-enum", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When creating with invalid workflow_phase value
         with pytest.raises(ValueError) as exc_info:
             db.create_workflow_phase(
@@ -4124,7 +4129,7 @@ class TestCreateWorkflowPhaseAllEnumValuesViaAPI:
         ]
         # When creating workflow phases for each
         for i, phase in enumerate(valid_phases):
-            db.register_entity("feature", name=f"Enum WP {i}", **identity_kwargs("feature", f"001-enum-wp-{i}"), project_id="__unknown__")
+            db.register_entity("feature", name=f"Enum WP {i}", **identity_kwargs("feature", f"001-enum-wp-{i}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             result = db.create_workflow_phase(
                 f"feature:001-enum-wp-{i}", workflow_phase=phase,
             )
@@ -4141,7 +4146,7 @@ class TestCreateWorkflowPhaseAllEnumValuesViaAPI:
         ]
         # When creating workflow phases for each
         for i, col in enumerate(valid_columns):
-            db.register_entity("feature", name=f"Enum KC {i}", **identity_kwargs("feature", f"001-enum-kc-{i}"), project_id="__unknown__")
+            db.register_entity("feature", name=f"Enum KC {i}", **identity_kwargs("feature", f"001-enum-kc-{i}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             result = db.create_workflow_phase(
                 f"feature:001-enum-kc-{i}", kanban_column=col,
             )
@@ -4152,7 +4157,7 @@ class TestCreateWorkflowPhaseAllEnumValuesViaAPI:
         self, db: EntityDatabase,
     ):
         # Given workflow_phase=None (NULL is valid for nullable column)
-        db.register_entity("feature", name="Null WP", seq=1, slug="null-wp", project_id="__unknown__")
+        db.register_entity("feature", name="Null WP", seq=1, slug="null-wp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         result = db.create_workflow_phase(
             "feature:001-null-wp", workflow_phase=None,
         )
@@ -4172,7 +4177,7 @@ class TestUpdateWorkflowPhaseAllFieldsSimultaneously:
         self, db: EntityDatabase,
     ):
         # Given a workflow phase with defaults
-        db.register_entity("feature", name="All Fields Test", seq=1, slug="all-fields", project_id="__unknown__")
+        db.register_entity("feature", name="All Fields Test", seq=1, slug="all-fields", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.create_workflow_phase("feature:001-all-fields")
         time.sleep(0.01)
         # When updating all 5 mutable fields simultaneously
@@ -4314,9 +4319,9 @@ class TestExportEntitiesJson:
 
     def test_no_filters_returns_all(self, mem_db: EntityDatabase):
         """No args returns all entities with correct envelope keys."""
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
-        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
-        mem_db.register_entity("brainstorm", name="Brainstorm One", display_id="001-b1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mem_db.register_entity("brainstorm", name="Brainstorm One", display_id="001-b1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = mem_db.export_entities_json()
 
@@ -4331,8 +4336,8 @@ class TestExportEntitiesJson:
 
     def test_entity_type_filter(self, mem_db: EntityDatabase):
         """entity_type='feature' returns only features."""
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
-        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = mem_db.export_entities_json(entity_type="feature")
 
@@ -4344,11 +4349,11 @@ class TestExportEntitiesJson:
         """status='completed' returns only completed entities."""
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1", status="completed",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         mem_db.register_entity(
             "feature", name="Feature Two", seq=1, slug="f2", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json(status="completed")
@@ -4361,15 +4366,15 @@ class TestExportEntitiesJson:
         """entity_type + status uses AND logic."""
         mem_db.register_entity(
             "feature", name="Active Feature", seq=1, slug="f1", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         mem_db.register_entity(
             "feature", name="Completed Feature", seq=1, slug="f2", status="completed",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         mem_db.register_entity(
             "project", name="Active Project", seq=2, slug="p1", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json(
@@ -4395,7 +4400,7 @@ class TestExportEntitiesJson:
         """Unmatched status returns valid envelope with zero entities."""
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json(status="nonexistent")
@@ -4448,7 +4453,7 @@ class TestExportEntitiesJson:
 
     def test_uuid_in_entity(self, mem_db: EntityDatabase):
         """Each entity dict has a uuid field matching the UUID pattern."""
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = mem_db.export_entities_json()
 
@@ -4460,11 +4465,11 @@ class TestExportEntitiesJson:
 
     def test_include_lineage_true(self, mem_db: EntityDatabase):
         """include_lineage=True includes parent_type_id in entity dicts."""
-        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1",
-            parent_type_id="project:002-p1",
-            project_id="__unknown__",
+            parent_uuid=mem_db.get_entity("project:002-p1")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json(include_lineage=True)
@@ -4479,11 +4484,11 @@ class TestExportEntitiesJson:
 
     def test_include_lineage_false(self, mem_db: EntityDatabase):
         """include_lineage=False excludes parent_type_id from entity dicts."""
-        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1",
-            parent_type_id="project:002-p1",
-            project_id="__unknown__",
+            parent_uuid=mem_db.get_entity("project:002-p1")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json(include_lineage=False)
@@ -4493,7 +4498,7 @@ class TestExportEntitiesJson:
 
     def test_metadata_null_normalized(self, mem_db: EntityDatabase):
         """Entity with no metadata has metadata field as {} (not None)."""
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         result = mem_db.export_entities_json()
 
@@ -4506,7 +4511,7 @@ class TestExportEntitiesJson:
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1",
             metadata={"key": "value"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         result = mem_db.export_entities_json()
@@ -4516,7 +4521,7 @@ class TestExportEntitiesJson:
 
     def test_metadata_malformed_json(self, mem_db: EntityDatabase):
         """Entity with malformed JSON metadata returns {} (empty dict)."""
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Directly corrupt metadata in DB
         mem_db._conn.execute(
             "UPDATE entities SET metadata = '{bad' WHERE type_id = ?",
@@ -4602,12 +4607,12 @@ class TestExportEntitiesJson:
 
     def test_all_entity_fields_present(self, mem_db: EntityDatabase):
         """Each entity dict has exactly the expected keys."""
-        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", project_id="__unknown__")
+        mem_db.register_entity("project", name="Project One", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         mem_db.register_entity(
             "feature", name="Feature One", seq=1, slug="f1",
-            parent_type_id="project:002-p1",
+            parent_uuid=mem_db.get_entity("project:002-p1")["uuid"],
             metadata={"key": "value"},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # With lineage
@@ -4707,7 +4712,7 @@ class TestExportEntitiesJsonDeepened:
         derived_from: boundary: single element
         """
         # Given exactly one entity exists in the database
-        mem_db.register_entity("feature", name="Solo Feature", seq=1, slug="solo", status="active", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Solo Feature", seq=1, slug="solo", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When export_entities_json() is called with no arguments
         result = mem_db.export_entities_json()
         # Then entity_count is 1 and entities array has exactly one element
@@ -4721,9 +4726,9 @@ class TestExportEntitiesJsonDeepened:
         derived_from: boundary: all match
         """
         # Given all entities in the database are features
-        mem_db.register_entity("feature", name="F1", seq=1, slug="f1", status="active", project_id="__unknown__")
-        mem_db.register_entity("feature", name="F2", seq=1, slug="f2", status="active", project_id="__unknown__")
-        mem_db.register_entity("feature", name="F3", seq=1, slug="f3", status="active", project_id="__unknown__")
+        mem_db.register_entity("feature", name="F1", seq=1, slug="f1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mem_db.register_entity("feature", name="F2", seq=1, slug="f2", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mem_db.register_entity("feature", name="F3", seq=1, slug="f3", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When filtering by entity_type='feature'
         result = mem_db.export_entities_json(entity_type="feature")
         # Then all three entities are returned
@@ -4740,7 +4745,7 @@ class TestExportEntitiesJsonDeepened:
         # Given one entity of each valid type exists
         valid_types = ("backlog", "brainstorm", "project", "feature")
         for et in valid_types:
-            mem_db.register_entity(et, name=f"Entity {et}", **identity_kwargs(et, f"001-{et}-001"), project_id="__unknown__")
+            mem_db.register_entity(et, name=f"Entity {et}", **identity_kwargs(et, f"001-{et}-001"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When filtering by each valid type individually
         for et in valid_types:
             result = mem_db.export_entities_json(entity_type=et)
@@ -4764,7 +4769,7 @@ class TestExportEntitiesJsonDeepened:
         }
         mem_db.register_entity(
             "feature", name="Nested Meta Feature", seq=1, slug="f1", metadata=nested_meta,
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # When export_entities_json() is called
         result = mem_db.export_entities_json()
@@ -4798,7 +4803,7 @@ class TestExportEntitiesJsonDeepened:
         derived_from: adversarial: case boundary
         """
         # Given entities of type 'feature' exist
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When filtering with incorrect case 'Feature'
         with pytest.raises(ValueError, match=r"Invalid entity_type"):
             mem_db.export_entities_json(entity_type="Feature")
@@ -4811,7 +4816,7 @@ class TestExportEntitiesJsonDeepened:
         derived_from: adversarial: null relationship
         """
         # Given an entity with no parent exists
-        mem_db.register_entity("feature", name="Orphan Feature", seq=1, slug="orphan", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Orphan Feature", seq=1, slug="orphan", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When export with include_lineage=True
         result = mem_db.export_entities_json(include_lineage=True)
         # Then parent_type_id key is present but value is None
@@ -4830,7 +4835,7 @@ class TestExportEntitiesJsonDeepened:
         """
         # Given 5 entities exist
         for i in range(5):
-            mem_db.register_entity("feature", name=f"Feature {i}", **identity_kwargs("feature", f"001-f{i}"), project_id="__unknown__")
+            mem_db.register_entity("feature", name=f"Feature {i}", **identity_kwargs("feature", f"001-f{i}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When export_entities_json() is called
         result = mem_db.export_entities_json()
         # Then entity_count equals len(entities) -- not off-by-one, not hardcoded
@@ -4845,7 +4850,7 @@ class TestExportEntitiesJsonDeepened:
         derived_from: mutation: filter values
         """
         # Given entities exist
-        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
+        mem_db.register_entity("feature", name="Feature One", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When export with no filters
         result = mem_db.export_entities_json()
         # Then both filter fields are None (not missing, not empty string)
@@ -5085,7 +5090,7 @@ class TestMigration5:
             ]
             for i, phase in enumerate(new_phases):
                 eid = f"001-idem-{i}"
-                db.register_entity("brainstorm", name=f"Idem {i}", **identity_kwargs("brainstorm", eid), project_id="__unknown__")
+                db.register_entity("brainstorm", name=f"Idem {i}", **identity_kwargs("brainstorm", eid), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
                 now = EntityDatabase._now_iso()
                 db._conn.execute(
                     "INSERT INTO workflow_phases "
@@ -5101,7 +5106,7 @@ class TestMigration5:
             assert count == len(new_phases)
 
             # Also verify new values work for last_completed_phase
-            db.register_entity("brainstorm", name="LCP Test", display_id="20260101-000023-lcp-test", project_id="__unknown__")
+            db.register_entity("brainstorm", name="LCP Test", display_id="20260101-000023-lcp-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             db._conn.execute(
                 "INSERT INTO workflow_phases "
                 "(type_id, workflow_phase, kanban_column, "
@@ -5140,7 +5145,7 @@ class TestMigration5Deepened:
         accepted silently.
         """
         # Given a fresh DB (already at schema v5) with a registered entity
-        db.register_entity("brainstorm", name="Check Invalid", display_id="20260101-000014-chk-invalid", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Check Invalid", display_id="20260101-000014-chk-invalid", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         # When inserting a workflow_phase with a value NOT in the valid set
         with pytest.raises(sqlite3.IntegrityError):
@@ -5159,7 +5164,7 @@ class TestMigration5Deepened:
         NULL would be rejected, breaking legacy data patterns.
         """
         # Given a registered entity
-        db.register_entity("brainstorm", name="Check Null", display_id="001-chk-null", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Check Null", display_id="001-chk-null", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         now = EntityDatabase._now_iso()
         # When inserting with NULL workflow_phase
         db._conn.execute(
@@ -5186,7 +5191,7 @@ class TestMigration5Deepened:
         # Given a fresh DB at schema v5
         for i, phase in enumerate(("open", "triaged", "dropped")):
             eid = f"001-bl-phase-{i}"
-            db.register_entity("backlog", name=f"Backlog Phase {i}", **identity_kwargs("backlog", eid), project_id="__unknown__")
+            db.register_entity("backlog", name=f"Backlog Phase {i}", **identity_kwargs("backlog", eid), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             now = EntityDatabase._now_iso()
             # When inserting each backlog phase value
             db._conn.execute(
@@ -5218,7 +5223,7 @@ class TestMigration5Deepened:
         ]
         for i, phase in enumerate(feature_phases):
             eid = f"001-fp-{i}"
-            db.register_entity("feature", name=f"Feature Phase {i}", **identity_kwargs("feature", eid), project_id="__unknown__")
+            db.register_entity("feature", name=f"Feature Phase {i}", **identity_kwargs("feature", eid), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
             now = EntityDatabase._now_iso()
             db._conn.execute(
                 "INSERT INTO workflow_phases "
@@ -5240,7 +5245,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_inserts_new_row(self, db: EntityDatabase):
         """upsert_workflow_phase creates a new row when none exists."""
-        db.register_entity("feature", name="Upsert Feature", seq=1, slug="u1", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature", seq=1, slug="u1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase(
             "feature:001-u1",
             workflow_phase="design",
@@ -5255,7 +5260,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_updates_existing_row(self, db: EntityDatabase):
         """upsert_workflow_phase updates fields on an existing row."""
-        db.register_entity("feature", name="Upsert Feature 2", seq=1, slug="u2", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 2", seq=1, slug="u2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase(
             "feature:001-u2",
             workflow_phase="design",
@@ -5274,7 +5279,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_rejects_invalid_column_name(self, db: EntityDatabase):
         """upsert_workflow_phase raises ValueError for invalid column names."""
-        db.register_entity("feature", name="Upsert Feature 3", seq=1, slug="u3", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 3", seq=1, slug="u3", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="Invalid workflow_phases columns"):
             db.upsert_workflow_phase(
                 "feature:001-u3",
@@ -5284,7 +5289,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_idempotent_reinsert(self, db: EntityDatabase):
         """upsert_workflow_phase with same data is idempotent."""
-        db.register_entity("feature", name="Upsert Feature 4", seq=1, slug="u4", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 4", seq=1, slug="u4", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase(
             "feature:001-u4",
             workflow_phase="design",
@@ -5303,7 +5308,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_sets_updated_at_on_update(self, db: EntityDatabase):
         """upsert_workflow_phase refreshes updated_at on each call."""
-        db.register_entity("feature", name="Upsert Feature 5", seq=1, slug="u5", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 5", seq=1, slug="u5", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase("feature:001-u5", workflow_phase="design")
         row1 = db.get_workflow_phase("feature:001-u5")
         # Second upsert should update timestamp
@@ -5315,7 +5320,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_with_mode_and_backward_reason(self, db: EntityDatabase):
         """upsert_workflow_phase handles mode and backward_transition_reason."""
-        db.register_entity("feature", name="Upsert Feature 6", seq=1, slug="u6", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 6", seq=1, slug="u6", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase(
             "feature:001-u6",
             workflow_phase="design",
@@ -5329,7 +5334,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_no_kwargs_still_inserts(self, db: EntityDatabase):
         """upsert_workflow_phase with no kwargs creates row with defaults."""
-        db.register_entity("feature", name="Upsert Feature 7", seq=1, slug="u7", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 7", seq=1, slug="u7", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase("feature:001-u7")
         row = db.get_workflow_phase("feature:001-u7")
         assert row is not None
@@ -5338,7 +5343,7 @@ class TestUpsertWorkflowPhase:
 
     def test_upsert_multiple_invalid_columns_reported(self, db: EntityDatabase):
         """upsert_workflow_phase reports all invalid column names."""
-        db.register_entity("feature", name="Upsert Feature 8", seq=1, slug="u8", project_id="__unknown__")
+        db.register_entity("feature", name="Upsert Feature 8", seq=1, slug="u8", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with pytest.raises(ValueError, match="Invalid workflow_phases columns"):
             db.upsert_workflow_phase(
                 "feature:001-u8",
@@ -5362,7 +5367,7 @@ class TestDeleteEntity:
 
     def test_delete_entity_success(self, db: EntityDatabase):
         """AC-2: Deleting an entity removes entity row, FTS entry, and workflow_phases."""
-        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase("feature:001-test", workflow_phase="design")
 
         db.delete_entity("feature:001-test")
@@ -5386,11 +5391,11 @@ class TestDeleteEntity:
 
     def test_delete_entity_with_children_rejected(self, db: EntityDatabase):
         """AC-3: Cannot delete entity that has children."""
-        db.register_entity("project", name="Parent Project", seq=1, slug="p001", project_id="__unknown__")
+        db.register_entity("project", name="Parent Project", seq=1, slug="p001", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity(
             "feature", name="Child Feature", seq=1, slug="child-1",
-            parent_type_id="project:001-p001",
-            project_id="__unknown__",
+            parent_uuid=db.get_entity("project:001-p001")["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with pytest.raises(ValueError, match="Cannot delete entity with children"):
@@ -5399,7 +5404,7 @@ class TestDeleteEntity:
     def test_delete_entity_fts_cleaned(self, db: EntityDatabase):
         """AC-4: After delete, search_entities no longer returns the entity."""
         db.register_entity("feature", name="Searchable Entity", seq=1, slug="fts-test",
-                               project_id="__unknown__",
+                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            status="active")
         # Confirm searchable before delete
         results = db.search_entities("Searchable")
@@ -5412,7 +5417,7 @@ class TestDeleteEntity:
 
     def test_delete_entity_no_workflow_phases(self, db: EntityDatabase):
         """AC-13: Deleting entity without workflow_phases does not error."""
-        db.register_entity("feature", name="No WF Feature", seq=2, slug="test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="No WF Feature", seq=2, slug="test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # No upsert_workflow_phase call — entity has no workflow_phases row
 
         db.delete_entity("feature:002-test")
@@ -5421,7 +5426,7 @@ class TestDeleteEntity:
 
     def test_delete_entity_rollback_on_error(self, db: EntityDatabase):
         """AC-12: Transaction rolls back on mid-delete error, preserving all data."""
-        db.register_entity("feature", name="Rollback Feature", seq=1, slug="rb-test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Rollback Feature", seq=1, slug="rb-test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.upsert_workflow_phase("feature:001-rb-test", workflow_phase="design")
 
         # Wrap the real connection with a proxy that intercepts execute
@@ -5457,7 +5462,7 @@ class TestDeleteEntity:
 
     def test_delete_entity_corrupted_metadata_still_deletes(self, db: EntityDatabase):
         """Corrupted metadata does not prevent deletion — uses empty string for FTS."""
-        db.register_entity("feature", name="Corrupt Meta Feature", seq=1, slug="corrupt-meta", project_id="__unknown__")
+        db.register_entity("feature", name="Corrupt Meta Feature", seq=1, slug="corrupt-meta", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # Manually corrupt the metadata column
         db._conn.execute(
             "UPDATE entities SET metadata = '{bad json' WHERE type_id = ?",
@@ -5478,8 +5483,8 @@ class TestOkrAlignment:
 
     def test_add_okr_alignment_basic(self, db: EntityDatabase):
         """Link feature to KR -> alignment recorded."""
-        feat_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", project_id="__unknown__")
-        kr_uuid = db.register_entity("key_result", name="KR One", seq=1, slug="kr1", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr_uuid = db.register_entity("key_result", name="KR One", seq=1, slug="kr1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr_uuid)
         alignments = db.get_okr_alignments(feat_uuid)
@@ -5488,8 +5493,8 @@ class TestOkrAlignment:
 
     def test_add_okr_alignment_idempotent(self, db: EntityDatabase):
         """Adding same alignment twice doesn't duplicate."""
-        feat_uuid = db.register_entity("feature", name="Feature Two", seq=1, slug="f2", status="active", project_id="__unknown__")
-        kr_uuid = db.register_entity("key_result", name="KR Two", seq=1, slug="kr2", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Two", seq=1, slug="f2", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr_uuid = db.register_entity("key_result", name="KR Two", seq=1, slug="kr2", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr_uuid)
         db.add_okr_alignment(feat_uuid, kr_uuid)
@@ -5498,10 +5503,10 @@ class TestOkrAlignment:
 
     def test_add_multiple_alignments(self, db: EntityDatabase):
         """Entity can align to multiple KRs."""
-        feat_uuid = db.register_entity("feature", name="Feature Three", seq=1, slug="f3", status="active", project_id="__unknown__")
-        kr1_uuid = db.register_entity("key_result", name="KR 3A", seq=1, slug="kr3a", status="active", project_id="__unknown__")
-        kr2_uuid = db.register_entity("key_result", name="KR 3B", seq=1, slug="kr3b", status="active", project_id="__unknown__")
-        kr3_uuid = db.register_entity("key_result", name="KR 3C", seq=1, slug="kr3c", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Three", seq=1, slug="f3", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr1_uuid = db.register_entity("key_result", name="KR 3A", seq=1, slug="kr3a", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr2_uuid = db.register_entity("key_result", name="KR 3B", seq=1, slug="kr3b", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr3_uuid = db.register_entity("key_result", name="KR 3C", seq=1, slug="kr3c", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr1_uuid)
         db.add_okr_alignment(feat_uuid, kr2_uuid)
@@ -5513,8 +5518,8 @@ class TestOkrAlignment:
 
     def test_remove_okr_alignment(self, db: EntityDatabase):
         """Remove alignment -> no longer returned."""
-        feat_uuid = db.register_entity("feature", name="Feature Four", seq=1, slug="f4", status="active", project_id="__unknown__")
-        kr_uuid = db.register_entity("key_result", name="KR Four", seq=1, slug="kr4", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Four", seq=1, slug="f4", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr_uuid = db.register_entity("key_result", name="KR Four", seq=1, slug="kr4", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr_uuid)
         assert len(db.get_okr_alignments(feat_uuid)) == 1
@@ -5524,22 +5529,22 @@ class TestOkrAlignment:
 
     def test_remove_nonexistent_alignment_silent(self, db: EntityDatabase):
         """Removing alignment that doesn't exist is a no-op."""
-        feat_uuid = db.register_entity("feature", name="Feature Five", seq=1, slug="f5", status="active", project_id="__unknown__")
-        kr_uuid = db.register_entity("key_result", name="KR Five", seq=1, slug="kr5", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Five", seq=1, slug="f5", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr_uuid = db.register_entity("key_result", name="KR Five", seq=1, slug="kr5", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Should not raise
         db.remove_okr_alignment(feat_uuid, kr_uuid)
 
     def test_get_okr_alignments_empty(self, db: EntityDatabase):
         """Entity with no alignments -> empty list."""
-        feat_uuid = db.register_entity("feature", name="Feature Six", seq=1, slug="f6", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Six", seq=1, slug="f6", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         alignments = db.get_okr_alignments(feat_uuid)
         assert alignments == []
 
     def test_get_okr_alignments_returns_entity_dicts(self, db: EntityDatabase):
         """Returned alignments are full entity dicts with expected keys."""
-        feat_uuid = db.register_entity("feature", name="Feature Seven", seq=1, slug="f7", status="active", project_id="__unknown__")
-        kr_uuid = db.register_entity("key_result", name="KR Seven", seq=1, slug="kr7", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Seven", seq=1, slug="f7", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr_uuid = db.register_entity("key_result", name="KR Seven", seq=1, slug="kr7", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr_uuid)
         alignments = db.get_okr_alignments(feat_uuid)
@@ -5551,14 +5556,14 @@ class TestOkrAlignment:
 
     def test_lateral_cross_linkage(self, db: EntityDatabase):
         """Feature can align to KR that is NOT its parent — lateral linkage."""
-        obj_uuid = db.register_entity("objective", name="Objective One", seq=1, slug="o1", status="active", project_id="__unknown__")
+        obj_uuid = db.register_entity("objective", name="Objective One", seq=1, slug="o1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         kr_uuid = db.register_entity(
             "key_result", name="KR Lateral", seq=1, slug="kr-lateral",
-            parent_type_id="objective:001-o1", status="active",
-            project_id="__unknown__",
+            parent_uuid=obj_uuid, status="active",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Feature is NOT a child of the KR
-        feat_uuid = db.register_entity("feature", name="Feature Lateral", seq=1, slug="f-lateral", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Lateral", seq=1, slug="f-lateral", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr_uuid)
         alignments = db.get_okr_alignments(feat_uuid)
@@ -5567,9 +5572,9 @@ class TestOkrAlignment:
 
     def test_remove_partial_alignment(self, db: EntityDatabase):
         """Remove one alignment, others remain."""
-        feat_uuid = db.register_entity("feature", name="Feature Eight", seq=1, slug="f8", status="active", project_id="__unknown__")
-        kr1_uuid = db.register_entity("key_result", name="KR 8A", seq=1, slug="kr8a", status="active", project_id="__unknown__")
-        kr2_uuid = db.register_entity("key_result", name="KR 8B", seq=1, slug="kr8b", status="active", project_id="__unknown__")
+        feat_uuid = db.register_entity("feature", name="Feature Eight", seq=1, slug="f8", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr1_uuid = db.register_entity("key_result", name="KR 8A", seq=1, slug="kr8a", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        kr2_uuid = db.register_entity("key_result", name="KR 8B", seq=1, slug="kr8b", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         db.add_okr_alignment(feat_uuid, kr1_uuid)
         db.add_okr_alignment(feat_uuid, kr2_uuid)
@@ -5589,8 +5594,8 @@ class TestDependencyMethods:
     """Tests for add_dependency, remove_dependency, query_dependencies, etc."""
 
     def _make_two_entities(self, db):
-        uuid_a = db.register_entity("feature", name="Feature A", seq=1, slug="dep-a", project_id="__unknown__")
-        uuid_b = db.register_entity("feature", name="Feature B", seq=1, slug="dep-b", project_id="__unknown__")
+        uuid_a = db.register_entity("feature", name="Feature A", seq=1, slug="dep-a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        uuid_b = db.register_entity("feature", name="Feature B", seq=1, slug="dep-b", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         return uuid_a, uuid_b
 
     def test_add_and_query_dependency(self, db):
@@ -5619,7 +5624,7 @@ class TestDependencyMethods:
 
     def test_query_dependencies_by_blocker(self, db):
         a, b = self._make_two_entities(db)
-        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", project_id="__unknown__")
+        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.add_dependency(a, b)
         db.add_dependency(c, b)
         deps = db.query_dependencies(blocked_by_uuid=b)
@@ -5637,7 +5642,7 @@ class TestDependencyMethods:
 
     def test_check_dependency_cycle_simple(self, db):
         a, b = self._make_two_entities(db)
-        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", project_id="__unknown__")
+        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # A blocked by B, B blocked by C
         db.add_dependency(a, b)
         db.add_dependency(b, c)
@@ -5646,7 +5651,7 @@ class TestDependencyMethods:
 
     def test_check_dependency_cycle_no_cycle(self, db):
         a, b = self._make_two_entities(db)
-        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", project_id="__unknown__")
+        c = db.register_entity("feature", name="Feature C", seq=1, slug="dep-c", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.add_dependency(a, b)
         # C blocked by A is fine (no cycle)
         assert db.check_dependency_cycle(c, a) is False
@@ -5667,9 +5672,9 @@ class TestUtilityMethods:
     """Tests for scan_entity_ids and is_healthy."""
 
     def test_scan_entity_ids_returns_ids(self, db):
-        db.register_entity("feature", name="Feature 1", seq=1, slug="scan-1", project_id="__unknown__")
-        db.register_entity("feature", name="Feature 2", seq=1, slug="scan-2", project_id="__unknown__")
-        db.register_entity("task", name="Task 1", seq=1, slug="task-1", project_id="__unknown__")
+        db.register_entity("feature", name="Feature 1", seq=1, slug="scan-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("feature", name="Feature 2", seq=1, slug="scan-2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        db.register_entity("task", name="Task 1", seq=1, slug="task-1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         ids = db.scan_entity_ids("feature")
         assert "001-scan-1" in ids
         assert "001-scan-2" in ids
@@ -5678,7 +5683,7 @@ class TestUtilityMethods:
     def test_scan_entity_ids_returns_a_brainstorm_id_verbatim(self, db):
         # Registration parses a brainstorm stem into a display row too (seq 1,
         # slug "idea" here); rebuilding from that row would drop the padding.
-        db.register_entity("brainstorm", name="Idea", display_id="001-idea", project_id="__unknown__")
+        db.register_entity("brainstorm", name="Idea", display_id="001-idea", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert db.scan_entity_ids("brainstorm") == ["001-idea"]
 
     def test_scan_entity_ids_empty(self, db):
@@ -5704,7 +5709,7 @@ class TestMetadataValidationWiring:
         db.register_entity(
             "key_result", name="Bad KR", seq=1, slug="kr-bad",
             metadata={"metric_type": 123},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         err = capsys.readouterr().err
         assert "metadata warning" in err
@@ -5713,13 +5718,13 @@ class TestMetadataValidationWiring:
         db.register_entity(
             "feature", name="Good Feature", seq=1, slug="f-good",
             metadata={"progress": 0.5},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         err = capsys.readouterr().err
         assert "metadata warning" not in err
 
     def test_update_entity_warns_bad_type(self, db, capsys):
-        db.register_entity("key_result", name="Update KR", seq=1, slug="kr-upd", project_id="__unknown__")
+        db.register_entity("key_result", name="Update KR", seq=1, slug="kr-upd", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         _ = capsys.readouterr()  # clear
         db.update_entity("key_result:001-kr-upd", metadata={"metric_type": 123})
         err = capsys.readouterr().err
@@ -5730,7 +5735,7 @@ class TestMetadataValidationWiring:
         uuid = db.register_entity(
             "key_result", name="Still Saved", seq=1, slug="kr-still-saved",
             metadata={"metric_type": 123},
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         entity = db.get_entity("key_result:001-kr-still-saved")
         assert entity is not None
@@ -5738,7 +5743,7 @@ class TestMetadataValidationWiring:
         assert meta["metric_type"] == 123
 
     def test_register_no_metadata_no_warning(self, db, capsys):
-        db.register_entity("feature", name="No Meta", seq=1, slug="f-nometa", project_id="__unknown__")
+        db.register_entity("feature", name="No Meta", seq=1, slug="f-nometa", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         err = capsys.readouterr().err
         assert "metadata warning" not in err
 
@@ -5757,7 +5762,7 @@ class TestBatchRegistration:
             {"entity_type": "feature", "seq": 1, "slug": "b2", "name": "Batch 2"},
             {"entity_type": "feature", "seq": 1, "slug": "b3", "name": "Batch 3"},
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 3
         for uid in uuids:
             assert _UUID_RE.match(uid)
@@ -5768,7 +5773,7 @@ class TestBatchRegistration:
             {"entity_type": "feature", **identity_kwargs("feature", f"001-bulk-{i:03d}"), "name": f"Bulk {i}"}
             for i in range(100)
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 100
 
     def test_batch_invalid_type_fails_all(self, db):
@@ -5777,7 +5782,7 @@ class TestBatchRegistration:
             {"entity_type": "invalid_type", "seq": 1, "slug": "bad", "name": "Bad"},
         ]
         with pytest.raises(ValueError, match="Invalid entity_type"):
-            db.register_entities_batch(entities, project_id="__unknown__")
+            db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # None should have been inserted (raw-SQL probe — get_entity()
         # still references the dropped project_id column post-Migration-11
         # and is out of scope for this dispatch).
@@ -5787,12 +5792,12 @@ class TestBatchRegistration:
         assert row is None
 
     def test_batch_duplicate_type_id_ignored(self, db):
-        db.register_entity("feature", name="Already Exists", seq=1, slug="dup", project_id="__unknown__")
+        db.register_entity("feature", name="Already Exists", seq=1, slug="dup", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         entities = [
             {"entity_type": "feature", "seq": 1, "slug": "dup", "name": "Duplicate"},
             {"entity_type": "feature", "seq": 1, "slug": "new", "name": "New"},
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 2  # Both return UUIDs (existing + new)
 
     def test_batch_parent_within_batch(self, db):
@@ -5802,7 +5807,7 @@ class TestBatchRegistration:
         ``parent_type_id`` dict key was dropped along with the kwarg.
         """
         parent_uuid = db.register_entity(
-            "project", name="Project", seq=2, slug="p1", project_id="__unknown__"
+            "project", name="Project", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
         )
         entities = [
             {
@@ -5810,7 +5815,7 @@ class TestBatchRegistration:
                 "parent_uuid": parent_uuid,
             },
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 1
         # Raw-SQL probe — get_entity() out of scope this dispatch.
         row = db._conn.execute(
@@ -5823,7 +5828,7 @@ class TestBatchRegistration:
     def test_batch_parent_in_db(self, db):
         parent_uuid = db.register_entity(
             "project", name="Existing Project", seq=1, slug="existing-p",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         entities = [
             {
@@ -5831,11 +5836,11 @@ class TestBatchRegistration:
                 "parent_uuid": parent_uuid,
             },
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 1
 
     def test_batch_empty_list(self, db):
-        assert db.register_entities_batch([], project_id="__unknown__") == []
+        assert db.register_entities_batch([], workspace_uuid=_UNKNOWN_WORKSPACE_UUID) == []
 
     def test_batch_with_metadata(self, db):
         entities = [
@@ -5844,7 +5849,7 @@ class TestBatchRegistration:
                 "metadata": {"mode": "standard"},
             },
         ]
-        uuids = db.register_entities_batch(entities, project_id="__unknown__")
+        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 1
         # Raw-SQL probe — get_entity() out of scope this dispatch.
         row = db._conn.execute(
@@ -5860,7 +5865,7 @@ class TestBatchRegistration:
         entities = [
             {"entity_type": "feature", "seq": 1, "slug": "fts-batch", "name": "UniqueSearchTerm"},
         ]
-        db.register_entities_batch(entities, project_id="__unknown__")
+        db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         results = db.search_entities("UniqueSearchTerm")
         assert len(results) >= 1
 
@@ -5978,7 +5983,7 @@ class TestTransactionContextManager:
         methods like register_entity/update_entity that internally call
         transaction() but may also be called inside an outer transaction().
         """
-        db.register_entity("feature", name="Nested", seq=1, slug="txn-nest", project_id="__unknown__")
+        db.register_entity("feature", name="Nested", seq=1, slug="txn-nest", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         with db.transaction():
             with db.transaction():
                 db.update_entity("feature:001-txn-nest", name="Updated")
@@ -5999,7 +6004,7 @@ class TestBeginImmediate:
     def test_begin_immediate_register_entity(self, db):
         """register_entity inside begin_immediate completes without error (AC-3)."""
         with db.begin_immediate():
-            db.register_entity("feature", name="BI Test", seq=1, slug="bi-test", project_id="__unknown__")
+            db.register_entity("feature", name="BI Test", seq=1, slug="bi-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         row = db._conn.execute(
             "SELECT * FROM entities WHERE type_id = ?", ("feature:001-bi-test",)
@@ -6011,7 +6016,7 @@ class TestBeginImmediate:
         """register_entity then raise inside begin_immediate rolls back."""
         with pytest.raises(ValueError, match="deliberate"):
             with db.begin_immediate():
-                db.register_entity("feature", name="BI Rollback", seq=1, slug="bi-rollback", project_id="__unknown__")
+                db.register_entity("feature", name="BI Rollback", seq=1, slug="bi-rollback", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
                 raise ValueError("deliberate error")
 
         row = db._conn.execute(
@@ -6028,7 +6033,7 @@ class TestBeginImmediate:
 
     def test_register_entity_outside_transaction_unchanged(self, db):
         """register_entity outside any transaction works as before (AC-4)."""
-        entity_uuid = db.register_entity("feature", name="No Txn", seq=1, slug="no-txn", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="No Txn", seq=1, slug="no-txn", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert entity_uuid is not None
 
         row = db._conn.execute(
@@ -6560,7 +6565,7 @@ class TestResolveIdentifierProject:
     def test_uuid_lookup_unchanged(self, mem_db):
         """UUID lookup ignores project_id (UUID is globally unique)."""
         uid = mem_db.register_entity(
-            "feature", name="F1", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         result_uuid, result_tid = mem_db._resolve_identifier(uid)
         assert result_uuid == uid
@@ -6569,10 +6574,10 @@ class TestResolveIdentifierProject:
     def test_type_id_with_project_id(self, mem_db):
         """type_id + project_id filters correctly."""
         uid1 = mem_db.register_entity(
-            "feature", name="F1 test", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1 test", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         uid2 = mem_db.register_entity(
-            "feature", name="F1 other", seq=1, slug="f1", project_id="__other__"
+            "feature", name="F1 other", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
         resolved_uuid, _ = mem_db._resolve_identifier(
             "feature:001-f1", project_id=TEST_PROJECT_ID
@@ -6586,7 +6591,7 @@ class TestResolveIdentifierProject:
     def test_type_id_globally_unique(self, mem_db):
         """type_id without project_id returns if globally unique."""
         uid = mem_db.register_entity(
-            "feature", name="Unique", seq=1, slug="unique1", project_id=TEST_PROJECT_ID
+            "feature", name="Unique", seq=1, slug="unique1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         resolved_uuid, _ = mem_db._resolve_identifier("feature:001-unique1")
         assert resolved_uuid == uid
@@ -6594,10 +6599,10 @@ class TestResolveIdentifierProject:
     def test_type_id_ambiguity_error(self, mem_db):
         """type_id without project_id raises ambiguity if in multiple projects."""
         mem_db.register_entity(
-            "feature", name="Dup test", seq=1, slug="dup1", project_id=TEST_PROJECT_ID
+            "feature", name="Dup test", seq=1, slug="dup1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.register_entity(
-            "feature", name="Dup other", seq=1, slug="dup1", project_id="__other__"
+            "feature", name="Dup other", seq=1, slug="dup1", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
         with pytest.raises(ValueError, match="Ambiguous"):
             mem_db._resolve_identifier("feature:001-dup1")
@@ -6609,10 +6614,10 @@ class TestResolveRefAndPrefixProject:
     def test_prefix_search_filtered_by_project(self, mem_db):
         """search_by_type_id_prefix respects project_id filter."""
         mem_db.register_entity(
-            "feature", name="Alpha", seq=55, slug="alpha", project_id=TEST_PROJECT_ID
+            "feature", name="Alpha", seq=55, slug="alpha", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.register_entity(
-            "feature", name="Beta", seq=55, slug="beta", project_id="__other__"
+            "feature", name="Beta", seq=55, slug="beta", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
         results = mem_db.search_by_type_id_prefix(
             "feature:055", project_id=TEST_PROJECT_ID
@@ -6631,20 +6636,20 @@ class TestRegisterEntityProject:
     def test_idempotency_same_project(self, mem_db):
         """Same type_id + project returns existing UUID via upsert_entity (F12)."""
         uid1 = mem_db.upsert_entity(
-            "feature", name="F1", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         uid2 = mem_db.upsert_entity(
-            "feature", name="F1", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         assert uid1 == uid2
 
     def test_different_project_creates_new(self, mem_db):
         """Same type_id in different project creates a new entity."""
         uid1 = mem_db.register_entity(
-            "feature", name="F1 test", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1 test", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         uid2 = mem_db.register_entity(
-            "feature", name="F1 other", seq=1, slug="f1", project_id="__other__"
+            "feature", name="F1 other", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
         assert uid1 != uid2
 
@@ -6671,7 +6676,7 @@ class TestRegisterEntityProject:
 
 
 class TestRegisterEntitiesBatchProject:
-    """T3.4: register_entities_batch with project_id."""
+    """T3.4: register_entities_batch into one project's workspace."""
 
     def test_batch_idempotency(self, mem_db):
         """Batch registration is idempotent for same project."""
@@ -6679,8 +6684,8 @@ class TestRegisterEntitiesBatchProject:
             {"entity_type": "feature", "seq": 1, "slug": "b1", "name": "B1"},
             {"entity_type": "feature", "seq": 1, "slug": "b2", "name": "B2"},
         ]
-        uuids1 = mem_db.register_entities_batch(batch, project_id=TEST_PROJECT_ID)
-        uuids2 = mem_db.register_entities_batch(batch, project_id=TEST_PROJECT_ID)
+        uuids1 = mem_db.register_entities_batch(batch, workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        uuids2 = mem_db.register_entities_batch(batch, workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
         assert uuids1 == uuids2
 
 
@@ -6688,8 +6693,8 @@ class TestProjectScopedQueryListEntities:
     """T3.5: Query methods with project_id."""
 
     def test_project_scoped_query_list_entities(self, mem_db):
-        mem_db.register_entity("feature", name="Q1", seq=1, slug="q1", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("feature", name="Q2", seq=1, slug="q2", project_id="__other__")
+        mem_db.register_entity("feature", name="Q1", seq=1, slug="q1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        mem_db.register_entity("feature", name="Q2", seq=1, slug="q2", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
         result = mem_db.list_entities(project_id=TEST_PROJECT_ID)
         assert len(result) == 1
         assert result[0]["entity_id"] == "001-q1"
@@ -6697,8 +6702,8 @@ class TestProjectScopedQueryListEntities:
         assert len(all_result) == 2
 
     def test_project_scoped_query_search_entities(self, mem_db):
-        mem_db.register_entity("feature", name="Search Me", seq=1, slug="searchme", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("feature", name="Search Other", seq=1, slug="searchother", project_id="__other__")
+        mem_db.register_entity("feature", name="Search Me", seq=1, slug="searchme", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        mem_db.register_entity("feature", name="Search Other", seq=1, slug="searchother", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
         result = mem_db.search_entities("search", project_id=TEST_PROJECT_ID)
         assert len(result) == 1
         assert result[0]["entity_id"] == "001-searchme"
@@ -6706,8 +6711,8 @@ class TestProjectScopedQueryListEntities:
         assert len(all_result) == 2
 
     def test_project_scoped_query_export_entities_json(self, mem_db):
-        mem_db.register_entity("feature", name="E1", seq=1, slug="e1", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("feature", name="E2", seq=1, slug="e2", project_id="__other__")
+        mem_db.register_entity("feature", name="E1", seq=1, slug="e1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        mem_db.register_entity("feature", name="E2", seq=1, slug="e2", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
         result = mem_db.export_entities_json(project_id=TEST_PROJECT_ID)
         assert result["entity_count"] == 1
         assert result["entities"][0]["entity_id"] == "001-e1"
@@ -6730,10 +6735,10 @@ class TestProjectScopedQueryListEntities:
         assert all_result["entity_count"] == 2
 
     def test_project_scoped_query_export_lineage_markdown(self, mem_db):
-        _bootstrap_test_workspace(mem_db)
-        _bootstrap_test_workspace(mem_db, "__other__")
-        mem_db.register_entity("project", name="001-p1", seq=2, slug="p1", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("project", name="P2", seq=1, slug="p2", project_id="__other__")
+        ws_a = _bootstrap_test_workspace(mem_db)
+        ws_b = _bootstrap_test_workspace(mem_db, "__other__")
+        mem_db.register_entity("project", name="001-p1", seq=2, slug="p1", workspace_uuid=ws_a)
+        mem_db.register_entity("project", name="P2", seq=1, slug="p2", workspace_uuid=ws_b)
         result = mem_db.export_lineage_markdown(project_id=TEST_PROJECT_ID)
         assert "001-p1" in result
         assert "P2" not in result
@@ -6742,8 +6747,8 @@ class TestProjectScopedQueryListEntities:
         assert "P2" in all_result
 
     def test_project_scoped_query_scan_entity_ids(self, mem_db):
-        mem_db.register_entity("feature", name="S1", seq=1, slug="s1", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("feature", name="S2", seq=1, slug="s2", project_id="__other__")
+        mem_db.register_entity("feature", name="S1", seq=1, slug="s1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        mem_db.register_entity("feature", name="S2", seq=1, slug="s2", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
         result = mem_db.scan_entity_ids("feature", project_id=TEST_PROJECT_ID)
         assert result == ["001-s1"]
         all_result = mem_db.scan_entity_ids("feature")
@@ -6755,13 +6760,13 @@ class TestSetParentProject:
 
     def test_set_parent_project_scoped(self, mem_db):
         """set_parent resolves both entities within the project scope."""
-        mem_db.register_entity("project", name="P1 test", seq=2, slug="p1", project_id=TEST_PROJECT_ID)
+        mem_db.register_entity("project", name="P1 test", seq=2, slug="p1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
         uid_child = mem_db.register_entity(
-            "feature", name="F1 test", seq=1, slug="f1", project_id=TEST_PROJECT_ID
+            "feature", name="F1 test", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         # Also register same type_ids in another project
-        mem_db.register_entity("project", name="P1 other", seq=2, slug="p1", project_id="__other__")
-        mem_db.register_entity("feature", name="F1 other", seq=1, slug="f1", project_id="__other__")
+        mem_db.register_entity("project", name="P1 other", seq=2, slug="p1", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
+        mem_db.register_entity("feature", name="F1 other", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
 
         result_uuid = mem_db.set_parent(
             "feature:001-f1", "project:002-p1", project_id=TEST_PROJECT_ID
@@ -6785,13 +6790,13 @@ class TestDeleteCascade:
         """Delete cleans up entity_tags, dependency edges (entity_relations
         kind='blocks'), entity_okr_alignment."""
         uid = mem_db.register_entity(
-            "feature", name="Deletable", seq=1, slug="del1", project_id=TEST_PROJECT_ID
+            "feature", name="Deletable", seq=1, slug="del1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         kr_uid = mem_db.register_entity(
-            "key_result", name="KR1", seq=1, slug="kr1", project_id=TEST_PROJECT_ID
+            "key_result", name="KR1", seq=1, slug="kr1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         blocker_uid = mem_db.register_entity(
-            "feature", name="Blocker", seq=1, slug="blocker1", project_id=TEST_PROJECT_ID
+            "feature", name="Blocker", seq=1, slug="blocker1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
 
         # Add tags, deps, OKR
@@ -6822,10 +6827,10 @@ class TestDeleteCascade:
     def test_delete_cascade_project_scoped(self, mem_db):
         """Delete resolves entity within project scope."""
         uid_test = mem_db.register_entity(
-            "feature", name="Test One", seq=1, slug="same-id", project_id=TEST_PROJECT_ID
+            "feature", name="Test One", seq=1, slug="same-id", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         uid_other = mem_db.register_entity(
-            "feature", name="Other One", seq=1, slug="same-id", project_id="__other__"
+            "feature", name="Other One", seq=1, slug="same-id", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
 
         mem_db.delete_entity("feature:001-same-id", project_id=TEST_PROJECT_ID)
@@ -6848,11 +6853,11 @@ class TestDeleteCascadeUnblock:
         load-bearing empty-set case)."""
         a = mem_db.register_entity(
             "feature", name="Blocker A", seq=1, slug="d01-a", status="active",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         b = mem_db.register_entity(
             "feature", name="Blocked B", seq=1, slug="d02-b", status="blocked",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         mem_db.add_dependency(b, a)
         assert len(mem_db.query_dependencies(entity_uuid=b)) == 1
@@ -6884,15 +6889,15 @@ class TestDeleteCascadeUnblock:
         "flip whenever a blocker is deleted, ignoring what's left" mutant)."""
         a = mem_db.register_entity(
             "feature", name="Blocker A", seq=1, slug="d03-a", status="active",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         c = mem_db.register_entity(
             "feature", name="Blocker C", seq=1, slug="d04-c", status="active",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         b = mem_db.register_entity(
             "feature", name="Blocked B", seq=1, slug="d05-b", status="blocked",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         mem_db.add_dependency(b, a)
         mem_db.add_dependency(b, c)
@@ -6914,15 +6919,15 @@ class TestDeleteCascadeUnblock:
         only the resolved C -- all remaining blockers resolved -> B flips."""
         a = mem_db.register_entity(
             "feature", name="Blocker A", seq=1, slug="d06-a", status="active",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         c = mem_db.register_entity(
             "feature", name="Blocker C", seq=1, slug="d07-c", status="completed",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         b = mem_db.register_entity(
             "feature", name="Blocked B", seq=1, slug="d08-b", status="blocked",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID),
         )
         mem_db.add_dependency(b, a)
         mem_db.add_dependency(b, c)
@@ -6944,8 +6949,8 @@ class TestReattribution:
 
     def test_basic_project_id_resolution(self, mem_db):
         """update_entity resolves via project_id."""
-        mem_db.register_entity("feature", name="R1", seq=1, slug="r1", project_id=TEST_PROJECT_ID)
-        mem_db.register_entity("feature", name="R1 other", seq=1, slug="r1", project_id="__other__")
+        mem_db.register_entity("feature", name="R1", seq=1, slug="r1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID))
+        mem_db.register_entity("feature", name="R1 other", seq=1, slug="r1", workspace_uuid=workspace_uuid_for(mem_db, "__other__"))
         mem_db.update_entity(
             "feature:001-r1", name="R1 Updated", project_id=TEST_PROJECT_ID
         )
@@ -6964,15 +6969,15 @@ class TestReattribution:
     def test_reattribution_preserves_data(self, mem_db):
         """Re-attribution preserves UUID, tags, deps, OKR, workflow_phases."""
         uid = mem_db.register_entity(
-            "feature", name="Reattr", seq=1, slug="reattr1", project_id=TEST_PROJECT_ID
+            "feature", name="Reattr", seq=1, slug="reattr1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.add_tag(uid, "important")
         blocker_uid = mem_db.register_entity(
-            "feature", name="Blocker", seq=1, slug="blk", project_id=TEST_PROJECT_ID
+            "feature", name="Blocker", seq=1, slug="blk", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.add_dependency(uid, blocker_uid)
         kr_uid = mem_db.register_entity(
-            "key_result", name="KR1", seq=1, slug="kr1", project_id=TEST_PROJECT_ID
+            "key_result", name="KR1", seq=1, slug="kr1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.add_okr_alignment(uid, kr_uid)
         mem_db.upsert_workflow_phase(
@@ -7002,7 +7007,7 @@ class TestReattribution:
     def test_reattribution_fts_works(self, mem_db):
         """FTS search works after re-attribution."""
         mem_db.register_entity(
-            "feature", name="FTS Re-attr Test", seq=1, slug="ftstest", project_id=TEST_PROJECT_ID
+            "feature", name="FTS Re-attr Test", seq=1, slug="ftstest", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.update_entity(
             "feature:001-ftstest", project_id=TEST_PROJECT_ID,
@@ -7024,11 +7029,11 @@ class TestReattribution:
         violates UNIQUE(project_id, type_id).
         """
         uid = mem_db.register_entity(
-            "feature", name="Rollback", seq=1, slug="rollback1", project_id=TEST_PROJECT_ID
+            "feature", name="Rollback", seq=1, slug="rollback1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         # Create a conflict target: same type_id already in __other__
         mem_db.register_entity(
-            "feature", name="Conflict", seq=1, slug="rollback1", project_id="__other__"
+            "feature", name="Conflict", seq=1, slug="rollback1", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
 
         with pytest.raises(sqlite3.IntegrityError):
@@ -7060,7 +7065,7 @@ class TestUpsertWorkflowPhaseProject:
         """upsert_workflow_phase succeeds when project matches."""
         _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
-            "feature", name="WP1", seq=1, slug="wp1", project_id=TEST_PROJECT_ID
+            "feature", name="WP1", seq=1, slug="wp1", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         mem_db.upsert_workflow_phase(
             "feature:001-wp1", project_id=TEST_PROJECT_ID,
@@ -7074,7 +7079,7 @@ class TestUpsertWorkflowPhaseProject:
         """upsert_workflow_phase fails when project doesn't match."""
         _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
-            "feature", name="WP2", seq=1, slug="wp2", project_id=TEST_PROJECT_ID
+            "feature", name="WP2", seq=1, slug="wp2", workspace_uuid=workspace_uuid_for(mem_db, TEST_PROJECT_ID)
         )
         with pytest.raises(ValueError, match="not found in project"):
             mem_db.upsert_workflow_phase(
@@ -7095,11 +7100,11 @@ class TestCascadeOnComplete:
         """Completing a blocker removes the edge and promotes blocked entity."""
         uuid_a = db.register_entity(
             "feature", name="Blocked Entity", seq=1, slug="cas-a", status="blocked",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uuid_b = db.register_entity(
             "feature", name="Blocker Entity", seq=1, slug="cas-b", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.add_dependency(uuid_a, uuid_b)  # A blocked_by B
 
@@ -7118,11 +7123,11 @@ class TestCascadeOnComplete:
         """Non-completed status (e.g., 'active') does not trigger cascade."""
         uuid_a = db.register_entity(
             "feature", name="Blocked Entity", seq=1, slug="ncas-a", status="blocked",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uuid_b = db.register_entity(
             "feature", name="Blocker Entity", seq=1, slug="ncas-b", status="planned",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.add_dependency(uuid_a, uuid_b)
 
@@ -7140,7 +7145,7 @@ class TestCascadeOnComplete:
         """Completing entity with no dependents is a no-op, no error."""
         uuid_a = db.register_entity(
             "feature", name="Solo Entity", seq=1, slug="nodep-a", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # No dependencies added — should not raise
         db.update_entity("feature:001-nodep-a", status="completed")
@@ -7152,11 +7157,11 @@ class TestCascadeOnComplete:
         """Completing same entity twice does not error (idempotent)."""
         uuid_a = db.register_entity(
             "feature", name="Blocked Entity", seq=1, slug="idem-a", status="blocked",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uuid_b = db.register_entity(
             "feature", name="Blocker Entity", seq=1, slug="idem-b", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.add_dependency(uuid_a, uuid_b)
 
@@ -8487,8 +8492,8 @@ class TestFeature108ClaimUnknownEntities:
         """Without entity_type filter, every unknown-workspace entity is moved."""
         from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         # Two entities in the unknown bucket
-        u1 = db.register_entity("feature", name="F1", seq=1, slug="f1", project_id="__unknown__")
-        u2 = db.register_entity("feature", name="F2", seq=1, slug="f2", project_id="__unknown__")
+        u1 = db.register_entity("feature", name="F1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        u2 = db.register_entity("feature", name="F2", seq=1, slug="f2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         target = self._make_target_workspace(db)
 
         n = db.claim_unknown_entities(workspace_uuid=target)
@@ -8511,8 +8516,8 @@ class TestFeature108ClaimUnknownEntities:
 
     def test_entity_type_filter(self, db: EntityDatabase):
         """entity_type kwarg restricts the claim to that type only."""
-        db.register_entity("feature", name="F1", seq=1, slug="f1", project_id="__unknown__")
-        b_uid = db.register_entity("backlog", name="B1", seq=1, slug="b1", project_id="__unknown__")
+        db.register_entity("feature", name="F1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        b_uid = db.register_entity("backlog", name="B1", seq=1, slug="b1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         target = self._make_target_workspace(db)
 
         n = db.claim_unknown_entities(
@@ -8521,7 +8526,6 @@ class TestFeature108ClaimUnknownEntities:
         assert n == 1
 
         # Backlog row still in unknown
-        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         b_row = db._conn.execute(
             "SELECT workspace_uuid FROM entities WHERE uuid = ?",
             (b_uid,),
@@ -8532,7 +8536,7 @@ class TestFeature108ClaimUnknownEntities:
         """limit kwarg caps the number of entities re-attributed."""
         for i in range(3):
             db.register_entity(
-                "feature", name=f"F{i}", **identity_kwargs("feature", f"001-f{i}"), project_id="__unknown__"
+                "feature", name=f"F{i}", **identity_kwargs("feature", f"001-f{i}"), workspace_uuid=_UNKNOWN_WORKSPACE_UUID
             )
         target = self._make_target_workspace(db)
 
@@ -8566,7 +8570,7 @@ class TestFeature108ClaimUnknownEntities:
     ):
         """After successful claim, plain UPDATE OF workspace_uuid is still blocked."""
         u_uid = db.register_entity(
-            "feature", name="F1", seq=1, slug="f1", project_id="__unknown__"
+            "feature", name="F1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
         )
         target = self._make_target_workspace(db)
         db.claim_unknown_entities(workspace_uuid=target)
@@ -8591,7 +8595,7 @@ class TestFeature108ClaimUnknownEntities:
         """Re-attribution preserves uuid, type_id, name, status, metadata."""
         u_uid = db.register_entity(
             "feature", name="Claim Me", seq=1, slug="claim-1", status="planned",
-            metadata={"k": "v"}, project_id="__unknown__",
+            metadata={"k": "v"}, workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         target = self._make_target_workspace(db)
         db.claim_unknown_entities(workspace_uuid=target)
@@ -8637,8 +8641,8 @@ class TestFeature108QueryDependenciesWorkspaceFilter:
     ):
         """Edges in workspace A are not returned when filtering on workspace B."""
         # Workspace A: unknown bucket
-        a1 = db.register_entity("feature", name="A1", seq=1, slug="a1", project_id="__unknown__")
-        a2 = db.register_entity("feature", name="A2", seq=1, slug="a2", project_id="__unknown__")
+        a1 = db.register_entity("feature", name="A1", seq=1, slug="a1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        a2 = db.register_entity("feature", name="A2", seq=1, slug="a2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.add_dependency(a1, a2)
 
         # Workspace B: fresh workspace
@@ -8655,8 +8659,8 @@ class TestFeature108QueryDependenciesWorkspaceFilter:
 
     def test_no_filter_returns_all(self, db: EntityDatabase):
         """Without workspace_uuid kwarg, all edges return regardless of workspace."""
-        a1 = db.register_entity("feature", name="A1", seq=1, slug="a1", project_id="__unknown__")
-        a2 = db.register_entity("feature", name="A2", seq=1, slug="a2", project_id="__unknown__")
+        a1 = db.register_entity("feature", name="A1", seq=1, slug="a1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        a2 = db.register_entity("feature", name="A2", seq=1, slug="a2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         ws_b = self._make_target_workspace(db)
         b1 = db.register_entity("feature", name="B1", seq=1, slug="b1", workspace_uuid=ws_b)
         b2 = db.register_entity("feature", name="B2", seq=1, slug="b2", workspace_uuid=ws_b)
@@ -8969,7 +8973,7 @@ class TestUuid7RegisterEntityRoundTrip:
 
         minted = db.register_entity(
             "feature", name="UUID7 Round Trip", seq=1, slug="uuid7-round-trip",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         # Non-vacuous: the version nibble sits at string index 14 in the
@@ -9031,7 +9035,7 @@ class TestUuid7RegisterEntityRoundTrip:
 
         minted = db.register_entity(
             "feature", name="UUID7 Uppercase Round Trip", seq=2, slug="uuid7-uppercase-round-trip",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uppercased = minted.upper()
         # Sanity: uppercasing actually changed the string (otherwise this

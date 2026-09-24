@@ -17,6 +17,7 @@ from doctor.models import (
     FixResult,
     Issue,
 )
+from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
 
 
 # ---------------------------------------------------------------------------
@@ -728,11 +729,11 @@ class TestFixMissedCascade:
 
         uuid_blocked = db.register_entity(
             "feature", name="Blocked Entity", seq=1, slug="stale-blocked",
-            status="blocked", project_id="__unknown__",
+            status="blocked", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uuid_blocker = db.register_entity(
             "feature", name="Completed Blocker", seq=1, slug="stale-blocker",
-            status="completed", project_id="__unknown__",
+            status="completed", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.add_dependency(uuid_blocked, uuid_blocker)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.id_generator import (
     NON_SEQUENCE_KINDS,
     read_display_identity,
@@ -33,7 +33,7 @@ def _registered(db, kind: str, seq: int, slug: str, *, stored_entity_id: str | N
     """Register ``(seq, slug)`` with its display row; with *stored_entity_id*,
     store it under that older text form, as pre-renderer registries hold it."""
     entity_uuid = db.register_entity(kind, name=slug.title(), seq=seq, slug=slug,
-                                     project_id="__unknown__")
+                                     workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     if stored_entity_id is not None:
         db._conn.execute(
             "UPDATE entities SET type_id = ?, entity_id = ? WHERE uuid = ?",

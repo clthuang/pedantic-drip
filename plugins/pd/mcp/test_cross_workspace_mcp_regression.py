@@ -45,7 +45,7 @@ if _mcp_dir not in sys.path:
 
 import entity_server  # noqa: E402
 
-from entity_registry.database import EntityDatabase  # noqa: E402
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ def cross_workspace_pair(db, tmp_path):
     )
     entity_a_uuid = db.register_entity(
         entity_type="feature", seq=301, slug="entity-a", name="Entity A",
-        status="active", project_id="__unknown__",
+        status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     entity_b_uuid = db.register_entity(
         entity_type="backlog", seq=302, slug="entity-b", name="Entity B",

@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from entity_registry.database import EntityDatabase
-from entity_registry.test_helpers import bootstrap_test_workspace
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.test_helpers import bootstrap_test_workspace, workspace_uuid_for
 from reconciliation_orchestrator import entity_status
 from reconciliation_orchestrator.entity_status import sync_entity_statuses
 from entity_registry.test_helpers import identity_kwargs
@@ -38,7 +38,7 @@ def seed_feature(db: EntityDatabase, folder: str, status: str) -> None:
         **identity_kwargs("feature", folder),
         name=folder,
         status=status,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 
@@ -49,7 +49,7 @@ def seed_project(db: EntityDatabase, folder: str, status: str) -> None:
         **identity_kwargs("project", folder),
         name=folder,
         status=status,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
 
 
@@ -256,14 +256,14 @@ class TestProjectsScanned:
 
 def seed_brainstorm(db: EntityDatabase, entity_id: str, status: str = "active",
                     artifact_path: str = "", project_id: str = "test-project") -> None:
-    """Register a brainstorm entity for testing."""
+    """Register a brainstorm entity in the workspace seeded as ``project_id``."""
     db.register_entity(
         entity_type="brainstorm",
         **identity_kwargs("brainstorm", entity_id),
         name=entity_id,
         status=status,
         artifact_path=artifact_path,
-        project_id=project_id,
+        workspace_uuid=workspace_uuid_for(db, project_id),
     )
 
 
@@ -430,7 +430,7 @@ class TestUnifiedSync:
         feature_folder = "042-test"
         db.register_entity(
             entity_type="feature", **identity_kwargs("feature", feature_folder),
-            name=feature_folder, status="active", project_id="test-project",
+            name=feature_folder, status="active", workspace_uuid=workspace_uuid_for(db, "test-project"),
         )
         write_meta_json(str(tmp_path / "features" / feature_folder), status="completed")
 

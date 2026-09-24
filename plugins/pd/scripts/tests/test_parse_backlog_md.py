@@ -38,6 +38,7 @@ from entity_registry.database import EntityDatabase  # noqa: E402
 from entity_registry.test_helpers import (  # noqa: E402
     TEST_PROJECT_ID,
     bootstrap_test_workspace,
+    workspace_uuid_for,
 )
 
 
@@ -136,7 +137,7 @@ def test_apply_mode_updates_existing_entity(db, monkeypatch):
         entity_type="backlog",
         seq=10, slug="existing",
         name="Existing item",
-        project_id=TEST_PROJECT_ID,
+        workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
         status="open",
         metadata={"description": "Pre-existing description"},
     )
@@ -176,7 +177,7 @@ def test_apply_mode_idempotent(db, monkeypatch):
         entity_type="backlog",
         seq=20, slug="idempotent",
         name="Idempotent test",
-        project_id=TEST_PROJECT_ID,
+        workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
         status="open",
         metadata={
             "description": "x",

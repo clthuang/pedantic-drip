@@ -38,6 +38,7 @@ if _MCP not in sys.path:
 from entity_registry.database import (  # noqa: E402
     EntityDatabase,
     _v2_migration_7_immutable_is_legacy,
+    _UNKNOWN_WORKSPACE_UUID,
 )
 from workflow_state_server import (  # noqa: E402
     _project_backlog_md,
@@ -84,7 +85,7 @@ def _seed_feature(
         artifact_path=feature_dir,
         status="active",
         metadata=metadata,
-        project_id="__unknown__",
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
     )
     type_id = f"feature:{entity_id}"
 

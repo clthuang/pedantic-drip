@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ class TestFullRunOutputsValidJson:
             seq=1, slug="test-feature",
             name="001-test-feature",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.close()
 
@@ -421,7 +421,7 @@ class TestWorkflowReconcileAppliesDrift:
             seq=99, slug="drift-test",
             name="099-drift-test",
             status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Set workflow phase to "specify" in DB (behind .meta.json)
         db.create_workflow_phase(

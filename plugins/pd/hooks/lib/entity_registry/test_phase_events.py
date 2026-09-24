@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, MIGRATIONS
-from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry.test_helpers import TEST_PROJECT_ID, workspace_uuid_for
 
 
 # ---------------------------------------------------------------------------
@@ -86,15 +86,15 @@ def seeded_db():
 
     database.register_entity(
         "feature", name="Alpha", seq=1, slug="alpha",
-        project_id=TEST_PROJECT_ID, metadata=meta1,
+        workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID), metadata=meta1,
     )
     database.register_entity(
         "feature", name="Beta", seq=2, slug="beta",
-        project_id=TEST_PROJECT_ID, metadata=meta2,
+        workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID), metadata=meta2,
     )
     database.register_entity(
         "feature", name="Gamma", seq=3, slug="gamma",
-        project_id=TEST_PROJECT_ID, metadata=meta3,
+        workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID), metadata=meta3,
     )
 
     # Drop phase_events and reset schema_version to simulate pre-migration state
@@ -173,7 +173,7 @@ class TestMigration10:
         # Register entity then corrupt its metadata
         db.register_entity(
             "feature", name="Bad Meta", seq=1, slug="bad-meta",
-            project_id=TEST_PROJECT_ID, metadata={"phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}}},
+            workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID), metadata={"phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}}},
         )
         # The entity was registered after migration 10 ran, so its phase_timing
         # was not backfilled. To test AC-9 properly, we need to verify that
@@ -501,7 +501,7 @@ class TestFeature088Migration10Hardening:
             # Three entities with phase_timing metadata.
             database.register_entity(
                 "feature", name="Alpha", seq=1, slug="alpha",
-                project_id=TEST_PROJECT_ID,
+                workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
                 metadata={
                     "phase_timing": {
                         "brainstorm": {
@@ -516,7 +516,7 @@ class TestFeature088Migration10Hardening:
             )
             database.register_entity(
                 "feature", name="Beta", seq=2, slug="beta",
-                project_id=TEST_PROJECT_ID,
+                workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
                 metadata={
                     "phase_timing": {
                         "brainstorm": {
@@ -605,7 +605,7 @@ class TestFeature088Migration10Hardening:
         # Seed an entity with an unparseable timestamp in metadata.phase_timing.
         database.register_entity(
             "feature", name="Bad Timestamp", seq=1, slug="bad-ts",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {
                     "design": {"started": "not-a-date"},
@@ -647,7 +647,7 @@ class TestFeature088Migration10Hardening:
         _bootstrap_test_workspace(database)
         database.register_entity(
             "feature", name="Trunc", seq=1, slug="trunc-001",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
             metadata={
                 "backward_history": [{
                     "source_phase": "design",
@@ -837,7 +837,7 @@ class TestFeature088BundleH4PhaseEvents:
         _bootstrap_test_workspace(database)
         database.register_entity(
             "feature", name="Rerun", seq=1, slug="rerun-001",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {
                     "brainstorm": {
@@ -908,7 +908,7 @@ class TestFeature090Migration10Atomicity:
         try:
             database.register_entity(
                 "feature", name="Atomic Test", seq=90, slug="atom-001",
-                project_id=TEST_PROJECT_ID,
+                workspace_uuid=workspace_uuid_for(database, TEST_PROJECT_ID),
                 metadata={
                     "phase_timing": {
                         "brainstorm": {
@@ -1106,7 +1106,7 @@ class TestFeature089BundleE:
         _bootstrap_test_workspace(seed_db)
         seed_db.register_entity(
             "feature", name="E24", seq=89, slug="e24",
-            project_id=TEST_PROJECT_ID,
+            workspace_uuid=workspace_uuid_for(seed_db, TEST_PROJECT_ID),
             metadata={
                 "phase_timing": {
                     "design": {

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from reconciliation_orchestrator.dependency_freshness import cleanup_stale_dependencies
 
 
@@ -17,11 +17,11 @@ class TestCleanupStaleDependencies:
 
         uuid_blocked = db.register_entity(
             "feature", name="Blocked Entity", seq=1, slug="fresh-blocked",
-            status="blocked", project_id="__unknown__",
+            status="blocked", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         uuid_blocker = db.register_entity(
             "feature", name="Completed Blocker", seq=1, slug="fresh-blocker",
-            status="active", project_id="__unknown__",
+            status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.add_dependency(uuid_blocked, uuid_blocker)
 

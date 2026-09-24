@@ -9,10 +9,10 @@ import textwrap
 
 import pytest
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id
-from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry.test_helpers import TEST_PROJECT_ID, workspace_uuid_for
 from workflow_engine.task_promotion import (
     TaskAlreadyPromotedError,
     TaskNotFoundError,
@@ -36,7 +36,8 @@ def _patch_compute_legacy_project_id(monkeypatch):
 
 def _make_db() -> EntityDatabase:
     # Feature 108 Migration 11: pre-bootstrap a workspaces row for
-    # TEST_PROJECT_ID so register_entity(project_id=TEST_PROJECT_ID) resolves.
+    # TEST_PROJECT_ID; _register_feature registers into it
+    # (workspace_uuid_for(db, TEST_PROJECT_ID)).
     from entity_registry.test_helpers import bootstrap_test_workspace
     db = EntityDatabase(":memory:")
     bootstrap_test_workspace(db)
@@ -57,7 +58,7 @@ def _register_feature(
         **identity_kwargs("feature", slug),
         name=f"Test Feature {slug}",
         status=status,
-        project_id=TEST_PROJECT_ID,
+        workspace_uuid=workspace_uuid_for(db, TEST_PROJECT_ID),
     )
     db.create_workflow_phase(type_id, mode=mode, workflow_phase="implement")
     return type_id, uuid
@@ -353,7 +354,7 @@ class TestQueryReadyTasks:
         feature_uuid = db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug),
             name="Test Ready Feature", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, mode="standard", workflow_phase="implement")
 
@@ -361,8 +362,8 @@ class TestQueryReadyTasks:
         task_a_uuid = db.register_entity(
             entity_type="task", seq=1, slug="task-a",
             name="Task A - Ready", status="planned",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=feature_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:001-task-a", mode="standard")
 
@@ -370,8 +371,8 @@ class TestQueryReadyTasks:
         task_b_uuid = db.register_entity(
             entity_type="task", seq=2, slug="task-b",
             name="Task B - Blocked", status="planned",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=feature_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:002-task-b", mode="standard")
         dep_mgr = DependencyManager()
@@ -383,7 +384,7 @@ class TestQueryReadyTasks:
         feature2_uuid = db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug2),
             name="Not Implement Feature", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id2, mode="standard", workflow_phase="specify")
 
@@ -391,8 +392,8 @@ class TestQueryReadyTasks:
         task_c_uuid = db.register_entity(
             entity_type="task", seq=3, slug="task-c",
             name="Task C - Parent Not Implement", status="planned",
-            parent_type_id=type_id2,
-            project_id="__unknown__",
+            parent_uuid=feature2_uuid,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:003-task-c", mode="standard")
 
@@ -441,15 +442,15 @@ class TestQueryReadyTasks:
         db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug),
             name="Completed Parent", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, mode="standard", workflow_phase="implement")
 
         db.register_entity(
             entity_type="task", seq=4, slug="done",
             name="Done Task", status="completed",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=db.get_entity(type_id)["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:004-done", mode="standard")
 
@@ -472,23 +473,23 @@ class TestQueryReadyTasks:
         db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug),
             name="Ready Widen Parent", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(type_id, mode="standard", workflow_phase="implement")
 
         blocker_uuid = db.register_entity(
             entity_type="task", seq=5, slug="blocker",
             name="Resolved Blocker Task", status="completed",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=db.get_entity(type_id)["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:005-blocker", mode="standard")
 
         ready_task_uuid = db.register_entity(
             entity_type="task", seq=6, slug="ready",
             name="Cascade-Flipped Task", status="ready",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=db.get_entity(type_id)["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase("task:006-ready", mode="standard")
         dep_mgr = DependencyManager()
@@ -517,7 +518,7 @@ class TestQueryReadyTasks:
         db.register_entity(
             entity_type="feature", **identity_kwargs("feature", slug),
             name="Ready But Not Implement Parent", status="active",
-            project_id="__unknown__",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             type_id, mode="standard", workflow_phase="specify"
@@ -526,8 +527,8 @@ class TestQueryReadyTasks:
         ready_task_uuid = db.register_entity(
             entity_type="task", seq=7, slug="ready-orphaned",
             name="Ready Task, Wrong Parent Phase", status="ready",
-            parent_type_id=type_id,
-            project_id="__unknown__",
+            parent_uuid=db.get_entity(type_id)["uuid"],
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.create_workflow_phase(
             "task:007-ready-orphaned", mode="standard"

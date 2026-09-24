@@ -56,8 +56,9 @@ def bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
     """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
 
     Helper for ad-hoc test files that build their own EntityDatabase
-    instances and pass ``project_id=legacy_id`` to register_entity. Returns
-    the workspace UUID for callers that want it.
+    instances and register entities in the workspace of ``legacy_id``.
+    Returns the workspace UUID for callers that want it; callers that did
+    not keep it read it back with :func:`workspace_uuid_for`.
     """
     ws_uuid = str(_uuid.uuid4())
     now = db._now_iso()
@@ -72,6 +73,31 @@ def bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
         "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
         (legacy_id,),
     ).fetchone()
+    return row["uuid"]
+
+
+def workspace_uuid_for(db, legacy_id: str) -> str:
+    """The uuid of the workspace a fixture seeded under ``legacy_id``.
+
+    Fixtures seed workspaces by legacy project id (``TEST_PROJECT_ID``,
+    ``"__other__"``, ``bootstrap_test_workspace(db, "P001")``) under random
+    uuids, and registration takes the uuid, so this reads it back by
+    ``workspaces.project_id_legacy``. The canonical unknown workspace needs no
+    lookup: it is ``entity_registry.database._UNKNOWN_WORKSPACE_UUID``.
+
+    Raises
+    ------
+    LookupError
+        If no workspace carries ``legacy_id`` (the fixture never seeded it).
+    """
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    if row is None:
+        raise LookupError(
+            f"no workspace seeded with project_id_legacy={legacy_id!r}"
+        )
     return row["uuid"]
 
 
