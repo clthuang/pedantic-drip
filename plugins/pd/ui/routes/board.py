@@ -52,6 +52,11 @@ def board(request: Request) -> HTMLResponse:
     2. DB query error -> error.html
     3. HX-Request header present -> _board_content.html partial
     4. Normal request -> board.html full page
+
+    Archived entities get no card (user decision 2026-09-25): the query
+    drops their rows, so the column counts and the empty state count only
+    the cards shown. Orphan workflow rows and soft-deleted entities are
+    shown as before. The /entities page still lists archived entities.
     """
     db = request.app.state.db
     db_path = request.app.state.db_path
@@ -65,7 +70,8 @@ def board(request: Request) -> HTMLResponse:
     switcher = None
     try:
         rows = db.list_workflow_phases(
-            workspace_uuid=effective_workspace_uuid(request)
+            workspace_uuid=effective_workspace_uuid(request),
+            include_archived=False,
         )
         if not request.headers.get("HX-Request"):
             switcher = switcher_context(request, db)
