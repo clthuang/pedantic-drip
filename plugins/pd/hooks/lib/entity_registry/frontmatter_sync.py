@@ -21,7 +21,8 @@ from entity_registry.frontmatter import (
 from entity_registry.frontmatter_inject import (
     ARTIFACT_BASENAME_MAP,
     ARTIFACT_PHASE_MAP,
-    _parse_feature_type_id,
+    _feature_identity_fields,
+    _parent_project_id,
 )
 
 logger = logging.getLogger("entity_registry.frontmatter_sync")
@@ -86,15 +87,19 @@ class IngestResult:
 # ---------------------------------------------------------------------------
 
 
-def _derive_optional_fields(entity: dict, artifact_type: str) -> dict:
+def _derive_optional_fields(db: EntityDatabase, entity: dict, artifact_type: str) -> dict:
     """Derive optional frontmatter fields from an entity record.
 
-    Extracts feature_id/feature_slug (feature entities only), project_id
-    (from metadata JSON or parent_type_id fallback), and phase (from
-    artifact_type mapping).
+    Reads them from the entity's structure, never its ``type_id`` text:
+    feature_id/feature_slug for entities whose ``kind`` column is
+    ``feature`` (C8), taken from the display row (C9); project_id from
+    metadata JSON, else from the parent row found by ``parent_uuid`` (C10);
+    and phase from the artifact_type mapping.
 
     Parameters
     ----------
+    db:
+        Entity database the display and parent rows are read from.
     entity:
         Entity dict as returned by ``EntityDatabase.get_entity()``.
     artifact_type:
@@ -106,25 +111,18 @@ def _derive_optional_fields(entity: dict, artifact_type: str) -> dict:
         Optional kwargs suitable for ``build_header(**kwargs)``.
     """
     kwargs: dict[str, str] = {}
-    entity_type, _, _ = entity["type_id"].partition(":")
 
     # feature_id + feature_slug (feature entities only)
-    if entity_type == "feature":
-        feat_id, feat_slug = _parse_feature_type_id(entity["type_id"])
-        if feat_id:
-            kwargs["feature_id"] = feat_id
-        if feat_slug is not None:
-            kwargs["feature_slug"] = feat_slug
+    if entity["kind"] == "feature":
+        kwargs.update(_feature_identity_fields(db, entity))
 
-    # project_id: metadata JSON first, then parent_type_id fallback
+    # project_id: metadata JSON first, then the parent row
     project_id = None
     if entity.get("metadata"):
         meta = parse_metadata(entity["metadata"])
         project_id = meta.get("project_id") or None
-    if project_id is None and entity.get("parent_type_id"):
-        p_type, _, p_id = entity["parent_type_id"].partition(":")
-        if p_type == "project":
-            project_id = p_id
+    if project_id is None:
+        project_id = _parent_project_id(db, entity)
     if project_id:
         kwargs["project_id"] = project_id
 
@@ -350,7 +348,7 @@ def stamp_header(
         created_at = entity["created_at"]
 
         # Step 3: Derive optional fields
-        optional = _derive_optional_fields(entity, artifact_type)
+        optional = _derive_optional_fields(db, entity, artifact_type)
 
         # Steps 4-7: build_header -> read existing -> UUID mismatch check -> write
         header = build_header(

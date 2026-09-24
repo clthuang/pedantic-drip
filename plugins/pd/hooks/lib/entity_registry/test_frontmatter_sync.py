@@ -91,94 +91,104 @@ class TestConstants:
 # ---------------------------------------------------------------------------
 
 
+def _registered_row(db, kind: str = "feature", seq: int = 1, slug: str = "test", *,
+                    metadata: dict | None = None, parent_uuid: str | None = None) -> dict:
+    """Register an entity and return its row, as ``stamp_header`` reads it.
+
+    ``_derive_optional_fields`` reads the entity's structure (its ``kind``
+    column, display row and parent row), so its tests use registered rows
+    rather than hand-built dicts.
+    """
+    entity_uuid = db.register_entity(
+        kind, name=slug.title(), seq=seq, slug=slug, metadata=metadata,
+        parent_uuid=parent_uuid, project_id="__unknown__",
+    )
+    return db.get_entity_by_uuid(entity_uuid)
+
+
 class TestDeriveOptionalFields:
-    """Tests for _derive_optional_fields() helper (task 2.1a)."""
+    """Tests for _derive_optional_fields() helper (task 2.1a).
+
+    Structural precedence over disagreeing type_id text (C8, C9, C10) is
+    pinned in ``test_c9_c10_frontmatter_identity.py``.
+    """
 
     def test_derive_feature_entity(self):
-        """Feature type_id with artifact_type='spec' yields feature_id, feature_slug, phase."""
+        """A feature with artifact_type='spec' yields feature_id, feature_slug, phase."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "feature:003-bidirectional-uuid-sync-betwee",
-            "metadata": None,
-            "parent_type_id": None,
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db, seq=3, slug="bidirectional-uuid-sync-betwee")
+        result = _derive_optional_fields(db, entity, "spec")
         assert result["feature_id"] == "003"
         assert result["feature_slug"] == "bidirectional-uuid-sync-betwee"
         assert result["phase"] == "specify"
 
     def test_derive_project_id_from_metadata(self):
         """Entity with metadata JSON containing project_id extracts it."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": '{"project_id": "001-p001"}',
-            "parent_type_id": None,
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db, metadata={"project_id": "001-p001"})
+        result = _derive_optional_fields(db, entity, "spec")
         assert result["project_id"] == "001-p001"
 
     def test_derive_project_id_from_parent(self):
-        """Entity with parent_type_id='project:001-p001' extracts project_id."""
+        """A feature whose parent is project 001-p001 gets project_id 001-p001."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": None,
-            "parent_type_id": "project:001-p001",
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        parent = _registered_row(db, "project", seq=1, slug="p001")
+        entity = _registered_row(db, parent_uuid=parent["uuid"])
+        result = _derive_optional_fields(db, entity, "spec")
         assert result["project_id"] == "001-p001"
 
     def test_derive_metadata_priority(self):
-        """When both metadata JSON and parent_type_id have project_id, metadata wins."""
+        """When both metadata JSON and the parent project give a project_id, metadata wins."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": '{"project_id": "META-ID"}',
-            "parent_type_id": "project:PARENT-ID",
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        parent = _registered_row(db, "project", seq=1, slug="parent-id")
+        entity = _registered_row(db, metadata={"project_id": "META-ID"}, parent_uuid=parent["uuid"])
+        result = _derive_optional_fields(db, entity, "spec")
         assert result["project_id"] == "META-ID"
 
     def test_derive_non_feature_entity(self):
         """Non-feature entity (project) has no feature_id or feature_slug."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "project:001-p001",
-            "metadata": None,
-            "parent_type_id": None,
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db, "project", seq=1, slug="p001")
+        result = _derive_optional_fields(db, entity, "spec")
         assert "feature_id" not in result
         assert "feature_slug" not in result
 
     def test_derive_malformed_metadata(self):
-        """Invalid JSON metadata falls back to parent_type_id for project_id."""
+        """Invalid JSON metadata falls back to the parent row for project_id."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
+        from entity_registry.test_helpers import seed_legacy_entity
 
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": "not-valid-json{{{",
-            "parent_type_id": "project:FALLBACK",
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        parent_uuid = seed_legacy_entity(db, "project", "FALLBACK", "Fallback")
+        entity = dict(_registered_row(db, parent_uuid=parent_uuid))
+        entity["metadata"] = "not-valid-json{{{"
+        result = _derive_optional_fields(db, entity, "spec")
         assert result["project_id"] == "FALLBACK"
 
     def test_derive_no_project_id(self):
         """Neither metadata nor parent provides project_id — key absent from result."""
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": None,
-            "parent_type_id": None,
-        }
-        result = _derive_optional_fields(entity, "spec")
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db)
+        result = _derive_optional_fields(db, entity, "spec")
         assert "project_id" not in result
 
 
@@ -1262,29 +1272,37 @@ class TestBoundaryValues:
         assert type_id_mismatches[0].file_value == "Feature:001-test"
         assert type_id_mismatches[0].db_value == "feature:001-test"
 
-    def test_derive_optional_fields_feature_type_id_without_hyphen(self):
-        """type_id='feature:003' -> feature_id='003', no feature_slug.
+    def test_derive_optional_fields_legacy_feature_with_metadata_id_only(self):
+        """A legacy feature (no display row) whose metadata has an id and no
+        slug -> feature_id from metadata, no feature_slug.
 
-        Anticipate: _parse_feature_type_id might fail or produce wrong
-        results when there's no hyphen-separated slug. This catches
-        the edge case where partition('-') returns ('003', '', '').
+        Anticipate: with no display row to read, a reader might fall back to
+        splitting the id text (``003`` would come out either way here) or
+        emit an empty feature_slug. The metadata id is deliberately NOT the
+        id text, so a split cannot pass.
 
-        derived_from: spec:R10 (_parse_feature_type_id edge case)
+        derived_from: spec:R10 (missing-slug edge case), C9 (display row
+        or stored metadata, never the id text)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
+        from entity_registry.test_helpers import seed_legacy_entity
 
-        # Given an entity with a type_id that has no slug
-        entity = {
-            "type_id": "feature:003",
-            "metadata": None,
-            "parent_type_id": None,
-        }
+        # Given a legacy feature with a metadata id and no metadata slug
+        db = EntityDatabase(":memory:")
+        legacy_uuid = seed_legacy_entity(db, "feature", "003", "Three")
+        db._conn.execute(
+            "UPDATE entities SET metadata = ? WHERE uuid = ?",
+            (json.dumps({"id": "0003"}), legacy_uuid),
+        )
+        db._conn.commit()
+        entity = db.get_entity_by_uuid(legacy_uuid)
 
         # When we derive optional fields
-        result = _derive_optional_fields(entity, "spec")
+        result = _derive_optional_fields(db, entity, "spec")
 
-        # Then feature_id is extracted, feature_slug is absent
-        assert result["feature_id"] == "003"
+        # Then feature_id comes from metadata, feature_slug is absent
+        assert result["feature_id"] == "0003"
         assert "feature_slug" not in result
 
     def test_derive_optional_fields_all_artifact_type_phase_mappings(self):
@@ -1296,14 +1314,12 @@ class TestBoundaryValues:
 
         derived_from: spec:R10 (artifact_type to phase mapping completeness)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
         # Given a minimal entity
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": None,
-            "parent_type_id": None,
-        }
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db)
 
         # When/Then each artifact_type maps to its correct phase
         expected_mappings = {
@@ -1315,7 +1331,7 @@ class TestBoundaryValues:
             "prd": "brainstorm",
         }
         for artifact_type, expected_phase in expected_mappings.items():
-            result = _derive_optional_fields(entity, artifact_type)
+            result = _derive_optional_fields(db, entity, artifact_type)
             assert result.get("phase") == expected_phase, (
                 f"artifact_type={artifact_type!r}: expected phase={expected_phase!r}, "
                 f"got {result.get('phase')!r}"
@@ -1329,46 +1345,44 @@ class TestBoundaryValues:
 
         derived_from: spec:R10 (unknown artifact_type handling)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
         # Given a minimal entity
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": None,
-            "parent_type_id": None,
-        }
+        db = EntityDatabase(":memory:")
+        entity = _registered_row(db)
 
         # When we pass an unknown artifact_type
-        result = _derive_optional_fields(entity, "unknown_type")
+        result = _derive_optional_fields(db, entity, "unknown_type")
 
         # Then no phase key is present
         assert "phase" not in result
 
     def test_derive_optional_fields_metadata_is_none(self):
-        """None metadata -> no crash, falls through to parent_type_id.
+        """None metadata -> no crash, falls through to the parent row.
 
         Anticipate: json.loads(None) raises TypeError; the code must handle
         the None metadata case before attempting JSON parse.
 
         derived_from: spec:R10 (metadata None safety)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
 
         # Given an entity with no metadata and a project parent
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": None,
-            "parent_type_id": "project:001-p001",
-        }
+        db = EntityDatabase(":memory:")
+        parent = _registered_row(db, "project", seq=1, slug="p001")
+        entity = _registered_row(db, parent_uuid=parent["uuid"])
+        assert entity["metadata"] is None
 
         # When we derive optional fields
-        result = _derive_optional_fields(entity, "spec")
+        result = _derive_optional_fields(db, entity, "spec")
 
         # Then project_id is derived from parent (no crash from None metadata)
         assert result["project_id"] == "001-p001"
 
     def test_derive_optional_fields_metadata_has_empty_project_id(self):
-        """metadata project_id='' -> falls back to parent_type_id.
+        """metadata project_id='' -> falls back to the parent row.
 
         Anticipate: Empty string '' might pass the `or None` check and be
         treated as a valid project_id. This pins that empty string is
@@ -1376,17 +1390,17 @@ class TestBoundaryValues:
 
         derived_from: spec:R10 (empty project_id fallback)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
+        from entity_registry.test_helpers import seed_legacy_entity
 
         # Given an entity with empty project_id in metadata but valid parent
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": '{"project_id": ""}',
-            "parent_type_id": "project:FALLBACK-PROJ",
-        }
+        db = EntityDatabase(":memory:")
+        parent_uuid = seed_legacy_entity(db, "project", "FALLBACK-PROJ", "Fallback")
+        entity = _registered_row(db, metadata={"project_id": ""}, parent_uuid=parent_uuid)
 
         # When we derive optional fields
-        result = _derive_optional_fields(entity, "spec")
+        result = _derive_optional_fields(db, entity, "spec")
 
         # Then project_id comes from parent (empty string was treated as falsy)
         assert result["project_id"] == "FALLBACK-PROJ"
@@ -1492,9 +1506,9 @@ class TestAdversarial:
     def test_stamp_header_with_non_feature_entity_type(self, tmp_path):
         """Stamping a project entity produces no feature_id/feature_slug.
 
-        Anticipate: _derive_optional_fields might unconditionally call
-        _parse_feature_type_id on non-feature entities, producing garbage
-        feature_id values.
+        Anticipate: _derive_optional_fields might derive feature fields for
+        non-feature entities (a project's display row would give a
+        plausible-looking feature_id).
 
         derived_from: spec:R10 (non-feature entity stamp)
         """
@@ -1915,8 +1929,8 @@ class TestMutationMindset:
         assert uuid_mismatches[0].file_value == different_uuid
         assert uuid_mismatches[0].db_value == entity_uuid
 
-    def test_project_id_metadata_priority_over_parent_type_id(self):
-        """Pin: metadata project_id takes priority over parent_type_id.
+    def test_project_id_metadata_priority_over_parent(self):
+        """Pin: metadata project_id takes priority over the parent project.
 
         Mutation: swapping the order of checks (parent first, metadata
         second) would produce the wrong project_id when both are present.
@@ -1924,17 +1938,18 @@ class TestMutationMindset:
 
         derived_from: dimension:mutation (arithmetic swap on priority)
         """
+        from entity_registry.database import EntityDatabase
         from entity_registry.frontmatter_sync import _derive_optional_fields
+        from entity_registry.test_helpers import seed_legacy_entity
 
         # Given an entity with BOTH metadata project_id and parent project
-        entity = {
-            "type_id": "feature:001-test",
-            "metadata": '{"project_id": "METADATA-WINS"}',
-            "parent_type_id": "project:PARENT-LOSES",
-        }
+        db = EntityDatabase(":memory:")
+        parent_uuid = seed_legacy_entity(db, "project", "PARENT-LOSES", "Parent")
+        entity = _registered_row(db, metadata={"project_id": "METADATA-WINS"},
+                                 parent_uuid=parent_uuid)
 
         # When we derive optional fields
-        result = _derive_optional_fields(entity, "spec")
+        result = _derive_optional_fields(db, entity, "spec")
 
         # Then metadata project_id wins (not parent)
         assert result["project_id"] == "METADATA-WINS"

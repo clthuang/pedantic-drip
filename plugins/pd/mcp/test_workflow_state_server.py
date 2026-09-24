@@ -4511,11 +4511,11 @@ class TestProjectMetaJson:
 
         result = _read_entity_display(
             db, entity_uuid, "feature:043-legacy", {"id": "7", "slug": "from-metadata"},
-            entity_id_hint="043-legacy",
+            kind="feature", stored_entity_id="043-legacy",
         )
 
         assert result == ("7", "from-metadata")
-        assert "no entity_display row for 'feature:043-legacy'" in capsys.readouterr().err
+        assert "no usable entity_display row for 'feature:043-legacy'" in capsys.readouterr().err
 
     def test_no_artifact_path_and_no_feature_dir_returns_warning(self, db, tmp_path):
         """Entity with no artifact_path and no feature_dir param returns warning."""

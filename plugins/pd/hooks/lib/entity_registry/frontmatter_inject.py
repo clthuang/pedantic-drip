@@ -23,6 +23,8 @@ from entity_registry.frontmatter import (
     build_header,
     write_frontmatter,
 )
+from entity_registry.id_generator import read_display_identity
+from entity_registry.metadata import parse_metadata
 
 # ---------------------------------------------------------------------------
 # Logging (TD-7): stderr handler, minimal format
@@ -66,44 +68,48 @@ ARTIFACT_PHASE_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _parse_feature_type_id(type_id: str) -> tuple[str, str | None]:
-    """Parse a feature type_id into (feature_id, feature_slug | None).
+def _feature_identity_fields(db: EntityDatabase, entity: dict) -> dict[str, str]:
+    """The ``feature_id`` / ``feature_slug`` header fields for *entity* (C9).
 
-    The type_id format is 'feature:{id}-{slug}'. The 'feature:' prefix is
-    stripped first. Then the entity part is split on the first '-' to get
-    (id, slug). If no '-', slug is None.
-
-    Examples:
-        'feature:002-some-slug' -> ('002', 'some-slug')
-        'feature:noseparator'   -> ('noseparator', None)
-        'feature:'              -> ('', None)
+    Read from its display row by ``read_display_identity``, the reader the
+    ``.meta.json`` projection uses, so the header and the projection show
+    the same number at the same width. An entity with no usable display row
+    (a legacy entity) falls back to the ``id``/``slug`` its metadata stored
+    at registration, as the projection does. The stored ``entity_id`` is
+    never taken apart (design D9). An absent value is omitted, as optional
+    header fields always were.
     """
-    # Strip "feature:" prefix (split on first ':')
-    _, _, entity_part = type_id.partition(":")
-    # Split entity part on first '-' to get (id, slug)
-    if "-" in entity_part:
-        feature_id, _, slug = entity_part.partition("-")
-        return (feature_id, slug)
-    return (entity_part, None)
+    identity = read_display_identity(db, entity["uuid"], entity["kind"], entity["entity_id"])
+    if identity is not None:
+        feature_id, feature_slug = identity
+        return {"feature_id": feature_id, "feature_slug": feature_slug}
+    metadata = parse_metadata(entity.get("metadata"))
+    fields: dict[str, str] = {}
+    if metadata.get("id"):
+        fields["feature_id"] = str(metadata["id"])
+    if metadata.get("slug"):
+        fields["feature_slug"] = str(metadata["slug"])
+    return fields
 
 
-def _extract_project_id(parent_type_id: str | None) -> str | None:
-    """Extract project_id from a parent_type_id string.
+def _parent_project_id(db: EntityDatabase, entity: dict) -> str | None:
+    """The ``project_id`` header field: the stored ``entity_id`` of *entity*'s
+    parent when that parent is a project, else None (C10).
 
-    If parent_type_id is None or the entity_type is not 'project',
-    returns None. Otherwise returns the entity_id portion.
-
-    Examples:
-        'project:P001'   -> 'P001'
-        'brainstorm:abc' -> None
-        None             -> None
+    The parent is found by ``parent_uuid`` and is a project when its ``kind``
+    column says so. Its ``entity_id`` is read whole, a column read and not
+    inference (design D9), so a parent with no display row still resolves:
+    a live child of an archived legacy project keeps its ``project_id``. A
+    soft-deleted parent resolves too, as the ``parent_type_id`` join this
+    replaces did.
     """
-    if parent_type_id is None:
+    parent_uuid = entity.get("parent_uuid")
+    if not parent_uuid:
         return None
-    entity_type, _, entity_id = parent_type_id.partition(":")
-    if entity_type == "project":
-        return entity_id
-    return None
+    parent = db.get_entity_by_uuid(parent_uuid, include_deleted=True)
+    if parent is None or parent["kind"] != "project":
+        return None
+    return parent["entity_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -159,16 +165,12 @@ def main() -> None:
         # 6. Extract UUID
         entity_uuid = entity_record["uuid"]
 
-        # 7. Build optional fields
-        feature_id, feature_slug = _parse_feature_type_id(feature_type_id)
-        project_id = _extract_project_id(entity_record.get("parent_type_id"))
+        # 7. Build optional fields from the entity's structure: its display
+        # row (C9) and its parent row (C10), never its type_id text.
+        project_id = _parent_project_id(db, entity_record)
         phase = ARTIFACT_PHASE_MAP.get(artifact_type)
 
-        optional_kwargs: dict[str, str] = {}
-        if feature_id:
-            optional_kwargs["feature_id"] = feature_id
-        if feature_slug is not None:
-            optional_kwargs["feature_slug"] = feature_slug
+        optional_kwargs: dict[str, str] = _feature_identity_fields(db, entity_record)
         if project_id is not None:
             optional_kwargs["project_id"] = project_id
         if phase is not None:
