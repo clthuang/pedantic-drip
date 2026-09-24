@@ -277,7 +277,7 @@ Measured: `is_legacy INTEGER NOT NULL DEFAULT 0`, no trigger, no guard, no docto
 
 # Part 2 — Release C, the cutover
 
-Task definitions are in the parent plan. This section only sequences them and marks where the corrections above apply. **Shipped from Part 2 as of 2026-09-22:** C4 (`235f7d0f`), C23 (`c621f3e5`), C1 and C2 (`e9f5774f`). Wave 2's remaining core — C5, C6, C7 — is re-planned below and unstarted.
+Task definitions are in the parent plan. This section only sequences them and marks where the corrections above apply. **Shipped from Part 2 as of 2026-09-24:** C4 (`235f7d0f`), C23 (`c621f3e5`), C1 and C2 (`e9f5774f`), C17a (`833095a9`), and Wave 2's core: C5's removal half, C6 and C7, merged as `fe40082c` and cut over with migration 7. **Not started:** C3, C5b, C8–C19, C20b, C22, C21.
 
 ## Wave 1 — version guard for the next cutover
 
@@ -287,7 +287,7 @@ Task definitions are in the parent plan. This section only sequences them and ma
 
 **This cutover is protected operationally instead (decision 4):** a hard stop-the-world before Wave 2, cued to the operator, verified with `ps` and `lsof`. See the gate at the top of Wave 2. C23 **shipped 2026-09-22 (`c621f3e5`)** ahead of Wave 2 and guards the *next* version bump, when every running process will already carry it.
 
-## Wave 2 — the locked core — **RE-PLANNED 2026-09-22, rev 2 after review**
+## Wave 2 — the locked core — **SHIPPED 2026-09-24 (`fe40082c`)**; re-planned 2026-09-22, rev 2 after review
 
 **C4 SHIPPED 2026-09-22** — `render_display_id` is the sole composer; the `P` prefix is gone; `_PROJECT_DISPLAY_RE` deleted.
 
