@@ -427,19 +427,17 @@ def init_project_state(
     if brainstorm_source:
         metadata["brainstorm_source"] = brainstorm_source
 
-    # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
-    # below: resumed only when the row is this call's own earlier attempt.
-    # Use ``project_id="__unknown__"`` so the canonical workspaces row is
-    # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
-    # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
-    # like every other sequence-numbered kind, so the allocated id splits
-    # into seq and slug and the display row is written.
-    #
     # The parent must be live and in the workspace the project registers in
     # (the parent rules reparent_entity enforces, C22a). The check shares the
     # registration's transaction, so the parent cannot change between the
     # two. Without a workspace_uuid, the project registers in the default
     # __unknown__ workspace (the project_id argument below).
+    #
+    # Use ``project_id="__unknown__"`` so the canonical workspaces row is
+    # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
+    # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
+    # like every other sequence-numbered kind, so the allocated id splits
+    # into seq and slug and the display row is written.
     project_workspace_uuid = (
         workspace_uuid if workspace_uuid is not None else _UNKNOWN_WORKSPACE_UUID
     )
@@ -452,6 +450,9 @@ def init_project_state(
                     child_ref=project_type_id,
                     caller="init_project_state",
                 )
+            # F12 audit: conflict-is-error → register_entity, EntityExistsError
+            # handled below: resumed only when the row is this call's own
+            # earlier attempt.
             project_uuid = db.register_entity(
                 entity_type="project",
                 **identity,
