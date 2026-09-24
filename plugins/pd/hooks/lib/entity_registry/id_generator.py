@@ -1,9 +1,9 @@
-"""Entity identity: allocation, rendering and the one sanctioned parse.
+"""Entity identity: allocation, rendering, the one sanctioned parse, the invariant.
 
 ``generate_entity_id`` allocates ``(seq, slug)`` from the per-type counters in
 the ``sequences`` table; ``render_display_id`` renders them as ``{seq:03d}-{slug}``;
 ``registration_identity`` turns display text read from a file back into
-them, or refuses.
+them, or refuses; ``display_row_violations_sql`` states the display-row invariant.
 """
 from __future__ import annotations
 
@@ -134,6 +134,13 @@ def generate_entity_id(
     tuple[int, str]
         ``(seq, slug)``, which ``register_entity`` takes as they are;
         ``render_display_id`` gives the display text.
+
+    Raises
+    ------
+    IncompleteBucketError
+        From ``next_sequence_value`` (C3): the bucket holds an entity that
+        breaks the display-row invariant. Nothing was allocated; callers
+        report it rather than retry.
     """
     seq = db.next_sequence_value(project_id, entity_type)
     slug = _slugify(name)
@@ -142,3 +149,82 @@ def generate_entity_id(
         slug = "unnamed"
 
     return seq, slug
+
+
+# ---------------------------------------------------------------------------
+# The display-row invariant
+# ---------------------------------------------------------------------------
+
+# The flag columns that exempt an entity from the display-row invariant.
+# is_legacy arrived in migration 22, is_deleted in 24.
+DISPLAY_ROW_EXEMPTION_FLAGS = ("is_legacy", "is_deleted")
+
+# Where an entity's kind lives: kind since migration 12, entity_type before.
+_KIND_COLUMNS = ("kind", "entity_type")
+
+
+def display_row_violations_sql(
+    entity_columns: set[str],
+) -> tuple[str, tuple[str, ...]]:
+    """``FROM ... WHERE ...`` selecting every entity that breaks the
+    display-row invariant. THE one statement of that invariant.
+
+    **The invariant.** Every entity has an ``entity_display`` row unless it
+    is exempt. An entity is exempt when any of these holds:
+
+    - ``is_legacy = 1``: it predates the structural model. The ``sequences``
+      counter reserves its number (B4's high-water sweep), not a display
+      row. The column is immutable (v2 migration 7), so it cannot mute a
+      violation.
+    - ``is_deleted = 1``: it is soft-deleted (#081).
+    - its kind is in ``NON_SEQUENCE_KINDS``: its identity is not a sequence
+      number (a brainstorm's is its file stem), so it has no display row by
+      design (Wave 2 D3).
+
+    **Both enforcers build their SQL here, never from a copy:**
+
+    - ``doctor.checks.check_display_row_invariant`` reports every violation
+      in the registry.
+    - ``EntityDatabase.next_sequence_value`` refuses to allocate for a
+      bucket that holds one (C3): a violating entity's number exists only in
+      its ``entity_id`` text, which the structural census cannot see.
+
+    With a second copy of these clauses, doctor could report a registry
+    green while allocation refuses it, or the reverse.
+
+    **Interface.** Returns ``(sql, params)``. The SQL aliases ``entities`` as
+    ``e`` and ``entity_display`` as ``d``. A caller prepends its own
+    ``SELECT``, may append ``AND`` clauses to narrow the scope, and binds
+    *params* before any parameters of its own.
+
+    *entity_columns* is the ``entities`` table's column set, from
+    ``PRAGMA table_info(entities)``. Each clause is added only when its
+    column exists, and each absence has a deliberate reading:
+
+    - **No exemption flag column:** that flag exempts nothing. A file
+      predating ``is_legacy`` has no entity marked legacy.
+    - **No ``kind`` column:** the kind clause reads ``entity_type``
+      instead, never nothing. A file predating migration 12 still holds
+      brainstorms.
+    - **Neither kind column:** no kind is exempt, so every display-less row
+      is reported. That is a false alarm, never a silent pass.
+
+    The SQL never names a column the table lacks. Doing so makes the
+    statement raise, and a caller that swallowed the error would report a
+    registry it never evaluated.
+    """
+    where = ["d.uuid IS NULL"]
+    for flag in DISPLAY_ROW_EXEMPTION_FLAGS:
+        if flag in entity_columns:
+            where.append(f"NOT COALESCE(e.{flag}, 0)")
+    params: tuple[str, ...] = ()
+    kind_column = next((c for c in _KIND_COLUMNS if c in entity_columns), None)
+    if kind_column is not None:
+        params = tuple(sorted(NON_SEQUENCE_KINDS))
+        placeholders = ", ".join("?" for _ in params)
+        where.append(f"COALESCE(e.{kind_column}, '') NOT IN ({placeholders})")
+    return (
+        "FROM entities e LEFT JOIN entity_display d ON d.uuid = e.uuid "
+        "WHERE " + " AND ".join(where),
+        params,
+    )

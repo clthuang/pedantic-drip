@@ -8,7 +8,7 @@ import subprocess
 import time
 
 from doctor.models import CheckResult, Issue
-from entity_registry.id_generator import NON_SEQUENCE_KINDS
+from entity_registry.id_generator import display_row_violations_sql
 
 
 def _get_expected_entity_version() -> int:
@@ -568,8 +568,10 @@ def _not_applicable(reason: str, start: float) -> CheckResult:
 def check_display_row_invariant(
     entities_conn: sqlite3.Connection, **_
 ) -> CheckResult:
-    """Every entity has an ``entity_display`` row unless ``is_legacy = 1`` or its
-    kind is in ``NON_SEQUENCE_KINDS``.
+    """Reports every entity that breaks the display-row invariant: no
+    ``entity_display`` row and not exempt. The invariant, exemptions
+    included, is stated once, in ``id_generator.display_row_violations_sql``;
+    this check and C3's allocation guard both build their SQL from it.
 
     When B8 added it this stated a fact already exactly true — 180 legacy rows
     and the same 180 display-less rows, set equality — and it holds it true
@@ -585,7 +587,7 @@ def check_display_row_invariant(
     ambiguous rows and make every future seq -> entity lookup non-deterministic.
 
     **Why it has to exist before C3.** C3 refuses allocation for a bucket
-    holding non-legacy entities that lack display rows. Until Wave 2 step 4,
+    holding an entity this check would report. Until Wave 2 step 4,
     ``init_project_state`` registered every project without one, so each
     project it created added a fresh violation and C3 would then have
     refused that bucket forever. Every registration now passes seq/slug,
@@ -615,10 +617,6 @@ def check_display_row_invariant(
             return _not_applicable(
                 "entities lacks uuid/type_id", start
             )
-        # kind arrived in migration 12; before it the same value lived in
-        # entity_type. A synthetic table with neither exempts no kind and so
-        # reports every display-less row: a false alarm, never a silent pass.
-        kind_column = next((c for c in ("kind", "entity_type") if c in cols), None)
         if "entity_display" not in {
             row[0] for row in entities_conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -626,26 +624,11 @@ def check_display_row_invariant(
         }:
             return _not_applicable("no entity_display table (pre-migration 13)", start)
 
-        # Exemption clauses are added only for columns that exist. A file
-        # predating them has no exempt rows, which is the correct reading:
-        # before is_legacy existed, no entity was marked legacy.
-        where = ["d.uuid IS NULL"]
-        for flag in ("is_legacy", "is_deleted"):
-            if flag in cols:
-                where.append(f"NOT COALESCE(e.{flag}, 0)")
-        # Unlike the flags, a file predating the kind column still holds
-        # brainstorms, so the clause falls back to entity_type, never away.
-        exempt_kinds = sorted(NON_SEQUENCE_KINDS)
-        if kind_column:
-            where.append(f"COALESCE(e.{kind_column}, '') NOT IN "
-                         f"({', '.join('?' for _ in exempt_kinds)})")
-
+        # The builder adds each exemption clause only for a column this file
+        # has, and reads kind from entity_type on a file predating kind.
+        violations_sql, params = display_row_violations_sql(cols)
         cursor = entities_conn.execute(
-            "SELECT e.uuid, e.type_id "
-            "FROM entities e "
-            "LEFT JOIN entity_display d ON d.uuid = e.uuid "
-            "WHERE " + " AND ".join(where),
-            exempt_kinds if kind_column else (),
+            "SELECT e.uuid, e.type_id " + violations_sql, params
         )
         for entity_uuid, type_id in cursor:
             issues.append(Issue(

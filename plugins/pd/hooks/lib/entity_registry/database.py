@@ -23,7 +23,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from entity_registry.id_generator import NON_SEQUENCE_KINDS, render_display_id
+from entity_registry.id_generator import NON_SEQUENCE_KINDS, display_row_violations_sql, render_display_id
 
 _UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
@@ -6400,13 +6400,14 @@ def _census_max(
     the next value 1 for a bucket that may well have legacy rows.
 
     **What this deliberately cannot see.** Legacy entities have no
-    ``entity_display`` row — that is what legacy means (B8's invariant:
-    every entity has one unless ``is_legacy`` or its kind has no sequence).
-    They are invisible to this
+    ``entity_display`` row — that is what legacy means, and why the
+    display-row invariant (``id_generator.display_row_violations_sql``)
+    exempts them. They are invisible to this
     join by construction, and their numbers are reserved by the stored
     counter, which B4's high-water sweep raised above every legacy id. The
     census is a repair floor, not the sole guard; ``next_sequence_value``
-    takes the max of both.
+    takes the max of both, after ``_require_complete_bucket`` has refused
+    any bucket holding a display-less entity that is NOT exempt.
     """
     row = conn.execute(
         "SELECT MAX(d.seq) FROM entities e "
@@ -6415,6 +6416,48 @@ def _census_max(
         (kind, workspace_uuid),
     ).fetchone()
     return row[0] if row and row[0] is not None else None
+
+
+def _require_complete_bucket(
+    conn: sqlite3.Connection, *, kind: str, workspace_uuid: str
+) -> None:
+    """C3: refuse allocation from a bucket holding an entity that breaks
+    the display-row invariant (``id_generator.display_row_violations_sql``).
+
+    Such an entity's number lives only in its ``entity_id`` text, which
+    ``_census_max`` cannot see, so allocating anyway could issue that
+    number a second time. ``next_sequence_value`` calls this inside its
+    ``BEGIN IMMEDIATE``, before it reads or writes the counter, so a
+    refusal rolls back with the counter untouched.
+
+    - **Scope:** the allocation's bucket, ``(kind, workspace_uuid)``. A
+      violation in another bucket refuses that bucket, not this one.
+    - **Existing entities only:** allocation inserts no entity, so the
+      number being issued is never among the rows examined.
+    - **An empty bucket is complete.** Exempt rows neither satisfy nor
+      violate it.
+    - **Detects, never repairs:** writing the missing display rows here
+      would register while holding the write lock. Repair happens outside
+      the transaction.
+
+    The SQL comes from ``display_row_violations_sql``, the same builder
+    ``doctor.checks.check_display_row_invariant`` uses, so the guard and
+    the check cannot disagree about which entities violate.
+
+    Raises
+    ------
+    IncompleteBucketError
+        Naming every offending entity, sorted by type_id.
+    """
+    entity_columns = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+    violations_sql, params = display_row_violations_sql(entity_columns)
+    offending = [row[0] for row in conn.execute(
+        "SELECT e.type_id " + violations_sql
+        + " AND e.kind = ? AND e.workspace_uuid = ? ORDER BY e.type_id",
+        (*params, kind, workspace_uuid),
+    )]
+    if offending:
+        raise IncompleteBucketError(kind, workspace_uuid, offending)
 
 
 # SQLite authorizer actions that mutate. Used by C23's future-file guard.
@@ -6693,6 +6736,59 @@ class InvalidCloseTargetError(ValueError):
     - already terminal with no prior closer record (FR-10.3 step 4)
     """
     pass
+
+
+# How many offending type_ids an IncompleteBucketError message names before
+# summarising the rest as a count; the exception's ``type_ids`` keeps all.
+_INCOMPLETE_BUCKET_IDS_SHOWN = 10
+
+
+class IncompleteBucketError(ValueError):
+    """Raised by ``next_sequence_value`` when the bucket it would allocate
+    from — the allocation's ``(kind, workspace_uuid)`` — holds entities that
+    break the display-row invariant (C3; the invariant is stated once, in
+    ``id_generator.display_row_violations_sql``).
+
+    Such an entity's number exists only in its ``entity_id`` text, which the
+    structural census cannot see, so the bucket's highest issued number is
+    not knowable from structure and the next one could repeat it. Nothing
+    was allocated and the counter did not move.
+
+    Repair happens outside the allocator: write each listed entity's
+    ``entity_display`` row, then allocate again. ``type_ids`` lists every
+    offending entity, sorted.
+    """
+
+    # Single-sourced for every MCP error envelope that reports this refusal;
+    # a hand-typed copy in each server would drift.
+    ERROR_TYPE = "incomplete_bucket"
+    RECOVERY_HINT = (
+        "Nothing was allocated. Write the entity_display row of each entity "
+        "the message lists (/pd:doctor lists every violation under "
+        "display_row_invariant), then allocate again. Marking them is_legacy "
+        "or re-kinding them is not a repair."
+    )
+
+    def __init__(self, kind: str, workspace_uuid: str, type_ids: list[str]):
+        self.kind = kind
+        self.workspace_uuid = workspace_uuid
+        self.type_ids = list(type_ids)
+        named = ", ".join(self.type_ids[:_INCOMPLETE_BUCKET_IDS_SHOWN])
+        unnamed = len(self.type_ids) - _INCOMPLETE_BUCKET_IDS_SHOWN
+        if unnamed > 0:
+            named += f" and {unnamed} more"
+        subject = ("1 entity has" if len(self.type_ids) == 1
+                   else f"{len(self.type_ids)} entities have")
+        super().__init__(
+            f"cannot allocate a {kind!r} number in workspace {workspace_uuid}: "
+            f"{subject} no entity_display row and no exemption from the "
+            f"display-row invariant: {named}. Their numbers exist only in "
+            f"entity_id text, so the next number is not knowable from "
+            f"structure. Nothing was allocated and the counter did not move. "
+            f"Repair: write each entity's entity_display row (its seq and "
+            f"slug), then allocate again; /pd:doctor's display_row_invariant "
+            f"check lists every violation."
+        )
 
 
 class EntityDatabase:
@@ -10405,9 +10501,15 @@ class EntityDatabase:
     ) -> int:
         """Atomic read-increment-write for per-workspace, per-type sequence.
 
-        Bootstraps from entities scan if no sequences row exists.
+        Bootstraps from the structural census (``_census_max``) if no
+        sequences row exists.
         Returns the next value to issue (pre-increment semantics:
         first call returns 1, second returns 2, etc.).
+
+        Fails closed (C3): a bucket holding an entity that breaks the
+        display-row invariant is refused, not allocated from. A refusal
+        rolls back, so the counter does not move and nothing is issued.
+        The caller repairs the bucket outside this call.
 
         Parameters
         ----------
@@ -10426,6 +10528,16 @@ class EntityDatabase:
         -------
         int
             The next sequence value to use.
+
+        Raises
+        ------
+        IncompleteBucketError
+            The ``(entity_type, workspace)`` bucket holds an entity with no
+            ``entity_display`` row that the invariant does not exempt.
+        ValueError
+            The bucket has entities but no counter and no display rows, so
+            its highest issued number is unknowable (repair with
+            ``establish_high_water``).
         """
         if entity_type is None:
             raise TypeError(
@@ -10444,6 +10556,12 @@ class EntityDatabase:
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            # C3, before the counter is read or written: a refusal rolls
+            # back below with the counter exactly as it was.
+            _require_complete_bucket(
+                self._conn, kind=entity_type, workspace_uuid=ws_uuid
+            )
+
             row = self._conn.execute(
                 "SELECT next_val FROM sequences "
                 "WHERE workspace_uuid = ? AND entity_type = ?",
@@ -10460,17 +10578,18 @@ class EntityDatabase:
             census_floor = (census + 1) if census is not None else 1
 
             if row is None:
-                # No counter AND no census, but the bucket holds entities:
-                # every number in it lives only in entity_id text, which
-                # this function no longer reads. Issuing 1 here would
+                # No counter AND no census, but the bucket holds entities.
+                # The C3 guard above has passed, so every one of them is
+                # exempt from the display-row invariant; an exempt legacy
+                # row's number lives only in its entity_id text, reserved by
+                # the counter alone. With no counter, issuing 1 here would
                 # collide with whatever those rows already carry.
                 #
                 # The predecessor parsed the text and got away with it.
-                # Refusing is the C3 posture — fail closed rather than
-                # reissue — applied at the one place that needs it before
-                # C3 itself can ship (C3 waits on C6). Measured on the live
-                # registry: 0 of 19 buckets are in this state, because B4's
-                # high-water sweep gave every bucket a counter.
+                # Refusing is the same fail-closed posture as the guard.
+                # Measured on the live registry: 0 of 19 buckets are in this
+                # state, because B4's high-water sweep gave every bucket a
+                # counter.
                 if census is None and self._conn.execute(
                     "SELECT 1 FROM entities WHERE kind = ? AND workspace_uuid = ? "
                     "LIMIT 1",

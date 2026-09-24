@@ -12,7 +12,7 @@ import uuid as _uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, _census_max
-from entity_registry.test_helpers import identity_kwargs
+from entity_registry.test_helpers import identity_kwargs, seed_legacy_entity
 
 
 def _db(tmp_path, name="e.db"):
@@ -134,10 +134,15 @@ class TestMonotonicIssuance:
     def test_counter_above_the_census_is_honoured(self, tmp_path):
         """The live project bucket's exact shape: every row legacy, so the
         census is None, and the stored counter is the only reservation.
-        Taking the census alone would restart at 1 and collide with P001."""
+        Taking the census alone would restart at 1 and collide with P001.
+
+        The rows are marked is_legacy, as the live ones are: a display-less
+        row that is NOT legacy breaks the display-row invariant, and C3's
+        guard refuses its bucket instead of allocating."""
         db, ws = _db(tmp_path)
-        _seed(db, ws, "project", "001-p001", seq=None)
-        _seed(db, ws, "project", "001-p004-entity-db-redesign", seq=None)
+        seed_legacy_entity(db, "project", "P001", "P001", workspace_uuid=ws)
+        seed_legacy_entity(db, "project", "P004-entity-db-redesign",
+                           "P004-entity-db-redesign", workspace_uuid=ws)
         db._conn.execute(
             "INSERT OR REPLACE INTO sequences(workspace_uuid, entity_type, next_val) "
             "VALUES(?,?,?)", (ws, "project", 5))

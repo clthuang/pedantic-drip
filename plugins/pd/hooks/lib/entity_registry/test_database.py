@@ -13,6 +13,7 @@ import pytest
 from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
+    IncompleteBucketError,
     MIGRATIONS,
     _UUID_RE,
     _add_project_scoping,
@@ -6479,8 +6480,9 @@ class TestNextSequenceValue:
             # their numbers live only in their ids — which this function no
             # longer reads. It refuses rather than issuing 1 and colliding
             # with 005-alpha. The old behaviour (parse text -> 11) was safe
-            # only because it inferred identity from text.
-            with pytest.raises(ValueError, match="unknowable from structure"):
+            # only because it inferred identity from text. They are not
+            # legacy either, so the refusal is C3's completeness guard.
+            with pytest.raises(IncompleteBucketError):
                 db.next_sequence_value(TEST_PROJECT_ID, "feature")
 
             # Give the same rows display rows and the census can see them.

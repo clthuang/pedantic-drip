@@ -931,11 +931,12 @@ class TestAllocateEntityId:
     async def test_next_sequence_value_operational_error_propagates_unhandled(
         self, ws_db, monkeypatch
     ):
-        """allocate_entity_id has no try/except around
-        next_sequence_value (unlike, e.g., create_key_result's `except
-        Exception as exc: return json.dumps({"error": str(exc)})`
-        wrapper) — a DB-layer failure here propagates as a raw, uncaught
-        exception rather than a structured §3.5 envelope. Pins
+        """allocate_entity_id's only try/except around
+        next_sequence_value is C3's IncompleteBucketError (unlike, e.g.,
+        create_key_result's `except Exception as exc: return
+        json.dumps({"error": str(exc)})` wrapper) — any other DB-layer
+        failure here propagates as a raw, uncaught exception rather than a
+        structured §3.5 envelope. Pins
         design.md's Error Handling line ('next_sequence_value sqlite
         errors propagate to the server's existing exception translation')
         at the unit level: calling the tool function directly (bypassing

@@ -295,6 +295,9 @@ def promote_task(
         If the matched task has already been promoted.
     FileNotFoundError
         If plan.md does not exist at the expected path.
+    IncompleteBucketError
+        If the registry refuses the task id allocation (C3). A ValueError
+        subclass, raised before the task is registered.
     """
     # 1. Resolve feature
     feature = db.get_entity(feature_ref)
