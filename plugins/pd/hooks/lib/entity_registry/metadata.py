@@ -28,6 +28,13 @@ _COMMON_SCHEMA: dict[str, type | tuple[type, ...]] = {
     "progress": (int, float),
 }
 
+# C22 (structural-identity completion plan, decisions 2 and 3): the uuids of
+# the legacy originals a backlog item or project was recreated from, stored
+# on the replacement. scripts/c22_recreate_live_remainder.py writes it and
+# reads it back on a re-run to know an original is already recreated. A list,
+# because a collapsed duplicate project pair becomes one entity.
+RECREATED_FROM_KEY = "recreated_from"
+
 METADATA_SCHEMAS: dict[str, dict[str, type | tuple[type, ...]]] = {
     "feature": {
         "id": str,
@@ -53,12 +60,14 @@ METADATA_SCHEMAS: dict[str, dict[str, type | tuple[type, ...]]] = {
         "features": list,
         "milestones": list,
         "brainstorm_source": str,
+        RECREATED_FROM_KEY: list,
     },
     "task": {
         "source_heading": str,
     },
     "backlog": {
         "description": str,
+        RECREATED_FROM_KEY: list,
     },
     "objective": {
         "score": (int, float),
