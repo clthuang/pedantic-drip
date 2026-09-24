@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 def _safe_referer_path(referer: str | None) -> str:
-    """Return a same-origin ``path[?query]`` to redirect back to.
+    r"""Return a same-origin ``path[?query]`` to redirect back to.
 
     The ``if not referer`` guard MUST run first: ``urlsplit(None)``
     silently returns a bytes ``SplitResult`` (verified empirically) rather
