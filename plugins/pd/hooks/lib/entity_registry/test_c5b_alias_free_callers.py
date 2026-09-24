@@ -218,7 +218,9 @@ def test_no_call_passes_a_removed_alias():
     keyword, or in the position it held). The only exceptions are calls
     inside ``with pytest.raises(TypeError)``: the tests that prove each
     parameter is refused. A ``**`` splat of a variable is not inspected; the
-    suite's splats carry identity keywords only."""
+    suite's splats carry identity keywords only. Nor is a batch list held in
+    a variable; ``register_entities_batch`` refuses an unknown item key when
+    it is called."""
     offending = [site for path in _python_sources() for site in _removed_parameter_uses(path)]
     assert offending == []
 

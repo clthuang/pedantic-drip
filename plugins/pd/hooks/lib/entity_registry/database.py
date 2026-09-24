@@ -10830,6 +10830,14 @@ class EntityDatabase:
     # Batch registration
     # ------------------------------------------------------------------
 
+    # The keys register_entities_batch reads from each batch item. Any other
+    # key is refused, so a stale one (the removed ``project_id`` or
+    # ``parent_type_id`` aliases) cannot be silently dropped.
+    _BATCH_ITEM_KEYS = frozenset({
+        "entity_type", "name", "seq", "slug", "display_id",
+        "status", "artifact_path", "parent_uuid", "metadata",
+    })
+
     def register_entities_batch(
         self,
         entities: list[dict],
@@ -10850,7 +10858,9 @@ class EntityDatabase:
         entities:
             List of dicts, each with keys: entity_type, name, one identity
             (seq + slug, or display_id), and optional: artifact_path, status,
-            parent_uuid, metadata.
+            parent_uuid, metadata. Any other key raises TypeError.
+            ``parent_uuid`` must name an entity registered before the call:
+            uuids are minted inside it, so items cannot name each other.
         workspace_uuid:
             Workspace identity applied to every entity in the batch.
             Required.
@@ -10863,16 +10873,23 @@ class EntityDatabase:
 
         Notes
         -----
-        Invalid entity_type causes the entire batch to fail (none inserted).
-        Duplicate (workspace_uuid, type_id) entries are no-ops via
-        ``upsert_entity``'s conflict branch (no new uuid generated, no
-        duplicate ``entity_created`` event emitted on replay).
+        An invalid entity_type or an unknown item key causes the entire batch
+        to fail (none inserted). Duplicate (workspace_uuid, type_id) entries
+        are no-ops via ``upsert_entity``'s conflict branch (no new uuid
+        generated, no duplicate ``entity_created`` event emitted on replay).
         """
         if not entities:
             return []
 
-        # Validate all entity_types upfront — fail fast on the entire batch.
-        for ent in entities:
+        # Validate every item's keys and entity_type upfront — fail fast on
+        # the entire batch, before anything is written.
+        for index, ent in enumerate(entities):
+            unknown_keys = [key for key in ent if key not in self._BATCH_ITEM_KEYS]
+            if unknown_keys:
+                raise TypeError(
+                    "register_entities_batch() got unexpected key(s) in batch "
+                    f"item {index}: {', '.join(repr(key) for key in unknown_keys)}"
+                )
             self._validate_entity_type(ent["entity_type"])
 
         # Validate workspace_uuid once, before the batch's first write, and

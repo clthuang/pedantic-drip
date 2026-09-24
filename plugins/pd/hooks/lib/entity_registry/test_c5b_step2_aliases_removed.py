@@ -5,15 +5,16 @@ Removed parameters:
 * ``project_id`` (was an alias for ``workspace_uuid``) and ``parent_type_id``
   (was an alias for ``parent_uuid``) from ``register_entity`` and
   ``upsert_entity``.
-* ``project_id`` from ``register_entities_batch``.
+* ``project_id`` from ``register_entities_batch``, and both aliases as keys
+  of its batch items: the batch refuses any item key it does not read.
 * ``project_id`` from the allocator: ``generate_entity_id`` (keyword or 4th
   positional) and ``next_sequence_value`` (keyword or 1st positional).
 
 Each test passes a removed parameter to an otherwise valid call and pins three
 facts:
 
-* **It is refused with TypeError** that names the parameter or the extra
-  positional.
+* **It is refused with TypeError** that names the parameter, the item key or
+  the extra positional.
 * **Nothing is written**: no entity row, display row, phase event or counter
   change.
 * **The same call without the removed parameter succeeds.** This proves the
@@ -164,6 +165,35 @@ def test_register_entities_batch_rejects_project_id(db, workspace_uuid):
     assert _registry_state(db) == before
     db.register_entities_batch(batch, workspace_uuid=workspace_uuid)
     assert db.get_entity("feature:009-batched")["workspace_uuid"] == workspace_uuid
+
+
+def test_register_entities_batch_rejects_a_project_id_item_key(db, workspace_uuid):
+    """Ignored, the key would leave the item in the batch's workspace."""
+    item = {"entity_type": "feature", "name": "Batched", "seq": 10, "slug": "batched"}
+    before = _registry_state(db)
+
+    with pytest.raises(TypeError, match="'project_id'"):
+        db.register_entities_batch([{**item, "project_id": LEGACY_ID}],
+                                   workspace_uuid=workspace_uuid)
+
+    assert _registry_state(db) == before
+    db.register_entities_batch([item], workspace_uuid=workspace_uuid)
+    assert db.get_entity("feature:010-batched")["workspace_uuid"] == workspace_uuid
+
+
+def test_register_entities_batch_rejects_a_parent_type_id_item_key(db, workspace_uuid, parent_uuid):
+    """Ignored, the key would register the item with no parent."""
+    item = {"entity_type": "feature", "name": "Batched child", "seq": 10, "slug": "batched-child"}
+    before = _registry_state(db)
+
+    with pytest.raises(TypeError, match="'parent_type_id'"):
+        db.register_entities_batch([{**item, "parent_type_id": PARENT_TYPE_ID}],
+                                   workspace_uuid=workspace_uuid)
+
+    assert _registry_state(db) == before
+    db.register_entities_batch([{**item, "parent_uuid": parent_uuid}],
+                               workspace_uuid=workspace_uuid)
+    assert db.get_entity("feature:010-batched-child")["parent_uuid"] == parent_uuid
 
 
 # ---------------------------------------------------------------------------
