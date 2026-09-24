@@ -26,9 +26,11 @@ def test_recreated_from_is_registered_for_backlog_and_project():
 
 def test_recreated_from_beside_each_kinds_ordinary_keys_is_valid():
     backlog = {"description": "full text", RECREATED_FROM_KEY: ORIGINAL_UUIDS[:1]}
+    # 005 records P001 alone: P001-openclaw-gap-analysis, a different
+    # project, is archived with no replacement.
     project = {
         "id": "005", "slug": "iflow-arch-evolution", "features": [], "milestones": [],
-        RECREATED_FROM_KEY: ORIGINAL_UUIDS,
+        RECREATED_FROM_KEY: ORIGINAL_UUIDS[:1],
     }
     assert validate_metadata("backlog", backlog) == []
     assert validate_metadata("project", project) == []

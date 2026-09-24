@@ -21,15 +21,23 @@ with a fresh uuid, an ``entity_display`` row and a newly issued number.
   (``reparent_entity``).
 - **Originals** are archived afterwards (``set_archived``: ``is_archived``
   only, status untouched).
+- **A different project** sharing the group's legacy number
+  (``ARCHIVED_WITHOUT_REPLACEMENT``, with its reason) is archived the same
+  way, but the group's new entity does not record it as an original. It
+  must hold no children.
+- **brainstorm_source** of a project is the survivor's; when the survivor
+  has none, its pair's archived half's (an archived row of the group, left
+  as it is). The manifest names where it came from.
 - **Out of scope:** archived legacy rows stay as they are, children included
   (decision 3's residue). So does every other workspace.
 
 **Modes.**
 
 - ``--plan``: read-only. Prints the manifest as JSON: every original, its
-  group and survivor, the new entity's name and slug and where each came
-  from, the children to move, the residue, the archive list, and any
-  difference from ``LOCKED_SCOPE``.
+  group and survivor, the rows archived without a replacement and why, the
+  new entity's name, slug and brainstorm_source and where each came from,
+  the children to move, the residue, the archive list, and any difference
+  from ``LOCKED_SCOPE``.
 - ``--apply``: recreates, moves and archives, then verifies. Refuses unless
   the derivation reproduces ``LOCKED_SCOPE``. Idempotent and resumable: each
   step checks whether it is already done, so a second run writes nothing and
@@ -56,20 +64,24 @@ The script's own SQL only reads.
 
 **The replacement record.** A replacement stores the uuids of the originals
 it replaces under the registered metadata key ``RECREATED_FROM_KEY``. A
-re-run reads it to know an original is done. A project registered by an
+re-run reads it to know an original is done; a row archived without a
+replacement is done once it is archived. A project registered by an
 interrupted run before its record was written is recognized by what
 ``init_project_state`` wrote (its directory, slug and parent) and adopted,
 not registered a second time. Its directory is compared by where it
 resolves; an unrecorded project with that slug and parent at any other
 directory is refused.
 
-**Guard.** A ``--db`` that reaches ``~/.claude/pd`` is refused in either
-mode unless ``--i-mean-the-live-registry`` is given. "Reaches" means the
-directory, anything under it, or its registry file under another name,
-compared by resolved path and by file identity, so case variants,
-firmlinks and hard links are refused too. ``plan_only`` and ``apply``
-enforce it themselves (keyword ``live_registry_confirmed``), so an
-importer gets the same refusal.
+**Guard.** A ``--db`` that reaches the live registry directory
+``.claude/pd`` is refused in either mode unless
+``--i-mean-the-live-registry`` is given. The directory is looked for under
+two homes: ``$HOME``'s, and the account's own from the password database,
+because a rehearsal points HOME at a scratch directory while the account's
+registry stays where it is. "Reaches" means the directory, anything under
+it, or its registry file under another name, compared by resolved path and
+by file identity, so case variants, firmlinks and hard links are refused
+too. ``plan_only`` and ``apply`` enforce it themselves (keyword
+``live_registry_confirmed``), so an importer gets the same refusal.
 
 Usage::
 
@@ -85,6 +97,7 @@ import dataclasses
 import datetime
 import json
 import os
+import pwd
 import re
 import sqlite3
 import sys
@@ -104,7 +117,9 @@ from entity_registry.metadata import RECREATED_FROM_KEY  # noqa: E402
 from entity_registry.project_identity import _compute_legacy_project_id  # noqa: E402
 from entity_registry.schema_v2 import V2_SCHEMA_VERSION  # noqa: E402
 
-LIVE_REGISTRY_DIR = "~/.claude/pd"
+# The live registry's directory, under a home directory. Two homes are
+# checked (live_registry_directories): $HOME's and the account's own.
+LIVE_REGISTRY_DIR = ".claude/pd"
 # The registry file in it, relative to it: ENTITY_DB_PATH's default. A hard
 # link to this file is the live registry under a name outside the directory.
 LIVE_REGISTRY_FILE = "entities/entities.db"
@@ -136,13 +151,15 @@ _LEGACY_PROJECT_DIRECTORY_PREFIX = re.compile(r"^P\d+-")
 # {NNN}-{slug} and the legacy P{NNN}-{slug}.
 _PROJECT_DIRECTORY_NUMBER = re.compile(r"^P?(\d+)-")
 
-# Decisions 2 and 3 as locked in the completion plan on 2026-09-22: the
+# Decisions 2 and 3 as locked in the completion plan on 2026-09-22, with
+# the P001 lineage settled on 2026-09-24 (ARCHIVED_WITHOUT_REPLACEMENT): the
 # groups C22 recreates in pedantic-drip. Each is keyed by its survivor's
-# type_id, with the rows it absorbs and the children it holds (on its
-# originals, plus on its replacement once moved, so a re-run counts the
-# same). --apply refuses unless the derivation reproduces this exactly.
-# Correction 3 says derive at execution time; a difference is reported, not
-# guessed around.
+# type_id, with the rows it absorbs (its replacement records them), the rows
+# of its group archived with no replacement (key present only where there
+# are any), and the children it holds (on its originals, plus on its
+# replacement once moved, so a re-run counts the same). --apply refuses
+# unless the derivation reproduces this exactly. Correction 3 says derive at
+# execution time; a difference is reported, not guessed around.
 LOCKED_SCOPE: dict[str, dict] = {
     "backlog:00059": {"absorbs": [], "children": 0},
     "backlog:00060": {"absorbs": [], "children": 0},
@@ -150,10 +167,32 @@ LOCKED_SCOPE: dict[str, dict] = {
     "backlog:00180": {"absorbs": [], "children": 0},
     "backlog:00183": {"absorbs": [], "children": 0},
     "backlog:00190": {"absorbs": [], "children": 0},
-    "project:P001": {"absorbs": ["project:P001-openclaw-gap-analysis"], "children": 0},
+    "project:P001": {"absorbs": [],
+                     "archived_without_replacement": ["project:P001-openclaw-gap-analysis"],
+                     "children": 0},
     "project:P002": {"absorbs": [], "children": 5},
     "project:P003": {"absorbs": [], "children": 4},
     "project:P004-entity-db-redesign": {"absorbs": [], "children": 16},
+}
+
+# Rows that share a group's legacy number but are a different project from
+# its survivor: archived with no replacement, so no replacement's
+# RECREATED_FROM_KEY names them (the orchestrator's decision of 2026-09-24
+# on decision 2's P001 pair: the outcome stands, both rows archived and one
+# new project, but the lineage is accurate). Keyed by type_id; the value is
+# the reason --plan's manifest gives. Such a row must hold no children:
+# nothing would take them.
+ARCHIVED_WITHOUT_REPLACEMENT: dict[str, str] = {
+    "project:P001-openclaw-gap-analysis": (
+        "a different project from project:P001, registered in this workspace by mistake: "
+        "OpenClaw gap analysis is terry_agent's work. Its brainstorm "
+        "(docs/brainstorms/20260326-030832-openclaw-gap-analysis.prd.md) is not in this "
+        "repository and it has no directory here (docs/projects/P001-openclaw-gap-analysis "
+        "does not exist), while project:P001 is the iflow architectural-evolution project "
+        "(docs/projects/P001-iflow-arch-evolution/ holds its prd.md and roadmap.md). Decision "
+        "2's outcome stands, both rows archived and one new project, but that project's "
+        "record names project:P001 alone."
+    ),
 }
 
 _ENTITY_COLUMNS = ("uuid", "workspace_uuid", "type_id", "entity_id", "kind", "name", "status",
@@ -183,9 +222,26 @@ class ApplyError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def reaches_the_live_registry(db_path: str) -> bool:
-    """Whether *db_path* reaches the live registry: ``~/.claude/pd`` itself,
-    anything under it, or its registry file under another name.
+def live_registry_directories() -> list[Path]:
+    """The live registry's directory (``LIVE_REGISTRY_DIR``) under each home
+    a run can mean:
+
+    - **``$HOME``'s**, the one ``~`` expands to.
+    - **The account's own**, from the password database. A rehearsal points
+      HOME at a scratch directory, which moves ``~`` but not the registry
+      the account's pd writes: an absolute ``--db`` under the account's
+      home still reaches it.
+    """
+    homes = [Path(os.path.expanduser("~"))]
+    with contextlib.suppress(KeyError):  # this uid has no password entry
+        homes.append(Path(pwd.getpwuid(os.getuid()).pw_dir))
+    return list(dict.fromkeys(home / LIVE_REGISTRY_DIR for home in homes))
+
+
+def live_registry_reached(db_path: str) -> Path | None:
+    """The live registry directory *db_path* reaches, if any: one of
+    ``live_registry_directories`` itself, anything under it, or its registry
+    file under another name.
 
     The resolved text (symlinks followed) is compared first. It misses other
     spellings of the same place, so file identity (``os.path.samefile``) is
@@ -198,27 +254,29 @@ def reaches_the_live_registry(db_path: str) -> bool:
 
     A path that does not exist yet is judged by those of its ancestors that do.
     """
-    live_dir = Path(LIVE_REGISTRY_DIR).expanduser()
     target = Path(os.path.expanduser(db_path)).absolute()
-    resolved_live, resolved_target = live_dir.resolve(), target.resolve()
-    if resolved_target == resolved_live or resolved_live in resolved_target.parents:
-        return True
-    same_file_checks = [(ancestor, live_dir) for ancestor in (target, *target.parents)]
-    same_file_checks.append((target, live_dir / LIVE_REGISTRY_FILE))
-    for path, live in same_file_checks:
-        with contextlib.suppress(OSError):  # either side missing
-            if os.path.samefile(path, live):
-                return True
-    return False
+    resolved_target = target.resolve()
+    for live_dir in live_registry_directories():
+        resolved_live = live_dir.resolve()
+        if resolved_target == resolved_live or resolved_live in resolved_target.parents:
+            return live_dir
+        same_file_checks = [(ancestor, live_dir) for ancestor in (target, *target.parents)]
+        same_file_checks.append((target, live_dir / LIVE_REGISTRY_FILE))
+        for path, live in same_file_checks:
+            with contextlib.suppress(OSError):  # either side missing
+                if os.path.samefile(path, live):
+                    return live_dir
+    return None
 
 
 def refuse_the_live_registry(db_path: str, *, live_registry_confirmed: bool) -> None:
     """Raise Refusal for a *db_path* that reaches the live registry, unless
     the caller confirmed it (``--i-mean-the-live-registry``)."""
-    if reaches_the_live_registry(db_path) and not live_registry_confirmed:
-        raise Refusal(f"{db_path} reaches the live registry ({LIVE_REGISTRY_DIR}, compared by "
-                      f"path and by file identity). A rehearsal runs on a copy; to write the "
-                      f"live file, pass {LIVE_REGISTRY_FLAG}.")
+    live_dir = live_registry_reached(db_path)
+    if live_dir is not None and not live_registry_confirmed:
+        raise Refusal(f"{db_path} reaches the live registry {live_dir} (under $HOME or the "
+                      f"account's home, compared by path and by file identity). A rehearsal "
+                      f"runs on a copy; to write the live file, pass {LIVE_REGISTRY_FLAG}.")
 
 
 def open_read_only(db_path: str, *, other_connection_open: bool = False) -> sqlite3.Connection:
@@ -388,6 +446,9 @@ class Group:
     legacy_seq: int
     survivor: Row
     absorbed: list[Row]
+    # In scope, a different project (ARCHIVED_WITHOUT_REPLACEMENT): archived,
+    # recorded by no replacement.
+    archived_without_replacement: list[Row]
     left_as_is: list[Row]            # same (kind, legacy seq), out of scope
     children: list[Row]              # of the survivor and absorbed rows: they move
     residue: dict[str, list[Row]]    # a left_as_is row's type_id -> its children: they stay
@@ -459,8 +520,57 @@ def _directory_of(row: Row) -> str:
     return os.path.basename(row.artifact_path.rstrip("/"))
 
 
+def _brainstorm_source_of(row: Row) -> str | None:
+    value = row.metadata.get("brainstorm_source")
+    return value if isinstance(value, str) and value else None
+
+
+def _carried_brainstorm_source(survivor: Row, parent: Row | None, absorbed: list[Row],
+                               left_as_is: list[Row]) -> tuple[str | None, str, list[str]]:
+    """The replacement's brainstorm_source, where it came from, and flags.
+
+    - **The survivor's own**, when its metadata has one.
+    - **Else its pair's archived half's**: an archived row of the group,
+      left as it is. It is the same project registered twice, and its
+      metadata holds the value the survivor's lacks (the orchestrator's
+      decision of 2026-09-24, for P002 and P003). It is flagged when it does
+      not name the artifact of the survivor's parent brainstorm.
+    - **Not an absorbed row's** (flagged), and never a row archived without
+      a replacement: that is another project, and is not consulted.
+    """
+    own = _brainstorm_source_of(survivor)
+    if own is not None:
+        return own, f"the metadata of {survivor.type_id}, the survivor", []
+    flags = [f"brainstorm_source {value!r} of {row.type_id} is not carried: it comes from the "
+             f"survivor's metadata, or else from an archived half of its pair"
+             for row in absorbed if (value := _brainstorm_source_of(row)) is not None]
+    archived_halves = {row.type_id: value for row in left_as_is
+                       if row.is_archived and not row.is_deleted
+                       and (value := _brainstorm_source_of(row)) is not None}
+    if len(set(archived_halves.values())) > 1:
+        raise Refusal(f"the archived halves of {survivor.type_id}'s pair carry different "
+                      f"brainstorm_source values {archived_halves}, and its own metadata has "
+                      f"none: there is no one value to carry")
+    if not archived_halves:
+        return None, (f"none: neither {survivor.type_id}'s metadata nor an archived half of "
+                      f"its pair has one"), flags
+    value = next(iter(archived_halves.values()))
+    halves = ", ".join(archived_halves)
+    origin = (f"the metadata of {halves}, the archived half of {survivor.type_id}'s pair: "
+              f"{survivor.type_id}'s own metadata has none")
+    if parent is not None and parent.artifact_path == value:
+        origin += f". It names the artifact of {survivor.type_id}'s parent, {parent.type_id}"
+    else:
+        flags.append(f"brainstorm_source {value!r}, carried from {halves}, does not name the "
+                     f"artifact of {survivor.type_id}'s parent "
+                     + (f"{parent.type_id} ({parent.artifact_path!r})" if parent else
+                        "(it has none)"))
+    return value, origin, flags
+
+
 def _project_spec(conn: sqlite3.Connection, workspace: Workspace, group_seq: int,
-                  survivor: Row, others: list[Row]) -> tuple[dict, list[str]]:
+                  survivor: Row, absorbed: list[Row],
+                  left_as_is: list[Row]) -> tuple[dict, list[str]]:
     directory = _directory_of(survivor)
     if parse_legacy_seq("project", directory) != group_seq:
         raise Refusal(f"{survivor.type_id}'s artifact_path {survivor.artifact_path!r} does not "
@@ -475,22 +585,17 @@ def _project_spec(conn: sqlite3.Connection, workspace: Workspace, group_seq: int
         if parent is None or parent.is_deleted or parent.workspace_uuid != workspace.uuid:
             raise Refusal(f"{survivor.type_id}'s parent {survivor.parent_uuid} is missing, "
                           f"deleted or in another workspace")
-    brainstorm_source = survivor.metadata.get("brainstorm_source")
-    if not (isinstance(brainstorm_source, str) and brainstorm_source):
-        brainstorm_source = None
-
     flags = []
-    for other in others:
+    for other in (*absorbed, *left_as_is):
         if _directory_of(other) != directory:
             flags.append(
                 f"{other.type_id} (status {other.status!r}, directory {_directory_of(other)!r}) "
                 f"is grouped with {survivor.type_id} (status {survivor.status!r}, directory "
                 f"{directory!r}) by legacy number {group_seq}: the directories name different "
                 f"projects")
-        other_source = other.metadata.get("brainstorm_source")
-        if brainstorm_source is None and isinstance(other_source, str) and other_source:
-            flags.append(f"brainstorm_source {other_source!r} of {other.type_id} is not carried: "
-                         f"it is taken from the survivor's metadata only, which has none")
+    brainstorm_source, brainstorm_source_origin, brainstorm_flags = _carried_brainstorm_source(
+        survivor, parent, absorbed, left_as_is)
+    flags.extend(brainstorm_flags)
     if survivor.status != PROJECT_STATUS:
         flags.append(f"{survivor.type_id} has status {survivor.status!r}; init_project_state "
                      f"registers its replacement {PROJECT_STATUS!r}")
@@ -510,6 +615,7 @@ def _project_spec(conn: sqlite3.Connection, workspace: Workspace, group_seq: int
         "parent_uuid": survivor.parent_uuid,
         "parent": parent.type_id if parent else None,
         "brainstorm_source": brainstorm_source,
+        "brainstorm_source_origin": brainstorm_source_origin,
         "features": json.loads(NO_FEATURES),
         "milestones": json.loads(NO_MILESTONES),
     }, flags
@@ -565,11 +671,15 @@ def derive_plan(conn: sqlite3.Connection, workspace_root: str, artifacts_root: s
         f"SELECT {_select()} FROM entities WHERE workspace_uuid = ? AND is_legacy = 1",
         (workspace.uuid,))}
     recorded = recorded_replacements(conn, workspace)
+    # An archived row stays in scope once C22 has done it, so a re-run
+    # derives the same groups: an original a replacement records, or a row
+    # C22 archives without a replacement.
     in_scope = {
         legacy.uuid for legacy in select_legacy_entities(conn)
         if legacy.workspace_uuid == workspace.uuid and legacy.is_live
         and not rows[legacy.uuid].is_deleted
-        and (not rows[legacy.uuid].is_archived or legacy.uuid in recorded)
+        and (not rows[legacy.uuid].is_archived or legacy.uuid in recorded
+             or rows[legacy.uuid].type_id in ARCHIVED_WITHOUT_REPLACEMENT)
     }
 
     keyed: dict[tuple[str, int], list[Row]] = {}
@@ -606,8 +716,20 @@ def derive_plan(conn: sqlite3.Connection, workspace_root: str, artifacts_root: s
                 f"of scope (archived, finished or deleted) while "
                 f"{[r.type_id for r in members if r.uuid in in_scope]} are live: the survivor "
                 f"rule would pick a row decision 2 does not recreate")
-        absorbed = [r for r in members if r.uuid in in_scope and r is not survivor]
+        if survivor.type_id in ARCHIVED_WITHOUT_REPLACEMENT:
+            raise Refusal(f"the later-created row of {kind} group {legacy_seq}, "
+                          f"{survivor.type_id}, is to be archived without a replacement "
+                          f"(ARCHIVED_WITHOUT_REPLACEMENT): the survivor rule would recreate it")
+        others = [r for r in members if r.uuid in in_scope and r is not survivor]
+        absorbed = [r for r in others if r.type_id not in ARCHIVED_WITHOUT_REPLACEMENT]
+        archived_without_replacement = [r for r in others
+                                        if r.type_id in ARCHIVED_WITHOUT_REPLACEMENT]
         left_as_is = [r for r in members if r.uuid not in in_scope]
+        for row in archived_without_replacement:
+            held = _children_of(conn, row.uuid)
+            if held:
+                raise Refusal(f"{row.type_id} is to be archived without a replacement, but holds "
+                              f"children {[c.type_id for c in held]}: nothing would take them")
 
         children = []
         for original in (survivor, *absorbed):
@@ -622,8 +744,8 @@ def derive_plan(conn: sqlite3.Connection, workspace_root: str, artifacts_root: s
         if kind == "backlog":
             new, flags = _backlog_spec(survivor)
         else:
-            new, flags = _project_spec(conn, workspace, legacy_seq, survivor,
-                                       [*absorbed, *left_as_is])
+            new, flags = _project_spec(conn, workspace, legacy_seq, survivor, absorbed,
+                                       left_as_is)
 
         replacements = {recorded[r.uuid].uuid: recorded[r.uuid]
                         for r in (survivor, *absorbed) if r.uuid in recorded}
@@ -641,8 +763,8 @@ def derive_plan(conn: sqlite3.Connection, workspace_root: str, artifacts_root: s
         if replacement is None and kind == "project":
             unrecorded = _unrecorded_project(conn, workspace, artifacts_root, new)
 
-        groups.append(Group(kind, legacy_seq, survivor, absorbed, left_as_is, children, residue,
-                            new, replacement, unrecorded, flags))
+        groups.append(Group(kind, legacy_seq, survivor, absorbed, archived_without_replacement,
+                            left_as_is, children, residue, new, replacement, unrecorded, flags))
     return Plan(workspace, artifacts_root, buckets, legacy_numbers, groups)
 
 
@@ -666,6 +788,9 @@ def plan_manifest(plan: Plan) -> dict:
             "legacy_seq": g.legacy_seq,
             "survivor": g.survivor.summary(),
             "absorbed": [r.summary() for r in g.absorbed],
+            "archived_without_replacement": [
+                {**r.summary(), "reason": ARCHIVED_WITHOUT_REPLACEMENT[r.type_id]}
+                for r in g.archived_without_replacement],
             "left_as_is": [r.summary() for r in g.left_as_is],
             "children_to_move": [{"uuid": c.uuid, "type_id": c.type_id} for c in g.children],
             "residue": [{"parent": parent, "children": [c.type_id for c in kids]}
@@ -674,7 +799,8 @@ def plan_manifest(plan: Plan) -> dict:
             "replacement": replacement_of(g),
             "flags": g.flags,
         } for g in plan.groups],
-        "archive": sorted(o.type_id for g in plan.groups for o in g.originals),
+        "archive": sorted(r.type_id for g in plan.groups
+                          for r in (*g.originals, *g.archived_without_replacement)),
     }
 
 
@@ -684,8 +810,11 @@ def scope_differences(conn: sqlite3.Connection, plan: Plan, locked_scope: dict) 
         children = len(group.children)
         if group.replacement is not None:
             children += len(_children_of(conn, group.replacement.uuid))
-        derived[group.survivor.type_id] = {"absorbs": [r.type_id for r in group.absorbed],
-                                           "children": children}
+        derived[group.survivor.type_id] = {
+            "absorbs": [r.type_id for r in group.absorbed],
+            "archived_without_replacement": [r.type_id
+                                             for r in group.archived_without_replacement],
+            "children": children}
     differences = []
     for survivor in sorted(set(derived) | set(locked_scope)):
         if survivor not in derived:
@@ -697,6 +826,11 @@ def scope_differences(conn: sqlite3.Connection, plan: Plan, locked_scope: dict) 
             if sorted(found["absorbs"]) != sorted(locked["absorbs"]):
                 differences.append(f"{survivor}: absorbs {found['absorbs']}, "
                                    f"locked {locked['absorbs']}")
+            locked_unreplaced = locked.get("archived_without_replacement", [])
+            if sorted(found["archived_without_replacement"]) != sorted(locked_unreplaced):
+                differences.append(f"{survivor}: archives without a replacement "
+                                   f"{found['archived_without_replacement']}, "
+                                   f"locked {locked_unreplaced}")
             if found["children"] != locked["children"]:
                 differences.append(f"{survivor}: {found['children']} children, "
                                    f"locked {locked['children']}")
@@ -919,7 +1053,8 @@ def _adopt_project(context: Context, group: Group) -> Row:
 
 
 def _recreate_group(context: Context, group: Group) -> dict:
-    """One group, end to end: its replacement, its children, its originals."""
+    """One group, end to end: its replacement, its children, its originals,
+    then its rows archived without a replacement."""
     if group.replacement is not None:
         replacement, how = group.replacement, "already recreated"
     elif group.kind == "backlog":
@@ -941,6 +1076,11 @@ def _recreate_group(context: Context, group: Group) -> dict:
         if not original.is_archived:
             context.db.set_archived(original.type_id, workspace_uuid=context.workspace.uuid)
             archived.append(original.type_id)
+    archived_without_replacement = []
+    for row in group.archived_without_replacement:
+        if not row.is_archived:
+            context.db.set_archived(row.type_id, workspace_uuid=context.workspace.uuid)
+            archived_without_replacement.append(row.type_id)
     return {"group": group.survivor.type_id,
             "originals": [o.type_id for o in group.originals],
             "replacement": replacement.type_id,
@@ -948,7 +1088,8 @@ def _recreate_group(context: Context, group: Group) -> dict:
             "name": replacement.name,
             "how": how,
             "children_moved": moved,
-            "archived": archived}
+            "archived": archived,
+            "archived_without_replacement": archived_without_replacement}
 
 
 # ---------------------------------------------------------------------------
@@ -987,13 +1128,18 @@ def verify(conn: sqlite3.Connection, plan: Plan) -> list[str]:
             (plan.workspace.uuid, group.kind, display["seq"])).fetchone()[0]
         if holders != 1:
             failures.append(f"{replacement.type_id}: {holders} entities hold number {display['seq']}")
-        for original in group.originals:
-            now = _entity_by_uuid(conn, original.uuid)
+        for archived in (*group.originals, *group.archived_without_replacement):
+            now = _entity_by_uuid(conn, archived.uuid)
             if not now.is_archived:
-                failures.append(f"{original.type_id} is not archived")
-            if now.status != original.status:
-                failures.append(f"{original.type_id}'s status moved {original.status!r} -> "
+                failures.append(f"{archived.type_id} is not archived")
+            if now.status != archived.status:
+                failures.append(f"{archived.type_id}'s status moved {archived.status!r} -> "
                                 f"{now.status!r}")
+        for row in group.archived_without_replacement:
+            if row.uuid in recorded:
+                failures.append(f"{row.type_id} is recorded as replaced by "
+                                f"{recorded[row.uuid].type_id}; it is archived without a "
+                                f"replacement")
         on_replacement = {c.uuid for c in _children_of(conn, replacement.uuid)}
         for child in group.children:
             if child.uuid not in on_replacement:
@@ -1012,11 +1158,11 @@ def verify(conn: sqlite3.Connection, plan: Plan) -> list[str]:
             failures.append(f"{replacement.type_id} has no .meta.json at {replacement.artifact_path}")
 
     for group in plan.groups:
-        for original in group.originals:
-            stranded = _children_of(conn, original.uuid)
+        for archived in (*group.originals, *group.archived_without_replacement):
+            stranded = _children_of(conn, archived.uuid)
             if stranded:
                 failures.append(f"{[c.type_id for c in stranded]} still point at "
-                                f"{original.type_id}")
+                                f"{archived.type_id}")
     invariant = check_display_row_invariant(conn)
     if not invariant.passed:
         failures.extend(f"display_row_invariant: {issue.message}" for issue in invariant.issues)
@@ -1081,7 +1227,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     mode.add_argument("--plan", action="store_true", help="read-only: print the manifest")
     mode.add_argument("--apply", action="store_true", help="recreate, move, archive, verify")
     parser.add_argument(LIVE_REGISTRY_FLAG, dest="live_registry_confirmed", action="store_true",
-                        help=f"allow a --db that reaches {LIVE_REGISTRY_DIR}")
+                        help=f"allow a --db that reaches {LIVE_REGISTRY_DIR} under $HOME or "
+                             f"under the account's home")
     return parser.parse_args(argv)
 
 

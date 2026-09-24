@@ -6,13 +6,17 @@ The fixture is the live registry's C22 shapes in miniature, on a v2 file:
   whose description is JSON-encoded twice), one open item already archived
   by hand and one completed item, both out of scope.
 - **Projects** — ``P001`` with a later ``created_at`` than
-  ``P001-openclaw-gap-analysis`` (both unarchived: a pair that collapses,
-  and the absorbed half holds a child); ``P002`` and ``P003`` whose other
-  halves are archived (out of scope; ``P003-entity-system-redesign`` keeps
-  its child as residue); ``P004-entity-db-redesign`` unpaired with three
-  children.
+  ``P001-openclaw-gap-analysis`` (both unarchived, sharing legacy number 1;
+  the openclaw row is a different project, archived with no replacement,
+  and holds no child); ``P002`` and ``P003`` whose other halves are
+  archived (out of scope, each carrying the ``brainstorm_source`` its
+  survivor lacks; ``P003-entity-system-redesign`` keeps its child as
+  residue); ``P004-entity-db-redesign`` unpaired with three children.
 - **Another workspace** holding a live legacy project and its child, which
   C22 cannot reach.
+
+HOME and the account's home in the password database point at two
+different scratch directories, as in a rehearsal run with a scratch HOME.
 
 ``test_rehearsal_on_a_snapshot_copy`` repeats the run on a copy of a live
 registry snapshot and asserts the file's full diff. It runs only when
@@ -26,6 +30,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import pwd
 import re
 import shutil
 import sqlite3
@@ -62,30 +67,34 @@ DESCRIPTION_00177 = (
 )
 P004_BRAINSTORM_SOURCE = "docs/brainstorms/20260710-153600-entity-db-redesign.prd.md"
 OPENCLAW_BRAINSTORM_SOURCE = "docs/brainstorms/20260326-030832-openclaw-gap-analysis.prd.md"
+# The archived halves' values, which their survivors (P002, P003) lack.
+MEMORY_FLYWHEEL_BRAINSTORM_SOURCE = "docs/brainstorms/20260415-100000-memory-flywheel.prd.md"
+ENTITY_SYSTEM_BRAINSTORM_SOURCE = "docs/brainstorms/20260510-152932-entity-system-redesign.prd.md"
+
+# P001's pair: a different project, archived with no replacement
+# (c22.ARCHIVED_WITHOUT_REPLACEMENT).
+OPENCLAW = "project:P001-openclaw-gap-analysis"
 
 # The fixture's own locked scope, in the shape of c22.LOCKED_SCOPE.
 FIXTURE_SCOPE = {
     "backlog:00059": {"absorbs": [], "children": 0},
     "backlog:00177": {"absorbs": [], "children": 0},
-    "project:P001": {"absorbs": ["project:P001-openclaw-gap-analysis"], "children": 1},
+    "project:P001": {"absorbs": [], "archived_without_replacement": [OPENCLAW], "children": 0},
     "project:P002": {"absorbs": [], "children": 2},
     "project:P003": {"absorbs": [], "children": 2},
     "project:P004-entity-db-redesign": {"absorbs": [], "children": 3},
 }
-IN_SCOPE = sorted(["backlog:00059", "backlog:00177", "project:P001",
-                   "project:P001-openclaw-gap-analysis", "project:P002", "project:P003",
-                   "project:P004-entity-db-redesign"])
+IN_SCOPE = sorted(["backlog:00059", "backlog:00177", "project:P001", OPENCLAW, "project:P002",
+                   "project:P003", "project:P004-entity-db-redesign"])
 REPLACEMENT_OF = {
     "backlog:00059": "backlog:279-pre-review-lint-for-curly",
     "backlog:00177": "backlog:280-low-security-resolve-project",
     "project:P001": "project:005-iflow-arch-evolution",
-    "project:P001-openclaw-gap-analysis": "project:005-iflow-arch-evolution",
     "project:P002": "project:006-memory-flywheel",
     "project:P003": "project:007-entity-system-redesign",
     "project:P004-entity-db-redesign": "project:008-entity-db-redesign",
 }
 CHILDREN_OF = {  # original -> its children's type_ids, as the fixture builds them
-    "project:P001-openclaw-gap-analysis": ["feature:070-openclaw-survey"],
     "project:P002": ["feature:079-fts5-backfill", "feature:080-influence-wiring"],
     "project:P003": ["feature:108-workspace-identity", "feature:110-markdown-projections"],
     "project:P003-entity-system-redesign": ["feature:112-workspace-identity-cleanup"],
@@ -93,6 +102,8 @@ CHILDREN_OF = {  # original -> its children's type_ids, as the fixture builds th
                                         "feature:119-append-only-event-log",
                                         "feature:120-state-projection-views"],
 }
+# The child _hang_a_child_on_the_openclaw_row gives the openclaw row.
+OPENCLAW_CHILD = "feature:070-openclaw-survey"
 
 
 # ---------------------------------------------------------------------------
@@ -100,13 +111,31 @@ CHILDREN_OF = {  # original -> its children's type_ids, as the fixture builds th
 # ---------------------------------------------------------------------------
 
 
+def _set_account_home(monkeypatch, account_home: Path) -> None:
+    """Make the password database name *account_home* as this uid's home
+    (HOME is left alone). Every other field is the real entry's."""
+    getpwuid = pwd.getpwuid
+
+    def with_account_home(uid):
+        entry = getpwuid(uid)
+        if uid != os.getuid():
+            return entry
+        return pwd.struct_passwd((entry.pw_name, entry.pw_passwd, entry.pw_uid, entry.pw_gid,
+                                  entry.pw_gecos, str(account_home), entry.pw_shell))
+
+    monkeypatch.setattr(pwd, "getpwuid", with_account_home)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_from_the_live_registry(monkeypatch, tmp_path):
-    """No code path may reach ``~/.claude/pd``: HOME and ENTITY_DB_PATH point
-    into this test's directory (repo-root scripts/ has no conftest doing it)."""
+    """No code path may reach ``~/.claude/pd``: HOME, the account's home in
+    the password database and ENTITY_DB_PATH all point into this test's
+    directory (repo-root scripts/ has no conftest doing it). HOME and the
+    account's home are different directories, as in a rehearsal."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    _set_account_home(monkeypatch, tmp_path / "account-home")
     monkeypatch.setenv("ENTITY_DB_PATH", str(tmp_path / "throwaway-entities.db"))
     monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
     monkeypatch.delenv("WORKSPACE_UUID", raising=False)
@@ -176,7 +205,8 @@ def _feature(db: EntityDatabase, workspace_uuid: str, display_id: str, parent_uu
 
 
 def _build_registry(root: Path, *, archived_half_created_later: bool = False,
-                    p001_pair_created_together: bool = False) -> Registry:
+                    p001_pair_created_together: bool = False,
+                    openclaw_created_later: bool = False) -> Registry:
     root.mkdir(parents=True, exist_ok=True)
     db_path = root / "entities.db"
     rebuild_tool.build_staging_database(str(db_path))
@@ -203,20 +233,24 @@ def _build_registry(root: Path, *, archived_half_created_later: bool = False,
 
         memory_flywheel_brainstorm = db.register_entity(
             "brainstorm", display_id="20260415-100000-memory-flywheel",
-            name="memory flywheel", workspace_uuid=ws)
+            name="memory flywheel", workspace_uuid=ws,
+            artifact_path=MEMORY_FLYWHEEL_BRAINSTORM_SOURCE)
         entity_system_brainstorm = db.register_entity(
             "brainstorm", display_id="20260510-152932-entity-system-redesign",
-            name="entity system redesign", workspace_uuid=ws)
+            name="entity system redesign", workspace_uuid=ws,
+            artifact_path=ENTITY_SYSTEM_BRAINSTORM_SOURCE)
         entity_db_brainstorm = db.register_entity(
             "brainstorm", display_id="20260710-153600-entity-db-redesign",
-            name="entity db redesign", workspace_uuid=ws)
+            name="entity db redesign", workspace_uuid=ws, artifact_path=P004_BRAINSTORM_SOURCE)
 
         p001_created_at = "2026-03-26T14:54:54.133536+00:00"
         _legacy(db, ws, "project", "P001", "P001", None, p001_created_at,
                 artifact_path=f"{workspace_root}/docs/projects/P001-iflow-arch-evolution")
-        openclaw = _legacy(
+        _legacy(
             db, ws, "project", "P001-openclaw-gap-analysis", "Openclaw Gap Analysis", "active",
-            p001_created_at if p001_pair_created_together else "2026-03-26T01:27:55.096791+00:00",
+            "2026-03-27T00:00:00+00:00" if openclaw_created_later
+            else p001_created_at if p001_pair_created_together
+            else "2026-03-26T01:27:55.096791+00:00",
             artifact_path="docs/projects/P001-openclaw-gap-analysis",
             metadata=json.dumps({"id": "P001", "slug": "openclaw-gap-analysis", "features": [],
                                  "milestones": [], "brainstorm_source": OPENCLAW_BRAINSTORM_SOURCE}))
@@ -232,7 +266,7 @@ def _build_registry(root: Path, *, archived_half_created_later: bool = False,
                 archived=True,
                 metadata=json.dumps({"id": "P002", "slug": "memory-flywheel", "features": [],
                                      "milestones": [],
-                                     "brainstorm_source": "docs/brainstorms/x.prd.md"}))
+                                     "brainstorm_source": MEMORY_FLYWHEEL_BRAINSTORM_SOURCE}))
         p003 = _legacy(db, ws, "project", "P003", "entity-system-redesign", "active",
                        "2026-05-10T07:32:33.194377+00:00",
                        artifact_path="docs/projects/P003-entity-system-redesign/",
@@ -240,7 +274,10 @@ def _build_registry(root: Path, *, archived_half_created_later: bool = False,
         p003_archived_half = _legacy(
             db, ws, "project", "P003-entity-system-redesign", "Entity System Redesign",
             "active", "2026-05-10T07:32:22.383141+00:00",
-            artifact_path="docs/projects/P003-entity-system-redesign", archived=True)
+            artifact_path="docs/projects/P003-entity-system-redesign", archived=True,
+            metadata=json.dumps({"id": "P003", "slug": "entity-system-redesign", "features": [],
+                                 "milestones": [],
+                                 "brainstorm_source": ENTITY_SYSTEM_BRAINSTORM_SOURCE}))
         p004 = _legacy(
             db, ws, "project", "P004-entity-db-redesign", "Entity Db Redesign", "active",
             "2026-07-10T10:45:20.309399+00:00",
@@ -250,8 +287,8 @@ def _build_registry(root: Path, *, archived_half_created_later: bool = False,
                                  "features": ["118-uuidv7-identity"], "milestones": [],
                                  "brainstorm_source": P004_BRAINSTORM_SOURCE}))
 
-        parents = {"project:P001-openclaw-gap-analysis": openclaw, "project:P002": p002,
-                   "project:P003": p003, "project:P003-entity-system-redesign": p003_archived_half,
+        parents = {"project:P002": p002, "project:P003": p003,
+                   "project:P003-entity-system-redesign": p003_archived_half,
                    "project:P004-entity-db-redesign": p004}
         for parent_type_id, children in CHILDREN_OF.items():
             for child in children:
@@ -403,14 +440,37 @@ def test_plan_writes_nothing_and_names_every_choice(registry, capsys):
     manifest = json.loads(capsys.readouterr().out)
     groups = {g["survivor"]["type_id"]: g for g in manifest["groups"]}
     assert sorted(groups) == sorted(FIXTURE_SCOPE)
-    collapsed = groups["project:P001"]
-    assert [m["type_id"] for m in collapsed["absorbed"]] == ["project:P001-openclaw-gap-analysis"]
-    assert collapsed["new"]["slug"] == "iflow-arch-evolution"
-    assert collapsed["new"]["brainstorm_source"] is None
-    assert [c["type_id"] for c in collapsed["children_to_move"]] == ["feature:070-openclaw-survey"]
-    assert any("P001-openclaw-gap-analysis" in flag for flag in collapsed["flags"])
+    # P001's pair shares its legacy number, is a different project, and is
+    # archived with no replacement: the manifest says so, and why.
+    p001 = groups["project:P001"]
+    assert p001["absorbed"] == []
+    [unreplaced] = p001["archived_without_replacement"]
+    assert unreplaced["type_id"] == OPENCLAW
+    assert unreplaced["reason"] == c22.ARCHIVED_WITHOUT_REPLACEMENT[OPENCLAW]
+    assert "terry_agent" in unreplaced["reason"]
+    assert p001["new"]["slug"] == "iflow-arch-evolution"
+    # The openclaw row's brainstorm is another project's: not carried.
+    assert p001["new"]["brainstorm_source"] is None
+    assert p001["children_to_move"] == []
+    assert p001["flags"] == [
+        "project:P001 has status None; init_project_state registers its replacement 'active'"]
     assert [m["type_id"] for m in groups["project:P002"]["left_as_is"]] == \
         ["project:P002-memory-flywheel"]
+    # A survivor with no brainstorm_source takes its pair's archived half's,
+    # and the manifest names where it came from.
+    for survivor, (value, archived_half, parent) in {
+            "project:P002": (MEMORY_FLYWHEEL_BRAINSTORM_SOURCE, "project:P002-memory-flywheel",
+                             "brainstorm:20260415-100000-memory-flywheel"),
+            "project:P003": (ENTITY_SYSTEM_BRAINSTORM_SOURCE, "project:P003-entity-system-redesign",
+                             "brainstorm:20260510-152932-entity-system-redesign")}.items():
+        new = groups[survivor]["new"]
+        assert new["brainstorm_source"] == value, survivor
+        assert archived_half in new["brainstorm_source_origin"], survivor
+        assert f"names the artifact of {survivor}'s parent, {parent}" in \
+            new["brainstorm_source_origin"], survivor
+        assert groups[survivor]["flags"] == [], survivor
+    assert groups["project:P004-entity-db-redesign"]["new"]["brainstorm_source_origin"] == \
+        "the metadata of project:P004-entity-db-redesign, the survivor"
     assert groups["project:P003"]["residue"] == [{
         "parent": "project:P003-entity-system-redesign",
         "children": ["feature:112-workspace-identity-cleanup"]}]
@@ -428,9 +488,10 @@ def test_plan_writes_nothing_and_names_every_choice(registry, capsys):
 # ---------------------------------------------------------------------------
 
 
-def _live_registry_copy(registry: Registry) -> Path:
-    """The fixture registry, copied to the live registry's place under this test's HOME."""
-    live_dir = Path(os.environ["HOME"]) / ".claude" / "pd" / "entities"
+def _live_registry_copy(registry: Registry, *, home: Path | None = None) -> Path:
+    """The fixture registry, copied to the live registry's place under *home*
+    (this test's HOME unless given)."""
+    live_dir = (home or Path(os.environ["HOME"])) / ".claude" / "pd" / "entities"
     live_dir.mkdir(parents=True)
     live_db = live_dir / "entities.db"
     shutil.copy(registry.db_path, live_db)
@@ -455,12 +516,14 @@ def test_refuses_a_database_under_the_live_registry_directory(registry, tmp_path
     assert _file_fingerprint(live_db) == before
 
 
-def _spellings_text_cannot_see(live_db: Path, tmp_path: Path) -> dict[str, Path]:
-    """Paths that reach the live registry although their resolved text is not
-    under ``~/.claude/pd``. A hard link works on any filesystem; the case
-    variants need a case-insensitive one (APFS's default), and the firmlink
-    needs macOS's ``/System/Volumes/Data``."""
-    home = Path(os.environ["HOME"])
+def _spellings_text_cannot_see(live_db: Path, tmp_path: Path, *,
+                               home: Path | None = None) -> dict[str, Path]:
+    """Paths that reach the live registry *live_db* under *home* (this test's
+    HOME unless given) although their resolved text is not under its
+    ``.claude/pd``. A hard link works on any filesystem; the case variants
+    need a case-insensitive one (APFS's default), and the firmlink needs
+    macOS's ``/System/Volumes/Data``."""
+    home = home or Path(os.environ["HOME"])
     spellings = {"hard link": tmp_path / "hard-link.db"}
     os.link(live_db, spellings["hard link"])
     case_variant = home / ".Claude" / "PD" / "entities" / "entities.db"
@@ -487,6 +550,41 @@ def test_the_guard_compares_file_identity_not_path_text(registry, tmp_path, caps
             assert "--i-mean-the-live-registry" in capsys.readouterr().err, (label, mode)
     assert _file_fingerprint(live_db) == before
     assert not registry.artifacts_root.exists()
+
+
+def test_the_guard_refuses_the_accounts_registry_while_home_points_elsewhere(
+        registry, tmp_path, monkeypatch, capsys):
+    """A rehearsal runs with HOME at a scratch directory, where ``~`` then
+    expands. The registry under the account's own home, as the password
+    database names it, is still the live one: a --db reaching it is refused
+    in both modes however it is spelled, and nothing is written."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)  # unrefused, --apply would write
+    account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    assert account_home != Path(os.environ["HOME"])
+    live_db = _live_registry_copy(registry, home=account_home)
+    before = _file_fingerprint(live_db)
+    alias = tmp_path / "alias.db"
+    alias.symlink_to(live_db)
+    spellings = {
+        "the file": live_db,
+        "a symlink to it": alias,
+        "a '..' spelling": account_home / "elsewhere" / ".." / ".claude" / "pd" / "entities"
+                           / "entities.db",
+        "a new file in its directory": account_home / ".claude" / "pd" / "new.db",
+        **_spellings_text_cannot_see(live_db, tmp_path, home=account_home),
+    }
+
+    for label, db in spellings.items():
+        for mode in ("--plan", "--apply"):
+            assert c22.main(_args(registry, mode, db=db)) == 2, (label, mode)
+            assert "--i-mean-the-live-registry" in capsys.readouterr().err, (label, mode)
+    assert _file_fingerprint(live_db) == before
+    assert not registry.artifacts_root.exists()
+
+    # The flag, and only the flag, lets the same run through.
+    assert c22.main(_args(registry, "--plan", db=live_db) + ["--i-mean-the-live-registry"]) == 0
+    assert json.loads(capsys.readouterr().out)["groups"]
+    assert _file_fingerprint(live_db) == before
 
 
 def test_plan_only_and_apply_refuse_the_live_registry_when_called_directly(registry, capsys):
@@ -563,10 +661,14 @@ def test_backlog_items_keep_their_name_and_description(registry, applied):
 def test_projects_take_slug_and_name_from_the_survivors_directory(registry, applied):
     conn = _connect(registry.db_path)
     expectations = {
+        # Not the openclaw row's brainstorm: that row is another project.
         "project:005-iflow-arch-evolution": ("Iflow Arch Evolution", None, None),
-        "project:006-memory-flywheel": ("Memory Flywheel", "20260415-100000-memory-flywheel", None),
+        # Carried from the pair's archived half; the survivor has none.
+        "project:006-memory-flywheel": ("Memory Flywheel", "20260415-100000-memory-flywheel",
+                                        MEMORY_FLYWHEEL_BRAINSTORM_SOURCE),
         "project:007-entity-system-redesign": ("Entity System Redesign",
-                                               "20260510-152932-entity-system-redesign", None),
+                                               "20260510-152932-entity-system-redesign",
+                                               ENTITY_SYSTEM_BRAINSTORM_SOURCE),
         "project:008-entity-db-redesign": ("Entity Db Redesign",
                                            "20260710-153600-entity-db-redesign",
                                            P004_BRAINSTORM_SOURCE),
@@ -584,6 +686,69 @@ def test_projects_take_slug_and_name_from_the_survivors_directory(registry, appl
         assert (meta["features"], meta["milestones"], meta["status"]) == ([], [], "active")
         assert meta.get("brainstorm_source") == brainstorm_source
         assert row["artifact_path"] == str(directory)
+
+
+def test_the_openclaw_row_is_archived_with_no_replacement_recording_it(registry, applied):
+    """Decision 2's outcome stands (both P001 rows archived, one new
+    project), and the lineage is accurate: 005 records P001 alone, and the
+    openclaw row, a different project, is archived with its status as it
+    was and no replacement claiming it."""
+    _before, report = applied
+    conn = _connect(registry.db_path)
+    ws = registry.workspace_uuid
+    p001, openclaw = _entity(conn, ws, "project:P001"), _entity(conn, ws, OPENCLAW)
+    replacements = _replacements(conn, ws)
+
+    assert json.loads(replacements["project:005-iflow-arch-evolution"]["metadata"])[
+        RECREATED_FROM_KEY] == [p001["uuid"]]
+    assert not any(openclaw["uuid"] in json.loads(row["metadata"])[RECREATED_FROM_KEY]
+                   for row in replacements.values())
+    assert (openclaw["is_archived"], openclaw["status"]) == (1, "active")
+    [action] = [a for a in report["actions"] if a["group"] == "project:P001"]
+    assert (action["originals"], action["archived"], action["archived_without_replacement"]) \
+        == (["project:P001"], ["project:P001"], [OPENCLAW])
+
+
+def test_without_the_decision_the_pair_collapses_onto_its_survivor(registry, monkeypatch, capsys):
+    """The decision alone keeps the openclaw row out of 005's record. With no
+    row decided otherwise, a live pair collapses as correction 3 says: the
+    replacement records both rows and takes the absorbed row's child."""
+    monkeypatch.setattr(c22, "ARCHIVED_WITHOUT_REPLACEMENT", {})
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", {
+        **FIXTURE_SCOPE, "project:P001": {"absorbs": [OPENCLAW], "children": 1}})
+    _hang_a_child_on_the_openclaw_row(registry)
+
+    assert c22.main(_args(registry, "--apply")) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["verification"] == {"passed": True, "failures": []}
+    conn = _connect(registry.db_path)
+    ws = registry.workspace_uuid
+    new = _entity(conn, ws, "project:005-iflow-arch-evolution")
+    assert sorted(json.loads(new["metadata"])[RECREATED_FROM_KEY]) == sorted(
+        _entity(conn, ws, type_id)["uuid"] for type_id in ("project:P001", OPENCLAW))
+    assert _children(conn, new["uuid"]) == [OPENCLAW_CHILD]
+    assert _entity(conn, ws, OPENCLAW)["is_archived"] == 1
+
+
+def test_a_carried_brainstorm_source_naming_another_brainstorm_is_flagged(registry, capsys):
+    """The archived half's value is carried as decided, and the manifest
+    flags it when it does not name the survivor's parent brainstorm."""
+    _write_with_entity_database(registry, lambda db: db.update_entity(
+        db.resolve_ref("project:P002-memory-flywheel", workspace_uuid=registry.workspace_uuid),
+        metadata={"brainstorm_source": "docs/brainstorms/elsewhere.prd.md"},
+        workspace_uuid=registry.workspace_uuid))
+
+    assert c22.main(_args(registry, "--plan")) == 0
+
+    p002 = next(g for g in json.loads(capsys.readouterr().out)["groups"]
+                if g["survivor"]["type_id"] == "project:P002")
+    assert p002["new"]["brainstorm_source"] == "docs/brainstorms/elsewhere.prd.md"
+    assert "names the artifact" not in p002["new"]["brainstorm_source_origin"]
+    assert p002["flags"] == [
+        "brainstorm_source 'docs/brainstorms/elsewhere.prd.md', carried from "
+        "project:P002-memory-flywheel, does not name the artifact of project:P002's parent "
+        f"brainstorm:20260415-100000-memory-flywheel ({MEMORY_FLYWHEEL_BRAINSTORM_SOURCE!r})"]
 
 
 def test_every_issued_number_clears_the_legacy_high_water_and_reuses_nothing(registry, applied):
@@ -641,11 +806,11 @@ def test_the_diff_is_exactly_what_c22_owns(registry, applied):
     summary = summarize(diff)
     assert summary == {
         "entities": {"added": 6, "removed": 0, "changed_columns": {
-            ("is_archived", "updated_at"): 7, ("parent_uuid", "updated_at"): 8}},
+            ("is_archived", "updated_at"): 7, ("parent_uuid", "updated_at"): 7}},
         "entities_fts": {"added": 6, "removed": 0, "changed_columns": {}},
         "entity_display": {"added": 6, "removed": 0, "changed_columns": {}},
-        "events": {"added": 14, "removed": 0, "changed_columns": {},
-                   "added_by_type": {"entity_created": 6, "reparented": 8}},
+        "events": {"added": 13, "removed": 0, "changed_columns": {},
+                   "added_by_type": {"entity_created": 6, "reparented": 7}},
         "phase_events": {"added": 6, "removed": 0, "changed_columns": {},
                          "added_by_type": {"entity_created": 6}},
         "sequences": {"added": 0, "removed": 0, "changed_columns": {("next_val",): 2}},
@@ -685,7 +850,8 @@ def test_a_second_apply_changes_nothing(registry, applied, capsys):
     assert _artifacts_tree(registry.artifacts_root) == tree_after_first
     report = json.loads(capsys.readouterr().out)
     assert {a["how"] for a in report["actions"]} == {"already recreated"}
-    assert all(a["children_moved"] == [] and a["archived"] == [] for a in report["actions"])
+    assert all(a["children_moved"] == [] and a["archived"] == []
+               and a["archived_without_replacement"] == [] for a in report["actions"])
     assert report["verification"] == {"passed": True, "failures": []}
 
 
@@ -764,6 +930,43 @@ def test_an_apply_interrupted_after_the_backlog_half_resumes_to_the_same_end_sta
     report = json.loads(capsys.readouterr().out)
     assert sorted({a["how"] for a in report["actions"]}) == ["already recreated", "created"]
 
+    assert _end_state(interrupted) == _end_state(straight)
+
+
+def test_an_apply_stopped_before_archiving_the_openclaw_row_archives_it_on_resume(
+        tmp_path, monkeypatch, capsys):
+    """A run that stopped after 005 was created and P001 archived, before the
+    openclaw row was archived: the re-run takes the group as recreated and
+    archives the openclaw row, still with no replacement recording it."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    straight = _build_registry(tmp_path / "straight")
+    interrupted = _build_registry(tmp_path / "interrupted")
+    assert c22.main(_args(straight, "--apply")) == 0
+    set_archived = EntityDatabase.set_archived
+
+    def stop_at_the_openclaw_row(self, type_id, *args, **kwargs):
+        if type_id == OPENCLAW:
+            raise KeyboardInterrupt
+        return set_archived(self, type_id, *args, **kwargs)
+
+    monkeypatch.setattr(EntityDatabase, "set_archived", stop_at_the_openclaw_row)
+    with pytest.raises(KeyboardInterrupt):
+        c22.main(_args(interrupted, "--apply"))
+
+    midway = _connect(interrupted.db_path)
+    assert "project:005-iflow-arch-evolution" in _replacements(midway, interrupted.workspace_uuid)
+    assert _entity(midway, interrupted.workspace_uuid, "project:P001")["is_archived"] == 1
+    assert _entity(midway, interrupted.workspace_uuid, OPENCLAW)["is_archived"] == 0
+    midway.close()
+
+    monkeypatch.setattr(EntityDatabase, "set_archived", set_archived)
+    capsys.readouterr()
+    assert c22.main(_args(interrupted, "--apply")) == 0
+    report = json.loads(capsys.readouterr().out)
+    [action] = [a for a in report["actions"] if a["group"] == "project:P001"]
+    assert (action["how"], action["archived"], action["archived_without_replacement"]) == \
+        ("already recreated", [], [OPENCLAW])
+    assert report["verification"] == {"passed": True, "failures": []}
     assert _end_state(interrupted) == _end_state(straight)
 
 
@@ -1032,6 +1235,34 @@ def _count_an_issued_number_as_legacy(registry, plan, uuid_of):
     return ["backlog:280-low-security-resolve-project reuses legacy number 280"]
 
 
+def _unarchive_the_openclaw_row(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.set_archived(
+        OPENCLAW, archived=False, workspace_uuid=registry.workspace_uuid))
+    return [f"{OPENCLAW} is not archived"]
+
+
+def _change_the_openclaw_rows_status(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.update_entity(
+        uuid_of[OPENCLAW], status="completed", workspace_uuid=registry.workspace_uuid))
+    return [f"{OPENCLAW}'s status moved 'active' -> 'completed'"]
+
+
+def _record_the_openclaw_row_as_replaced(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.update_entity(
+        uuid_of["project:005-iflow-arch-evolution"],
+        metadata={RECREATED_FROM_KEY: [uuid_of["project:P001"], uuid_of[OPENCLAW]]},
+        workspace_uuid=registry.workspace_uuid))
+    return [f"{OPENCLAW} is recorded as replaced by project:005-iflow-arch-evolution"]
+
+
+def _give_the_openclaw_row_a_child(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.reparent_entity(
+        uuid_of["feature:079-fts5-backfill"], uuid_of[OPENCLAW],
+        workspace_uuid=registry.workspace_uuid))
+    return ["feature:079-fts5-backfill did not move onto project:006-memory-flywheel",
+            f"['feature:079-fts5-backfill'] still point at {OPENCLAW}"]
+
+
 @pytest.mark.parametrize("break_one_fact", [
     _unarchive_an_original,
     _change_an_originals_status,
@@ -1043,6 +1274,10 @@ def _count_an_issued_number_as_legacy(registry, plan, uuid_of):
     _delete_a_features_display_row,
     _raise_the_project_high_water_mark_to_the_first_issued_number,
     _count_an_issued_number_as_legacy,
+    _unarchive_the_openclaw_row,
+    _change_the_openclaw_rows_status,
+    _record_the_openclaw_row_as_replaced,
+    _give_the_openclaw_row_a_child,
 ], ids=lambda breaker: breaker.__name__.strip("_"))
 def test_verify_names_each_fact_that_does_not_hold(registry, monkeypatch, capsys, break_one_fact):
     monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
@@ -1080,6 +1315,22 @@ def test_apply_refuses_when_the_derivation_differs_from_the_locked_scope(registr
     assert not registry.artifacts_root.exists()
 
 
+def test_apply_refuses_when_the_rows_archived_without_a_replacement_differ_from_the_lock(
+        registry, monkeypatch, capsys):
+    """The locked scope pins which rows a group archives without a
+    replacement; a derivation that differs writes nothing."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", {
+        **FIXTURE_SCOPE, "project:P001": {"absorbs": [], "children": 0}})
+    before = _file_fingerprint(registry.db_path)
+
+    assert c22.main(_args(registry, "--apply")) == 3
+
+    assert f"project:P001: archives without a replacement ['{OPENCLAW}'], locked []" in \
+        capsys.readouterr().err
+    assert _file_fingerprint(registry.db_path) == before
+    assert not registry.artifacts_root.exists()
+
+
 def test_refuses_a_group_whose_later_row_is_out_of_scope(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
     registry = _build_registry(tmp_path / "registry", archived_half_created_later=True)
@@ -1103,6 +1354,21 @@ def test_refuses_a_group_with_no_single_latest_row(tmp_path, monkeypatch, capsys
         err = capsys.readouterr().err
         assert "['project:P001', 'project:P001-openclaw-gap-analysis'] share the latest " \
                "created_at of their group; no survivor" in err, mode
+    assert _file_fingerprint(registry.db_path) == before
+    assert not registry.artifacts_root.exists()
+
+
+def test_refuses_when_the_survivor_rule_picks_the_openclaw_row(tmp_path, monkeypatch, capsys):
+    """A row decided to be archived without a replacement cannot be its
+    group's survivor: the survivor rule would recreate it."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    registry = _build_registry(tmp_path / "registry", openclaw_created_later=True)
+    before = _file_fingerprint(registry.db_path)
+
+    for mode in ("--plan", "--apply"):
+        assert c22.main(_args(registry, mode)) == 2, mode
+        assert (f"the later-created row of project group 1, {OPENCLAW}, is to be archived "
+                f"without a replacement") in capsys.readouterr().err, mode
     assert _file_fingerprint(registry.db_path) == before
     assert not registry.artifacts_root.exists()
 
@@ -1158,6 +1424,20 @@ def _drop_the_project_counter(registry):
                          "AND entity_type = 'project'", (registry.workspace_uuid,))
 
 
+def _hang_a_child_on_the_openclaw_row(registry):
+    _write_with_entity_database(registry, lambda db: _feature(
+        db, registry.workspace_uuid, OPENCLAW_CHILD.partition(":")[2],
+        db.resolve_ref(OPENCLAW, workspace_uuid=registry.workspace_uuid)))
+
+
+def _archive_another_p002_half_with_another_brainstorm(registry):
+    _write_with_entity_database(registry, lambda db: _legacy(
+        db, registry.workspace_uuid, "project", "P002-memory-flywheel-again", "Memory Flywheel",
+        "active", "2026-04-15T14:30:00.000000+00:00",
+        artifact_path="docs/projects/P002-memory-flywheel", archived=True,
+        metadata=json.dumps({"brainstorm_source": "docs/brainstorms/elsewhere.prd.md"})))
+
+
 @pytest.mark.parametrize("put_in_state, modes, reason", [
     (_state_schema_version_6, ("--plan", "--apply"),
      "would migrate anything else on open"),
@@ -1171,6 +1451,11 @@ def _drop_the_project_counter(registry):
      "the backlog counter 177 does not clear its legacy high-water mark 177"),
     (_drop_the_project_counter, ("--apply",),
      "the project bucket has no sequences counter"),
+    (_hang_a_child_on_the_openclaw_row, ("--plan", "--apply"),
+     f"{OPENCLAW} is to be archived without a replacement, but holds children "
+     f"['{OPENCLAW_CHILD}']"),
+    (_archive_another_p002_half_with_another_brainstorm, ("--plan", "--apply"),
+     "the archived halves of project:P002's pair carry different brainstorm_source values"),
 ], ids=lambda value: value.__name__.strip("_") if callable(value) else None)
 def test_each_refusal_names_its_reason_and_writes_nothing(
         registry, monkeypatch, capsys, put_in_state, modes, reason):
@@ -1287,6 +1572,25 @@ def test_rehearsal_on_a_snapshot_copy(tmp_path, capsys):
     assert len(_children(conn, _replacements(conn, workspace)["project:007-entity-system-redesign"]["uuid"])) == 4
     assert _children(conn, by_type_id["project:P003-entity-system-redesign"]["uuid"]) == \
         ["feature:112-workspace-identity-cleanup"]
+    # The P001 lineage: 005 records P001 alone; the openclaw row is archived,
+    # its status as it was, and no replacement records it.
+    replacements = _replacements(conn, workspace)
+    assert json.loads(replacements["project:005-iflow-arch-evolution"]["metadata"])[
+        RECREATED_FROM_KEY] == [by_type_id["project:P001"]["uuid"]]
+    openclaw = by_type_id[OPENCLAW]
+    assert (openclaw["is_archived"], openclaw["status"]) == (1, "active")
+    assert not any(openclaw["uuid"] in json.loads(row["metadata"])[RECREATED_FROM_KEY]
+                   for row in replacements.values())
+    # brainstorm_source: the survivor's own, else its pair's archived half's.
+    for type_id, brainstorm_source in {
+            "project:005-iflow-arch-evolution": None,
+            "project:006-memory-flywheel": MEMORY_FLYWHEEL_BRAINSTORM_SOURCE,
+            "project:007-entity-system-redesign": ENTITY_SYSTEM_BRAINSTORM_SOURCE,
+            "project:008-entity-db-redesign": P004_BRAINSTORM_SOURCE}.items():
+        project = replacements[type_id]
+        assert json.loads(project["metadata"]).get("brainstorm_source") == brainstorm_source
+        meta = json.loads(Path(project["artifact_path"], ".meta.json").read_text())
+        assert meta.get("brainstorm_source") == brainstorm_source
     assert check_display_row_invariant(conn).passed
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
