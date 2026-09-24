@@ -6,12 +6,17 @@ mutation-mindset dimensions beyond the TDD scaffolding tests.
 
 import sqlite3
 import unittest.mock
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 from starlette.testclient import TestClient
 
-from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.database import (
+    EntityDatabase,
+    _UNKNOWN_WORKSPACE_UUID,
+    _derive_type_and_lifecycle,
+)
 from ui import create_app
 from ui.routes.board import COLUMN_ORDER, _group_by_column
 
@@ -53,6 +58,28 @@ def _seed_workflow_row(
             updated_at,
             _UNKNOWN_WORKSPACE_UUID,
         ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _seed_entity_row(db_file, type_id, *, entity_id, kind):
+    """Insert the entities row behind a card, with its ``kind`` column.
+
+    The card reads its kind from this column (C8: list_workflow_phases'
+    ``e.kind AS entity_type``), so a test of kind-driven card elements needs
+    the row. A workflow_phases row alone is an orphan with no kind.
+    """
+    entity_type, lifecycle_class = _derive_type_and_lifecycle(kind)
+    now = "2026-03-08T00:00:00Z"
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, name, "
+        "created_at, updated_at, type, kind, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), _UNKNOWN_WORKSPACE_UUID, type_id, entity_id,
+         f"Seeded {kind}", now, now, entity_type, kind, lifecycle_class),
     )
     conn.commit()
     conn.close()
@@ -212,46 +239,6 @@ def test_group_by_column_missing_execution_status_key_defaults_to_backlog():
 
     # Then the row appears in the 'backlog' column
     assert result["backlog"] == [row]
-
-
-# ---------------------------------------------------------------------------
-# test_type_id_slug_extraction_with_colon
-# derived_from: dimension:boundary (string split), spec:AC-5
-# ---------------------------------------------------------------------------
-def test_type_id_slug_extraction_with_colon(tmp_path):
-    """Card renders slug extracted from type_id via split(':')[1]."""
-    # Given a card with type_id='feature:my-slug'
-    db_file = str(tmp_path / "test.db")
-    EntityDatabase(db_file)
-    _seed_workflow_row(db_file, "feature:my-slug", kanban_column="wip")
-    app = create_app(db_path=db_file)
-    client = TestClient(app)
-
-    # When the card is rendered
-    response = client.get("/")
-
-    # Then the slug displayed is 'my-slug'
-    assert "my-slug" in response.text
-
-
-# ---------------------------------------------------------------------------
-# test_type_id_slug_extraction_with_multiple_colons
-# derived_from: dimension:boundary (multiple delimiters)
-# ---------------------------------------------------------------------------
-def test_type_id_slug_extraction_with_multiple_colons(tmp_path):
-    """Slug extraction with multiple colons returns second segment only."""
-    # Given a card with type_id='feature:my-slug:extra'
-    db_file = str(tmp_path / "test.db")
-    EntityDatabase(db_file)
-    _seed_workflow_row(db_file, "feature:my-slug:extra", kanban_column="wip")
-    app = create_app(db_path=db_file)
-    client = TestClient(app)
-
-    # When the card is rendered
-    response = client.get("/")
-
-    # Then the slug displayed is 'my-slug' (split(':')[1])
-    assert "my-slug" in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +677,7 @@ def test_card_displays_last_completed_phase(tmp_path):
     # Given a feature row with last_completed_phase='design'
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "feature:lcp-test", entity_id="lcp-test", kind="feature")
     _seed_workflow_row(
         db_file,
         "feature:lcp-test",
@@ -737,6 +725,7 @@ def test_card_feature_renders_mode_badge(tmp_path):
     """Feature entity with mode shows mode badge on card."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "feature:mode-test", entity_id="mode-test", kind="feature")
     _seed_workflow_row(
         db_file,
         "feature:mode-test",
@@ -761,6 +750,7 @@ def test_card_brainstorm_renders_type_badge(tmp_path):
     """Brainstorm entity shows 'brainstorm' type badge, no mode badge."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "brainstorm:idea-one", entity_id="idea-one", kind="brainstorm")
     _seed_workflow_row(
         db_file,
         "brainstorm:idea-one",
@@ -794,6 +784,7 @@ def test_card_backlog_renders_type_badge(tmp_path):
     """Backlog entity shows 'backlog' type badge."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "backlog:item-42", entity_id="item-42", kind="backlog")
     _seed_workflow_row(
         db_file,
         "backlog:item-42",
@@ -818,6 +809,7 @@ def test_card_project_renders_type_badge(tmp_path):
     """Project entity shows 'project' type badge."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "project:big-proj", entity_id="big-proj", kind="project")
     _seed_workflow_row(
         db_file,
         "project:big-proj",
@@ -842,6 +834,7 @@ def test_card_feature_shows_last_completed_phase(tmp_path):
     """Feature with last_completed_phase shows 'last:' text."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "feature:lcp-feature", entity_id="lcp-feature", kind="feature")
     _seed_workflow_row(
         db_file,
         "feature:lcp-feature",
@@ -867,6 +860,7 @@ def test_card_brainstorm_hides_last_completed_phase(tmp_path):
     """Brainstorm entity does NOT show 'last:' text even if last_completed_phase set."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "brainstorm:no-last", entity_id="no-last", kind="brainstorm")
     _seed_workflow_row(
         db_file,
         "brainstorm:no-last",
@@ -891,6 +885,7 @@ def test_card_brainstorm_null_phase_shows_no_phase_badge(tmp_path):
     """Brainstorm entity with workflow_phase=None has no phase badge element."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    _seed_entity_row(db_file, "brainstorm:null-phase", entity_id="null-phase", kind="brainstorm")
     _seed_workflow_row(
         db_file,
         "brainstorm:null-phase",

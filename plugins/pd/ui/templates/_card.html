@@ -1,13 +1,16 @@
 <a href="/entities/{{ item.type_id }}" class="block no-underline [color:inherit]">
 <div class="card bg-base-200 shadow-sm p-3 transition-all duration-150 hover:bg-base-300 hover:shadow-md">
     <div class="font-semibold text-sm truncate">
-        {{ item.entity_name or (item.type_id.split(':')[1] if ':' in item.type_id else item.type_id) }}
+        {{ item.entity_name or item.type_id }}
     </div>
     <div class="text-xs text-base-content/50 truncate mt-0.5">
         {{ item.type_id }}
     </div>
-    {# Extract entity type from type_id #}
-    {% set entity_type = item.type_id.split(':')[0] if ':' in item.type_id else 'unknown' %}
+    {# The kind is entities.kind: list_workflow_phases selects e.kind AS entity_type
+       (C8; never read from the type_id text). An orphan row has no entities row, so
+       entity_type is None: no kind badge and no feature-only lines. Its title
+       above falls back to the whole type_id. #}
+    {% set entity_type = item.entity_type %}
     <div class="flex flex-wrap gap-1 mt-2">
         {% if item.pipeline_phase %}
         <span class="badge badge-xs {{ phase_colors.get(item.pipeline_phase, 'badge-ghost') }}">

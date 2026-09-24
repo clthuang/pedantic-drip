@@ -516,9 +516,11 @@ def test_integration_card_content_rendered(tmp_path):
     EntityDatabase(db_file)
 
     # workflow_phase must be a valid CHECK value (implement, not wip)
-    # kanban_column=wip is valid for the kanban column
-    _seed_workflow_row(
-        db_file, "feature:test-slug",
+    # kanban_column=wip is valid for the kanban column. The entities row is
+    # what makes the card a feature (C8: kind comes from its kind column),
+    # which is what renders the mode badge.
+    _seed_entity_and_workflow_row(
+        db_file, "feature:test-slug", name="Card content feature",
         kanban_column="wip", workflow_phase="implement", mode="standard",
     )
 
@@ -716,7 +718,9 @@ def test_card_renders_entity_name(tmp_path):
 
 
 def test_card_fallback_null_entity_name(tmp_path):
-    """Card falls back to type_id segment when entity_name is NULL."""
+    """Card title falls back to the whole type_id when entity_name is NULL
+    (an orphan row). C8: the id is not split; test_c8_card_kind.py pins the
+    exact title."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
     # Seed only workflow_phases (no entity row) — entity_name will be NULL

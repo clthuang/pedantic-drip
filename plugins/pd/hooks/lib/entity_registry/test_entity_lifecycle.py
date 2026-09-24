@@ -207,6 +207,16 @@ class TestTransitionEntityPhase:
             transition_entity_phase(db, "nocolon", "reviewing")
 
     def test_unsupported_entity_type_raises(self, db):
+        # C8: the kind comes from the entity row, so the feature must exist
+        # for the kind gate to fire; an unregistered id is entity_not_found
+        # (pinned in workflow_engine/test_c8_kind_from_column.py).
+        db.register_entity(
+            entity_type="feature",
+            seq=1, slug="feat-1",
+            name="Test feature",
+            status="active",
+            project_id="__unknown__",
+        )
         with pytest.raises(ValueError, match="invalid_entity_type.*feature"):
             transition_entity_phase(db, "feature:001-feat-1", "reviewing")
 
@@ -418,10 +428,10 @@ class TestTransitionEntityPhase:
 # ENTITY_MACHINES entries (feature 123 — task IS machine-bearing via
 # MACHINE_REGISTRY's FiveDMachine, but ENTITY_MACHINES itself stays scoped
 # to brainstorm/backlog only; bug remains the sole machine-less kind, spec
-# FR123-5). The existing first-line validation in transition_entity_phase
-# at router.py:413 (raises
-# "invalid_entity_type: {entity_type} — only brainstorm and backlog supported")
-# fires naturally for these type_ids. These tests pin that behavior so a
+# FR123-5). transition_entity_phase's kind gate (raises
+# "invalid_entity_type: {kind} — only brainstorm and backlog supported",
+# the kind read from the entity row's kind column since C8) fires
+# naturally for these entities. These tests pin that behavior so a
 # future refactor of ENTITY_MACHINES does not accidentally widen routing.
 
 

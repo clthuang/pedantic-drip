@@ -326,9 +326,11 @@ def get_machine(kind: str) -> Machine:
 
 # ---------------------------------------------------------------------------
 # Lifecycle entry points — moved from entity_registry's former lifecycle
-# module (feature 123 D6). Bodies unchanged: ValueError strings, dict returns, and
-# workspace_uuid kwargs are preserved exactly; ENTITY_MACHINES validation
-# now reads the local dict above instead of an imported one.
+# module (feature 123 D6). The move kept ValueError strings, dict returns and
+# workspace_uuid kwargs exactly; ENTITY_MACHINES validation reads the local
+# dict above instead of an imported one. Since C8 both functions read the
+# kind from the entity row's ``kind`` column instead of the type_id text;
+# transition_entity_phase's docstring records the one error-order change.
 # ---------------------------------------------------------------------------
 
 
@@ -341,9 +343,13 @@ def init_entity_workflow(
 
     Preserves all validation from _process_init_entity_workflow:
     - Entity must exist in registry
-    - feature/project types rejected (they use WorkflowStateEngine)
+    - feature/project kinds rejected (they use WorkflowStateEngine)
     - Phase/column validated against ENTITY_MACHINES when applicable
     - Idempotent: existing row returns with created=False
+
+    The kind is the entity row's ``kind`` column (C8), never the type_id
+    text, so the kind checks run for every resolved entity, including one
+    passed by uuid.
 
     Returns dict (caller serializes to JSON).
     Raises ValueError for validation failures.
@@ -353,25 +359,24 @@ def init_entity_workflow(
     if entity is None:
         raise ValueError(f"entity_not_found: {type_id}")
 
-    # 1b. Reject entity types with their own workflow management
-    if ":" in type_id:
-        entity_type = type_id.split(":", 1)[0]
-        if entity_type in ("feature", "project"):
+    # 1b. Reject kinds with their own workflow management
+    kind = entity["kind"]
+    if kind in ("feature", "project"):
+        raise ValueError(
+            f"invalid_entity_type: {kind} entities use the feature workflow engine"
+        )
+    if kind in ENTITY_MACHINES:
+        machine = ENTITY_MACHINES[kind]
+        if workflow_phase not in machine["columns"]:
             raise ValueError(
-                f"invalid_entity_type: {entity_type} entities use the feature workflow engine"
+                f"invalid_transition: {workflow_phase} is not a valid phase for {kind}"
             )
-        if entity_type in ENTITY_MACHINES:
-            machine = ENTITY_MACHINES[entity_type]
-            if workflow_phase not in machine["columns"]:
-                raise ValueError(
-                    f"invalid_transition: {workflow_phase} is not a valid phase for {entity_type}"
-                )
-            expected_column = machine["columns"][workflow_phase]
-            if kanban_column != expected_column:
-                raise ValueError(
-                    f"invalid_transition: kanban_column {kanban_column} does not match "
-                    f"expected {expected_column} for phase {workflow_phase}"
-                )
+        expected_column = machine["columns"][workflow_phase]
+        if kanban_column != expected_column:
+            raise ValueError(
+                f"invalid_transition: kanban_column {kanban_column} does not match "
+                f"expected {expected_column} for phase {workflow_phase}"
+            )
 
     # 2. Check idempotency — existing row means no-op
     existing = db.get_workflow_phase(type_id)
@@ -412,27 +417,36 @@ def transition_entity_phase(
     - entities.status update via db.update_entity()
     - workflow_phases update: forward sets last_completed_phase, backward preserves it
 
+    The kind is the entity row's ``kind`` column (C8), never the type_id
+    text. The entity is therefore fetched BEFORE the kind gate. An id with
+    no live entity row (unregistered, or soft-deleted) is
+    ``entity_not_found`` whatever kind its text spells (before C8 a
+    non-lifecycle prefix answered ``invalid_entity_type``).
+
     Returns dict (caller serializes to JSON).
     Raises ValueError for validation failures.
     """
-    # 1. Parse entity_type
+    # 1. Reject a malformed type_id (no ":") before any lookup. This checks
+    # the argument's shape; it does not read a kind. It also keeps an entity
+    # uuid, which get_entity would resolve, from being used below as a
+    # workflow_phases key.
     if ":" not in type_id:
         raise ValueError(f"invalid_entity_type: malformed type_id: {type_id}")
-    entity_type = type_id.split(":", 1)[0]
 
-    # 2. Validate entity_type has a state machine (this endpoint is
-    # lifecycle-kind-only — brainstorm/backlog; unlike get_machine(), which
-    # would also resolve feature/5D kinds, ENTITY_MACHINES membership is
-    # the correct gate here).
-    if entity_type not in ENTITY_MACHINES:
-        raise ValueError(
-            f"invalid_entity_type: {entity_type} — only brainstorm and backlog supported"
-        )
-
-    # 3. Validate entity exists
+    # 2. Validate entity exists; its row supplies the kind
     entity = db.get_entity(type_id)
     if entity is None:
         raise ValueError(f"entity_not_found: {type_id}")
+    kind = entity["kind"]
+
+    # 3. Validate the kind has a state machine (this endpoint is
+    # lifecycle-kind-only — brainstorm/backlog; unlike get_machine(), which
+    # would also resolve feature/5D kinds, ENTITY_MACHINES membership is
+    # the correct gate here).
+    if kind not in ENTITY_MACHINES:
+        raise ValueError(
+            f"invalid_entity_type: {kind} — only brainstorm and backlog supported"
+        )
 
     # 4. Get current phase via public API
     current_row = db.get_workflow_phase(type_id)
@@ -449,7 +463,7 @@ def transition_entity_phase(
     # #075: one enforcement route per kind, matching 123's 5D rewire —
     # the former inline ENTITY_MACHINES[entity_type]["transitions"] walk
     # duplicated exactly what LifecycleMachine.validate() already does).
-    machine = get_machine(entity_type)
+    machine = get_machine(kind)
     decision = machine.validate(current_phase, target_phase)
     if not decision.allowed:
         raise ValueError(decision.reason)
