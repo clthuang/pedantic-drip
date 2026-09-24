@@ -240,7 +240,7 @@ def _process_register_entity(
         Optional UUID of the parent entity.
     workspace_uuid:
         The workspace to register in. ``register_entity`` receives this, or
-        the one ``project_id`` names; never the ``project_id`` alias.
+        the one ``project_id`` names.
 
     Returns
     -------
@@ -256,10 +256,10 @@ def _process_register_entity(
         type_id = f"{entity_type}:{display}"
         existing = db.get_entity(type_id)
         existing_parent = existing["parent_type_id"] if existing else None
-        # Feature 112 / FR-4: parent_uuid is the canonical kwarg passed to
-        # ``db.register_entity``. Callers may still supply ``parent_type_id``
-        # for compat at this wrapper boundary; we resolve it to parent_uuid
-        # here so the underlying register_entity does not need the alias.
+        # Feature 112 / FR-4: parent_uuid is the kwarg passed to
+        # ``db.register_entity``, which takes no ``parent_type_id`` (C5b).
+        # Callers may still supply ``parent_type_id`` at this wrapper
+        # boundary; we resolve it to parent_uuid here.
         if parent_type_id and parent_uuid is None:
             try:
                 parent_row = db.get_entity(parent_type_id)
@@ -277,10 +277,11 @@ def _process_register_entity(
                 )
                 # Fall through with parent_uuid=None
         # One workspace for the registration (C5b): the caller's, else the
-        # one the legacy project_id names -- the resolution register_entity
-        # applied to that alias, under its name, so an unknown project_id
-        # reports exactly as before. Callers in the MCP layer coerce missing
-        # workspace identity to "" before reaching this wrapper.
+        # one the legacy project_id names, resolved under register_entity's
+        # name, so an unknown project_id reports the message
+        # register_entity's former project_id parameter gave. Callers in the
+        # MCP layer coerce missing workspace identity to "" before reaching
+        # this wrapper.
         registration_workspace_uuid = workspace_uuid or db._resolve_optional_workspace_filter(
             None, project_id, _caller="register_entity"
         )

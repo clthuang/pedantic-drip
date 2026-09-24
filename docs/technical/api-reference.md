@@ -77,41 +77,42 @@ reconcile_apply(feature_type_id: str | None = None, dry_run: bool = False) -> {"
 
 ### register_entity
 
-Raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict — no silent ignore (feature 109, FR-4).
+Registers through `EntityDatabase.register_entity`, which raises `EntityExistsError` on a `(workspace_uuid, type_id)` conflict — no silent ignore (feature 109, FR-4). This tool catches it and returns `Already existed: {type_id} — …` instead of raising.
 
 ```
 register_entity(
-    entity_type: str,               # kind, e.g. "feature", "backlog" — combined with entity_id into "{kind}:{entity_id}" (colon separator, not slash)
-    entity_id: str | None = None,
-    name: str = "",
+    entity_type: str,               # kind, e.g. "feature", "backlog" — the type_id is "{kind}:{display id}" (colon separator, not slash)
+    seq: int | None = None,         # sequence kinds: seq + slug as allocate_entity_id returned them, rendered "{NNN}-{slug}"
+    slug: str | None = None,
+    display_id: str | None = None,  # kinds with no sequence (a brainstorm's file stem), stored as given
+    name: str = "",                 # must be non-blank
     artifact_path: str | None = None,
     status: str | None = None,
     parent_uuid: str | None = None,
     metadata: str | dict | None = None,   # dict preferred; auto-coerced to JSON string
-    workspace_uuid: str | None = None,
-    project_id: str | None = None,
-    auto_id: bool = False,
-) -> str                            # entity uuid
+    workspace_uuid: str | None = None,    # None → the server's own workspace
+    auto_id: bool = False,                # allocate seq and derive slug from name; not with seq, slug or display_id
+) -> str                            # "Registered: {type_id}", "Already existed: {type_id} — …", an "Error …" string, or a JSON error envelope
 ```
 
-**Exception:** `EntityExistsError(ValueError)` — raised when the `(workspace_uuid, type_id)` pair already exists. Carries `.workspace_uuid` and `.type_id` attributes for caller inspection. Defined in `database.py` (not a separate `exceptions.py`).
+**Exception:** `EntityExistsError(ValueError)` — raised by `EntityDatabase.register_entity` when the `(workspace_uuid, type_id)` pair already exists. Carries `.workspace_uuid` and `.type_id` attributes for caller inspection. Defined in `database.py` (not a separate `exceptions.py`).
 
 ### upsert_entity — EntityDatabase method (database.py, not an MCP tool)
 
-Idempotent insert-or-status-update. Byte-identical signature to the DB-layer `EntityDatabase.register_entity` (feature 109, FR-4).
+Idempotent insert-or-status-update. Byte-identical signature to the DB-layer `EntityDatabase.register_entity` (feature 109, FR-4). Neither takes `project_id` or `parent_type_id`: name the workspace by `workspace_uuid` and the parent by `parent_uuid`.
 
 ```
 EntityDatabase.upsert_entity(
     entity_type: str,
-    entity_id: str,
+    *,                              # keyword-only from here
     name: str,
-    *,
-    workspace_uuid: str | None = None,
-    project_id: str | None = None,
+    seq: int | None = None,         # sequence kinds: seq + slug, rendered "{NNN}-{slug}"
+    slug: str | None = None,
+    display_id: str | None = None,  # kinds with no sequence, stored as given
+    workspace_uuid: str | None = None,   # required: None raises ValueError
     artifact_path: str | None = None,
     status: str | None = None,
     parent_uuid: str | None = None,
-    parent_type_id: str | None = None,
     metadata: dict | None = None,
 ) -> str                    # entity uuid (existing or newly created)
 ```

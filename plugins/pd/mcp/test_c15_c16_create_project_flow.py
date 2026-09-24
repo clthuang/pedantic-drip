@@ -152,7 +152,7 @@ def test_the_create_project_flow_registers_the_project_exactly_once(db, artifact
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
     attempts = _record_registration_attempts(db, monkeypatch, project_dir)
 
-    seq, slug = generate_entity_id(db, "project", "alpha", "__unknown__")
+    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     assert render_display_id("project", seq, slug) == "001-alpha"
     registered = _process_register_entity(
         db, "brainstorm", {"display_id": BRAINSTORM_STEM}, BRAINSTORM_STEM,
@@ -181,7 +181,7 @@ def test_a_reintroduced_command_side_registration_is_refused_by_the_tool(db, art
     tool's conflict must not resume that row as its own, which would hide
     the duplicate; it refuses before the directory exists."""
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
-    seq, slug = generate_entity_id(db, "project", "alpha", "__unknown__")
+    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
     registered = _process_register_entity(
         db, "project", {"seq": seq, "slug": slug}, "alpha", None, "active", None, None,
     )

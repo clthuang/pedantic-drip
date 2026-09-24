@@ -26,8 +26,7 @@ _TYPE_ID = f"brainstorm:{_STEM}"
 
 def _record_calls(monkeypatch, target, method_name: str) -> list[dict]:
     """Wrap ``target.method_name``; return every call's arguments by parameter
-    name, positional ones included (``next_sequence_value`` takes its
-    ``project_id`` alias first)."""
+    name, positional ones included."""
     calls: list[dict] = []
     original = getattr(target, method_name)
     signature = inspect.signature(original)

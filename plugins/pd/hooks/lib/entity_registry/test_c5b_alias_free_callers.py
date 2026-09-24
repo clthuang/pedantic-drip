@@ -1,30 +1,26 @@
-"""C5b step 1: production callers stop passing the deprecated registration aliases.
+"""C5b: callers register and allocate with one resolved ``workspace_uuid``.
 
-``project_id`` (alias for ``workspace_uuid``) and ``parent_type_id`` (alias
-for ``parent_uuid``) stay accepted by ``register_entity``, ``upsert_entity``
-and ``register_entities_batch`` until a later step deletes them. Here every
-production caller resolves ONE workspace at its boundary and passes
-``workspace_uuid`` instead, and the allocator ``generate_entity_id`` takes
-``workspace_uuid`` too.
+Step 1 moved every production caller off the registration aliases:
+``project_id`` (for ``workspace_uuid``) and ``parent_type_id`` (for
+``parent_uuid``). Each caller now resolves ONE workspace at its boundary and
+passes ``workspace_uuid``, and the allocator ``generate_entity_id`` takes
+``workspace_uuid`` too. Step 2 deleted the aliases from ``register_entity``,
+``upsert_entity`` and ``register_entities_batch``, and deleted ``project_id``
+from ``generate_entity_id`` and ``next_sequence_value``. Its TypeError tests
+are in ``test_c5b_step2_aliases_removed.py``.
 
-One internal call keeps the aliases: ``upsert_entity`` forwards its own
-``project_id`` and ``parent_type_id`` to ``register_entity`` unchanged. An
-explicit ``project_id`` is the ``entity_created`` label, so resolving it in
-``upsert_entity`` and handing ``register_entity`` only the workspace would
-relabel ``upsert_entity(workspace_uuid=W, project_id=P)`` with W's
-``project_id_legacy`` when that is not P. The step that deletes the aliases
-deletes this forwarding with them.
+The exit check below scans plugins/pd and the repository's scripts/ for any
+call that still passes a removed parameter.
 
 Two facts are pinned per converted site:
 
 * **The alias no longer reaches registration** — a spy on the registration
-  call sees ``workspace_uuid`` and no alias keyword. True only on the
-  converted path.
-* **The ``entity_created`` label is byte-identical to the base.** With an
-  explicit ``project_id`` the label WAS that string; without it, the label is
-  the resolved workspace's ``project_id_legacy``. A workspace found through
-  ``project_id_legacy`` carries the same string, so every expected label
-  below is what the pre-C5b build wrote for the same input.
+  call sees ``workspace_uuid`` and no alias keyword.
+* **The ``entity_created`` label is byte-identical to the base.** The label
+  is the resolved workspace's ``project_id_legacy`` (``"__unknown__"`` when
+  it has none). A workspace found through ``project_id_legacy`` carries the
+  same string, so every expected label below is what the pre-C5b build wrote
+  for the same input.
 """
 from __future__ import annotations
 
@@ -47,10 +43,15 @@ LEGACY_A = "c5b-ws-a"
 LEGACY_B = "c5b-ws-b"
 UNKNOWN_LABEL = "__unknown__"
 _PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[5]
+_SCANNED_ROOTS = (_PLUGIN_ROOT, _REPOSITORY_ROOT / "scripts")
 _REGISTRATION_CALLS = frozenset({"register_entity", "upsert_entity", "register_entities_batch"})
 _REGISTRATION_ALIASES = frozenset({"project_id", "parent_type_id"})
-_SKIPPED_DIRECTORIES = frozenset({".venv", "tests", "__pycache__", "node_modules"})
-_UPSERT_FORWARDING_FILE = Path("hooks", "lib", "entity_registry", "database.py")
+# The positional index each allocator's removed ``project_id`` occupied:
+# generate_entity_id(db, entity_type, name, project_id) and
+# next_sequence_value(project_id, entity_type).
+_ALLOCATOR_PROJECT_ID_POSITION = {"generate_entity_id": 3, "next_sequence_value": 0}
+_SKIPPED_DIRECTORIES = frozenset({".venv", "__pycache__", "node_modules"})
 
 
 @pytest.fixture
@@ -65,8 +66,7 @@ def two_workspaces():
 
 def _record_calls(monkeypatch, target, method_name: str) -> list[dict]:
     """Wrap ``target.method_name``; return every call's arguments by parameter
-    name, positional ones included (``next_sequence_value`` takes its
-    ``project_id`` alias first)."""
+    name, positional ones included."""
     calls: list[dict] = []
     original = getattr(target, method_name)
     signature = inspect.signature(original)
@@ -115,19 +115,20 @@ def _assert_no_alias(calls: list[dict], expected_workspace_uuid: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Exit check: no production call passes an alias
+# Exit check: no call passes a removed parameter
 # ---------------------------------------------------------------------------
 
 
-def _production_sources():
-    for directory, subdirectories, files in os.walk(_PLUGIN_ROOT):
-        subdirectories[:] = [d for d in subdirectories if d not in _SKIPPED_DIRECTORIES]
-        for file_name in files:
-            if not file_name.endswith(".py"):
-                continue
-            if file_name.startswith("test_") or file_name == "conftest.py":
-                continue
-            yield Path(directory, file_name)
+def _python_sources():
+    """Every .py file under plugins/pd and the repository's scripts/: tests,
+    conftest files and tools included."""
+    for root in _SCANNED_ROOTS:
+        assert root.is_dir(), f"scan root missing: {root}"
+        for directory, subdirectories, files in os.walk(root):
+            subdirectories[:] = [d for d in subdirectories if d not in _SKIPPED_DIRECTORIES]
+            for file_name in files:
+                if file_name.endswith(".py"):
+                    yield Path(directory, file_name)
 
 
 def _called_name(call: ast.Call) -> str | None:
@@ -138,58 +139,87 @@ def _called_name(call: ast.Call) -> str | None:
     return None
 
 
-def _upsert_forwarding_keywords(tree: ast.AST, where: Path) -> set[int]:
-    """ids of the keywords by which ``upsert_entity`` hands ``register_entity``
-    its own alias parameters (``project_id=project_id``) — the one sanctioned
-    alias-passing call (module docstring)."""
-    if where != _UPSERT_FORWARDING_FILE:
-        return set()
-    forwarding = set()
-    for function in ast.walk(tree):
-        if not (isinstance(function, ast.FunctionDef) and function.name == "upsert_entity"):
-            continue
-        for node in ast.walk(function):
-            if isinstance(node, ast.Call) and _called_name(node) == "register_entity":
-                forwarding |= {id(keyword) for keyword in node.keywords
-                               if keyword.arg in _REGISTRATION_ALIASES
-                               and isinstance(keyword.value, ast.Name)
-                               and keyword.value.id == keyword.arg}
-    return forwarding
+def _asserts_type_error(context: ast.expr) -> bool:
+    """``pytest.raises(TypeError, ...)``."""
+    return (isinstance(context, ast.Call) and _called_name(context) == "raises"
+            and bool(context.args) and isinstance(context.args[0], ast.Name)
+            and context.args[0].id == "TypeError")
 
 
-def _alias_passing_calls(path: Path) -> list[str]:
+def _calls_asserted_to_raise_type_error(tree: ast.AST) -> set[int]:
+    """ids of the calls inside a ``with pytest.raises(TypeError)`` block: the
+    TypeError tests that pass a removed parameter to prove it is refused."""
+    asserted = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.With, ast.AsyncWith)) and any(
+            _asserts_type_error(item.context_expr) for item in node.items
+        ):
+            asserted |= {id(inner) for statement in node.body
+                         for inner in ast.walk(statement) if isinstance(inner, ast.Call)}
+    return asserted
+
+
+def _alias_keys_in_literals(expression: ast.expr) -> list[str]:
+    """Alias names used as keys of a dict literal or ``dict(...)`` call within
+    *expression*: a ``**`` splat's source, or a batch's entity list."""
+    keys = []
+    for node in ast.walk(expression):
+        if isinstance(node, ast.Dict):
+            keys += [key.value for key in node.keys
+                     if isinstance(key, ast.Constant) and key.value in _REGISTRATION_ALIASES]
+        elif isinstance(node, ast.Call) and _called_name(node) == "dict":
+            keys += [keyword.arg for keyword in node.keywords if keyword.arg in _REGISTRATION_ALIASES]
+    return keys
+
+
+def _removed_parameters_passed(call: ast.Call, called: str) -> list[str]:
+    if called in _REGISTRATION_CALLS:
+        passed = [f"{keyword.arg}=" for keyword in call.keywords
+                  if keyword.arg in _REGISTRATION_ALIASES]
+        passed += [f"**{{{key!r}: ...}}" for keyword in call.keywords if keyword.arg is None
+                   for key in _alias_keys_in_literals(keyword.value)]
+        if called == "register_entities_batch" and call.args:
+            passed += [f"entity[{key!r}]" for key in _alias_keys_in_literals(call.args[0])]
+        return passed
+    if called in _ALLOCATOR_PROJECT_ID_POSITION:
+        passed = [f"{keyword.arg}=" for keyword in call.keywords if keyword.arg == "project_id"]
+        position = _ALLOCATOR_PROJECT_ID_POSITION[called]
+        if len(call.args) > position:
+            passed.append(f"<positional argument {position + 1}: project_id>")
+        return passed
+    return []
+
+
+def _removed_parameter_uses(path: Path) -> list[str]:
     with warnings.catch_warnings():
         # Parsing is all this needs; a module's own invalid-escape
         # SyntaxWarning is not this test's finding.
         warnings.simplefilter("ignore", SyntaxWarning)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    where = path.relative_to(_PLUGIN_ROOT)
-    forwarding = _upsert_forwarding_keywords(tree, where)
+    where = path.relative_to(_REPOSITORY_ROOT)
+    asserted_refusals = _calls_asserted_to_raise_type_error(tree)
     found = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or id(node) in asserted_refusals:
             continue
         called = _called_name(node)
-        if called in _REGISTRATION_CALLS:
-            found += [f"{where}:{node.lineno} {called}({keyword.arg}=...)"
-                      for keyword in node.keywords
-                      if keyword.arg in _REGISTRATION_ALIASES and id(keyword) not in forwarding]
-        elif called == "generate_entity_id":
-            if len(node.args) >= 4:
-                found.append(f"{where}:{node.lineno} generate_entity_id(<4th positional project_id>)")
-            found += [f"{where}:{node.lineno} generate_entity_id(project_id=...)"
-                      for keyword in node.keywords if keyword.arg == "project_id"]
+        passed = _removed_parameters_passed(node, called)
+        if passed:
+            found.append(f"{where}:{node.lineno} {called}({', '.join(passed)})")
     return found
 
 
-def test_no_production_call_passes_a_registration_alias():
-    """C5b step 1's exit check: no production call hands registration the
-    ``project_id`` or ``parent_type_id`` alias, or the allocator ``project_id``
-    (keyword or 4th positional), except ``upsert_entity`` forwarding its own
-    alias parameters to ``register_entity`` (module docstring). (A
-    ``**splat`` argument is not inspected; production splats carry identity
-    keywords only.)"""
-    offending = [site for path in _production_sources() for site in _alias_passing_calls(path)]
+def test_no_call_passes_a_removed_alias():
+    """C5b's exit check, over every Python file in plugins/pd and scripts/
+    (tests included). No call passes ``project_id`` or ``parent_type_id`` to
+    ``register_entity``, ``upsert_entity`` or ``register_entities_batch`` (as
+    a keyword, a ``**`` dict literal, or a batch entity's key), and none passes
+    ``project_id`` to ``generate_entity_id`` or ``next_sequence_value`` (as a
+    keyword, or in the position it held). The only exceptions are calls
+    inside ``with pytest.raises(TypeError)``: the tests that prove each
+    parameter is refused. A ``**`` splat of a variable is not inspected; the
+    suite's splats carry identity keywords only."""
+    offending = [site for path in _python_sources() for site in _removed_parameter_uses(path)]
     assert offending == []
 
 
@@ -209,90 +239,30 @@ def test_generate_entity_id_allocates_from_the_workspace_uuid_it_is_given(two_wo
 
 
 # ---------------------------------------------------------------------------
-# database.py: upsert_entity forwards its own aliases, so its labels and
-# refusals are the base's
+# database.py: upsert_entity's insert branch refuses in register_entity's name
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_forwards_its_own_aliases_to_register_unchanged(two_workspaces, monkeypatch):
-    """The sanctioned alias-passing call the exit check exempts: it exists,
-    and register_entity resolves what it forwards as before."""
-    db, ws_a, _ws_b = two_workspaces
-    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent",
-                                     workspace_uuid=ws_a)
-    delegated = _record_calls(monkeypatch, db, "register_entity")
-
-    db.upsert_entity("feature", name="Child", seq=7, slug="child",
-                     project_id=LEGACY_A, parent_type_id="project:001-parent")
-
-    assert len(delegated) == 1, delegated
-    assert delegated[0].get("project_id") == LEGACY_A, delegated[0]
-    assert delegated[0].get("parent_type_id") == "project:001-parent", delegated[0]
-    child = db.get_entity("feature:007-child")
-    assert child["workspace_uuid"] == ws_a
-    assert child["parent_uuid"] == parent_uuid
-    assert _created_label(db, "feature:007-child") == LEGACY_A
-
-
-def test_upsert_given_both_workspace_aliases_keeps_the_base_label(two_workspaces):
-    """workspace_uuid=B with project_id=A's legacy id: the row goes to B
-    (workspace_uuid wins) and entity_created carries the explicit project_id,
-    A's legacy id, as before C5b. Handing register_entity only B would label
-    it B's legacy id."""
-    db, _ws_a, ws_b = two_workspaces
-
-    with pytest.warns(DeprecationWarning, match="workspace_uuid wins"):
-        db.upsert_entity("feature", name="Both", seq=9, slug="both",
-                         workspace_uuid=ws_b, project_id=LEGACY_A)
-
-    assert _row_workspace(db, "feature:009-both") == ws_b
-    assert _created_label(db, "feature:009-both") == LEGACY_A
-
-
-@pytest.mark.parametrize("aliases, message", [
-    ({}, "register_entity() requires workspace_uuid or project_id"),
-    ({"project_id": "no-such-legacy-id"},
-     "register_entity(): project_id='no-such-legacy-id' has no matching "
-     "workspaces.project_id_legacy row. Either pass workspace_uuid directly or "
-     "pre-register the workspace."),
+@pytest.mark.parametrize("workspace, message", [
+    ({}, "register_entity() requires workspace_uuid"),
     ({"workspace_uuid": "01900000-0000-7000-8000-00000000dead"},
      "register_entity(): workspace_uuid='01900000-0000-7000-8000-00000000dead' not "
      "present in the workspaces table — workspace.json/DB split-brain detected. Run "
      "pd:doctor --fix, then restart the session (MCP servers cache the workspace UUID "
      "at startup)."),
 ])
-def test_upsert_insert_branch_refusals_are_the_base_messages(two_workspaces, aliases, message):
-    """The insert branch resolves its workspace inside register_entity, so a
+def test_upsert_insert_branch_refusals_name_register_entity(two_workspaces, workspace, message):
+    """The insert branch validates its workspace inside register_entity, so a
     refusal names register_entity() as before C5b; the reconciler records
-    these strings as its warnings."""
+    these strings as its warnings. (The missing-workspace message lost its
+    "or project_id" when C5b step 2 deleted that alias.)"""
     db, _ws_a, _ws_b = two_workspaces
 
     with pytest.raises(ValueError) as refusal:
-        db.upsert_entity("feature", name="Refused", seq=10, slug="refused", **aliases)
+        db.upsert_entity("feature", name="Refused", seq=10, slug="refused", **workspace)
 
     assert str(refusal.value) == message
-
-
-def test_upsert_with_the_unknown_alias_registers_in_the_unknown_workspace():
-    db = EntityDatabase(":memory:")
-
-    db.upsert_entity("feature", name="Orphan", seq=3, slug="orphan", project_id=UNKNOWN_LABEL)
-
-    assert _row_workspace(db, "feature:003-orphan") == _UNKNOWN_WORKSPACE_UUID
-    assert _created_label(db, "feature:003-orphan") == UNKNOWN_LABEL
-
-
-def test_upsert_parent_alias_naming_no_entity_still_leaves_the_parent_unset(two_workspaces):
-    """register_entity's tolerant alias resolution, preserved: an unresolvable
-    parent_type_id registers the entity with no parent rather than raising."""
-    db, ws_a, _ws_b = two_workspaces
-
-    db.upsert_entity("feature", name="Loose", seq=4, slug="loose",
-                     project_id=LEGACY_A, parent_type_id="project:099-missing")
-
-    loose = db.get_entity("feature:004-loose")
-    assert loose["workspace_uuid"] == ws_a
-    assert loose["parent_uuid"] is None
+    assert db.get_entity("feature:010-refused") is None
 
 
 # ---------------------------------------------------------------------------

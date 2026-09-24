@@ -135,8 +135,11 @@ count = int(sys.argv[3])
 
 # Import entity_registry from hooks/lib (set via PYTHONPATH by caller).
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import workspace_uuid_for
 
 db = EntityDatabase(db_path)
+# The harness pre-created this workspace; registration takes its uuid.
+workspace_uuid = workspace_uuid_for(db, "test-078-sqlite-concurrency")
 
 written = 0
 retries = 0
@@ -144,6 +147,9 @@ errors = []
 start = time.monotonic()
 
 for m in range(1, count + 1):
+    # A distinct seq and slug per worker and write, so each row has its own
+    # type_id ("feature:{seq:03d}-{slug}").
+    seq = (proc_index - 1) * count + m
     entity_id = f"t02-proc{proc_index}-entity{m}"
     attempts = 0
     while True:
@@ -151,9 +157,10 @@ for m in range(1, count + 1):
         try:
             db.register_entity(
                 "feature",
-                entity_id,
-                f"T0.2 spike entity proc={proc_index} m={m}",
-                project_id="test-078-sqlite-concurrency",
+                seq=seq,
+                slug=entity_id,
+                name=f"T0.2 spike entity proc={proc_index} m={m}",
+                workspace_uuid=workspace_uuid,
                 metadata={"proc": proc_index, "m": m},
             )
             written += 1
@@ -207,12 +214,15 @@ test_parallel_entity_writes() {
     local shared_db="${TMPDIR_TEST}/entities.db"
 
     # Pre-create the DB (also warms up schema migration) so workers race on
-    # INSERTs, not on first-open migrations.
+    # INSERTs, not on first-open migrations, and the workspace every worker
+    # registers into.
     "$PD_PYTHON" - <<PYINIT
 import os, sys
 sys.path.insert(0, "${PD_PYTHONPATH}")
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import bootstrap_test_workspace
 db = EntityDatabase("${shared_db}")
+bootstrap_test_workspace(db, "test-078-sqlite-concurrency")
 db.close()
 PYINIT
 
@@ -286,7 +296,8 @@ import sqlite3
 conn = sqlite3.connect("${shared_db}")
 try:
     row = conn.execute(
-        "SELECT COUNT(*) FROM entities WHERE project_id = ?",
+        "SELECT COUNT(*) FROM entities e JOIN workspaces w ON w.uuid = e.workspace_uuid "
+        "WHERE w.project_id_legacy = ?",
         ("test-078-sqlite-concurrency",),
     ).fetchone()
     print(row[0])

@@ -6912,14 +6912,16 @@ class EntityDatabase:
           value AS-IS — ``None`` means "no scoping", and an unrecognized
           ``workspace_uuid`` is not an error (a query against it just
           yields zero rows).
-        * Write paths (``register_entity``, ``upsert_entity``,
-          ``update_entity``'s re-attribution branch, ``upsert_workflow_phase``,
-          ``next_sequence_value``, ``register_entities_batch``) additionally
-          require a resolved value AND run it through
-          :meth:`_validated_provided_workspace_uuid` — the split-brain
-          fail-loud guard the retired shim used to apply directly. This
-          reproduces the old shim's exact behavior (same messages, same
-          ``stacklevel``) without a dedicated wrapper.
+        * Write paths (``update_entity``'s re-attribution branch,
+          ``upsert_workflow_phase``) additionally require a resolved value
+          AND run it through :meth:`_validated_provided_workspace_uuid` —
+          the split-brain fail-loud guard the retired shim used to apply
+          directly. This reproduces the old shim's exact behavior (same
+          messages, same ``stacklevel``) without a dedicated wrapper.
+          Registration and allocation (``register_entity``,
+          ``upsert_entity``, ``register_entities_batch``,
+          ``next_sequence_value``) take no ``project_id`` (C5b): they
+          validate the ``workspace_uuid`` they are given directly.
         * Caller boundaries (C5b/C17): production code outside this class
           that holds only a legacy ``project_id`` (the entity server's
           tools, ``server_helpers``, the reconciler, ``task_promotion``,
@@ -7583,11 +7585,9 @@ class EntityDatabase:
         slug: str | None = None,
         display_id: str | None = None,
         workspace_uuid: str | None = None,
-        project_id: str | None = None,
         artifact_path: str | None = None,
         status: str | None = None,
         parent_uuid: str | None = None,
-        parent_type_id: str | None = None,
         metadata: dict | None = None,
     ) -> str:
         """Register a new entity. Raises :class:`EntityExistsError` on
@@ -7614,15 +7614,11 @@ class EntityDatabase:
         display_id:
             Identity of a ``NON_SEQUENCE_KINDS`` entity, stored as given.
         workspace_uuid:
-            Workspace identity for the entity. Post-Migration-11 the entities
-            table is keyed on (workspace_uuid, type_id). Required unless the
-            deprecated ``project_id`` alias is supplied.
-        project_id:
-            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved to a
-            workspace_uuid via JOIN on ``workspaces.project_id_legacy``.
-            ``"__unknown__"`` maps to the canonical
-            ``_UNKNOWN_WORKSPACE_UUID``. Other values without an existing
-            workspaces row will raise ``ValueError``.
+            Workspace identity for the entity. Required. Post-Migration-11
+            the entities table is keyed on (workspace_uuid, type_id). The
+            ``entity_created`` event's ``project_id`` label is this
+            workspace's ``workspaces.project_id_legacy``, or
+            ``"__unknown__"`` when it has none.
         artifact_path:
             Optional filesystem path to the entity's artifact.
         status:
@@ -7630,14 +7626,6 @@ class EntityDatabase:
         parent_uuid:
             Optional UUID of the parent entity. The post-Migration-11 way
             to express a parent edge.
-        parent_type_id:
-            DEPRECATED — legacy alias resolved to ``parent_uuid`` via
-            :meth:`_resolve_identifier` (workspace-scoped). Provided for
-            test-fixture compatibility during the Feature 108 transition.
-            If both ``parent_uuid`` and ``parent_type_id`` are supplied,
-            ``parent_uuid`` wins and a DeprecationWarning is emitted. An
-            alias naming no entity leaves the parent NULL; it does not
-            raise.
         metadata:
             Optional dict stored as JSON TEXT.
 
@@ -7649,9 +7637,8 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If neither ``workspace_uuid`` nor ``project_id`` is provided,
-            if ``project_id`` names no workspace, or if
-            ``workspace_uuid`` has no ``workspaces`` row.
+            If ``workspace_uuid`` is not provided, or has no
+            ``workspaces`` row.
         EntityExistsError
             If ``(workspace_uuid, type_id)`` already exists. Callers that
             relied on the pre-feature-109 silent no-op semantics must
@@ -7686,43 +7673,11 @@ class EntityDatabase:
             for w in validate_metadata(entity_type, metadata):
                 print(f"metadata warning: {w}", file=sys.stderr)
 
-        ws_uuid = self._resolve_optional_workspace_filter(
-            workspace_uuid, project_id, _caller="register_entity"
-        )
-        if ws_uuid is None:
-            raise ValueError(
-                "register_entity() requires workspace_uuid or project_id"
-            )
+        if workspace_uuid is None:
+            raise ValueError("register_entity() requires workspace_uuid")
         ws_uuid = self._validated_provided_workspace_uuid(
-            ws_uuid, "register_entity"
+            workspace_uuid, "register_entity"
         )
-
-        # Compat shim (Feature 108 transition): resolve deprecated
-        # parent_type_id alias to parent_uuid. workspace-scoped resolution.
-        # Pre-Migration-11 stored parent_type_id as a denormalized string even
-        # when the parent did not exist (parent_uuid NULL). Post-migration the
-        # column is gone, so we keep parent_uuid NULL on resolution failure
-        # rather than raising.
-        if parent_type_id is not None:
-            if parent_uuid is not None:
-                warnings.warn(
-                    "register_entity() received both parent_uuid and "
-                    "parent_type_id; parent_uuid wins. parent_type_id is "
-                    "deprecated.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                try:
-                    resolved_parent_uuid, _ = self._resolve_identifier(
-                        parent_type_id,
-                        workspace_uuid=ws_uuid,
-                    )
-                    parent_uuid = resolved_parent_uuid
-                except ValueError:
-                    # Parent does not exist; preserve pre-Migration-11
-                    # tolerant behaviour by leaving parent_uuid as NULL.
-                    parent_uuid = None
 
         # F11 derivation (feature 109 Group 6): the legacy ``entity_type``
         # kwarg maps to (type, kind, lifecycle_class) via the FR-1 mapping.
@@ -7730,19 +7685,16 @@ class EntityDatabase:
         # production values (feature/backlog/brainstorm/project/workspace).
         _type, _lifecycle = _derive_type_and_lifecycle(entity_type)
 
-        # Resolve a project_id label for the entity_created phase_event.
-        # Use the explicit project_id kwarg when provided; otherwise look up
-        # ``workspaces.project_id_legacy`` for the resolved workspace.
-        resolved_project_id = project_id
-        if resolved_project_id is None:
-            ws_row = self._conn.execute(
-                "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
-                (ws_uuid,),
-            ).fetchone()
-            if ws_row is not None and ws_row["project_id_legacy"]:
-                resolved_project_id = ws_row["project_id_legacy"]
-            else:
-                resolved_project_id = "__unknown__"
+        # The entity_created phase_event's project_id label:
+        # ``workspaces.project_id_legacy`` of the resolved workspace.
+        ws_row = self._conn.execute(
+            "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+            (ws_uuid,),
+        ).fetchone()
+        if ws_row is not None and ws_row["project_id_legacy"]:
+            resolved_project_id = ws_row["project_id_legacy"]
+        else:
+            resolved_project_id = "__unknown__"
 
         from entity_registry.uuid7 import generate_uuid7
         entity_uuid = generate_uuid7()
@@ -7877,11 +7829,9 @@ class EntityDatabase:
         slug: str | None = None,
         display_id: str | None = None,
         workspace_uuid: str | None = None,
-        project_id: str | None = None,
         artifact_path: str | None = None,
         status: str | None = None,
         parent_uuid: str | None = None,
-        parent_type_id: str | None = None,
         metadata: dict | None = None,
     ) -> str:
         """Idempotent insert-or-status-update. Signature byte-identical to
@@ -7923,20 +7873,13 @@ class EntityDatabase:
             try:
                 # Try the insert branch via register_entity. On success,
                 # it emits entity_created and returns the new uuid.
-                # The deprecated aliases are forwarded unchanged (C5b step
-                # 1): an explicit project_id is also the entity_created
-                # label, so register_entity must see the caller's own value
-                # to label the row as before. The step that deletes the
-                # aliases deletes this forwarding.
                 return self.register_entity(
                     entity_type, name=name,
                     seq=seq, slug=slug, display_id=display_id,
                     workspace_uuid=workspace_uuid,
-                    project_id=project_id,
                     artifact_path=artifact_path,
                     status=status,
                     parent_uuid=parent_uuid,
-                    parent_type_id=parent_type_id,
                     metadata=metadata,
                 )
             except EntityExistsError:
@@ -7945,15 +7888,10 @@ class EntityDatabase:
                 # that helper raises ValueError on cross-workspace ambiguity
                 # (database.py get_entity body); upsert knows the workspace
                 # so we scope the lookup explicitly.
-                ws_uuid = self._resolve_optional_workspace_filter(
-                    workspace_uuid, project_id, _caller="upsert_entity"
-                )
-                if ws_uuid is None:
-                    raise ValueError(
-                        "upsert_entity() requires workspace_uuid or project_id"
-                    )
+                if workspace_uuid is None:
+                    raise ValueError("upsert_entity() requires workspace_uuid")
                 ws_uuid = self._validated_provided_workspace_uuid(
-                    ws_uuid, "upsert_entity"
+                    workspace_uuid, "upsert_entity"
                 )
                 row = self._conn.execute(
                     "SELECT uuid, status FROM entities "
@@ -7975,18 +7913,17 @@ class EntityDatabase:
                 # Status-change branch: emit one entity_status_changed event.
                 # append_phase_event handles the entities.status UPDATE
                 # atomically (workspace-scoped per FR-2 helper step 3).
-                # Resolve project_id for the phase_events row.
-                resolved_project_id = project_id
-                if resolved_project_id is None:
-                    ws_row = self._conn.execute(
-                        "SELECT project_id_legacy FROM workspaces "
-                        "WHERE uuid = ?",
-                        (ws_uuid,),
-                    ).fetchone()
-                    if ws_row is not None and ws_row["project_id_legacy"]:
-                        resolved_project_id = ws_row["project_id_legacy"]
-                    else:
-                        resolved_project_id = "__unknown__"
+                # The phase_events row's project_id label:
+                # ``workspaces.project_id_legacy`` of the resolved workspace.
+                ws_row = self._conn.execute(
+                    "SELECT project_id_legacy FROM workspaces "
+                    "WHERE uuid = ?",
+                    (ws_uuid,),
+                ).fetchone()
+                if ws_row is not None and ws_row["project_id_legacy"]:
+                    resolved_project_id = ws_row["project_id_legacy"]
+                else:
+                    resolved_project_id = "__unknown__"
 
                 self.append_phase_event(
                     type_id=type_id,
@@ -10704,10 +10641,9 @@ class EntityDatabase:
 
     def next_sequence_value(
         self,
-        project_id: str | None = None,
-        entity_type: str | None = None,
         *,
-        workspace_uuid: str | None = None,
+        entity_type: str,
+        workspace_uuid: str,
     ) -> int:
         """Atomic read-increment-write for per-workspace, per-type sequence.
 
@@ -10723,16 +10659,11 @@ class EntityDatabase:
 
         Parameters
         ----------
-        project_id:
-            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            the shared workspace-identity resolution (feature 132 D6.4).
-            Accepted as the first positional arg for backward compat with
-            id_generator and tests.
         entity_type:
             The entity type (e.g. "feature", "task"). Required.
         workspace_uuid:
             The workspace scope for the sequence (post-Migration-11 the
-            sequences table is keyed on workspace_uuid).
+            sequences table is keyed on workspace_uuid). Required.
 
         Returns
         -------
@@ -10753,15 +10684,10 @@ class EntityDatabase:
             raise TypeError(
                 "next_sequence_value() requires entity_type"
             )
-        ws_uuid = self._resolve_optional_workspace_filter(
-            workspace_uuid, project_id, _caller="next_sequence_value"
-        )
-        if ws_uuid is None:
-            raise ValueError(
-                "next_sequence_value() requires workspace_uuid or project_id"
-            )
+        if workspace_uuid is None:
+            raise ValueError("next_sequence_value() requires workspace_uuid")
         ws_uuid = self._validated_provided_workspace_uuid(
-            ws_uuid, "next_sequence_value"
+            workspace_uuid, "next_sequence_value"
         )
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
@@ -10896,7 +10822,6 @@ class EntityDatabase:
         entities: list[dict],
         *,
         workspace_uuid: str | None = None,
-        project_id: str | None = None,
     ) -> list[str]:
         """Register multiple entities in a single transaction.
 
@@ -10913,15 +10838,9 @@ class EntityDatabase:
             List of dicts, each with keys: entity_type, name, one identity
             (seq + slug, or display_id), and optional: artifact_path, status,
             parent_uuid, metadata.
-            ``parent_uuid`` (post-Feature-108) replaces the legacy
-            ``parent_type_id`` dict key.
         workspace_uuid:
             Workspace identity applied to every entity in the batch.
-            Required unless the deprecated ``project_id`` alias is supplied.
-        project_id:
-            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            ``workspaces.project_id_legacy``; ``"__unknown__"`` maps to
-            the canonical ``_UNKNOWN_WORKSPACE_UUID``.
+            Required.
 
         Returns
         -------
@@ -10943,18 +10862,12 @@ class EntityDatabase:
         for ent in entities:
             self._validate_entity_type(ent["entity_type"])
 
-        # Resolve workspace_uuid once so we pass it consistently to
-        # upsert_entity (avoids per-row __unknown__ workspace bootstrap).
-        ws_uuid = self._resolve_optional_workspace_filter(
-            workspace_uuid, project_id, _caller="register_entities_batch"
-        )
-        if ws_uuid is None:
-            raise ValueError(
-                "register_entities_batch() requires workspace_uuid or "
-                "project_id"
-            )
+        # Validate workspace_uuid once, before the batch's first write, and
+        # pass it to every upsert_entity.
+        if workspace_uuid is None:
+            raise ValueError("register_entities_batch() requires workspace_uuid")
         ws_uuid = self._validated_provided_workspace_uuid(
-            ws_uuid, "register_entities_batch"
+            workspace_uuid, "register_entities_batch"
         )
 
         with self.transaction():

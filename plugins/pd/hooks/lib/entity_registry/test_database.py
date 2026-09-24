@@ -1674,32 +1674,6 @@ class TestLineageDescendants:
         assert "feature:001-fb" in type_ids
 
 
-class TestParentFieldValidation:
-    """BDD: AC-9 — nonexistent parent warns and nullifies.
-    derived_from: spec:AC-9
-    """
-
-    def test_parent_field_validation_nonexistent_entity_stores_with_null_uuid(
-        self, db: EntityDatabase,
-    ):
-        # Given no project "nonexistent" exists in the database
-        # When registering a feature with that parent
-        entity_uuid = db.register_entity(
-            "feature", name="Child Feature", seq=1, slug="child",
-            parent_type_id="project:nonexistent",
-            project_id="__unknown__",
-        )
-        # Feature 108 Migration 11: parent_type_id column dropped. The
-        # tolerant compat shim keeps the entity inserted with parent_uuid
-        # NULL when the deprecated parent_type_id alias does not resolve.
-        # The legacy denormalized parent_type_id no longer survives because
-        # the column no longer exists; get_entity returns NULL via JOIN.
-        entity = db.get_entity("feature:001-child")
-        assert entity is not None
-        assert entity["parent_type_id"] is None
-        assert entity["parent_uuid"] is None
-
-
 class TestTraversalDepthGuard:
     """BDD: AC-14 + Boundary — depth guard stops at 10 hops.
     derived_from: spec:AC-14, dimension:boundary_values
@@ -2637,32 +2611,6 @@ class TestExistingImmutabilityTriggersStillFire:
                 "WHERE uuid = ?",
                 (entity_uuid,),
             )
-
-
-class TestRegisterEntityParentUuidPopulation:
-    """BDD: register_entity with parent_type_id also sets parent_uuid.
-    derived_from: spec:R5, spec:AC-29
-    """
-
-    def test_register_with_parent_populates_parent_uuid(
-        self, db: EntityDatabase,
-    ):
-        """register_entity with parent_type_id should set parent_uuid.
-        Anticipate: If register_entity only sets parent_type_id but not
-        parent_uuid, the dual columns would be inconsistent from the start.
-        """
-        # Given a parent entity
-        parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent", project_id="__unknown__")
-        # When registering child with parent_type_id
-        child_uuid = db.register_entity(
-            "feature", name="Child", seq=1, slug="child",
-            parent_type_id="project:001-parent",
-            project_id="__unknown__",
-        )
-        # Then parent_uuid is also populated
-        child = db.get_entity(child_uuid)
-        assert child["parent_type_id"] == "project:001-parent"
-        assert child["parent_uuid"] == parent_uuid
 
 
 class TestExportLineageWithUuidInput:
@@ -6443,9 +6391,8 @@ class TestNextSequenceValue:
     """Tests for EntityDatabase.next_sequence_value().
 
     Post-Migration-11: sequences table is keyed on (workspace_uuid,
-    entity_type). The next_sequence_value compat shim resolves a legacy
-    project_id positional arg to a workspace_uuid via the workspaces table.
-    Each test bootstraps the workspaces row(s) it needs.
+    entity_type), and next_sequence_value takes both by keyword. Each test
+    bootstraps the workspaces row(s) it needs.
     """
 
     def test_sequence_bootstrap_from_entities(self):
@@ -6488,7 +6435,7 @@ class TestNextSequenceValue:
             # only because it inferred identity from text. They are not
             # legacy either, so the refusal is C3's completeness guard.
             with pytest.raises(IncompleteBucketError):
-                db.next_sequence_value(TEST_PROJECT_ID, "feature")
+                db.next_sequence_value(entity_type="feature", workspace_uuid=ws_uuid)
 
             # Give the same rows display rows and the census can see them.
             for eid, seq in (("005-alpha", 5), ("010-beta", 10)):
@@ -6500,7 +6447,7 @@ class TestNextSequenceValue:
                     (uid, seq, eid.split("-", 1)[1]),
                 )
             db._conn.commit()
-            assert db.next_sequence_value(TEST_PROJECT_ID, "feature") == 11
+            assert db.next_sequence_value(entity_type="feature", workspace_uuid=ws_uuid) == 11
         finally:
             db.close()
 
@@ -6508,10 +6455,10 @@ class TestNextSequenceValue:
         """Sequential calls return incrementing values."""
         db = EntityDatabase(":memory:")
         try:
-            _bootstrap_test_workspace(db)
-            v1 = db.next_sequence_value(TEST_PROJECT_ID, "task")
-            v2 = db.next_sequence_value(TEST_PROJECT_ID, "task")
-            v3 = db.next_sequence_value(TEST_PROJECT_ID, "task")
+            ws_uuid = _bootstrap_test_workspace(db)
+            v1 = db.next_sequence_value(entity_type="task", workspace_uuid=ws_uuid)
+            v2 = db.next_sequence_value(entity_type="task", workspace_uuid=ws_uuid)
+            v3 = db.next_sequence_value(entity_type="task", workspace_uuid=ws_uuid)
             assert v1 == 1
             assert v2 == 2
             assert v3 == 3
@@ -6522,11 +6469,11 @@ class TestNextSequenceValue:
         """Different projects get independent counters."""
         db = EntityDatabase(":memory:")
         try:
-            _bootstrap_test_workspace(db, "proj_a")
-            _bootstrap_test_workspace(db, "proj_b")
-            a1 = db.next_sequence_value("proj_a", "feature")
-            a2 = db.next_sequence_value("proj_a", "feature")
-            b1 = db.next_sequence_value("proj_b", "feature")
+            ws_a = _bootstrap_test_workspace(db, "proj_a")
+            ws_b = _bootstrap_test_workspace(db, "proj_b")
+            a1 = db.next_sequence_value(entity_type="feature", workspace_uuid=ws_a)
+            a2 = db.next_sequence_value(entity_type="feature", workspace_uuid=ws_a)
+            b1 = db.next_sequence_value(entity_type="feature", workspace_uuid=ws_b)
             assert a1 == 1
             assert a2 == 2
             assert b1 == 1  # independent
@@ -6542,7 +6489,7 @@ class TestNextSequenceValue:
         db = EntityDatabase(":memory:")
         try:
             ws_uuid = _bootstrap_test_workspace(db)
-            val = db.next_sequence_value(TEST_PROJECT_ID, "task")
+            val = db.next_sequence_value(entity_type="task", workspace_uuid=ws_uuid)
             assert val == 1
             row = db._conn.execute(
                 "SELECT next_val FROM sequences "
@@ -6631,7 +6578,7 @@ class TestResolveRefAndPrefixProject:
 
 
 class TestRegisterEntityProject:
-    """T3.3: register_entity with project_id."""
+    """T3.3: register_entity into one project's workspace."""
 
     def test_idempotency_same_project(self, mem_db):
         """Same type_id + project returns existing UUID via upsert_entity (F12)."""
@@ -6652,27 +6599,6 @@ class TestRegisterEntityProject:
             "feature", name="F1 other", seq=1, slug="f1", workspace_uuid=workspace_uuid_for(mem_db, "__other__")
         )
         assert uid1 != uid2
-
-    def test_parent_resolved_within_project(self, mem_db):
-        """Parent is resolved within the same project scope."""
-        mem_db.register_entity(
-            "project", name="Project", seq=2, slug="p1", project_id=TEST_PROJECT_ID
-        )
-        mem_db.register_entity(
-            "project", name="Other Project", seq=2, slug="p1", project_id="__other__"
-        )
-        uid = mem_db.register_entity(
-            "feature", name="F1", seq=1, slug="f1",
-            parent_type_id="project:002-p1",
-            project_id=TEST_PROJECT_ID,
-        )
-        entity = mem_db.get_entity_by_uuid(uid)
-        assert entity["parent_type_id"] == "project:002-p1"
-        # parent_uuid should be the __test__ project's project entity
-        test_project_uuid = mem_db._resolve_identifier(
-            "project:002-p1", project_id=TEST_PROJECT_ID
-        )[0]
-        assert entity["parent_uuid"] == test_project_uuid
 
 
 class TestRegisterEntitiesBatchProject:
