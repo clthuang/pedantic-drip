@@ -9,10 +9,13 @@ before it creates the project directory.
   failure leaves no directory. The failures injected here fire INSIDE
   ``register_entity``; a failure caused by a bad path never reaches
   registration and would prove nothing.
+- **Conflicts** — a registration conflict resumes only the row this same
+  call wrote (live, same directory, same parent); a deleted project or a
+  row with another directory or parent is refused before the directory.
 - **Path validation** — the directory no longer exists when the path is
   validated, so validation checks where the path RESOLVES: NUL bytes,
   realpath containment directly under ``{artifacts_root}/projects``, and no
-  existing non-directory.
+  existing non-directory. Writes go to the resolved path.
 
 Real ``EntityDatabase`` (in memory) throughout: the facts asserted are rows,
 events and directories, which a mock cannot hold.
@@ -92,6 +95,31 @@ def _creation_events(db, type_id: str = PROJECT_TYPE_ID) -> list[dict]:
     return db.query_phase_events(type_id=type_id, event_type="entity_created")
 
 
+def _register_brainstorm(db, stem: str) -> str:
+    return db.register_entity(
+        "brainstorm", name=f"{stem} brainstorm", display_id=stem,
+        project_id="__unknown__",
+    )
+
+
+def _register_then_fail_the_directory(db, artifacts_root, project_dir, monkeypatch, **overrides) -> str:
+    """Run the call with directory creation failing, so it stops after
+    registering: the state a retry resumes. Returns the registered uuid."""
+    real_makedirs = os.makedirs
+
+    def makedirs_failing_for_the_project(path, *args, **kwargs):
+        if os.path.realpath(path) == os.path.realpath(project_dir):
+            raise PermissionError("injected mkdir failure")
+        return real_makedirs(path, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(feature_lifecycle.os, "makedirs", makedirs_failing_for_the_project)
+        with pytest.raises(PermissionError, match="injected mkdir failure"):
+            _init(db, artifacts_root, project_dir, **overrides)
+    assert not os.path.exists(project_dir)
+    return db.get_entity(PROJECT_TYPE_ID)["uuid"]
+
+
 # ---------------------------------------------------------------------------
 # C16 — registration precedes directory creation
 # ---------------------------------------------------------------------------
@@ -142,6 +170,7 @@ def test_the_directory_is_created_only_after_registration_succeeds(db, artifacts
     assert os.path.isdir(project_dir)
     assert os.path.isfile(os.path.join(project_dir, ".meta.json"))
     assert result["project_uuid"] == db.get_entity(PROJECT_TYPE_ID)["uuid"]
+    assert result["resumed"] is False
 
 
 def test_the_project_registers_under_the_parent_it_is_given(db, artifacts_root):
@@ -160,26 +189,15 @@ def test_the_project_registers_under_the_parent_it_is_given(db, artifacts_root):
 def test_a_retry_after_a_failed_mkdir_finishes_without_a_second_creation(db, artifacts_root, monkeypatch):
     """A directory failure after registration leaves the row; running the
     same call again must finish the directory without registering twice.
-    The second attempt conflicts, and the workspace-scoped conflict is what
-    identifies the row as this project's own."""
+    The second attempt conflicts; the workspace-scoped conflict finds the
+    row, and its directory and parent match this call's, so it resumes."""
     project_dir = _project_dir(artifacts_root)
-    real_makedirs = os.makedirs
-
-    def makedirs_failing_for_the_project(path, *args, **kwargs):
-        if os.path.realpath(path) == os.path.realpath(project_dir):
-            raise PermissionError("injected mkdir failure")
-        return real_makedirs(path, *args, **kwargs)
-
-    with monkeypatch.context() as patched:
-        patched.setattr(feature_lifecycle.os, "makedirs", makedirs_failing_for_the_project)
-        with pytest.raises(PermissionError, match="injected mkdir failure"):
-            _init(db, artifacts_root, project_dir)
-    first_uuid = db.get_entity(PROJECT_TYPE_ID)["uuid"]
-    assert not os.path.exists(project_dir)
+    first_uuid = _register_then_fail_the_directory(db, artifacts_root, project_dir, monkeypatch)
 
     result = _init(db, artifacts_root, project_dir)
 
     assert result["project_uuid"] == first_uuid
+    assert result["resumed"] is True
     assert len(_creation_events(db)) == 1
     assert os.path.isfile(os.path.join(project_dir, ".meta.json"))
 
@@ -204,6 +222,79 @@ def test_a_same_id_project_in_another_workspace_does_not_stand_in_for_this_one(d
     own_rows = db.list_entities(entity_type="project", workspace_uuid=workspace_b)
     assert [row["type_id"] for row in own_rows] == [PROJECT_TYPE_ID]
     assert result["project_uuid"] == own_rows[0]["uuid"] != other_uuid
+
+
+# ---------------------------------------------------------------------------
+# A registration conflict resumes only this call's own earlier attempt
+# ---------------------------------------------------------------------------
+
+
+def test_a_retry_under_the_same_parent_resumes(db, artifacts_root, monkeypatch):
+    project_dir = _project_dir(artifacts_root)
+    brainstorm_uuid = _register_brainstorm(db, "20260924-alpha")
+    first_uuid = _register_then_fail_the_directory(
+        db, artifacts_root, project_dir, monkeypatch, parent_uuid=brainstorm_uuid,
+    )
+
+    result = _init(db, artifacts_root, project_dir, parent_uuid=brainstorm_uuid)
+
+    assert (result["project_uuid"], result["resumed"]) == (first_uuid, True)
+    assert os.path.isfile(os.path.join(project_dir, ".meta.json"))
+
+
+def test_a_deleted_project_holding_the_id_is_refused_before_the_directory(db, artifacts_root, monkeypatch):
+    """Sequence drift can re-issue a deleted project's id once its directory
+    is gone. Deletion is soft, so the row still holds the id and
+    registration conflicts; resuming it would hand the new project a
+    deleted row. The row is this very call's earlier attempt, so its
+    deletion is the only thing that differs."""
+    project_dir = _project_dir(artifacts_root)
+    _register_then_fail_the_directory(db, artifacts_root, project_dir, monkeypatch)
+    db.delete_entity(PROJECT_TYPE_ID)
+
+    with pytest.raises(RuntimeError, match="registration conflict for project:001-alpha: .* is deleted"):
+        _init(db, artifacts_root, project_dir)
+
+    assert db.get_entity(PROJECT_TYPE_ID, include_deleted=True)["is_deleted"] == 1
+    assert len(_creation_events(db)) == 1
+    assert not os.path.exists(project_dir)
+
+
+@pytest.mark.parametrize("recorded_dir", [None, "001-alpha-earlier"], ids=["no directory", "another directory"])
+def test_a_row_registered_for_another_directory_is_refused_before_the_directory(recorded_dir, db, artifacts_root):
+    """A row this call did not write is not resumed. The MCP
+    ``register_entity`` tool, the duplicate registrar C15 removed, records
+    no directory unless given one; a row recording another directory
+    belongs to another project. Resuming either would hide the duplicate."""
+    project_dir = _project_dir(artifacts_root)
+    db.register_entity(
+        "project", name="Alpha", seq=1, slug="alpha", project_id="__unknown__",
+        artifact_path=None if recorded_dir is None else _project_dir(artifacts_root, recorded_dir),
+    )
+
+    with pytest.raises(RuntimeError, match="registration conflict for project:001-alpha: .* directory is"):
+        _init(db, artifacts_root, project_dir)
+
+    assert len(_creation_events(db)) == 1
+    assert not os.path.exists(project_dir)
+
+
+def test_a_row_registered_under_another_parent_is_refused_before_the_directory(db, artifacts_root, monkeypatch):
+    """Same directory, another brainstorm: an earlier project that stopped
+    after registering, whose id drift has re-issued, is not this call's."""
+    project_dir = _project_dir(artifacts_root)
+    earlier_brainstorm = _register_brainstorm(db, "20260901-alpha")
+    this_brainstorm = _register_brainstorm(db, "20260924-alpha")
+    _register_then_fail_the_directory(
+        db, artifacts_root, project_dir, monkeypatch, parent_uuid=earlier_brainstorm,
+    )
+
+    with pytest.raises(RuntimeError, match="registration conflict for project:001-alpha: .* parent is"):
+        _init(db, artifacts_root, project_dir, parent_uuid=this_brainstorm)
+
+    assert db.get_entity(PROJECT_TYPE_ID)["parent_uuid"] == earlier_brainstorm
+    assert len(_creation_events(db)) == 1
+    assert not os.path.exists(project_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -318,18 +409,32 @@ def test_an_existing_file_at_the_path_is_refused_before_any_registry_write(db, a
     assert db.list_entities(entity_type="project") == []
 
 
-@pytest.mark.parametrize("overrides", [
-    {"project_id": "P001"},
-    {"features": "not-json"},
-    {"milestones": "{broken"},
+def test_a_path_through_a_missing_directory_is_written_where_it_resolves(db, artifacts_root):
+    """``projects/missing/../001-alpha`` resolves directly under the root, so
+    it is accepted. The kernel cannot walk through the missing component,
+    so a write through the path as given fails after registering, on every
+    retry; the checked, resolved path is the one to write."""
+    project_dir = os.path.join(artifacts_root, "projects", "missing", "..", "001-alpha")
+    resolved_meta = os.path.join(os.path.realpath(artifacts_root), "projects", "001-alpha", ".meta.json")
+
+    result = _init(db, artifacts_root, project_dir)
+
+    assert result["meta_json_path"] == resolved_meta
+    assert os.path.isfile(resolved_meta)
+
+
+@pytest.mark.parametrize("overrides, refusal", [
+    ({"project_id": "P001"}, "not an allocated id"),
+    ({"features": "not-json"}, "Expecting value"),
+    ({"milestones": "{broken"}, "Expecting property name"),
 ], ids=["unallocated id", "malformed features", "malformed milestones"])
 def test_invalid_input_is_refused_before_registration_and_before_the_directory(
-    overrides, db, artifacts_root, monkeypatch,
+    overrides, refusal, db, artifacts_root, monkeypatch,
 ):
     project_dir = _project_dir(artifacts_root)
     attempts = RegistrationAttempts(db, monkeypatch, project_dir)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=refusal):
         _init(db, artifacts_root, project_dir, **overrides)
 
     assert attempts.calls == []

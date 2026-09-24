@@ -10,8 +10,9 @@
   in-memory registry count registration ATTEMPTS and ``entity_created``
   events (a duplicate registration followed by conflict handling also
   leaves one row, so rows prove nothing); a failure that reaches
-  registration leaves no directory; an out-of-root path is refused before
-  any registry write.
+  registration leaves no directory; a reintroduced command-side
+  registration is refused, not resumed; an out-of-root path is refused
+  before any registry write.
 """
 from __future__ import annotations
 
@@ -172,6 +173,26 @@ def test_the_create_project_flow_registers_the_project_exactly_once(db, artifact
     assert project["parent_uuid"] == brainstorm_uuid
     assert result["project_uuid"] == project["uuid"]
     assert os.path.isfile(os.path.join(project_dir, ".meta.json"))
+
+
+def test_a_reintroduced_command_side_registration_is_refused_by_the_tool(db, artifacts_root):
+    """The duplicate C15 removed, put back: the old step 5 registering the
+    project through the MCP ``register_entity`` tool before step 6. The
+    tool's conflict must not resume that row as its own, which would hide
+    the duplicate; it refuses before the directory exists."""
+    project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
+    seq, slug = generate_entity_id(db, "project", "alpha", "__unknown__")
+    registered = _process_register_entity(
+        db, "project", {"seq": seq, "slug": slug}, "alpha", None, "active", None, None,
+    )
+    assert registered == f"Registered: {PROJECT_TYPE_ID}"
+
+    result = _init_project_state_tool(project_dir=project_dir)
+
+    assert result.get("error") is True
+    assert f"Project registration conflict for {PROJECT_TYPE_ID}" in result["message"]
+    assert len(db.query_phase_events(type_id=PROJECT_TYPE_ID, event_type="entity_created")) == 1
+    assert not os.path.exists(project_dir)
 
 
 def test_a_failure_inside_registration_through_the_tool_leaves_no_directory(db, artifacts_root, monkeypatch):

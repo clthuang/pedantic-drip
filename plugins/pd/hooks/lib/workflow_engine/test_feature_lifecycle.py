@@ -475,13 +475,18 @@ class TestInitProjectState:
         assert not os.path.exists(os.path.join(project_dir, ".meta.json"))
 
     def test_idempotent_existing_project(self, mock_db, tmp_path):
-        """A project this workspace already holds is a retry: registration
-        conflicts, and the run continues with the workspace's own row."""
+        """A row this workspace holds that the same call wrote (live, same
+        directory, same parent) is a retry: registration conflicts, and the
+        run resumes with that row."""
         project_dir = str(tmp_path / "projects" / "my-proj")
         mock_db.register_entity.side_effect = EntityExistsError(
             workspace_uuid="ws-own", type_id="project:001-my-proj",
         )
         mock_db.resolve_ref.return_value = "existing-project-uuid"
+        mock_db.get_entity_by_uuid.return_value = {
+            "uuid": "existing-project-uuid", "is_deleted": 0,
+            "artifact_path": project_dir, "parent_uuid": None,
+        }
 
         result = init_project_state(
             db=mock_db,
@@ -495,9 +500,12 @@ class TestInitProjectState:
         )
 
         assert result["created"] is True
-        assert result["project_uuid"] == "existing-project-uuid"
+        assert (result["project_uuid"], result["resumed"]) == ("existing-project-uuid", True)
         mock_db.resolve_ref.assert_called_once_with(
             "project:001-my-proj", workspace_uuid="ws-own",
+        )
+        mock_db.get_entity_by_uuid.assert_called_once_with(
+            "existing-project-uuid", include_deleted=True,
         )
         assert os.path.isfile(result["meta_json_path"])
 

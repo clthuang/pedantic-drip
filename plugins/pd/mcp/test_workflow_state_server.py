@@ -5995,7 +5995,8 @@ class TestAdversarialDeepened:
         data1 = json.loads(result1)
         assert data1["created"] is True
 
-        # Second call — should succeed (registration conflicts: a retry)
+        # Second call — should succeed (registration conflicts with the row
+        # this same call wrote, same directory and parent: resumed)
         result2 = _process_init_project_state(
             db, project_dir, "124", "idempotent",
             '["feat-a", "feat-b"]', '[]', None,
