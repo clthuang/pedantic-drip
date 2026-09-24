@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from entity_registry.database import EntityExistsError
 from workflow_engine.feature_lifecycle import (
     activate_feature,
     init_feature_state,
@@ -474,10 +475,13 @@ class TestInitProjectState:
         assert not os.path.exists(os.path.join(project_dir, ".meta.json"))
 
     def test_idempotent_existing_project(self, mock_db, tmp_path):
-        """If project entity already exists, skip registration."""
+        """A project this workspace already holds is a retry: registration
+        conflicts, and the run continues with the workspace's own row."""
         project_dir = str(tmp_path / "projects" / "my-proj")
-        os.makedirs(project_dir, exist_ok=True)
-        mock_db.get_entity.return_value = {"status": "active"}
+        mock_db.register_entity.side_effect = EntityExistsError(
+            workspace_uuid="ws-own", type_id="project:001-my-proj",
+        )
+        mock_db.resolve_ref.return_value = "existing-project-uuid"
 
         result = init_project_state(
             db=mock_db,
@@ -491,7 +495,11 @@ class TestInitProjectState:
         )
 
         assert result["created"] is True
-        mock_db.register_entity.assert_not_called()
+        assert result["project_uuid"] == "existing-project-uuid"
+        mock_db.resolve_ref.assert_called_once_with(
+            "project:001-my-proj", workspace_uuid="ws-own",
+        )
+        assert os.path.isfile(result["meta_json_path"])
 
     def test_meta_json_content(self, mock_db, tmp_path):
         project_dir = str(tmp_path / "projects" / "my-proj")
@@ -530,8 +538,10 @@ class TestInitProjectState:
                 milestones="[]",
             )
 
-    def test_nonexistent_dir_raises(self, mock_db, tmp_path):
-        with pytest.raises(ValueError, match="does not exist"):
+    def test_dir_outside_the_projects_root_raises(self, mock_db, tmp_path):
+        """A directory need not exist (it is created after registration), so
+        where the path resolves is what is checked."""
+        with pytest.raises(ValueError, match="path traversal blocked"):
             init_project_state(
                 db=mock_db,
                 artifacts_root=str(tmp_path),
@@ -542,6 +552,7 @@ class TestInitProjectState:
                 features="[]",
                 milestones="[]",
             )
+        mock_db.register_entity.assert_not_called()
 
     def test_invalid_json_features_raises(self, mock_db, tmp_path):
         project_dir = str(tmp_path / "projects" / "my-proj")

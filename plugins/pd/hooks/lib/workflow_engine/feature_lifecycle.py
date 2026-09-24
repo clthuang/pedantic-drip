@@ -274,6 +274,38 @@ def init_feature_state(
     }
 
 
+def _validate_project_dir(project_dir: str, artifacts_root: str) -> str:
+    """Resolve ``project_dir``, refusing any path that is not a directory
+    directly under ``{artifacts_root}/projects``.
+
+    The directory need not exist: ``init_project_state`` creates it only
+    after registration succeeds. So existence proves nothing here, and the
+    checks look at where the path RESOLVES:
+
+    - **NUL bytes** are refused outright.
+    - **Containment** — the realpath (``..`` and symlinks resolved) must be
+      a direct child of the realpath of ``{artifacts_root}/projects``, the
+      one place reconciliation and backfill look for projects.
+    - **Not a non-directory** — an existing file at the path is refused.
+
+    Returns the resolved path. Raises ValueError (``invalid_input: …``).
+    """
+    if "\0" in project_dir:
+        raise ValueError("invalid_input: project_dir path traversal blocked")
+    projects_root = os.path.realpath(os.path.join(artifacts_root, "projects"))
+    resolved = os.path.realpath(project_dir)
+    if os.path.dirname(resolved) != projects_root:
+        raise ValueError(
+            f"invalid_input: project_dir must be a directory directly under "
+            f"{projects_root} (path traversal blocked): {project_dir}"
+        )
+    if os.path.exists(resolved) and not os.path.isdir(resolved):
+        raise ValueError(
+            f"invalid_input: project_dir exists and is not a directory: {project_dir}"
+        )
+    return resolved
+
+
 # F4-AUDIT: project-type schema differs; ported to feature 111
 def init_project_state(
     db: EntityDatabase,
@@ -288,22 +320,36 @@ def init_project_state(
     status: str = "active",
     *,
     workspace_uuid: str | None = None,
+    parent_uuid: str | None = None,
 ) -> dict:
-    """Create initial project state in DB + .meta.json.
+    """Register a project, then create its directory and write its .meta.json.
 
-    Returns dict with keys: created, project_type_id, meta_json_path.
+    The one owner of project registration: ``/pd:create-project`` calls this
+    and never ``register_entity`` for a project. Registration precedes
+    directory creation, so a registration failure leaves no directory:
+
+    1. **Validate** ``project_dir`` (``_validate_project_dir``; it need not
+       exist yet), the id (the allocator must have issued it), and the
+       ``features``/``milestones`` JSON.
+    2. **Register** the project, under ``parent_uuid`` when given.
+    3. **Create** the directory.
+    4. **Write** ``.meta.json``.
+
+    A second call for a project this workspace already holds is a retry of
+    one that stopped after registering: it continues with that row.
+
+    Returns dict with keys: created, project_type_id, project_uuid,
+    meta_json_path.
 
     Raises:
         ValueError: if project_id with slug is not an id the allocator issues
             (``invalid_input: … is not an allocated id``), or project_dir is
             invalid; nothing is written.
+        A registration error propagates before the directory exists. An
+        OSError creating the directory leaves the project registered; the
+        same call again finishes it.
     """
-    # Path traversal validation
-    if "\0" in project_dir:
-        raise ValueError("invalid_input: project_dir path traversal blocked")
-    resolved = os.path.realpath(project_dir)
-    if not os.path.isdir(resolved):
-        raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
+    resolved_dir = _validate_project_dir(project_dir, artifacts_root)
 
     project_type_id = f"project:{project_id}-{slug}"
     identity = _allocated_identity("project", project_id, slug)
@@ -312,8 +358,6 @@ def init_project_state(
     features_list = json.loads(features)
     milestones_list = json.loads(milestones)
 
-    # Register entity (idempotent — skip if already exists)
-    existing = db.get_entity(project_type_id)
     metadata = {
         "id": project_id,
         "slug": slug,
@@ -323,28 +367,35 @@ def init_project_state(
     if brainstorm_source:
         metadata["brainstorm_source"] = brainstorm_source
 
-    if existing is None:
-        # Use ``project_id="__unknown__"`` so the canonical workspaces row is
-        # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
-        # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
-        # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
-        # like every other sequence-numbered kind, so the allocated id splits
-        # into seq and slug and the display row is written.
-        try:
-            db.register_entity(
-                entity_type="project",
-                **identity,
-                name=slug.replace("-", " ").title(),
-                artifact_path=project_dir,
-                status=status,
-                metadata=metadata,
-                workspace_uuid=workspace_uuid,
-                project_id="__unknown__" if workspace_uuid is None else None,
-            )
-        except EntityExistsError as e:
-            raise RuntimeError(
-                f"Project registration conflict for project:{project_id}-{slug}"
-            ) from e
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
+    # as a retry below.
+    # Use ``project_id="__unknown__"`` so the canonical workspaces row is
+    # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
+    # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
+    # like every other sequence-numbered kind, so the allocated id splits
+    # into seq and slug and the display row is written.
+    try:
+        project_uuid = db.register_entity(
+            entity_type="project",
+            **identity,
+            name=slug.replace("-", " ").title(),
+            artifact_path=project_dir,
+            status=status,
+            parent_uuid=parent_uuid,
+            metadata=metadata,
+            workspace_uuid=workspace_uuid,
+            project_id="__unknown__" if workspace_uuid is None else None,
+        )
+    except EntityExistsError as conflict:
+        # The conflict is scoped to this workspace, so the row is this
+        # project's own: a retry. An unscoped get_entity pre-check is not:
+        # a same-id project in another workspace made it skip this one.
+        project_uuid = db.resolve_ref(
+            conflict.type_id, workspace_uuid=conflict.workspace_uuid
+        )
+
+    # The directory exists only once the registry holds the project.
+    os.makedirs(resolved_dir, exist_ok=True)
 
     # Build project .meta.json
     meta = {
@@ -365,6 +416,7 @@ def init_project_state(
     return {
         "created": True,
         "project_type_id": project_type_id,
+        "project_uuid": project_uuid,
         "meta_json_path": meta_path,
     }
 

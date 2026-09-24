@@ -3960,6 +3960,12 @@ class TestAtomicJsonWrite:
 class TestInitProjectState:
     """Tests for _process_init_project_state."""
 
+    @pytest.fixture(autouse=True)
+    def _artifacts_root_is_tmp_path(self, tmp_path, monkeypatch):
+        """init_project_state refuses a project_dir outside
+        ``{artifacts_root}/projects``; these tests put theirs under tmp_path."""
+        import workflow_state_server as wss
+        monkeypatch.setattr(wss, "_artifacts_root", str(tmp_path))
 
     def test_creates_project_entity_and_meta_json(self, db, tmp_path):
         """Creates project entity in DB and writes .meta.json with features
@@ -5747,9 +5753,11 @@ class TestBoundaryValuesDeepened:
         meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
         assert meta_raw.get("skipped_phases") == []
 
-    def test_init_project_state_empty_features_and_milestones(self, db, tmp_path):
+    def test_init_project_state_empty_features_and_milestones(self, db, tmp_path, monkeypatch):
         """Empty features and milestones arrays are valid."""
         # derived_from: spec:Site3/Site9 — features/milestones can be empty
+        import workflow_state_server as wss
+        monkeypatch.setattr(wss, "_artifacts_root", str(tmp_path))  # project_dir must sit under {artifacts_root}/projects
 
         project_dir = os.path.join(str(tmp_path), "projects", "111-empty")
         os.makedirs(project_dir, exist_ok=True)
@@ -5789,9 +5797,11 @@ class TestBoundaryValuesDeepened:
             parsed = json.load(f)
         assert parsed == {}
 
-    def test_init_project_state_large_features_array(self, db, tmp_path):
+    def test_init_project_state_large_features_array(self, db, tmp_path, monkeypatch):
         """Large features array (50 items) handled correctly."""
         # derived_from: dimension:boundary — collection size
+        import workflow_state_server as wss
+        monkeypatch.setattr(wss, "_artifacts_root", str(tmp_path))  # project_dir must sit under {artifacts_root}/projects
 
         project_dir = os.path.join(str(tmp_path), "projects", "112-large")
         os.makedirs(project_dir, exist_ok=True)
@@ -5966,11 +5976,13 @@ class TestAdversarialDeepened:
         entity = db.get_entity("feature:123-nonterminal")
         assert entity["status"] == "active"
 
-    def test_init_project_state_idempotent_existing_entity(self, db, tmp_path):
+    def test_init_project_state_idempotent_existing_entity(self, db, tmp_path, monkeypatch):
         """Calling init_project_state twice with same ID — second call should not crash.
         Spec says: 'Register entity (idempotent — skip if already exists)'.
         """
         # derived_from: design:C4 — idempotent entity registration
+        import workflow_state_server as wss
+        monkeypatch.setattr(wss, "_artifacts_root", str(tmp_path))  # project_dir must sit under {artifacts_root}/projects
 
         project_dir = os.path.join(str(tmp_path), "projects", "124-idempotent")
         os.makedirs(project_dir, exist_ok=True)
@@ -5983,7 +5995,7 @@ class TestAdversarialDeepened:
         data1 = json.loads(result1)
         assert data1["created"] is True
 
-        # Second call — should succeed (entity exists, skip registration)
+        # Second call — should succeed (registration conflicts: a retry)
         result2 = _process_init_project_state(
             db, project_dir, "124", "idempotent",
             '["feat-a", "feat-b"]', '[]', None,
@@ -6049,9 +6061,11 @@ class TestErrorPropagationDeepened:
         assert data["error"] is True
         assert data["error_type"] == "db_unavailable"
 
-    def test_init_project_state_sqlite_error_returns_db_unavailable(self, db, tmp_path):
+    def test_init_project_state_sqlite_error_returns_db_unavailable(self, db, tmp_path, monkeypatch):
         """SQLite error during project entity registration returns db_unavailable."""
         # derived_from: design:D7 — _with_error_handling
+        import workflow_state_server as wss
+        monkeypatch.setattr(wss, "_artifacts_root", str(tmp_path))  # project_dir must sit under {artifacts_root}/projects
 
         from unittest.mock import patch
 
@@ -6059,7 +6073,7 @@ class TestErrorPropagationDeepened:
         os.makedirs(project_dir, exist_ok=True)
 
         with patch.object(
-            db, "get_entity", side_effect=sqlite3.OperationalError("database locked"),
+            db, "register_entity", side_effect=sqlite3.OperationalError("database locked"),
         ):
             result = _process_init_project_state(
                 db, project_dir, "131", "sqlerr", "[]", "[]", None,

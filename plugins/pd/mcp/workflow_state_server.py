@@ -1932,6 +1932,7 @@ def _process_init_project_state(
     features: str,  # JSON string
     milestones: str,  # JSON string
     brainstorm_source: str | None,
+    parent_uuid: str | None = None,
 ) -> str:
     """Thin wrapper — delegates to feature_lifecycle.init_project_state."""
     result = _lib_init_project_state(
@@ -1945,6 +1946,7 @@ def _process_init_project_state(
         milestones=milestones,
         brainstorm_source=brainstorm_source,
         workspace_uuid=_workspace_uuid or None,
+        parent_uuid=parent_uuid,
     )
     return json.dumps(result)
 
@@ -2531,15 +2533,24 @@ async def init_project_state(
     features: str,
     milestones: str,
     brainstorm_source: str | None = None,
+    parent_uuid: str | None = None,
 ) -> str:
-    """Create initial project state in DB and write project .meta.json."""
+    """Register a project, then create its directory and write its .meta.json.
+
+    The one owner of project registration: never call register_entity for a
+    project. ``project_dir`` is ``{artifacts_root}/projects/{id}-{slug}`` and
+    need not exist — it is created only after registration succeeds, so a
+    registration error leaves no directory. ``parent_uuid`` registers the
+    project under its brainstorm. The result carries ``project_uuid``.
+    """
     err = _check_db_available()
     if err:
         return err
     if _db is None:
         return _NOT_INITIALIZED
     return _process_init_project_state(
-        _db, project_dir, project_id, slug, features, milestones, brainstorm_source
+        _db, project_dir, project_id, slug, features, milestones, brainstorm_source,
+        parent_uuid,
     )
 
 
