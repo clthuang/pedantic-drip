@@ -6759,14 +6759,17 @@ class IncompleteBucketError(ValueError):
     offending entity, sorted.
     """
 
-    # Single-sourced for every MCP error envelope that reports this refusal;
-    # a hand-typed copy in each server would drift.
+    # The error_type and recovery_hint of the envelope that the MCP tools
+    # allocate_entity_id, register_entity with auto_id, and promote_task
+    # return for this refusal, single-sourced so those servers cannot drift.
+    # issue_spawn and create_key_result report it through their generic
+    # wrappers instead.
     ERROR_TYPE = "incomplete_bucket"
     RECOVERY_HINT = (
         "Nothing was allocated. Write the entity_display row of each entity "
         "the message lists (/pd:doctor lists every violation under "
-        "display_row_invariant), then allocate again. Marking them is_legacy "
-        "or re-kinding them is not a repair."
+        "display_row_invariant), then allocate again. Marking them is_legacy, "
+        "re-kinding them or soft-deleting them is not a repair."
     )
 
     def __init__(self, kind: str, workspace_uuid: str, type_ids: list[str]):

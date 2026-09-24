@@ -155,9 +155,10 @@ def generate_entity_id(
 # The display-row invariant
 # ---------------------------------------------------------------------------
 
-# The flag columns that exempt an entity from the display-row invariant.
-# is_legacy arrived in migration 22, is_deleted in 24.
-DISPLAY_ROW_EXEMPTION_FLAGS = ("is_legacy", "is_deleted")
+# The flag columns that exempt an entity from the display-row invariant:
+# is_legacy alone (migration 22). is_deleted is deliberately absent; see
+# display_row_violations_sql.
+DISPLAY_ROW_EXEMPTION_FLAGS = ("is_legacy",)
 
 # Where an entity's kind lives: kind since migration 12, entity_type before.
 _KIND_COLUMNS = ("kind", "entity_type")
@@ -170,16 +171,25 @@ def display_row_violations_sql(
     display-row invariant. THE one statement of that invariant.
 
     **The invariant.** Every entity has an ``entity_display`` row unless it
-    is exempt. An entity is exempt when any of these holds:
+    is exempt. An entity is exempt when either of these holds:
 
     - ``is_legacy = 1``: it predates the structural model. The ``sequences``
       counter reserves its number (B4's high-water sweep), not a display
       row. The column is immutable (v2 migration 7), so it cannot mute a
       violation.
-    - ``is_deleted = 1``: it is soft-deleted (#081).
     - its kind is in ``NON_SEQUENCE_KINDS``: its identity is not a sequence
       number (a brainstorm's is its file stem), so it has no display row by
-      design (Wave 2 D3).
+      design (Wave 2 D3). The ``entities`` CHECK pairs ``type`` with
+      ``kind``, so no single-column write moves a row into such a kind.
+
+    **Soft-deleted rows are not exempt.** ``is_deleted`` is mutable:
+    ``delete_entity`` sets it and ``set_deleted`` clears it. As an exemption
+    it would be a mute button: soft-deleting a violating row would unblock
+    its bucket, the allocator could then issue the number that row still
+    holds, and restoring the row would leave two entities with it. A deleted
+    entity's number is spent all the same. B8's contract exempted
+    ``is_legacy`` alone; its first implementation added ``is_deleted``
+    without a stated reason.
 
     **Both enforcers build their SQL here, never from a copy:**
 

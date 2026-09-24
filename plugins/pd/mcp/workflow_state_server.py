@@ -34,6 +34,7 @@ from sqlite_retry import with_retry, is_transient
 from entity_registry.database import (
     EntityDatabase,
     EntityNotFoundError,
+    IncompleteBucketError,
     InvalidCloseTargetError,
     _CLOSES_TERMINAL,
     _UNKNOWN_WORKSPACE_UUID,
@@ -2642,11 +2643,6 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     If the registry refuses the task's id allocation (C3), returns an
     ``incomplete_bucket`` error envelope and registers nothing.
     """
-    # Function-level: a header import would shift the line numbers that the
-    # identity-inference inventory (doctor/test_audit_writes.py) pins in
-    # this file.
-    from entity_registry.database import IncompleteBucketError
-
     err = _check_db_available()
     if err:
         return err

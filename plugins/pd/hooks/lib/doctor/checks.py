@@ -647,7 +647,9 @@ def check_display_row_invariant(
                     "this - is_legacy means 'predates the structural model', "
                     "and using it as a mute button makes C3 permit exactly "
                     "the bucket it exists to refuse. Re-kinding the row "
-                    "into a non-sequence kind is the same mute button."
+                    "into a non-sequence kind is the same mute button. "
+                    "Soft-deleting it does not exempt it either: a deleted "
+                    "entity's number must still never be reissued."
                 ),
             ))
     except sqlite3.Error as exc:

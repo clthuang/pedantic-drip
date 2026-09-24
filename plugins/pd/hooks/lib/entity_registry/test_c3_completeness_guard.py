@@ -23,6 +23,7 @@ import uuid as _uuid
 import pytest
 
 from doctor.checks import check_display_row_invariant
+from entity_registry import database as database_module
 from entity_registry.database import EntityDatabase, IncompleteBucketError
 from entity_registry.test_helpers import seed_legacy_entity
 
@@ -190,19 +191,27 @@ class TestExemptions:
         with pytest.raises(IncompleteBucketError):
             db.next_sequence_value(entity_type="feature", workspace_uuid=ws)
 
-    def test_a_soft_deleted_row_does_not_refuse(self, tmp_path):
-        """check_display_row_invariant exempts is_deleted as well, and the
-        guard enforces that same invariant, not a paraphrase of it."""
+class TestSoftDeleteIsNotAnExemption:
+    def test_soft_deleting_the_offending_row_does_not_unblock_the_bucket(self, tmp_path):
+        """is_deleted is mutable: delete_entity sets it and set_deleted clears
+        it. As an exemption it would mute the refusal: this bucket would then
+        allocate 6 — max(counter 6, census 5 + 1) — the number the deleted
+        row still holds, and restoring that row would leave two entities
+        numbered 6."""
         db, ws = _fresh_db(tmp_path)
-        _soft_delete(db, _register_display_less(db, ws, "feature", 4, "deleted"))
-        _set_counter(db, ws, "feature", 5)
-
-        assert db.next_sequence_value(entity_type="feature", workspace_uuid=ws) == 5
-
+        _register(db, ws, "feature", 5, "kept")
         _register_display_less(db, ws, "feature", 6, "lost")
+        _set_counter(db, ws, "feature", 6)
+        db.delete_entity("feature:006-lost", workspace_uuid=ws)
+        assert db._conn.execute(
+            "SELECT is_deleted FROM entities WHERE type_id = 'feature:006-lost'"
+        ).fetchone()[0] == 1
+
         with pytest.raises(IncompleteBucketError) as excinfo:
             db.next_sequence_value(entity_type="feature", workspace_uuid=ws)
+
         assert excinfo.value.type_ids == ["feature:006-lost"]
+        assert _counter(db, ws, "feature") == 6
 
 
 class TestCounterlessExemptBucket:
@@ -240,6 +249,36 @@ class TestBucketScope:
         with pytest.raises(IncompleteBucketError) as other_workspace:
             db.next_sequence_value(entity_type="feature", workspace_uuid=other_ws)
         assert other_workspace.value.type_ids == ["feature:500-lost-elsewhere"]
+
+
+class TestGuardHoldsTheWriteLock:
+    def test_the_guard_runs_inside_the_allocation_transaction(self, tmp_path, monkeypatch):
+        """The Interface: the guard runs inside next_sequence_value's BEGIN
+        IMMEDIATE. Run before it, a writer could add a display-less entity
+        between the check and the counter write, and the allocation would
+        proceed on a bucket the guard never saw. Seen from a second
+        connection: while the guard runs, the write lock is already held."""
+        db, ws = _fresh_db(tmp_path)
+        real_guard = database_module._require_complete_bucket
+        observed: list[tuple[bool, bool]] = []
+
+        def observing_guard(conn, **bucket):
+            other = sqlite3.connect(str(tmp_path / _DB_FILE), timeout=0)
+            try:
+                other.execute("BEGIN IMMEDIATE")
+                other.execute("ROLLBACK")
+                write_lock_held = False
+            except sqlite3.OperationalError as exc:
+                write_lock_held = "locked" in str(exc)
+            finally:
+                other.close()
+            observed.append((conn.in_transaction, write_lock_held))
+            real_guard(conn, **bucket)
+
+        monkeypatch.setattr(database_module, "_require_complete_bucket", observing_guard)
+
+        assert db.next_sequence_value(entity_type="feature", workspace_uuid=ws) == 1
+        assert observed == [(True, True)]
 
 
 class TestConnectionAfterRefusal:
@@ -305,8 +344,9 @@ class TestOneInvariant:
         finally:
             check_conn.close()
         # Pinned so a check that went silent cannot make the agreement vacuous.
-        assert reported == {"feature:002-lost", "task:005-lost-task",
-                            "feature:007-lost-elsewhere"}
+        # The soft-deleted row is reported: is_deleted is not an exemption.
+        assert reported == {"feature:002-lost", "feature:004-deleted",
+                            "task:005-lost-task", "feature:007-lost-elsewhere"}
 
         bucket_of = {
             row[0]: (row[1], row[2]) for row in db._conn.execute(

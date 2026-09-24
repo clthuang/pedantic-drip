@@ -2276,10 +2276,15 @@ class TestDisplayRowInvariant:
         self._entity(conn, "u1", "feature:001-a", is_legacy=1, display=False)
         assert check_display_row_invariant(conn).passed
 
-    def test_soft_deleted_rows_are_exempt(self, tmp_path):
+    def test_soft_deleted_rows_are_not_exempt(self, tmp_path):
+        """is_deleted is mutable (set_deleted restores a row), so as an
+        exemption a soft delete would mute a violation that a restore brings
+        back. A deleted entity's number must still never be reissued."""
         conn = self._conn(tmp_path)
         self._entity(conn, "u1", "feature:001-a", is_deleted=1, display=False)
-        assert check_display_row_invariant(conn).passed
+        result = check_display_row_invariant(conn)
+        assert not result.passed
+        assert [i.entity for i in result.issues] == ["feature:001-a"]
 
     def test_a_display_less_brainstorm_is_exempt(self, tmp_path):
         """Wave 2 D3: a brainstorm's identity is its stem; it has no display row."""
