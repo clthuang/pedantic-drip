@@ -534,7 +534,6 @@ _INFERENCE_SCAN_ROOTS = [
 #                          that deliberately and fixture it, not let the join
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
-    ("entity_registry/backfill.py",           804, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
