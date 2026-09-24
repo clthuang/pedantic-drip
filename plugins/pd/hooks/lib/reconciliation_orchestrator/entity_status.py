@@ -106,9 +106,9 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
         project_root: absolute path to project root. If empty, derived from
                       full_artifacts_path by stripping artifacts_root suffix.
         workspace_uuid: optional workspace UUID (feature 108 / FR-12).
-            Reserved for the post-Migration-11 reattribution path; today the
-            value is recorded but DB writes still use ``project_id`` until
-            the database.py method signatures are migrated.
+            When given, writes are scoped to it and ``project_id`` is not
+            passed. Brainstorm registration always takes a workspace uuid:
+            this one, else the workspace ``project_id`` names (C5b).
 
     Returns:
         {"updated": int, "skipped": int, "archived": int,
@@ -169,6 +169,11 @@ def _sync_brainstorm_entities(
 
     # FR-10: suppress project_id when workspace_uuid is supplied (see _sync_meta_json_entities).
     effective_project_id = project_id if workspace_uuid is None else None
+    # Registration takes one workspace (C5b): the given one, else the one the
+    # legacy project_id names, resolved as register_entity resolved that alias.
+    registration_workspace_uuid = db._resolve_optional_workspace_filter(
+        workspace_uuid, effective_project_id, _caller="register_entity"
+    )
 
     # Part 1: scan filesystem for .prd.md files, register new entities
     seen_on_disk = set()  # entity_ids with files present on disk
@@ -193,8 +198,7 @@ def _sync_brainstorm_entities(
             name=stem,
             artifact_path=artifact_path,
             status="active",
-            workspace_uuid=workspace_uuid,
-            project_id=effective_project_id,
+            workspace_uuid=registration_workspace_uuid,
         )
         results["registered"] += 1
 

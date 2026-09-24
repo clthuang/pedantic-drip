@@ -463,7 +463,8 @@ def _process_create_key_result(
 
     Feature 112 / FR-4: parent_type_id is resolved to parent_uuid at this
     call site; ``db.register_entity`` is invoked with the canonical
-    parent_uuid kwarg.
+    parent_uuid kwarg. ``project_id`` (the server's legacy project id) names
+    the one workspace that allocates the number and holds the row (C17).
     """
     parent_entity = db.get_entity(parent_type_id)
     if parent_entity is None:
@@ -472,8 +473,12 @@ def _process_create_key_result(
         # at entity_server.py:1136-1137 → returns JSON error to caller.
         raise ValueError(f"Parent entity not found: {parent_type_id!r}")
     parent_uuid = parent_entity["uuid"]
+    # Resolved once and handed to both the allocator and register_entity.
+    workspace_uuid = db._resolve_optional_workspace_filter(
+        None, project_id, _caller="create_key_result"
+    )
     # Allocated after the parent check, so a missing parent burns no number.
-    seq, slug = generate_entity_id(db, "key_result", name, project_id)
+    seq, slug = generate_entity_id(db, "key_result", name, workspace_uuid=workspace_uuid)
     type_id = f"key_result:{render_display_id('key_result', seq, slug)}"
     # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
     try:
@@ -485,7 +490,7 @@ def _process_create_key_result(
             status=status,
             parent_uuid=parent_uuid,
             metadata=parse_metadata(metadata_json),
-            project_id=project_id,
+            workspace_uuid=workspace_uuid,
         )
     except EntityExistsError as e:
         return json.dumps({
@@ -622,9 +627,9 @@ async def register_entity(
     # correctly when workspace_uuid is "".
     resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
     # Feature 132 D6.4: the caller-facing project_id kwarg (Migration 11
-    # transition alias) is retired from this tool's surface -- resolution
-    # now falls back only to the server's own legacy-project-id global,
-    # which database.py's register_entity(project_id=...) still accepts.
+    # transition alias) is retired from this tool's surface -- with no
+    # workspace, the server's own legacy-project-id global names one (C5b:
+    # resolved to its uuid before registration, never passed as the alias).
     resolved_project_id = _project_id or "__unknown__"
 
     identity = {key: value for key, value in
@@ -633,8 +638,16 @@ async def register_entity(
     if auto_id and identity:
         return "Error: cannot specify both auto_id=True and seq/slug/display_id"
     if auto_id:
+        # C17: one workspace allocates the number and holds the row. Resolved
+        # here, before allocating, and the same value is registered below.
+        if not resolved_workspace_uuid:
+            resolved_workspace_uuid = _db._resolve_optional_workspace_filter(
+                None, resolved_project_id, _caller="register_entity"
+            )
         try:
-            seq, slug = generate_entity_id(_db, entity_type, name, resolved_project_id)
+            seq, slug = generate_entity_id(
+                _db, entity_type, name, workspace_uuid=resolved_workspace_uuid
+            )
         except IncompleteBucketError as refusal:
             return _incomplete_bucket_envelope(refusal)
         identity = {"seq": seq, "slug": slug}
@@ -644,9 +657,9 @@ async def register_entity(
     if isinstance(metadata, dict):
         metadata = json.dumps(metadata)
 
-    # database.py register_entity still keys on project_id; the
-    # workspace_uuid surface is captured in metadata until the DB-layer
-    # signature flip lands (out of scope for this dispatch).
+    # _process_register_entity registers in resolved_workspace_uuid; when
+    # that is empty (explicit id, no workspace) it resolves the workspace
+    # resolved_project_id names.
     # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
     # (translation happens inside _process_register_entity which returns the
     # legacy "Already existed: ..." concise format on EntityExistsError per
@@ -895,15 +908,21 @@ async def issue_spawn(
     # values cannot leak into entities.metadata.
     caller_meta.pop("parent_uuid", None)
 
+    # C17: one workspace allocates the number and holds the row -- the
+    # resolved workspace, else the one resolved_project_id names. Resolved
+    # once, here, and handed to both calls below.
+    spawn_workspace_uuid = resolved_workspace_uuid or _db._resolve_optional_workspace_filter(
+        None, resolved_project_id, _caller="issue_spawn"
+    )
+
     # FR-9.2: generate_entity_id allocates the seq and derives the slug.
-    seq, slug = generate_entity_id(_db, kind, summary, resolved_project_id)
+    seq, slug = generate_entity_id(_db, kind, summary, workspace_uuid=spawn_workspace_uuid)
 
     # FR-9.2: direct db.register_entity call (mirrors entity_server.py:502+
     # pattern). The internal _derive_type_and_lifecycle mapping (Group B)
     # converts entity_type=kind → (type='work', kind=<bug|task>,
     # lifecycle_class=<kind>_flow). NO init_entity_workflow call —
     # bug/task use the status-only model per FR-BL.
-    ws_uuid_kwarg = resolved_workspace_uuid or None
     # F12 audit: conflict-is-error → register_entity, EntityExistsError
     # bubbles to MCP boundary translator. auto_id guarantees fresh entity_id
     # so conflict is operationally impossible; raise-on-conflict semantics
@@ -913,8 +932,7 @@ async def issue_spawn(
         seq=seq,
         slug=slug,
         name=summary,
-        workspace_uuid=ws_uuid_kwarg,
-        project_id=resolved_project_id if ws_uuid_kwarg is None else None,
+        workspace_uuid=spawn_workspace_uuid,
         status="open",
         parent_uuid=parent_uuid,
         metadata=caller_meta,

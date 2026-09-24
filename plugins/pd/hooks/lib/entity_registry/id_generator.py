@@ -183,7 +183,8 @@ def read_display_identity(
 
 
 def generate_entity_id(
-    db: "EntityDatabase", entity_type: str, name: str, project_id: str
+    db: "EntityDatabase", entity_type: str, name: str, project_id: str | None = None,
+    *, workspace_uuid: str | None = None,
 ) -> tuple[int, str]:
     """Allocate the next sequence value and derive the slug for a new entity.
 
@@ -196,7 +197,13 @@ def generate_entity_id(
     name:
         Human-readable name from which the slug is derived.
     project_id:
-        The project scope for the sequence counter.
+        DEPRECATED — legacy alias for ``workspace_uuid``, resolved through
+        ``workspaces.project_id_legacy`` (C5b removes it).
+    workspace_uuid:
+        The workspace whose counter issues the number. A caller that
+        registers the entity next passes this same value to
+        ``register_entity`` (C17), so the number and the row share one
+        workspace.
 
     Returns
     -------
@@ -206,12 +213,17 @@ def generate_entity_id(
 
     Raises
     ------
+    TypeError
+        Neither ``workspace_uuid`` nor ``project_id`` names a workspace: a
+        counter has no scope without one.
     IncompleteBucketError
         From ``next_sequence_value`` (C3): the bucket holds an entity that
         breaks the display-row invariant. Nothing was allocated; callers
         report it rather than retry.
     """
-    seq = db.next_sequence_value(project_id, entity_type)
+    if workspace_uuid is None and project_id is None:
+        raise TypeError("generate_entity_id() requires workspace_uuid")
+    seq = db.next_sequence_value(project_id, entity_type, workspace_uuid=workspace_uuid)
     slug = _slugify(name)
 
     if not slug:
