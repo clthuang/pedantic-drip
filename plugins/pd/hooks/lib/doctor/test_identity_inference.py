@@ -48,8 +48,8 @@ def test_bare_name_receivers_are_recognised(receiver):
 
 
 @pytest.mark.parametrize("expr", [
-    'entity["type_id"]',        # frontmatter_sync.py:109
-    "row['entity_id']",         # reconciliation.py:787
+    'entity["type_id"]',
+    "row['entity_id']",
     'anomaly["type_id"]',
     'entity.get("type_id")',
     "self.entity_id",
@@ -67,7 +67,9 @@ def test_compiled_pattern_applied_to_an_id():
 
 
 def test_module_level_re_match_puts_the_id_in_the_second_argument():
-    """database.py:10281 — checking only arg 0 misses every call of this shape."""
+    """database.py's census before ``_census_max`` passed the id as
+    ``re.match``'s second argument; checking only arg 0 misses every call
+    of this shape."""
     assert idioms(r're.match(r"^(\d+)", eid)') == {"regex"}
 
 
