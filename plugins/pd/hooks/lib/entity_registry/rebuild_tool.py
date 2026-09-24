@@ -46,7 +46,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import stat
 import sys
@@ -401,8 +400,6 @@ def _import_workspaces(old_conn: sqlite3.Connection, new_conn: sqlite3.Connectio
         )
 
 
-_DISPLAY_ID_RE = re.compile(r"^(\d+)-(.+)$")
-
 def _entities_insert_sql(cols: tuple[str, ...]) -> str:
     return (
         "INSERT INTO entities (" + ",".join(cols) + ") "
@@ -410,9 +407,13 @@ def _entities_insert_sql(cols: tuple[str, ...]) -> str:
     )
 
 
-# Kept for the v14-shaped path; the live path derives its columns from the
-# target file so later additions (is_legacy, is_archived) are carried rather
-# than silently dropped.
+# The INSERT names the v14 columns plus every flag. The old-file SELECT in
+# _import_entities reads whichever flags that file actually has (via
+# database.current_entities_columns), and _flag defaults an absent one to 0 —
+# a file older than the flag migrations. That SELECT used to name only the
+# v14 columns, so _flag returned 0 for EVERY row: a rebuild un-legacied,
+# un-archived and un-deleted the whole census, and is_legacy cannot be put
+# back after insert (enforce_immutable_is_legacy).
 _FLAG_COLUMNS = ("is_legacy", "is_archived", "is_deleted")
 _ENTITIES_INSERT_SQL = _entities_insert_sql(
     database._V14_ENTITIES_COLUMNS + _FLAG_COLUMNS
@@ -420,8 +421,28 @@ _ENTITIES_INSERT_SQL = _entities_insert_sql(
 
 
 def _flag(row, name: str) -> int:
-    """Read a flag column defensively — old files predate both."""
+    """Read a flag column defensively — an old file may predate it."""
     return int(row[name]) if name in row.keys() and row[name] is not None else 0
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone() is not None
+
+
+def _old_display_rows(old_conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
+    """Old entity uuid -> its ``entity_display`` row (``seq``, ``slug``).
+
+    Empty for a file older than migration 13, which has no display table:
+    there is no structure to carry, and none is inferred from id text.
+    """
+    if not _has_table(old_conn, "entity_display"):
+        return {}
+    return {
+        row["uuid"]: row
+        for row in old_conn.execute("SELECT uuid, seq, slug FROM entity_display")
+    }
 
 
 def _dedup_entities(
@@ -440,6 +461,8 @@ def _dedup_entities(
     ``collapse_map`` maps every LOSER's old uuid to its survivor's old
     uuid; ``survivor_old_uuids`` lists survivors in deterministic
     first-appearance order (mirrors *old_rows*, itself ``ORDER BY uuid``).
+    Each ``duplicate_type_id`` entry records the loser's ``kind`` column,
+    the bucket its lost count is booked to (:func:`_verify_counts_explained`).
     """
     groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
     for row in old_rows:
@@ -461,6 +484,7 @@ def _dedup_entities(
                 "old_uuid": loser["uuid"],
                 "workspace_uuid": ws,
                 "type_id": type_id,
+                "kind": loser["kind"],
                 "survivor_old_uuid": survivor["uuid"],
             })
     return collapse_map, survivor_old_uuids, anomalies
@@ -529,13 +553,23 @@ def _import_entities(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection)
     standalone FTS5 virtual table has no external-content wiring back to
     ``entities``, so a post-commit ``INSERT ... VALUES('rebuild')`` alone
     cannot backfill it; this per-row population is the real mechanism).
+
+    C19: identity STRUCTURE crosses the remap as it stands. A survivor's
+    ``entity_display`` row moves to its new uuid unchanged, and its flags
+    (``is_legacy``, ``is_archived``, ``is_deleted``) with it. Nothing is
+    re-derived from ``entity_id`` text: a row that had no display row
+    (legacy, a brainstorm, or a bug the old file already carried) has
+    none after the rebuild either.
     """
+    old_columns = set(database.current_entities_columns(old_conn))
+    flag_select = "".join(f", {name}" for name in _FLAG_COLUMNS if name in old_columns)
     old_rows = old_conn.execute(
         "SELECT uuid, workspace_uuid, type_id, entity_id, name, status, "
         "parent_uuid, artifact_path, created_at, updated_at, metadata, "
-        "type, kind, lifecycle_class FROM entities ORDER BY uuid"
+        "type, kind, lifecycle_class" + flag_select + " FROM entities ORDER BY uuid"
     ).fetchall()
     by_old_uuid = {row["uuid"]: row for row in old_rows}
+    old_display = _old_display_rows(old_conn)
 
     collapse_map, survivor_old_uuids, dedup_anomalies = _dedup_entities(old_rows)
     topo_order, broken_cycle, topo_anomalies = _parent_topological_order(
@@ -629,11 +663,11 @@ def _import_entities(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection)
              database.flatten_metadata(metadata_dict)),
         )
 
-        display_match = _DISPLAY_ID_RE.match(entity_id_new)
-        if display_match:
+        display = old_display.get(old_uuid)
+        if display is not None:
             new_conn.execute(
                 "INSERT INTO entity_display (uuid, seq, slug) VALUES (?, ?, ?)",
-                (new_uuid, int(display_match.group(1)), display_match.group(2)),
+                (new_uuid, display["seq"], display["slug"]),
             )
 
         secondary_map[(ws, row["type_id"])] = new_uuid
@@ -1030,76 +1064,41 @@ def _emit_all_events(
 
 
 # ---------------------------------------------------------------------------
-# D6.9 (seed-half): seed one ``sequences`` row per (kind, workspace) at
-# the census max display number, so the atomic allocator continues every
-# kind's numbering post-cutover.
+# D6.9 (seed-half): seed one ``sequences`` row per (kind, workspace) so the
+# atomic allocator continues every kind's numbering post-cutover, never below
+# what the old file had already reserved.
 # ---------------------------------------------------------------------------
-
-# One pattern for every kind. Projects used to need their own, end-anchored
-# ``^P(\d+)$`` — which is the original incident: it matched bare ``P004``
-# and returned NOTHING for ``P004-entity-db-redesign``, so _display_number
-# gave 0, the derived max came out below the stored counter, and a rebuild
-# reissued a number already on disk as a directory and a branch.
-#
-# C4 dropped the ``P`` prefix, so projects render ``{seq:03d}-{slug}`` like
-# everything else and the special case has no reason to exist. The generic
-# pattern is deliberately NOT end-anchored: it reads the leading digit run
-# of both id generations (``004-slug`` and the legacy ``P004-slug`` still on
-# disk — for the latter it returns 0, which _seed_sequences' max() against
-# the stored counter is what protects; see its docstring).
-_GENERIC_DISPLAY_RE = re.compile(r"^(\d+)")
-
-
-def _display_number(kind: str, entity_id: str) -> int:
-    """Leading sequence number of *entity_id*, or 0 if it has none.
-
-    *kind* is retained in the signature because callers pass it and the
-    parameter documents that this is a per-kind census; it no longer
-    selects a pattern.
-    """
-    match = _GENERIC_DISPLAY_RE.match(entity_id)
-    return int(match.group(1)) if match else 0
 
 
 def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -> dict:
     """D6.9: one row per (workspace, kind), at a value that can never be
     BELOW what the old file had already reserved.
 
-    ``next_val = max(stored_next_val, derived_max + 1)``.
+    ``next_val = max(stored_next_val, census_max + 1)``, both halves read
+    from STRUCTURE — never from ``entity_id`` or ``type_id`` text (C19/C20b):
 
-    The derived half is the text scan this function has always done:
-    ``max(display number) + 1`` over the FULL raw old-file scan (not the
-    post-dedup survivor set — within-workspace duplicates share the
-    identical entity_id/number by definition, so dedup can never change
-    the max). The stored half is the old ``sequences`` table, which this
-    function previously ignored entirely.
+    * **census** — C1's ``database._census_max``: ``MAX(entity_display.seq)``
+      per ``(workspace_uuid, kind)`` column pair, over every old row with
+      dedup losers included. A loser's display row is not carried (its
+      survivor's is), but the number it held was issued, so it still
+      raises the floor.
+    * **stored** — the old ``sequences`` counter, the high-water mark. It
+      alone covers legacy rows: an ``is_legacy`` row has no display row by
+      definition, so the census cannot see its number, and B4's
+      ``establish_high_water`` raised the counter above it for exactly that
+      reason. Ignoring the counter made rebuild a re-infection vector
+      rather than a repair (C20a): the live project bucket held
+      ``next_val=5`` with ``P004-entity-db-redesign`` present, the census
+      (then a scan of id text) came out 3, and a rebuild lowered the
+      counter to 4 — a number already on disk as a directory and a branch.
 
-    Ignoring it made rebuild a re-infection vector rather than a repair.
-    ``_display_number`` returns 0 for any id its regex misses. Until C4
-    that included every slug-suffixed project, because the project pattern
-    was end-anchored (``^P(\\d+)$``). C4 removed the prefix and the special
-    case, but legacy ``P{NNN}-{slug}`` rows remain on disk and still yield
-    0, so the ``max(stored, derived)`` below is what protects them — not the
-    regex. Measured on the live registry before the fix:
-    the project bucket held ``next_val=5`` with ``P004-entity-db-redesign``
-    present; the derived max was 3, so a rebuild LOWERED the counter to 4
-    and the next allocation reissued 4 — the number already on disk. Any
-    bucket whose ids the regex cannot parse had the same exposure.
-
-    Buckets present only in ``sequences`` (a counter with zero surviving
-    entity rows) are carried across too. Enumerating solely from the
-    entity census silently dropped their reservation.
+    Buckets come from both sides, so a counter with zero entity rows keeps
+    its reservation (C20a). A bucket that holds entities but has neither a
+    display row nor a counter gets NO row: its highest number is readable
+    only from id text, and seeding 1 would reissue it. Without a row,
+    ``next_sequence_value`` refuses the bucket and names the repair
+    (``establish_high_water``) — the state the old file was already in.
     """
-    rows = old_conn.execute(
-        "SELECT workspace_uuid, kind, entity_id FROM entities "
-        "ORDER BY workspace_uuid, kind"
-    ).fetchall()
-    max_by_bucket: dict[tuple[str, str], int] = {}
-    for row in rows:
-        key = (row["workspace_uuid"], row["kind"])
-        number = _display_number(row["kind"], row["entity_id"])
-        max_by_bucket[key] = max(max_by_bucket.get(key, 0), number)
-
     stored: dict[tuple[str, str], int] = {}
     try:
         for row in old_conn.execute(
@@ -1107,15 +1106,26 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
         ):
             stored[(row["workspace_uuid"], row["entity_type"])] = int(row["next_val"])
     except sqlite3.OperationalError:
-        # Pre-118 files have no ``sequences`` table; the derived floor is
-        # then the only available authority and the max() below is a no-op.
+        # Pre-118 files have no ``sequences`` table; the census is then the
+        # only available authority and the max() below is a no-op.
         pass
 
-    derived = {key: value + 1 for key, value in max_by_bucket.items()}
+    census_floor: dict[tuple[str, str], int] = {}
+    if _has_table(old_conn, "entity_display"):
+        buckets = old_conn.execute(
+            "SELECT DISTINCT workspace_uuid, kind FROM entities"
+        ).fetchall()
+        for row in buckets:
+            census = database._census_max(
+                old_conn, kind=row["kind"], workspace_uuid=row["workspace_uuid"]
+            )
+            if census is not None:
+                census_floor[(row["workspace_uuid"], row["kind"])] = census + 1
+
     seeded: dict[str, dict[str, int]] = {}
-    for key in sorted(set(derived) | set(stored)):
+    for key in sorted(set(census_floor) | set(stored)):
         ws, kind = key
-        next_val = max(derived.get(key, 1), stored.get(key, 1))
+        next_val = max(census_floor.get(key, 1), stored.get(key, 1))
         new_conn.execute(
             "INSERT INTO sequences (workspace_uuid, entity_type, next_val) VALUES (?, ?, ?)",
             (ws, kind, next_val),
@@ -1163,11 +1173,15 @@ def _verify_counts_explained(state: _ImportState) -> None:
     ``new < old`` in this import). Raises :class:`BackfillIntegrityError`
     (aborting the transaction) rather than ever committing a delta this
     import cannot explain.
+
+    Each loss is booked to the loser's ``kind`` column — the key ``counts``
+    itself uses — never to its ``type_id`` prefix, which a row can
+    contradict; booking by prefix turned such a row's own dedup into an
+    "unexplained" delta and aborted the import (C19).
     """
     dedup_by_bucket: dict[tuple[str, str], int] = {}
     for anomaly in state.anomalies["duplicate_type_id"]:
-        kind = anomaly["type_id"].split(":", 1)[0]
-        key = (kind, anomaly["workspace_uuid"])
+        key = (anomaly["kind"], anomaly["workspace_uuid"])
         dedup_by_bucket[key] = dedup_by_bucket.get(key, 0) + 1
 
     unexplained = []

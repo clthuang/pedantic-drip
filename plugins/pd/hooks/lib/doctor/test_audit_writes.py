@@ -546,8 +546,6 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
-    ("entity_registry/rebuild_tool.py",       1060, "regex",       "C19/C20b rebuild seeds from structure"),
-    ("entity_registry/rebuild_tool.py",       1169, "split",       "C19 rebuild seeds from structure"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
     ("workflow_engine/feature_lifecycle.py",  98, "split",       "C11 artifact path"),
     ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),

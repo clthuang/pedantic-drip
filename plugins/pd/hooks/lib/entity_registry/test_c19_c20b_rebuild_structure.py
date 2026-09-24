@@ -1,0 +1,364 @@
+"""C19 + C20b: the rebuild carries identity STRUCTURE across the uuid remap
+and seeds ``sequences`` from structure plus the stored high-water mark.
+
+C19 — an ``entity_display`` row is carried from the old file onto the
+entity's NEW uuid, never re-derived from ``entity_id`` text. The entity
+flags travel with it, so B8's invariant ("a display row unless
+``is_legacy``") means the same thing on both sides of a rebuild. Dedup
+accounting reads the ``kind`` column, never the ``type_id`` prefix.
+
+C20b — ``next_val = max(stored counter, structural census max + 1)``. The
+census is C1's (``entity_display.seq`` per ``entities.kind`` x workspace);
+the stored counter is the only thing that covers legacy rows, which have no
+display row by definition. Two of the Verify cases already hold since C20a
+(``12f1b571``) and are kept here as regression pins, labelled as such.
+
+Every test builds its own old file through the real v1 chain, so the old
+file's constraints are genuinely in force, then seeds it with raw SQL: the
+states under test (a ``P004-slug`` id with a display row, a ``type_id``
+whose prefix disagrees with its ``kind``) cannot be registered any more.
+"""
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from entity_registry import database
+from entity_registry import rebuild_tool
+from entity_registry import schema_v2
+from entity_registry.test_rebuild_tool import _relax_entities_unique_constraint
+
+_NOW = "2026-01-01T00:00:00Z"
+_LATER = "2026-01-02T00:00:00Z"
+_WORKSPACE = "ws-rebuild"
+
+
+@pytest.fixture(autouse=True)
+def _reset_ddl_registry():
+    """``build_staging_database`` registers the axes vocab DDL as production
+    behaviour; restore the registry so it cannot leak into later tests
+    (the idiom test_rebuild_tool.py uses)."""
+    original_registry = list(schema_v2.DDL_REGISTRY)
+    yield
+    schema_v2.DDL_REGISTRY[:] = original_registry
+
+
+class _OldFile:
+    """A chain-built v1 file, seeded with raw SQL, then rebuilt."""
+
+    def __init__(self, tmp_path, *, relax_unique: bool = False) -> None:
+        self._tmp_path = tmp_path
+        self.path = str(tmp_path / "old.db")
+        database.EntityDatabase(self.path).close()
+        self.conn = sqlite3.connect(self.path)
+        if relax_unique:
+            # Within-workspace duplicate type_ids: the one pathology a live
+            # file cannot reach, needed to drive the dedup accounting.
+            _relax_entities_unique_constraint(self.conn)
+        self.workspace(_WORKSPACE)
+
+    def workspace(self, workspace_uuid: str) -> None:
+        self.conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, project_root, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (workspace_uuid, workspace_uuid, f"/tmp/{workspace_uuid}", _NOW, _NOW),
+        )
+
+    def entity(
+        self, old_uuid: str, kind: str, entity_id: str, *,
+        type_id: str | None = None, display: tuple[int, str] | None = None,
+        is_legacy: int = 0, is_archived: int = 0, is_deleted: int = 0,
+        updated_at: str = _NOW, workspace_uuid: str = _WORKSPACE,
+    ) -> None:
+        entity_type, lifecycle_class = database._derive_type_and_lifecycle(kind)
+        self.conn.execute(
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, name, "
+            "status, created_at, updated_at, type, kind, lifecycle_class, "
+            "is_legacy, is_archived, is_deleted) "
+            "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (old_uuid, workspace_uuid, type_id or f"{kind}:{entity_id}", entity_id,
+             entity_id, _NOW, updated_at, entity_type, kind, lifecycle_class,
+             is_legacy, is_archived, is_deleted),
+        )
+        if display is not None:
+            seq, slug = display
+            self.conn.execute(
+                "INSERT INTO entity_display (uuid, seq, slug) VALUES (?, ?, ?)",
+                (old_uuid, seq, slug),
+            )
+
+    def counter(self, kind: str, next_val: int, *, workspace_uuid: str = _WORKSPACE) -> None:
+        self.conn.execute(
+            "INSERT INTO sequences (workspace_uuid, entity_type, next_val) VALUES (?, ?, ?)",
+            (workspace_uuid, kind, next_val),
+        )
+
+    def rebuild(self) -> tuple[str, dict]:
+        """Commit, close, and rebuild into a fresh staging file."""
+        self.conn.commit()
+        self.conn.close()
+        staging_path = str(self._tmp_path / "staging.db")
+        rebuild_tool.build_staging_database(staging_path)
+        report = rebuild_tool.run_backfill(self.path, staging_path)
+        return staging_path, report
+
+
+def _query(staging_path: str, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    conn = sqlite3.connect(staging_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+
+def _rebuilt_display(staging_path: str, type_id: str) -> sqlite3.Row:
+    """The rebuilt entity's uuid and its display row (``seq`` None if absent)."""
+    rows = _query(
+        staging_path,
+        "SELECT e.uuid, d.seq, d.slug FROM entities e "
+        "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+        "WHERE e.type_id = ? AND e.workspace_uuid = ?",
+        (type_id, _WORKSPACE),
+    )
+    assert len(rows) == 1, f"expected exactly one rebuilt {type_id}, got {len(rows)}"
+    return rows[0]
+
+
+def _seeded_counters(staging_path: str) -> dict[tuple[str, str], int]:
+    return {
+        (row["workspace_uuid"], row["entity_type"]): row["next_val"]
+        for row in _query(
+            staging_path, "SELECT workspace_uuid, entity_type, next_val FROM sequences"
+        )
+    }
+
+
+def _next_allocation(staging_path: str, kind: str) -> int:
+    """What the allocator issues next from the rebuilt file."""
+    rebuilt = database.EntityDatabase(staging_path)
+    try:
+        return rebuilt.next_sequence_value(entity_type=kind, workspace_uuid=_WORKSPACE)
+    finally:
+        rebuilt.close()
+
+
+# ---------------------------------------------------------------------------
+# C19 — display rows and flags are carried, not re-parsed
+# ---------------------------------------------------------------------------
+class TestDisplayRowsCarriedThroughTheRemap:
+    def test_p_prefixed_ids_keep_their_exact_seq_and_slug(self, tmp_path):
+        """The plan's C19 Verify. ``^(\\d+)-(.+)$`` never matched a leading
+        ``P``, so these rows came out of a rebuild with no display row."""
+        old = _OldFile(tmp_path)
+        old.entity("old-p004", "project", "P004-entity-db-redesign",
+                   display=(4, "entity-db-redesign"))
+        old.entity("old-p001", "project", "P001-openclaw-gap-analysis",
+                   display=(1, "openclaw-gap-analysis"))
+        staging_path, _ = old.rebuild()
+
+        p004 = _rebuilt_display(staging_path, "project:P004-entity-db-redesign")
+        p001 = _rebuilt_display(staging_path, "project:P001-openclaw-gap-analysis")
+        assert (p004["seq"], p004["slug"]) == (4, "entity-db-redesign")
+        assert (p001["seq"], p001["slug"]) == (1, "openclaw-gap-analysis")
+        # Carried THROUGH the remap: keyed by the new uuid7, not the old uuid.
+        assert {p004["uuid"], p001["uuid"]}.isdisjoint({"old-p004", "old-p001"})
+
+    def test_display_row_wins_over_disagreeing_id_text(self, tmp_path):
+        """Text says (5, lying-text); structure says (7, true-slug). A
+        re-parse reproduces the text, so only the carry passes."""
+        old = _OldFile(tmp_path)
+        old.entity("old-feature", "feature", "005-lying-text", display=(7, "true-slug"))
+        staging_path, _ = old.rebuild()
+
+        rebuilt = _rebuilt_display(staging_path, "feature:005-lying-text")
+        assert (rebuilt["seq"], rebuilt["slug"]) == (7, "true-slug")
+
+    def test_display_less_row_is_not_given_one_from_its_text(self, tmp_path):
+        """``is_legacy = 0`` with no display row is a bug the old file already
+        had, and C3 reports it there. The rebuild must carry it as it is,
+        not invent a number from id text."""
+        old = _OldFile(tmp_path)
+        old.entity("old-feature", "feature", "006-no-display")
+        staging_path, _ = old.rebuild()
+
+        assert _rebuilt_display(staging_path, "feature:006-no-display")["seq"] is None
+
+    def test_entity_flags_are_carried(self, tmp_path):
+        """The old-file SELECT never read the flag columns, so ``_flag``
+        defaulted every one to 0: a rebuild un-archived, un-deleted and
+        un-legacied every row. ``is_legacy`` is immutable after insert, so
+        the rebuilt 0 could never be put back."""
+        old = _OldFile(tmp_path)
+        old.entity("old-legacy", "project", "P002", is_legacy=1)
+        old.entity("old-archived", "feature", "001-done", display=(1, "done"), is_archived=1)
+        old.entity("old-deleted", "feature", "002-gone", display=(2, "gone"), is_deleted=1)
+        old.entity("old-plain", "feature", "003-live", display=(3, "live"))
+        staging_path, _ = old.rebuild()
+
+        flags = {
+            row["type_id"]: (row["is_legacy"], row["is_archived"], row["is_deleted"])
+            for row in _query(
+                staging_path,
+                "SELECT type_id, is_legacy, is_archived, is_deleted FROM entities",
+            )
+        }
+        assert flags == {
+            "project:P002": (1, 0, 0),
+            "feature:001-done": (0, 1, 0),
+            "feature:002-gone": (0, 0, 1),
+            "feature:003-live": (0, 0, 0),
+        }
+        # B8 holds after the rebuild exactly as before it: the legacy row is
+        # display-less because it is legacy, not because a write failed.
+        assert _rebuilt_display(staging_path, "project:P002")["seq"] is None
+
+
+# ---------------------------------------------------------------------------
+# C19 — kind comes from the kind column, never the type_id prefix
+# ---------------------------------------------------------------------------
+class TestKindComesFromTheColumn:
+    def test_dedup_loss_is_explained_by_the_losers_kind_column(self, tmp_path):
+        """The type_id says task; the kind column says feature. Counts are
+        keyed by the column, so the count delta lands in the feature bucket.
+        Booking the explanation to the type_id prefix put it in 'task' and
+        aborted the import on an 'unexplained' delta it had caused itself."""
+        old = _OldFile(tmp_path, relax_unique=True)
+        old.entity("dup-loser", "feature", "003-dup", type_id="task:003-dup",
+                   display=(3, "dup"), updated_at=_NOW)
+        old.entity("dup-winner", "feature", "003-dup", type_id="task:003-dup",
+                   display=(3, "dup"), updated_at=_LATER)
+        _, report = old.rebuild()
+
+        [anomaly] = report["anomalies"]["duplicate_type_id"]
+        assert anomaly["old_uuid"] == "dup-loser"
+        assert anomaly["kind"] == "feature"
+        assert report["counts"]["feature"][_WORKSPACE] == {"old": 2, "new": 1}
+
+    def test_seed_bucket_is_the_kind_column(self, tmp_path):
+        """Regression pin: seeding keyed buckets by the column before C19
+        too. Kept so the census rewrite cannot start reading the prefix."""
+        old = _OldFile(tmp_path)
+        old.entity("mislabelled", "feature", "005-x", type_id="task:005-x", display=(5, "x"))
+        staging_path, _ = old.rebuild()
+
+        seeded = _seeded_counters(staging_path)
+        assert seeded[(_WORKSPACE, "feature")] == 6
+        assert (_WORKSPACE, "task") not in seeded
+
+
+# ---------------------------------------------------------------------------
+# C20b — seed = max(stored high-water mark, structural census + 1)
+# ---------------------------------------------------------------------------
+class TestSeedFromStructureAndTheHighWaterMark:
+    def test_p_prefixed_display_row_sets_the_floor(self, tmp_path):
+        """C19's Verify on the seed side. The text scan read ``P004-...`` as
+        0, so with no counter the bucket was seeded at 1."""
+        old = _OldFile(tmp_path)
+        old.entity("old-p004", "project", "P004-entity-db-redesign",
+                   display=(4, "entity-db-redesign"))
+        staging_path, report = old.rebuild()
+
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "project")] == 5
+        assert report["sequences_seeded"]["project"][_WORKSPACE] == 5
+
+    def test_disagreeing_id_text_does_not_set_the_floor(self, tmp_path):
+        """Text says 999, the display row says 4 — C1's census rule."""
+        old = _OldFile(tmp_path)
+        old.entity("old-feature", "feature", "999-lying-text", display=(4, "lying-text"))
+        staging_path, _ = old.rebuild()
+
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "feature")] == 5
+
+    def test_census_counts_a_dedup_losers_display_row(self, tmp_path):
+        """A number is spent the moment it is issued (C1). The loser's row
+        is not carried — its survivor's is — but its seq still raises the
+        floor, or the rebuilt counter could hand 12 out again."""
+        old = _OldFile(tmp_path, relax_unique=True)
+        old.entity("dup-loser", "feature", "003-dup", display=(12, "dup-old"),
+                   updated_at=_NOW)
+        old.entity("dup-winner", "feature", "003-dup", display=(3, "dup"),
+                   updated_at=_LATER)
+        staging_path, _ = old.rebuild()
+
+        survivor = _rebuilt_display(staging_path, "feature:003-dup")
+        assert (survivor["seq"], survivor["slug"]) == (3, "dup")
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "feature")] == 13
+
+    def test_counter_above_the_census_max_is_not_lowered(self, tmp_path):
+        """REGRESSION PIN — passes since C20a (12f1b571), before C20b."""
+        old = _OldFile(tmp_path)
+        for seq in (1, 2, 3):
+            old.entity(f"old-f{seq}", "feature", f"00{seq}-f{seq}", display=(seq, f"f{seq}"))
+        old.counter("feature", 10)
+        staging_path, _ = old.rebuild()
+
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "feature")] == 10
+        assert _next_allocation(staging_path, "feature") == 10
+
+    def test_counter_only_bucket_keeps_its_reservation(self, tmp_path):
+        """REGRESSION PIN — passes since C20a (12f1b571), before C20b.
+
+        Buckets come from entities AND sequences: a counter with zero entity
+        rows, in a populated workspace or an empty one, is still a
+        reservation."""
+        old = _OldFile(tmp_path)
+        old.workspace("ws-without-entities")
+        old.entity("old-feature", "feature", "001-f", display=(1, "f"))
+        old.counter("bug", 42)
+        old.counter("feature", 7, workspace_uuid="ws-without-entities")
+        staging_path, report = old.rebuild()
+
+        seeded = _seeded_counters(staging_path)
+        assert seeded[(_WORKSPACE, "bug")] == 42
+        assert seeded[("ws-without-entities", "feature")] == 7
+        assert report["sequences_seeded"]["bug"][_WORKSPACE] == 42
+
+    def test_legacy_number_stays_reserved_by_the_stored_counter(self, tmp_path):
+        """REGRESSION PIN for the structural census's blind spot.
+
+        A legacy row has no display row, so the census cannot see P007's 7.
+        B4 raised the counter to 8 for exactly that reason; the seed keeps
+        it rather than falling to census(001) + 1 = 2."""
+        old = _OldFile(tmp_path)
+        old.entity("old-legacy", "project", "P007-old-project", is_legacy=1)
+        old.entity("old-fresh", "project", "001-fresh", display=(1, "fresh"))
+        old.counter("project", 8)
+        staging_path, _ = old.rebuild()
+
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "project")] == 8
+        assert _next_allocation(staging_path, "project") == 8
+
+    @pytest.mark.parametrize("kind, entity_id, is_legacy", [
+        ("project", "P003", 1),          # legacy: its number lives only in text
+        ("task", "004-text-only", 0),    # display-less bug row: same exposure
+    ])
+    def test_bucket_with_no_structure_and_no_counter_fails_closed(
+        self, tmp_path, kind, entity_id, is_legacy,
+    ):
+        """Entities, but no display row and no counter. The highest number
+        is readable only from id text, which the seed does not read, so it
+        writes no counter; the allocator then refuses the bucket and names
+        the repair, exactly as it did against the old file. Seeding one
+        instead would reissue the numbers those rows already carry."""
+        old = _OldFile(tmp_path)
+        old.entity("old-row", kind, entity_id, is_legacy=is_legacy)
+        staging_path, report = old.rebuild()
+
+        assert (_WORKSPACE, kind) not in _seeded_counters(staging_path)
+        assert kind not in report["sequences_seeded"]
+        with pytest.raises(ValueError, match="establish_high_water"):
+            _next_allocation(staging_path, kind)
+
+    def test_file_without_an_entity_display_table_seeds_from_its_counter(self, tmp_path):
+        """A file older than migration 13 has no structure to carry: no
+        display rows come across and the counter alone seeds the bucket."""
+        old = _OldFile(tmp_path)
+        old.entity("old-feature", "feature", "005-x")
+        old.counter("feature", 6)
+        old.conn.execute("DROP TABLE entity_display")
+        staging_path, _ = old.rebuild()
+
+        assert _seeded_counters(staging_path)[(_WORKSPACE, "feature")] == 6
+        assert _query(staging_path, "SELECT COUNT(*) AS n FROM entity_display")[0]["n"] == 0

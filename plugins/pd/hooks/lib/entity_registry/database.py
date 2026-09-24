@@ -4386,9 +4386,9 @@ def _append_migration_audit_log(
 # column-set guard reject every real database.
 #
 # Anything operating on a FULLY migrated file wants this list instead.
-# rebuild_tool builds its INSERT from it; using the v14 list there silently
-# dropped is_legacy/is_archived on every rebuild — the same class of defect
-# as _seed_sequences discarding the counter.
+# rebuild_tool reads the old file's flags through it; a SELECT of only the
+# v14 columns zeroed is_legacy/is_archived/is_deleted on every rebuild — the
+# same class of defect as _seed_sequences discarding the counter.
 def current_entities_columns(conn: sqlite3.Connection) -> tuple[str, ...]:
     """Columns actually present on ``entities``, in declared order."""
     return tuple(r[1] for r in conn.execute("PRAGMA table_info(entities)"))
