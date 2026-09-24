@@ -1096,8 +1096,15 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
     its reservation (C20a). A bucket that holds entities but has neither a
     display row nor a counter gets NO row: its highest number is readable
     only from id text, and seeding 1 would reissue it. Without a row,
-    ``next_sequence_value`` refuses the bucket and names the repair
-    (``establish_high_water``) — the state the old file was already in.
+    ``next_sequence_value`` refuses the bucket — the state the old file was
+    already in. Which refusal fires, and so which repair it names, depends
+    on the bucket's rows:
+
+    * **A row breaks the display-row invariant** (not ``is_legacy``, and a
+      sequence kind): C3's ``IncompleteBucketError``. The repair is writing
+      that row's ``entity_display`` row.
+    * **Every row is exempt:** the counterless ``ValueError``, which names
+      ``establish_high_water``.
     """
     stored: dict[tuple[str, str], int] = {}
     try:
