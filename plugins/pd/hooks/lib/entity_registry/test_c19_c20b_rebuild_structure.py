@@ -363,6 +363,8 @@ class TestSeedFromStructureAndTheHighWaterMark:
         assert type(refused.value) is refusal
         if refusal is ValueError:
             assert "establish_high_water" in str(refused.value)
+        else:
+            assert refused.value.type_ids == [f"{kind}:{entity_id}"]
 
 # ---------------------------------------------------------------------------
 # A file that does not state its identity structure is refused
