@@ -74,5 +74,5 @@ def test_batch_entries_take_seq_and_slug_or_display_id(db):
 def test_name_is_keyword_only(db, method):
     """A stale call with the old entity_id in second place fails when it is
     made, not as a confusing identity error further in."""
-    with pytest.raises(TypeError):
-        getattr(db, method)("feature", "001-a", project_id="__unknown__")
+    with pytest.raises(TypeError, match="positional argument"):
+        getattr(db, method)("feature", "001-a", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
