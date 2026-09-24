@@ -5748,32 +5748,29 @@ class TestBatchRegistration:
         uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 2  # Both return UUIDs (existing + new)
 
-    def test_batch_parent_within_batch(self, db):
-        """Intra-batch parent linkage via parent_uuid (post-Feature-108).
-
-        Caller resolves parent_uuid before constructing the batch; the
-        ``parent_type_id`` dict key was dropped along with the kwarg.
-        """
-        parent_uuid = db.register_entity(
-            "project", name="Project", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
-        )
-        entities = [
-            {
-                "entity_type": "feature", "seq": 1, "slug": "f1", "name": "Feature",
-                "parent_uuid": parent_uuid,
-            },
+    def test_batch_items_cannot_name_each_other_as_parent(self, db):
+        """Uuids are minted inside the call, so no item can name another as
+        its parent. A ``parent_type_id`` key that tries is refused before
+        anything is written, the valid item ahead of it included."""
+        before = [
+            db._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("entities", "phase_events")
         ]
-        uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        assert len(uuids) == 1
-        # Raw-SQL probe — get_entity() out of scope this dispatch.
-        row = db._conn.execute(
-            "SELECT parent_uuid FROM entities WHERE type_id = ?",
-            ("feature:001-f1",),
-        ).fetchone()
-        assert row is not None
-        assert row["parent_uuid"] == parent_uuid
+        with pytest.raises(TypeError, match="'parent_type_id'"):
+            db.register_entities_batch([
+                {"entity_type": "project", "seq": 2, "slug": "p1", "name": "Project"},
+                {"entity_type": "feature", "seq": 1, "slug": "f1", "name": "Feature",
+                 "parent_type_id": "project:002-p1"},
+            ], workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        after = [
+            db._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("entities", "phase_events")
+        ]
+        assert after == before
 
     def test_batch_parent_in_db(self, db):
+        """An item names its parent by the uuid of an entity registered
+        before the batch."""
         parent_uuid = db.register_entity(
             "project", name="Existing Project", seq=1, slug="existing-p",
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
@@ -5786,6 +5783,12 @@ class TestBatchRegistration:
         ]
         uuids = db.register_entities_batch(entities, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert len(uuids) == 1
+        row = db._conn.execute(
+            "SELECT parent_uuid FROM entities WHERE type_id = ?",
+            ("feature:001-f-child",),
+        ).fetchone()
+        assert row is not None
+        assert row["parent_uuid"] == parent_uuid
 
     def test_batch_empty_list(self, db):
         assert db.register_entities_batch([], workspace_uuid=_UNKNOWN_WORKSPACE_UUID) == []
