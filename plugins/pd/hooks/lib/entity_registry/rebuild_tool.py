@@ -194,6 +194,14 @@ class BackfillIntegrityError(RuntimeError):
     caller rolls back."""
 
 
+class BackfillMissingStructureError(RuntimeError):
+    """The old file does not state the identity structure the rebuild
+    carries: it has no ``entity_display`` table (migration 13) or no
+    ``entities.is_legacy`` column (migration 22). Raised BEFORE the staging
+    connection ever opens a write transaction — ``run_backfill`` guarantees
+    zero writes."""
+
+
 # ---------------------------------------------------------------------------
 # D3: vendored, frozen status/phase -> kanban-column derivation.
 #
@@ -409,11 +417,13 @@ def _entities_insert_sql(cols: tuple[str, ...]) -> str:
 
 # The INSERT names the v14 columns plus every flag. The old-file SELECT in
 # _import_entities reads whichever flags that file actually has (via
-# database.current_entities_columns), and _flag defaults an absent one to 0 —
-# a file older than the flag migrations. That SELECT used to name only the
-# v14 columns, so _flag returned 0 for EVERY row: a rebuild un-legacied,
-# un-archived and un-deleted the whole census, and is_legacy cannot be put
-# back after insert (enforce_immutable_is_legacy).
+# database.current_entities_columns). is_legacy is always among them:
+# run_backfill refuses a file without it (_refuse_unstated_identity_structure).
+# _flag defaults an absent is_archived or is_deleted to 0 — a file older than
+# those two migrations. That SELECT used to name only the v14 columns, so
+# _flag returned 0 for EVERY row: a rebuild un-legacied, un-archived and
+# un-deleted the whole census, and is_legacy cannot be put back after insert
+# (enforce_immutable_is_legacy).
 _FLAG_COLUMNS = ("is_legacy", "is_archived", "is_deleted")
 _ENTITIES_INSERT_SQL = _entities_insert_sql(
     database._V14_ENTITIES_COLUMNS + _FLAG_COLUMNS
@@ -431,14 +441,52 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     ).fetchone() is not None
 
 
+def _refuse_unstated_identity_structure(old_conn: sqlite3.Connection) -> None:
+    """Refuse an old file that does not state the identity structure the
+    rebuild carries.
+
+    The rebuild carries display rows and ``is_legacy`` as the old file
+    states them, and derives neither: not display rows from id text (C19),
+    and not ``is_legacy`` from a missing display row (migration 22 is where
+    that absence is read). Without them a row arrives with no display row
+    and no legacy exemption: every row of a file with no display table,
+    every legacy row of a file with no ``is_legacy`` column. C3's guard then
+    refuses the row's bucket, so the rebuilt file cannot allocate there.
+    Two gaps:
+
+    - **No ``entity_display`` table** — the file predates migration 13, or
+      has lost the table.
+    - **No ``entities.is_legacy`` column** — the file predates migration
+      22, like the v1 file archived at the v2 cutover (schema_version 19).
+      A legacy row there is marked only by having no display row.
+
+    Opening a copy with ``EntityDatabase`` runs the missing migrations, and
+    the copy then rebuilds. Raises :class:`BackfillMissingStructureError`.
+    """
+    missing = []
+    if not _has_table(old_conn, "entity_display"):
+        missing.append("the entity_display table (migration 13)")
+    if "is_legacy" not in database.current_entities_columns(old_conn):
+        missing.append("the entities.is_legacy column (migration 22)")
+    if missing:
+        raise BackfillMissingStructureError(
+            f"the old file lacks {' and '.join(missing)}. The rebuild carries "
+            f"display rows and is_legacy as the file states them and derives "
+            f"neither, so rows would arrive with no display row and no "
+            f"legacy exemption, and allocation would refuse their buckets. "
+            f"Migrate a copy first (opening it with EntityDatabase runs the "
+            f"migrations that add them), then rebuild the copy. A file at a "
+            f"later schema version that lacks them is damaged; restore it "
+            f"from a backup."
+        )
+
+
 def _old_display_rows(old_conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
     """Old entity uuid -> its ``entity_display`` row (``seq``, ``slug``).
 
-    Empty for a file older than migration 13, which has no display table:
-    there is no structure to carry, and none is inferred from id text.
+    The table is always there (``run_backfill`` refuses a file without
+    it), and nothing is inferred from id text.
     """
-    if not _has_table(old_conn, "entity_display"):
-        return {}
     return {
         row["uuid"]: row
         for row in old_conn.execute("SELECT uuid, seq, slug FROM entity_display")
@@ -1118,16 +1166,15 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
         pass
 
     census_floor: dict[tuple[str, str], int] = {}
-    if _has_table(old_conn, "entity_display"):
-        buckets = old_conn.execute(
-            "SELECT DISTINCT workspace_uuid, kind FROM entities"
-        ).fetchall()
-        for row in buckets:
-            census = database._census_max(
-                old_conn, kind=row["kind"], workspace_uuid=row["workspace_uuid"]
-            )
-            if census is not None:
-                census_floor[(row["workspace_uuid"], row["kind"])] = census + 1
+    buckets = old_conn.execute(
+        "SELECT DISTINCT workspace_uuid, kind FROM entities"
+    ).fetchall()
+    for row in buckets:
+        census = database._census_max(
+            old_conn, kind=row["kind"], workspace_uuid=row["workspace_uuid"]
+        )
+        if census is not None:
+            census_floor[(row["workspace_uuid"], row["kind"])] = census + 1
 
     seeded: dict[str, dict[str, int]] = {}
     for key in sorted(set(census_floor) | set(stored)):
@@ -1311,10 +1358,13 @@ def run_backfill(old_db_path: str, staging_path: str) -> dict:
     *staging_path* (already built via :func:`build_staging_database`).
 
     Reads the old file via a read-only URI connection — never
-    ``EntityDatabase`` (its construction mutates, design D2). The
-    pre-import vocab diff runs BEFORE the staging connection opens any
-    transaction, so a mismatch leaves *staging_path* exactly as
-    ``build_staging_database`` left it (zero import writes). The import
+    ``EntityDatabase`` (its construction mutates, design D2). Two checks
+    run BEFORE the staging connection opens any transaction, so either
+    refusal leaves *staging_path* exactly as ``build_staging_database``
+    left it (zero import writes): the identity-structure check (an old file
+    without an ``entity_display`` table or an ``is_legacy`` column is
+    refused, :func:`_refuse_unstated_identity_structure`), then the
+    pre-import vocab diff. The import
     itself is ONE transaction (H1); a ``PRAGMA foreign_key_check`` runs
     inside it, pre-commit, as a belt for the remap.
 
@@ -1326,6 +1376,7 @@ def run_backfill(old_db_path: str, staging_path: str) -> dict:
     old_conn = sqlite3.connect(f"file:{old_db_path}?mode=ro", uri=True, timeout=5.0)
     old_conn.row_factory = sqlite3.Row
     try:
+        _refuse_unstated_identity_structure(old_conn)
         _preimport_vocab_diff(old_conn)
 
         new_conn = sqlite3.connect(staging_path, autocommit=True)
@@ -1552,7 +1603,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = run_backfill(args.db, staging_path)
-    except (BackfillVocabMismatchError, BackfillIntegrityError) as exc:
+    except (
+        BackfillMissingStructureError, BackfillVocabMismatchError, BackfillIntegrityError,
+    ) as exc:
         print(f"Backfill aborted: {exc}", file=sys.stderr)
         return 1
 

@@ -20,6 +20,7 @@ whose prefix disagrees with its ``kind``) cannot be registered any more.
 """
 from __future__ import annotations
 
+import shutil
 import sqlite3
 
 import pytest
@@ -363,14 +364,178 @@ class TestSeedFromStructureAndTheHighWaterMark:
         if refusal is ValueError:
             assert "establish_high_water" in str(refused.value)
 
-    def test_file_without_an_entity_display_table_seeds_from_its_counter(self, tmp_path):
-        """A file older than migration 13 has no structure to carry: no
-        display rows come across and the counter alone seeds the bucket."""
+# ---------------------------------------------------------------------------
+# A file that does not state its identity structure is refused
+# ---------------------------------------------------------------------------
+_NO_DISPLAY_TABLE = "the entity_display table (migration 13)"
+_NO_LEGACY_COLUMN = "the entities.is_legacy column (migration 22)"
+
+
+def _chain_built_file(path: str, schema_version: int) -> sqlite3.Connection:
+    """A v1 file built by the real chain up to *schema_version* only: the
+    shape a file of that age has on disk. ``_OldFile`` always runs the whole
+    chain, so it cannot build one."""
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("CREATE TABLE IF NOT EXISTS _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    for version in range(1, schema_version + 1):
+        database.MIGRATIONS[version](conn)
+        database._upsert_metadata(conn, "schema_version", str(version))
+        conn.commit()
+    conn.execute(
+        "INSERT INTO workspaces (uuid, project_id_legacy, project_root, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (_WORKSPACE, _WORKSPACE, f"/tmp/{_WORKSPACE}", _NOW, _NOW),
+    )
+    return conn
+
+
+def _raw_entity(conn: sqlite3.Connection, old_uuid: str, kind: str, entity_id: str) -> None:
+    """An entities row naming only the columns every file since migration 12 has."""
+    entity_type, lifecycle_class = database._derive_type_and_lifecycle(kind)
+    conn.execute(
+        "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, name, "
+        "status, created_at, updated_at, type, kind, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+        (old_uuid, _WORKSPACE, f"{kind}:{entity_id}", entity_id, entity_id,
+         _NOW, _NOW, entity_type, kind, lifecycle_class),
+    )
+
+
+def _staging_row_counts(staging_path: str) -> dict[str, int]:
+    return {
+        table: _query(staging_path, f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
+        for table in ("workspaces", "entities", "entity_display", "sequences", "events")
+    }
+
+
+def _refused_before_any_write(old_path: str, staging_path: str) -> str:
+    """Rebuild *old_path* expecting the missing-structure refusal; return its
+    message. The staging file must be exactly as ``build_staging_database``
+    left it."""
+    rebuild_tool.build_staging_database(staging_path)
+    before = _staging_row_counts(staging_path)
+    with pytest.raises(rebuild_tool.BackfillMissingStructureError) as refused:
+        rebuild_tool.run_backfill(old_path, staging_path)
+    assert _staging_row_counts(staging_path) == before
+    return str(refused.value)
+
+
+def _rebuild_a_migrated_copy(tmp_path, old_path: str) -> str:
+    """The repair the refusal names: open a copy with ``EntityDatabase``,
+    which runs the migrations the file is missing, then rebuild the copy."""
+    migrated_path = str(tmp_path / "migrated.db")
+    shutil.copyfile(old_path, migrated_path)
+    database.EntityDatabase(migrated_path).close()
+    rebuilt_path = str(tmp_path / "rebuilt.db")
+    rebuild_tool.build_staging_database(rebuilt_path)
+    rebuild_tool.run_backfill(migrated_path, rebuilt_path)
+    return rebuilt_path
+
+
+def _rebuilt_identity(staging_path: str) -> dict[str, tuple[int, int | None]]:
+    """type_id -> (is_legacy, display seq or None) for every rebuilt row."""
+    return {
+        row["type_id"]: (row["is_legacy"], row["seq"])
+        for row in _query(
+            staging_path,
+            "SELECT e.type_id, e.is_legacy, d.seq FROM entities e "
+            "LEFT JOIN entity_display d ON d.uuid = e.uuid",
+        )
+    }
+
+
+class TestAFileThatDoesNotStateItsStructureIsRefused:
+    """The rebuild carries display rows and ``is_legacy`` as the old file
+    states them, and derives neither. Carried from a file that states
+    neither, a row arrives with no display row and no legacy exemption, so
+    C3's guard refuses its bucket: the rebuilt file cannot allocate. Such a
+    file is refused before any write, and the refusal names the repair:
+    migrate a copy, then rebuild the copy."""
+
+    def test_a_file_whose_entity_display_table_is_gone_is_refused(self, tmp_path):
+        """Before this refusal, the rebuild carried this file's 005-x with no
+        display row and ``is_legacy`` 0, and C3 then refused the feature
+        bucket. The file is at the current schema version, so no migration
+        brings the table back; the refusal is the whole contract here."""
         old = _OldFile(tmp_path)
         old.entity("old-feature", "feature", "005-x")
         old.counter("feature", 6)
         old.conn.execute("DROP TABLE entity_display")
-        staging_path, _ = old.rebuild()
+        old.conn.commit()
+        old.conn.close()
 
-        assert _seeded_counters(staging_path)[(_WORKSPACE, "feature")] == 6
-        assert _query(staging_path, "SELECT COUNT(*) AS n FROM entity_display")[0]["n"] == 0
+        message = _refused_before_any_write(old.path, str(tmp_path / "staging.db"))
+
+        assert _NO_DISPLAY_TABLE in message
+        assert _NO_LEGACY_COLUMN not in message
+
+    def test_a_file_older_than_migration_13_is_refused_and_a_migrated_copy_rebuilds(self, tmp_path):
+        """A genuine schema-version-12 file. The refusal comes before the
+        vocabulary diff, which would otherwise stop on the missing
+        ``entity_relations`` table (migration 14) with an OperationalError
+        that names no repair."""
+        old_path = str(tmp_path / "old.db")
+        conn = _chain_built_file(old_path, 12)
+        _raw_entity(conn, "old-feature", "feature", "005-x")
+        conn.execute(
+            "INSERT INTO sequences (workspace_uuid, entity_type, next_val) VALUES (?, 'feature', 6)",
+            (_WORKSPACE,),
+        )
+        conn.commit()
+        conn.close()
+
+        message = _refused_before_any_write(old_path, str(tmp_path / "staging.db"))
+
+        assert _NO_DISPLAY_TABLE in message
+        assert _NO_LEGACY_COLUMN in message
+        rebuilt_path = _rebuild_a_migrated_copy(tmp_path, old_path)
+        # Migration 13 wrote the display row, at the migration boundary.
+        assert _rebuilt_identity(rebuilt_path) == {"feature:005-x": (0, 5)}
+        assert _next_allocation(rebuilt_path, "feature") == 6
+
+    def test_a_file_older_than_migration_22_is_refused_and_a_migrated_copy_rebuilds(self, tmp_path):
+        """A genuine schema-version-19 file, the shape of the v1 file archived
+        at the v2 cutover. It has display rows, but a legacy row is still
+        marked only by the absence of one; migration 22 turns that absence
+        into ``is_legacy``. Carried without it, P001 would be a display-less
+        non-legacy row, and C3 would refuse the project bucket."""
+        old_path = str(tmp_path / "old.db")
+        conn = _chain_built_file(old_path, 19)
+        _raw_entity(conn, "old-legacy", "project", "P001")
+        _raw_entity(conn, "old-fresh", "project", "002-fresh")
+        conn.execute("INSERT INTO entity_display (uuid, seq, slug) VALUES ('old-fresh', 2, 'fresh')")
+        conn.execute(
+            "INSERT INTO sequences (workspace_uuid, entity_type, next_val) VALUES (?, 'project', 3)",
+            (_WORKSPACE,),
+        )
+        conn.commit()
+        conn.close()
+
+        message = _refused_before_any_write(old_path, str(tmp_path / "staging.db"))
+
+        assert _NO_LEGACY_COLUMN in message
+        assert _NO_DISPLAY_TABLE not in message
+        rebuilt_path = _rebuild_a_migrated_copy(tmp_path, old_path)
+        assert _rebuilt_identity(rebuilt_path) == {
+            "project:P001": (1, None),
+            "project:002-fresh": (0, 2),
+        }
+        assert _next_allocation(rebuilt_path, "project") == 3
+
+    def test_the_cli_reports_the_refusal_and_exits_1(self, tmp_path, capsys):
+        old = _OldFile(tmp_path)
+        old.conn.execute("DROP TABLE entity_display")
+        old.conn.commit()
+        old.conn.close()
+        report_dir = tmp_path / "reports"
+
+        exit_code = rebuild_tool.main([
+            "--db", old.path,
+            "--staging-path", str(tmp_path / "staging.db"),
+            "--report-dir", str(report_dir),
+        ])
+
+        assert exit_code == 1
+        assert f"Backfill aborted: the old file lacks {_NO_DISPLAY_TABLE}" in capsys.readouterr().err
+        assert not report_dir.exists()
