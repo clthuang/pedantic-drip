@@ -201,7 +201,7 @@ def apply_records(records: list[dict], db_path: str | None = None) -> dict:
     """
     _setup_db_imports()
     try:
-        from entity_registry.database import EntityDatabase
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID, EntityDatabase
         from entity_registry.id_generator import registration_identity
     except Exception as exc:
         sys.stderr.write(
@@ -270,7 +270,7 @@ def apply_records(records: list[dict], db_path: str | None = None) -> dict:
                     entity_type="backlog",
                     **identity,
                     name=rec.get("name") or "",
-                    project_id="__unknown__",
+                    workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                     status="open",
                     metadata=target_md,
                 )

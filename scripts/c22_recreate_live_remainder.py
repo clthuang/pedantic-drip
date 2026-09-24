@@ -384,8 +384,10 @@ def find_workspace(conn: sqlite3.Connection, workspace_root: str) -> Workspace:
     """The workspaces row for *workspace_root*, cross-checked against what a
     server started there resolves: ``project_id`` from git
     (``_compute_legacy_project_id``) and ``workspace_uuid`` from
-    ``.claude/pd/workspace.json``. A disagreement would make the in-process
-    tools allocate in one workspace and register in another."""
+    ``.claude/pd/workspace.json``. Before C17 a disagreement made the
+    in-process tools allocate in one workspace and register in another; the
+    tools now resolve one workspace for both, and this check still holds the
+    rehearsal's globals to what a server started there would hold."""
     root = os.path.abspath(workspace_root)
     rows = conn.execute("SELECT uuid, project_id_legacy FROM workspaces WHERE project_root = ?",
                         (root,)).fetchall()

@@ -6844,8 +6844,9 @@ class EntityDatabase:
         """Insert the canonical ``__unknown__`` workspaces row if absent.
 
         Required so the FK ``entities.workspace_uuid → workspaces.uuid`` is
-        satisfiable for entities written via the legacy
-        ``project_id='__unknown__'`` alias on a fresh post-Migration-11 DB.
+        satisfiable for entities written into that workspace — by its uuid,
+        or via the legacy ``project_id='__unknown__'`` alias — on a fresh
+        post-Migration-11 DB.
         """
         existing = self._conn.execute(
             "SELECT 1 FROM workspaces WHERE uuid = ?",
@@ -6903,8 +6904,8 @@ class EntityDatabase:
 
         Originally a read-path-only variant of the Feature 108 Migration 11
         transition shim (the dedicated (workspace_uuid, project_id) resolver
-        method retired at feature 132 D6.4). Two call-site shapes now share
-        it:
+        method retired at feature 132 D6.4). Three call-site shapes now
+        share it:
 
         * Read paths (``list_entities``, ``search_entities``,
           ``_resolve_identifier``, ``resolve_ref``, etc.) use the return
@@ -6919,6 +6920,13 @@ class EntityDatabase:
           fail-loud guard the retired shim used to apply directly. This
           reproduces the old shim's exact behavior (same messages, same
           ``stacklevel``) without a dedicated wrapper.
+        * Caller boundaries (C5b/C17): production code outside this class
+          that holds only a legacy ``project_id`` (the entity server's
+          tools, ``server_helpers``, the reconciler, ``task_promotion``,
+          backfill) resolves it here once and passes the uuid as
+          ``workspace_uuid`` to each allocation and registration that
+          follows, so they all use one workspace. The write methods those
+          calls reach validate the value.
 
         Resolution rules
         ----------------
@@ -7627,7 +7635,9 @@ class EntityDatabase:
             :meth:`_resolve_identifier` (workspace-scoped). Provided for
             test-fixture compatibility during the Feature 108 transition.
             If both ``parent_uuid`` and ``parent_type_id`` are supplied,
-            ``parent_uuid`` wins and a DeprecationWarning is emitted.
+            ``parent_uuid`` wins and a DeprecationWarning is emitted. An
+            alias naming no entity leaves the parent NULL; it does not
+            raise.
         metadata:
             Optional dict stored as JSON TEXT.
 
@@ -7640,7 +7650,8 @@ class EntityDatabase:
         ------
         ValueError
             If neither ``workspace_uuid`` nor ``project_id`` is provided,
-            or if ``parent_type_id`` cannot be resolved to an entity.
+            if ``project_id`` names no workspace, or if
+            ``workspace_uuid`` has no ``workspaces`` row.
         EntityExistsError
             If ``(workspace_uuid, type_id)`` already exists. Callers that
             relied on the pre-feature-109 silent no-op semantics must
@@ -7912,6 +7923,11 @@ class EntityDatabase:
             try:
                 # Try the insert branch via register_entity. On success,
                 # it emits entity_created and returns the new uuid.
+                # The deprecated aliases are forwarded unchanged (C5b step
+                # 1): an explicit project_id is also the entity_created
+                # label, so register_entity must see the caller's own value
+                # to label the row as before. The step that deletes the
+                # aliases deletes this forwarding.
                 return self.register_entity(
                     entity_type, name=name,
                     seq=seq, slug=slug, display_id=display_id,

@@ -422,6 +422,7 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
     with open(backlog_path) as f:
         content = f.read()
 
+    workspace_uuid = _workspace(db, project_id)
     for line in content.splitlines():
         line = line.strip()
         if not line.startswith("|"):
@@ -462,7 +463,7 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
             name=title,
             artifact_path=backlog_path,
             metadata={"description": description},
-            project_id=project_id,
+            workspace_uuid=workspace_uuid,
         )
         db.update_entity(
             type_id=f"backlog:{item_id}",
@@ -599,7 +600,7 @@ def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "_
                 **identity,
                 name=name,
                 artifact_path=os.path.dirname(path),
-                project_id=project_id,
+                workspace_uuid=workspace_uuid,
             )
 
         parent_type_id = _derive_parent("project", meta, None, artifacts_root=artifacts_root)
@@ -656,7 +657,7 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
                 name=name,
                 artifact_path=os.path.dirname(path),
                 metadata=entity_meta,
-                project_id=project_id,
+                workspace_uuid=workspace_uuid,
             )
 
         # Update name if existing entity has a slug-style name (no spaces)
@@ -790,6 +791,7 @@ def _extract_prd_title(content: str | None, stem: str) -> str:
 
 def _register_brainstorm(db: EntityDatabase, path: str, stem: str, project_id: str = "__unknown__") -> None:
     """Read a brainstorm file, register it, and set its parent if derivable."""
+    workspace_uuid = _workspace(db, project_id)
     content = _read_file(path)
     title = _extract_prd_title(content, stem)
     parent_type_id = _derive_parent("brainstorm", {}, content)
@@ -800,11 +802,11 @@ def _register_brainstorm(db: EntityDatabase, path: str, stem: str, project_id: s
         display_id=stem,
         name=title,
         artifact_path=path,
-        project_id=project_id,
+        workspace_uuid=workspace_uuid,
     )
     db.update_entity(type_id=f"brainstorm:{stem}", name=title, project_id=project_id)
     if parent_type_id:
-        _safe_set_parent(db, f"brainstorm:{stem}", parent_type_id, _workspace(db, project_id))
+        _safe_set_parent(db, f"brainstorm:{stem}", parent_type_id, workspace_uuid)
 
 
 def _brainstorm_parent(bs_source: str | None, artifacts_root: str | None = None) -> str | None:

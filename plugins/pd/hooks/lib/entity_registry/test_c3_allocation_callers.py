@@ -48,8 +48,8 @@ def registry(tmp_path, monkeypatch):
         monkeypatch.setattr(server, "_db", database)
         monkeypatch.setattr(server, "_db_unavailable", False)
         monkeypatch.setattr(server, "_workspace_uuid", workspace_uuid)
-    # The auto_id, issue_spawn and create_key_result paths resolve their
-    # bucket's workspace from the legacy project id, not _workspace_uuid.
+    # create_key_result resolves its bucket's workspace from the legacy
+    # project id; the auto_id and issue_spawn paths use _workspace_uuid (C17).
     monkeypatch.setattr(entity_server, "_project_id", _WORKSPACE_LEGACY_ID)
     yield database, workspace_uuid
     database.close()

@@ -1959,7 +1959,7 @@ def _process_init_feature_state(
         backlog_source=backlog_source,
         status=status,
         # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
-        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
+        # downstream, None registers the feature in the _UNKNOWN_WORKSPACE_UUID workspace.
         workspace_uuid=_workspace_uuid or None,
     )
     try:

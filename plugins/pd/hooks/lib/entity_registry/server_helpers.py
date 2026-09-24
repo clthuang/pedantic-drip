@@ -231,9 +231,16 @@ def _process_register_entity(
     metadata:
         Optional dict stored as JSON.
     project_id:
-        Project scope for the entity.
+        Legacy project id. Only when ``workspace_uuid`` is empty, it names
+        the workspace to register in (the one whose
+        ``workspaces.project_id_legacy`` it is).
     auto_id:
         Whether the identity was allocated here (informational only).
+    parent_uuid:
+        Optional UUID of the parent entity.
+    workspace_uuid:
+        The workspace to register in. ``register_entity`` receives this, or
+        the one ``project_id`` names; never the ``project_id`` alias.
 
     Returns
     -------
@@ -269,12 +276,14 @@ def _process_register_entity(
                     file=sys.stderr,
                 )
                 # Fall through with parent_uuid=None
-        # Normalize empty string → None so the deprecation-warning gate in
-        # the shared workspace-identity resolution (database.py, feature
-        # 132 D6.4) only fires when BOTH kwargs are genuinely supplied.
-        # Callers in the MCP layer coerce missing workspace identity to ""
-        # before reaching this wrapper.
-        ws_uuid_kwarg = workspace_uuid or None
+        # One workspace for the registration (C5b): the caller's, else the
+        # one the legacy project_id names -- the resolution register_entity
+        # applied to that alias, under its name, so an unknown project_id
+        # reports exactly as before. Callers in the MCP layer coerce missing
+        # workspace identity to "" before reaching this wrapper.
+        registration_workspace_uuid = workspace_uuid or db._resolve_optional_workspace_filter(
+            None, project_id, _caller="register_entity"
+        )
         # F12 audit: conflict-is-error -> register_entity, EntityExistsError handled
         # Server-helpers wraps register_entity so MCP callers see the legacy
         # "Already existed: ..." concise format (rather than the structured
@@ -289,8 +298,7 @@ def _process_register_entity(
                 status=status,
                 parent_uuid=parent_uuid,
                 metadata=metadata,
-                project_id=project_id if ws_uuid_kwarg is None else None,
-                workspace_uuid=ws_uuid_kwarg,
+                workspace_uuid=registration_workspace_uuid,
             )
         except EntityExistsError:
             # F12 audit: register_entity removed the on-duplicate parent_uuid

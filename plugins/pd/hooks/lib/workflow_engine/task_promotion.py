@@ -278,6 +278,10 @@ def promote_task(
         Feature type_id, UUID, or partial ref to resolve.
     task_heading:
         Full or partial task heading to match against plan.md.
+    workspace_uuid:
+        The workspace that allocates the task's number and holds its row
+        (C17). When None, the workspace whose ``project_id_legacy`` is the
+        project root's legacy id (``_compute_legacy_project_id``).
 
     Returns
     -------
@@ -288,7 +292,9 @@ def promote_task(
     Raises
     ------
     ValueError
-        If feature_ref cannot be resolved or feature lacks artifact_path.
+        If feature_ref cannot be resolved or feature lacks artifact_path, or,
+        with no workspace_uuid, no workspace carries the project root's
+        legacy id.
     TaskNotFoundError
         If no heading matches the query.
     TaskAlreadyPromotedError
@@ -353,9 +359,20 @@ def promote_task(
     wp = db.get_workflow_phase(feature_type_id)
     mode = wp["mode"] if wp and wp.get("mode") else "standard"
 
-    # 7. Generate task entity ID
-    _project_id = _compute_legacy_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
-    seq, slug = generate_entity_id(db, "task", matched_heading, project_id=_project_id)
+    # 7. Generate task entity ID. One workspace allocates the number and holds
+    # the row (C17): the caller's, else the one the project root's legacy id
+    # names. Resolved once here; the same value reaches register_entity below.
+    task_workspace_uuid = workspace_uuid
+    if task_workspace_uuid is None:
+        legacy_project_id = _compute_legacy_project_id(
+            os.environ.get("PROJECT_ROOT", os.getcwd())
+        )
+        task_workspace_uuid = db._resolve_optional_workspace_filter(
+            None, legacy_project_id, _caller="promote_task"
+        )
+    seq, slug = generate_entity_id(
+        db, "task", matched_heading, workspace_uuid=task_workspace_uuid
+    )
     task_type_id = f"task:{render_display_id('task', seq, slug)}"
 
     # 8. Register task entity
@@ -375,8 +392,7 @@ def promote_task(
             status="planned",
             parent_uuid=parent_uuid,
             metadata=task_metadata,
-            workspace_uuid=workspace_uuid,
-            project_id=_project_id if workspace_uuid is None else None,
+            workspace_uuid=task_workspace_uuid,
         )
     except EntityExistsError as e:
         raise RuntimeError(

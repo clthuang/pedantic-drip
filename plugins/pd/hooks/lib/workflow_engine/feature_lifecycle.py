@@ -212,8 +212,9 @@ def init_feature_state(
     if backlog_source:
         metadata["backlog_source"] = backlog_source
 
-    # Register or update entity. Use ``project_id="__unknown__"`` so the
-    # canonical workspaces row is auto-bootstrapped on fresh in-memory DBs.
+    # Register or update entity. Without a workspace_uuid the feature
+    # registers in the canonical __unknown__ workspace, named by its uuid;
+    # register_entity bootstraps that workspaces row on fresh in-memory DBs.
     # Production callers running against the persistent entities.db will
     # be migrated via the existing __unknown__-bucket backfill paths.
     existing = db.get_entity(feature_type_id)
@@ -227,8 +228,9 @@ def init_feature_state(
                 artifact_path=feature_dir,
                 status=status,
                 metadata=metadata,
-                workspace_uuid=workspace_uuid,
-                project_id="__unknown__" if workspace_uuid is None else None,
+                workspace_uuid=(
+                    workspace_uuid if workspace_uuid is not None else _UNKNOWN_WORKSPACE_UUID
+                ),
             )
         except EntityExistsError as e:
             raise RuntimeError(
@@ -433,10 +435,10 @@ def init_project_state(
     # (the parent rules reparent_entity enforces, C22a). The check shares the
     # registration's transaction, so the parent cannot change between the
     # two. Without a workspace_uuid, the project registers in the default
-    # __unknown__ workspace (the project_id argument below).
+    # __unknown__ workspace: project_workspace_uuid below, the one value both
+    # the check and the registration use. register_entity bootstraps that
+    # workspaces row on fresh in-memory DBs (matches feature 108 pattern).
     #
-    # Use ``project_id="__unknown__"`` so the canonical workspaces row is
-    # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
     # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
     # like every other sequence-numbered kind, so the allocated id splits
     # into seq and slug and the display row is written.
@@ -463,8 +465,7 @@ def init_project_state(
                 status=status,
                 parent_uuid=parent_uuid,
                 metadata=metadata,
-                workspace_uuid=workspace_uuid,
-                project_id="__unknown__" if workspace_uuid is None else None,
+                workspace_uuid=project_workspace_uuid,
             )
         resumed = False
     except EntityExistsError as conflict:
