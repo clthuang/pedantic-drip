@@ -84,7 +84,7 @@ This page is the whole remaining procedure. The history is in the [completion pl
   | `legacy rows` | 180 | 180 |
   | integrity | ok | ok |
 
-- **Full check.** This compares the live file against the gate's snapshot and the rehearsed first MCP start:
+- **Full check, retired 2026-09-24.** It compared the live file against the gate's snapshot and the rehearsed first MCP start. Its script and inputs lived in the gate directory, which was deleted after the check passed, so use the quick check now. For the record:
 
   ```bash
   G=~/projects/pedantic-drip/agent_sandbox/2026-09-24/wave2-gate
@@ -95,7 +95,6 @@ This page is the whole remaining procedure. The history is in the [completion pl
   - **After A:** entities, display rows and workflow_phases are all `+0`. The workflow_phases line still prints "rehearsal predicted +28": that prediction is for B, since A runs no startup.
   - **After B, in pedantic-drip:** workflow_phases shows `+28`, as the rehearsed MCP startup predicts. These are rows for backlog items registered since the last start.
   - **After B, in any other workspace:** its own startup rows instead. Anything the rehearsal did not predict is listed as "beyond the prediction"; read those lines before carrying on.
-  - **If the gate directory is gone:** `agent_sandbox/` is gitignored. Use the quick check instead.
 
 ## If something is wrong: restore the snapshot
 
@@ -117,7 +116,7 @@ This page is the whole remaining procedure. The history is in the [completion pl
 ## After it passes
 
 - **Record it.** Done on 2026-09-24, in step 7 of the gate record in the plan.
-- **Ask before each of these; none is done yet:**
-  - remove the worktree `.pd-worktrees/wave2` and the merged branch `wave2-core`;
-  - push `develop`;
-  - delete `agent_sandbox/2026-09-24/wave2-gate/` and `agent_sandbox/2026-09-23/wave2-step4-backfill-snapshot/`.
+- **Clean up.** Done on 2026-09-24, with the operator's go-ahead:
+  - the worktree `.pd-worktrees/wave2` and the merged branch `wave2-core` are removed;
+  - `agent_sandbox/2026-09-24/wave2-gate/` and `agent_sandbox/2026-09-23/wave2-step4-backfill-snapshot/` are deleted.
+- **Kept:** the rollback snapshot `~/.claude/pd/entities/entities.db.pre-wave2-20260924`.

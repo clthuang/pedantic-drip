@@ -550,7 +550,7 @@ Then read both keys back. Without this, the first pd MCP server to start runs ba
 **Executed 2026-09-24, on the operator's cue.**
 
 1. **Stopped world:** 0 pd MCP processes and 0 holders of the live file, checked again immediately before the one live write.
-2. **Snapshot:** `entities.db.pre-wave2-20260924` by `.backup`. Through an immutable open: integrity ok, 0 foreign-key violations, schema 6, 579 entities (180 legacy), 399 display rows, 523 `workflow_phases` rows, 1,459 phase events, 21 workspaces, 20 cross-workspace parent links (`agent_sandbox/2026-09-24/wave2-gate/baseline.json`).
+2. **Snapshot:** `entities.db.pre-wave2-20260924` by `.backup`. Through an immutable open: integrity ok, 0 foreign-key violations, schema 6, 579 entities (180 legacy), 399 display rows, 523 `workflow_phases` rows, 1,459 phase events, 21 workspaces, 20 cross-workspace parent links (`agent_sandbox/2026-09-24/wave2-gate/baseline.json`, deleted 2026-09-24 after the cutover).
 3. **Rehearsal:** the first MCP start, in `entity_server`'s startup order, replayed on marked copies of the snapshot, once per build. Both wrote the same: schema 6 → 7, the `is_legacy` trigger, and 28 `workflow_phases` rows for backlog items registered since the last start (`backfill_workflow_phases`, which Wave 2 did not touch). Neither changed an entity, a display row or a workspace. The two results are identical table for table, so the cutover's first start writes nothing today's build would not.
 4. **Marker (3a):** written to the live file and read back: `backfill_complete=1`, `backfill_version=4`; schema still 6, counts unchanged.
 5. **Merge:** `wave2-core` into develop, `fe40082c`.
@@ -631,7 +631,7 @@ After the fixes (final state: snapshot run 4, after the review round):
 - **project_illium:** 28 new entities (24 features, 4 brainstorms) that are on disk but not registered.
 - **terry_agent:** 15 new, 3 of them reusing a number that its folders already reuse; the 16th had been `brainstorm:prd`. 3 parents filled, 2 of them the two-workspace brainstorms the unscoped lookup dropped.
 
-**Decided (the operator):** fix all five, and mark backfill done at the gate (gate step 3a), so this identity change registers nothing through backfill. Clearing the key later runs it on purpose. Evidence is in `agent_sandbox/2026-09-23/wave2-step4-backfill-snapshot/` (the `run3-*` and `run4-*` directories).
+**Decided (the operator):** fix all five, and mark backfill done at the gate (gate step 3a), so this identity change registers nothing through backfill. Clearing the key later runs it on purpose. The evidence was in `agent_sandbox/2026-09-23/wave2-step4-backfill-snapshot/` (the `run3-*` and `run4-*` directories), deleted 2026-09-24 after the cutover.
 
 ### Review — one pass, one fix round (2026-09-24)
 
