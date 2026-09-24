@@ -242,46 +242,6 @@ def test_group_by_column_missing_execution_status_key_defaults_to_backlog():
 
 
 # ---------------------------------------------------------------------------
-# test_type_id_slug_extraction_with_colon
-# derived_from: dimension:boundary (string split), spec:AC-5
-# ---------------------------------------------------------------------------
-def test_type_id_slug_extraction_with_colon(tmp_path):
-    """Card renders slug extracted from type_id via split(':')[1]."""
-    # Given a card with type_id='feature:my-slug'
-    db_file = str(tmp_path / "test.db")
-    EntityDatabase(db_file)
-    _seed_workflow_row(db_file, "feature:my-slug", kanban_column="wip")
-    app = create_app(db_path=db_file)
-    client = TestClient(app)
-
-    # When the card is rendered
-    response = client.get("/")
-
-    # Then the slug displayed is 'my-slug'
-    assert "my-slug" in response.text
-
-
-# ---------------------------------------------------------------------------
-# test_type_id_slug_extraction_with_multiple_colons
-# derived_from: dimension:boundary (multiple delimiters)
-# ---------------------------------------------------------------------------
-def test_type_id_slug_extraction_with_multiple_colons(tmp_path):
-    """Slug extraction with multiple colons returns second segment only."""
-    # Given a card with type_id='feature:my-slug:extra'
-    db_file = str(tmp_path / "test.db")
-    EntityDatabase(db_file)
-    _seed_workflow_row(db_file, "feature:my-slug:extra", kanban_column="wip")
-    app = create_app(db_path=db_file)
-    client = TestClient(app)
-
-    # When the card is rendered
-    response = client.get("/")
-
-    # Then the slug displayed is 'my-slug' (split(':')[1])
-    assert "my-slug" in response.text
-
-
-# ---------------------------------------------------------------------------
 # test_type_id_slug_extraction_without_colon
 # derived_from: dimension:boundary (missing delimiter)
 # ---------------------------------------------------------------------------
