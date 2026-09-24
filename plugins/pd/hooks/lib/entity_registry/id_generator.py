@@ -1,7 +1,9 @@
-"""Entity identity: allocation, rendering, the one sanctioned parse, the invariant.
+"""Entity identity: allocation, rendering, reading, the one sanctioned parse, the invariant.
 
 ``generate_entity_id`` allocates ``(seq, slug)`` from the per-type counters in
-the ``sequences`` table; ``render_display_id`` renders them as ``{seq:03d}-{slug}``;
+the ``sequences`` table; ``render_display_id`` renders them as ``{seq:03d}-{slug}``,
+its number part by ``render_display_seq``; ``read_display_identity`` reads a
+registered entity's displayed number and slug from its display row;
 ``registration_identity`` turns display text read from a file back into
 them, or refuses; ``display_row_violations_sql`` states the display-row invariant.
 """
@@ -52,10 +54,38 @@ def _slugify(name: str, *, max_length: int = 30) -> str:
 NON_SEQUENCE_KINDS = frozenset({"brainstorm"})
 
 
+def render_display_seq(kind: str, seq: int) -> str:
+    """Render the number part of a display id: *seq* zero-padded to three digits.
+
+    The padding is a MINIMUM width, not a field size: ``1000`` stays
+    ``1000``. ``render_display_id`` composes every display id from this, so
+    the width is stated once. A reader that shows the number on its own — a
+    ``.meta.json`` ``id``, a frontmatter ``feature_id`` — gets it through
+    ``read_display_identity``, which uses this except for ids registered
+    unpadded (see there), and never from the width of stored text (design
+    D5).
+
+    Raises
+    ------
+    ValueError
+        If *kind* has no sequence identity, or if *seq* is not a positive
+        integer.
+    """
+    if kind in NON_SEQUENCE_KINDS:
+        raise ValueError(
+            f"{kind!r} identity is not a sequence; no display id can be "
+            f"rendered for it"
+        )
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        raise ValueError(f"seq must be a positive int, got {seq!r}")
+    return f"{seq:03d}"
+
+
 def render_display_id(kind: str, seq: int, slug: str) -> str:
     r"""Compose the one canonical display id: ``{seq:03d}-{slug}``.
 
-    THE single place that turns structured identity into display text. The
+    THE single place that turns structured identity into display text; its
+    number part is ``render_display_seq``'s. The
     allocator (``entity_server.allocate_entity_id``) and the registrar
     (``generate_entity_id``) previously each hardcoded this f-string and
     could therefore disagree.
@@ -79,16 +109,10 @@ def render_display_id(kind: str, seq: int, slug: str) -> str:
         If *kind* has no sequence identity, if *seq* is not a positive
         integer, or if *slug* is empty.
     """
-    if kind in NON_SEQUENCE_KINDS:
-        raise ValueError(
-            f"{kind!r} identity is not a sequence; render_display_id cannot "
-            f"compose an id for it"
-        )
-    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
-        raise ValueError(f"seq must be a positive int, got {seq!r}")
+    seq_text = render_display_seq(kind, seq)
     if not slug:
         raise ValueError("slug must be non-empty")
-    return f"{seq:03d}-{slug}"
+    return f"{seq_text}-{slug}"
 
 
 def registration_identity(kind: str, entity_id: str) -> dict | None:
@@ -111,6 +135,51 @@ def registration_identity(kind: str, entity_id: str) -> dict | None:
     if render_display_id(kind, int(seq_text), slug) != entity_id:
         return None
     return {"seq": int(seq_text), "slug": slug}
+
+
+def read_display_identity(
+    db: "EntityDatabase", entity_uuid: str | None, kind: str, entity_id: str | None,
+) -> tuple[str, str] | None:
+    """Read a registered entity's displayed ``(number, slug)`` from its
+    ``entity_display`` row.
+
+    THE reader behind every surface that shows an entity's number and slug
+    separately: the ``.meta.json`` projection's ``id``/``slug`` and the
+    frontmatter header's ``feature_id``/``feature_slug``. Returns ``None``
+    when there is no row the renderer accepts: a legacy entity, whose number
+    exists only inside its id text, or a row with a non-positive ``seq`` or
+    an empty ``slug``. Each caller keeps its own fallback for that case, and
+    none of them may take the stored id apart instead (design D9).
+
+    **The number is rendered, not recovered.** ``render_display_seq`` decides
+    its width, with one exception that keeps live output stable: when
+    *entity_id* (the stored ``entities.entity_id``) is exactly the UNPADDED
+    form of these same ``(seq, slug)``, ``74-sse-event-stream`` for seq 74,
+    the number is shown unpadded. Live features were registered that way
+    before registration took structured identity. Their directories,
+    branches and ``.meta.json`` files carry the unpadded number, and readers
+    rebuild ``{id}-{slug}`` into the type_id and the directory path, so
+    ``074`` would send them to an entity and a directory that do not exist.
+
+    *entity_id* is compared WHOLE with compositions of the display row's own
+    fields. It is never split, sliced or matched: its text only chooses
+    between two renderings of the row's ``seq`` and supplies no digit, width
+    or slug. From seq 100 up the two renderings coincide. The unpadded
+    composition only recognises an existing id; nothing is registered or
+    allocated through it, so ``render_display_id`` stays the one composer
+    of new ids.
+    """
+    row = db.get_entity_display(entity_uuid) if entity_uuid else None
+    if row is None:
+        return None
+    seq, slug = row["seq"], row["slug"]
+    try:
+        rendered_id = render_display_id(kind, seq, slug)
+    except ValueError:
+        return None
+    if entity_id != rendered_id and entity_id == f"{seq}-{slug}":
+        return str(seq), slug
+    return render_display_seq(kind, seq), slug
 
 
 def generate_entity_id(

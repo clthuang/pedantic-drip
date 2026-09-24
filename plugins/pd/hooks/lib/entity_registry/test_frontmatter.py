@@ -875,13 +875,16 @@ class TestRoundTrip:
 from entity_registry.frontmatter_inject import (
     ARTIFACT_BASENAME_MAP,
     ARTIFACT_PHASE_MAP,
-    _extract_project_id,
-    _parse_feature_type_id,
 )
 
 
 class TestCLIHelpers:
-    """Tests for frontmatter_inject helper functions and constants (Task 5.2.1)."""
+    """Tests for frontmatter_inject constants (Task 5.2.1).
+
+    The type_id text parsers that sat here (``_parse_feature_type_id``,
+    ``_extract_project_id``) were replaced by structural reads (C9, C10);
+    their tests live in ``test_c9_c10_frontmatter_identity.py``.
+    """
 
     def test_artifact_basename_map_contains_all_basenames(self):
         """ARTIFACT_BASENAME_MAP contains all 7 supported basenames."""
@@ -892,36 +895,6 @@ class TestCLIHelpers:
         """ARTIFACT_PHASE_MAP contains all 7 artifact types."""
         expected = {"shape", "spec", "design", "plan", "tasks", "retro", "prd"}
         assert set(ARTIFACT_PHASE_MAP.keys()) == expected
-
-    def test_parse_feature_type_id_with_slug(self):
-        """_parse_feature_type_id('feature:002-some-slug') returns ('002', 'some-slug')."""
-        result = _parse_feature_type_id("feature:002-some-slug")
-        assert result == ("002", "some-slug")
-
-    def test_parse_feature_type_id_no_separator(self):
-        """_parse_feature_type_id('feature:noseparator') returns ('noseparator', None)."""
-        result = _parse_feature_type_id("feature:noseparator")
-        assert result == ("noseparator", None)
-
-    def test_parse_feature_type_id_empty_entity(self):
-        """_parse_feature_type_id('feature:') returns ('', None)."""
-        result = _parse_feature_type_id("feature:")
-        assert result == ("", None)
-
-    def test_extract_project_id_from_project(self):
-        """_extract_project_id('project:P001') returns 'P001'."""
-        result = _extract_project_id("project:P001")
-        assert result == "P001"
-
-    def test_extract_project_id_non_project(self):
-        """_extract_project_id('brainstorm:abc') returns None."""
-        result = _extract_project_id("brainstorm:abc")
-        assert result is None
-
-    def test_extract_project_id_none(self):
-        """_extract_project_id(None) returns None."""
-        result = _extract_project_id(None)
-        assert result is None
 
 
 # DB teardown: EntityDatabase.close() confirmed available (database.py:265)

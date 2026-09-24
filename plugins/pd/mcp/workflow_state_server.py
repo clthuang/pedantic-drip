@@ -50,6 +50,7 @@ from entity_registry.frontmatter_sync import (
     detect_drift,
     scan_all,
 )
+from entity_registry.id_generator import read_display_identity
 from entity_registry.metadata import parse_metadata
 from pd_config.config import read_config
 from transition_gate.constants import HARD_PREREQUISITES
@@ -375,47 +376,34 @@ def _read_entity_display(
     feature_type_id: str,
     metadata: dict,
     *,
-    entity_id_hint: str | None = None,
+    kind: str,
+    stored_entity_id: str | None,
 ) -> tuple[str, str]:
-    """Return ``(id, slug)`` for an entity, preferring the ``entity_display``
-    side table over ``metadata`` JSON (feature 110 FR-8.3b).
+    """Return ``(id, slug)`` for a feature or project from its
+    ``entity_display`` row, read by ``read_display_identity`` (feature 110
+    FR-8.3b; C9, C12).
 
-    Defense-in-depth: if the entity_display row is missing (a legacy row,
-    or one registered before migration 13), emit a stderr WARN and fall
-    back to ``metadata.id`` / ``metadata.slug``.
+    ``id`` is the row's ``seq`` at the renderer's width
+    (``render_display_seq``), never a width recovered from ``metadata.id``
+    or from stored text (design D5). *stored_entity_id* is the entity's
+    ``entities.entity_id``: ``read_display_identity`` compares it whole, only
+    to keep the unpadded number of an id registered unpadded by an older
+    path, and never takes it apart. So the output is the same whether or not
+    ``metadata`` still carries ``id``/``slug`` (AC-8.5).
 
-    The function intentionally returns ``str`` for both fields so the
-    downstream ``.meta.json`` shape is stable. ``id`` is the integer ``seq``
-    serialized via ``str(seq)``. Zero-padding width is recovered from
-    (1) ``metadata.id`` if it's a digit string, else (2) ``entity_id_hint``'s
-    leading numeric prefix (i.e., ``entities.entity_id``), else (3) no
-    padding. AC-8.5 specifically requires that the projection output is
-    byte-identical even when ``metadata.id`` has been removed — so the
-    ``entity_id_hint`` fallback is load-bearing.
+    Defense-in-depth: with no usable display row (a legacy row, one
+    registered before migration 13, or one the renderer refuses), emit a
+    stderr WARN and fall back to ``metadata.id`` / ``metadata.slug``. The
+    projection runs after its mutation commits, so it degrades rather than
+    raises.
     """
-
-    def _width_from(value: str | None) -> int:
-        if not value:
-            return 0
-        head = value.split("-", 1)[0]
-        return len(head) if head.isdigit() else 0
-
-    if entity_uuid:
-        # Use the public encapsulated helper instead of raw _conn access;
-        # the helper returns None on pre-migration-13 DBs and on missing
-        # rows.
-        row = db.get_entity_display(entity_uuid)
-        if row is not None:
-            seq, slug = row["seq"], row["slug"]
-            # Recover zero-pad width. Order: metadata.id → entity_id prefix.
-            width = _width_from(metadata.get("id"))
-            if width == 0:
-                width = _width_from(entity_id_hint)
-            return (str(seq).zfill(width) if width else str(seq)), slug
-    # Fallback (WARN): entity_display row missing.
+    identity = read_display_identity(db, entity_uuid, kind, stored_entity_id)
+    if identity is not None:
+        return identity
+    # Fallback (WARN): no usable entity_display row.
     sys.stderr.write(
-        f"[workflow-state] _project_meta_json: no entity_display row for "
-        f"{feature_type_id!r} (uuid={entity_uuid!r}); falling back to "
+        f"[workflow-state] _project_meta_json: no usable entity_display row "
+        f"for {feature_type_id!r} (uuid={entity_uuid!r}); falling back to "
         f"metadata id/slug\n"
     )
     return metadata.get("id", ""), metadata.get("slug", "")
@@ -475,15 +463,26 @@ def _project_meta_json(
         metadata = {}
 
     if kind == "project":
-        # D5: PROJECT shape -- id/slug split from type_id (the '{NNN}-slug'
-        # convention feature_lifecycle.init_project_state mints); features/
-        # milestones/brainstorm_source recovered from DB metadata (stored
-        # there by init_project_state, feature_lifecycle.py:257-264);
-        # status from the entity row; created falls back to now only when
-        # the immutable DB column is somehow unset (mirrors the feature
-        # branch's identical pattern below).
-        _, _, id_and_slug = feature_type_id.partition(":")
-        project_id, _, project_slug = id_and_slug.partition("-")
+        # D5: PROJECT shape. id/slug come from the display row (C9), by the
+        # same reader as the feature branch below; features/milestones/
+        # brainstorm_source are recovered from DB metadata (stored there by
+        # init_project_state); status from the entity row; created falls
+        # back to now only when the immutable DB column is somehow unset
+        # (mirrors the feature branch's identical pattern below).
+        project_id, project_slug = _read_entity_display(
+            db,
+            entity.get("uuid"),
+            feature_type_id,
+            metadata,
+            kind=kind,
+            stored_entity_id=entity.get("entity_id"),
+        )
+        if not project_id:
+            # A legacy project has no display row, and one registered from
+            # a .meta.json id alone (``project:P002``, pre-structural
+            # backfill) has no metadata id either. Its stored entity_id IS
+            # the id it displays: read whole (design D9), never split.
+            project_id, project_slug = entity.get("entity_id") or "", ""
         project_meta = {
             "id": project_id,
             "slug": project_slug,
@@ -513,15 +512,16 @@ def _project_meta_json(
         last_completed = metadata.get("last_completed_phase")
 
     # Feature 110 Group 5 (FR-8.3b): read seq + slug from entity_display
-    # table when available. Falls back to metadata JSON with a WARN log if
-    # the row is missing (defense-in-depth: a legacy row, or one registered
-    # before migration 13).
+    # table when available, the number at the renderer's width (C12).
+    # Falls back to metadata JSON with a WARN log if there is no usable row
+    # (defense-in-depth: a legacy row, or one registered before migration 13).
     display_id, display_slug = _read_entity_display(
         db,
         entity.get("uuid"),
         feature_type_id,
         metadata,
-        entity_id_hint=entity.get("entity_id"),
+        kind=kind,
+        stored_entity_id=entity.get("entity_id"),
     )
 
     # Build .meta.json structure
@@ -595,6 +595,18 @@ def _project_meta_json(
 _BACKLOG_LIVE_STATUSES = frozenset({"open", "active"})
 
 
+def _backlog_row_order(row: dict) -> tuple[bool, int, str]:
+    """Sort key for a decorated backlog row: rows with an ``entity_display``
+    row first, by its ``seq``; rows without one (legacy) after them, by
+    their own ``entity_id`` compared whole. The id breaks ties either way.
+
+    Equal-width zero-padded legacy ids (``00003`` < ``00081``) keep their
+    numeric order among themselves without being parsed.
+    """
+    has_no_seq = row["seq"] is None
+    return (has_no_seq, row["seq"] or 0, row["entity_id"])
+
+
 def _project_backlog_md(
     db: EntityDatabase, *, workspace_uuid: str | None = None
 ) -> str:
@@ -603,8 +615,9 @@ def _project_backlog_md(
 
     All timestamp and identity fields source from DB columns
     (``entities.created_at``, ``entities.name``, ``entities.entity_id``,
-    ``entities.metadata``). No ``datetime.utcnow()`` / ``datetime.now()``
-    calls — AC-4.2 static-checks this contract.
+    ``entities.metadata``, ``entity_display.seq``). No
+    ``datetime.utcnow()`` / ``datetime.now()`` calls — AC-4.2
+    static-checks this contract.
 
     Two formats per TD-10:
       - ``metadata.format == "table_row"`` (default for general backlog
@@ -616,7 +629,9 @@ def _project_backlog_md(
 
     Section ordering: sections appear in the order of the FIRST entity
     created in them (``min(created_at)`` per section). Within a section,
-    rows are sorted by ``seq`` ascending.
+    and in the top-level table, rows are sorted by their ``entity_display``
+    ``seq`` ascending; rows without a display row (legacy) follow, by
+    ``entity_id`` (``_backlog_row_order``). No id text is parsed (C9).
 
     Optional metadata keys:
       - ``section_intro``: prose paragraph emitted after the section
@@ -666,8 +681,8 @@ def _project_backlog_md(
     # and 17 promoted items as though they were open work — 134 of 170.
     rows = [r for r in rows if (r.get("status") or "") in _BACKLOG_LIVE_STATUSES]
 
-    # Decorate rows with parsed metadata + (seq, slug) from entity_display
-    # (preferred) or entity_id fallback. NO datetime.now/utcnow call here.
+    # Decorate rows with parsed metadata + seq from entity_display (None
+    # when the row has none). NO datetime.now/utcnow call here.
     decorated: list[dict] = []
     for row in rows:
         raw_md = row.get("metadata")
@@ -691,37 +706,18 @@ def _project_backlog_md(
         else:
             md = {}
 
-        # Identity: prefer entity_display side table; fall back to
-        # parsing entity_id (feature 110 FR-8.3b style).
+        # Identity: seq comes from the entity_display row alone (C9). A row
+        # without one (a legacy row, whose number exists only inside its id
+        # text) has no seq, and _backlog_row_order places it after every row
+        # that has one. Its id is shown and compared whole, never parsed.
         entity_id = row.get("entity_id") or ""
         display = db.get_entity_display(row.get("uuid")) if row.get("uuid") else None
-        if display is not None:
-            seq = display["seq"]
-            slug = display["slug"]
-        else:
-            # Fallback: parse from entity_id. Backlog ids are typically
-            # zero-padded 5-digit integers (e.g., "00008"); a dash-slug
-            # form ("001-foo") is also supported per the strict format
-            # contract. Empty/non-numeric IDs sort last with seq=0.
-            if "-" in entity_id:
-                head, _, tail = entity_id.partition("-")
-                try:
-                    seq = int(head)
-                except ValueError:
-                    seq = 0
-                slug = tail
-            else:
-                try:
-                    seq = int(entity_id)
-                except ValueError:
-                    seq = 0
-                slug = ""
+        seq = display["seq"] if display is not None else None
 
         decorated.append({
             "uuid": row.get("uuid") or "",
             "entity_id": entity_id,
             "seq": seq,
-            "slug": slug,
             "name": row.get("name") or "",
             "created_at": row.get("created_at") or "",
             "metadata": md,
@@ -740,7 +736,7 @@ def _project_backlog_md(
 
     # Sort table rows by seq ascending (stable on entity_id tiebreaker
     # so that deterministic ordering survives duplicate seq).
-    table_rows.sort(key=lambda d: (d["seq"], d["entity_id"]))
+    table_rows.sort(key=_backlog_row_order)
 
     # Group bullet rows by section in order of FIRST creation per
     # section (deterministic groupby on min(created_at)).
@@ -750,7 +746,7 @@ def _project_backlog_md(
         sections.setdefault(sec, []).append(d)
     # Sort each section's rows by seq + entity_id.
     for sec in sections:
-        sections[sec].sort(key=lambda d: (d["seq"], d["entity_id"]))
+        sections[sec].sort(key=_backlog_row_order)
     # Section header ordering = min(created_at) per section, then
     # section name to break ties when timestamps are equal.
     section_order = sorted(
