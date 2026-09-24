@@ -25,6 +25,7 @@ from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
     EntityNotFoundError,
+    IncompleteBucketError,
 )
 from entity_registry.id_generator import (
     _slugify,
@@ -510,6 +511,21 @@ def _process_update_kr_score(
     return json.dumps({"result": f"Score updated to {score}", "type_id": resolved_type_id})
 
 
+def _incomplete_bucket_envelope(refusal: IncompleteBucketError) -> str:
+    """C3's allocation refusal as a structured error envelope.
+
+    Returned once, never retried: the refusal is a registry state that only
+    a repair outside the allocator changes, so a retry could only repeat it.
+    """
+    return json.dumps({
+        "error": True,
+        "error_type": refusal.ERROR_TYPE,
+        "message": str(refusal),
+        "type_ids": refusal.type_ids,
+        "recovery_hint": refusal.RECOVERY_HINT,
+    })
+
+
 # ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
@@ -566,7 +582,9 @@ async def register_entity(
         server startup from ``.claude/pd/workspace.json``.
     auto_id:
         If True, allocate seq and derive slug from name. Cannot be used
-        together with seq, slug or display_id.
+        together with seq, slug or display_id. An allocation the registry
+        refuses (C3) returns an ``incomplete_bucket`` error envelope and
+        registers nothing.
 
     Returns confirmation message or error.
     """
@@ -615,7 +633,10 @@ async def register_entity(
     if auto_id and identity:
         return "Error: cannot specify both auto_id=True and seq/slug/display_id"
     if auto_id:
-        seq, slug = generate_entity_id(_db, entity_type, name, resolved_project_id)
+        try:
+            seq, slug = generate_entity_id(_db, entity_type, name, resolved_project_id)
+        except IncompleteBucketError as refusal:
+            return _incomplete_bucket_envelope(refusal)
         identity = {"seq": seq, "slug": slug}
     elif not identity:
         return "Error: seq and slug (display_id for a brainstorm) are required, or use auto_id=True"
@@ -672,7 +693,10 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
         JSON ``{"seq": <int>, "slug": "<slug>", "entity_id": "<seq:03d>-<slug>"}``
         on success: register with ``seq`` and ``slug``; ``entity_id`` names the
         directory and branch. On failure, a structured error envelope
-        (``workspace_unresolved``, ``invalid_input``).
+        (``workspace_unresolved``, ``invalid_input``, or ``incomplete_bucket``
+        when the registry refuses the allocation (C3): the bucket holds an
+        entity with no display row that the display-row invariant does not
+        exempt; the envelope lists them in ``type_ids``).
     """
     err = _check_db_available()
     if err:
@@ -705,7 +729,12 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
             "message": "name must be non-empty and slugify to a non-empty slug",
             "recovery_hint": "supply a descriptive name containing letters/digits",
         })
-    seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
+    # Only C3's refusal becomes an envelope; any other DB-layer error still
+    # propagates to the server's own exception translation.
+    try:
+        seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
+    except IncompleteBucketError as refusal:
+        return _incomplete_bucket_envelope(refusal)
     return json.dumps(
         {"seq": seq, "slug": slug,
          "entity_id": render_display_id(entity_type, seq, slug)}
@@ -805,6 +834,10 @@ async def issue_spawn(
         ``invalid_parent_kind`` (FR-9.6). All three conditions are caught
         at the MCP boundary by ``_catch_issue_spawn_errors`` and
         translated to a JSON error envelope (FR-EX.3).
+    IncompleteBucketError
+        A ``ValueError`` subclass: the registry refused the allocation (C3)
+        before anything was registered. The same decorator translates it;
+        its envelope's ``error_type`` is ``incompletebucketerror``.
     """
     err = _check_db_available()
     if err:

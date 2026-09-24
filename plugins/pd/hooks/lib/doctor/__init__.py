@@ -33,7 +33,8 @@ CHECK_ORDER = [
     check_missed_cascade,
     # B8 (completion plan, 2026-09-22): every entity has an entity_display
     # row unless is_legacy or its kind has no sequence (brainstorms, Wave 2
-    # D3). Reads the DB, so it belongs in _ENTITY_DB_CHECKS.
+    # D3); stated once, in id_generator.display_row_violations_sql. Reads
+    # the DB, so it belongs in _ENTITY_DB_CHECKS.
     check_display_row_invariant,
     check_config_validity,
     check_security_review_command,

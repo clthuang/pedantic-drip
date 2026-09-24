@@ -34,6 +34,7 @@ from sqlite_retry import with_retry, is_transient
 from entity_registry.database import (
     EntityDatabase,
     EntityNotFoundError,
+    IncompleteBucketError,
     InvalidCloseTargetError,
     _CLOSES_TERMINAL,
     _UNKNOWN_WORKSPACE_UUID,
@@ -2639,6 +2640,8 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
 
     Fuzzy-matches task_heading against headings in plan.md, creates a task
     entity with parent=feature, status=planned, and links dependencies.
+    If the registry refuses the task's id allocation (C3), returns an
+    ``incomplete_bucket`` error envelope and registers nothing.
     """
     err = _check_db_available()
     if err:
@@ -2653,6 +2656,10 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
         return json.dumps(result)
     except (TaskNotFoundError, TaskAlreadyPromotedError) as exc:
         return _make_error(type(exc).__name__, str(exc), "Check heading text or use exact heading from plan.md")
+    except IncompleteBucketError as refusal:
+        # A ValueError, so it must be caught before the invalid_input branch:
+        # neither feature_ref nor plan.md is what went wrong.
+        return _make_error(refusal.ERROR_TYPE, str(refusal), refusal.RECOVERY_HINT)
     except (ValueError, FileNotFoundError) as exc:
         return _make_error("invalid_input", str(exc), "Provide valid feature_ref and ensure plan.md exists")
 
