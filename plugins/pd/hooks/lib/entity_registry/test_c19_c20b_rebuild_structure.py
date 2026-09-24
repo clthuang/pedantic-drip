@@ -330,26 +330,38 @@ class TestSeedFromStructureAndTheHighWaterMark:
         assert _seeded_counters(staging_path)[(_WORKSPACE, "project")] == 8
         assert _next_allocation(staging_path, "project") == 8
 
-    @pytest.mark.parametrize("kind, entity_id, is_legacy", [
-        ("project", "P003", 1),          # legacy: its number lives only in text
-        ("task", "004-text-only", 0),    # display-less bug row: same exposure
+    @pytest.mark.parametrize("kind, entity_id, is_legacy, refusal", [
+        # legacy: exempt from C3's guard, so the counterless refusal names
+        # the repair
+        ("project", "P003", 1, ValueError),
+        # display-less bug row: C3's completeness guard refuses it first
+        ("task", "004-text-only", 0, database.IncompleteBucketError),
     ])
     def test_bucket_with_no_structure_and_no_counter_fails_closed(
-        self, tmp_path, kind, entity_id, is_legacy,
+        self, tmp_path, kind, entity_id, is_legacy, refusal,
     ):
         """Entities, but no display row and no counter. The highest number
         is readable only from id text, which the seed does not read, so it
-        writes no counter; the allocator then refuses the bucket and names
-        the repair, exactly as it did against the old file. Seeding one
-        instead would reissue the numbers those rows already carry."""
+        writes no counter; the allocator then refuses the bucket, exactly as
+        it did against the old file. Seeding one instead would reissue the
+        numbers those rows already carry.
+
+        Which refusal fires depends on the row. A non-legacy display-less row
+        breaks the display-row invariant, so C3's guard refuses first with
+        ``IncompleteBucketError``. A legacy row is exempt from that guard and
+        reaches the older counterless refusal, which names
+        ``establish_high_water``."""
         old = _OldFile(tmp_path)
         old.entity("old-row", kind, entity_id, is_legacy=is_legacy)
         staging_path, report = old.rebuild()
 
         assert (_WORKSPACE, kind) not in _seeded_counters(staging_path)
         assert kind not in report["sequences_seeded"]
-        with pytest.raises(ValueError, match="establish_high_water"):
+        with pytest.raises(ValueError) as refused:
             _next_allocation(staging_path, kind)
+        assert type(refused.value) is refusal
+        if refusal is ValueError:
+            assert "establish_high_water" in str(refused.value)
 
     def test_file_without_an_entity_display_table_seeds_from_its_counter(self, tmp_path):
         """A file older than migration 13 has no structure to carry: no
