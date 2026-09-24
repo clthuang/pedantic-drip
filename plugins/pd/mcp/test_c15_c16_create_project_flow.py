@@ -11,8 +11,8 @@
   events (a duplicate registration followed by conflict handling also
   leaves one row, so rows prove nothing); a failure that reaches
   registration leaves no directory; a reintroduced command-side
-  registration is refused, not resumed; an out-of-root path is refused
-  before any registry write.
+  registration is refused, not resumed; a soft-deleted parent and an
+  out-of-root path are refused before any registry write.
 """
 from __future__ import annotations
 

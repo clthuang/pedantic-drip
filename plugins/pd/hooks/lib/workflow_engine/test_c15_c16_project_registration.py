@@ -12,6 +12,9 @@ before it creates the project directory.
 - **Conflicts** — a registration conflict resumes only the row this same
   call wrote (live, same directory, same parent); a deleted project or a
   row with another directory or parent is refused before the directory.
+- **Parent rules** — the parent must be live and in the project's
+  workspace, the rules ``reparent_entity`` enforces (C22a); a soft-deleted
+  or cross-workspace parent is refused before registration is attempted.
 - **Path validation** — the directory no longer exists when the path is
   validated, so validation checks where the path RESOLVES: NUL bytes,
   realpath containment directly under ``{artifacts_root}/projects``, and no
