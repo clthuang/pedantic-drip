@@ -18,6 +18,9 @@ The soft-deleted class covers an entity ``delete_entity`` has hidden from
 the live ``get_entity`` read. Its transition still goes through, so the
 kind must come from the deleted row's kind column, in both server scopes.
 
+The phase-timing class covers the other read of the written row on those
+two edges: the ``phase_timing`` merge and the reply's ``started_at``.
+
 Non-vacuity: each test first asserts that the transition or completion went
 through, so the kanban step was reached. Each fixture starts in ``backlog``,
 and the phase it lands on maps to ``prioritised``, so a write that
@@ -39,6 +42,7 @@ if _hooks_lib not in sys.path:
     sys.path.insert(0, _hooks_lib)
 
 from entity_registry.database import EntityDatabase, _derive_type_and_lifecycle
+from entity_registry.metadata import parse_metadata
 from entity_registry.test_helpers import bootstrap_test_workspace
 from workflow_engine.engine import WorkflowStateEngine
 
@@ -114,6 +118,56 @@ def _complete_specify(db: EntityDatabase, tmp_path, type_id: str) -> dict:
     ))
 
 
+def _seed_shared_type_id(db, tmp_path, monkeypatch, *, this_workspace_kind) -> str:
+    """Raw SQL: ``feature:001-shared`` registered in two workspaces, this
+    one's row with kind *this_workspace_kind* and the other's a feature, at
+    phase ``specify`` in kanban column ``backlog``. Scopes the server to this
+    workspace and returns the type_id."""
+    type_id, entity_id = "feature:001-shared", "001-shared"
+    this_workspace = bootstrap_test_workspace(db, "c8-h2-this")
+    other_workspace = bootstrap_test_workspace(db, "c8-h2-other")
+    feature_dir = tmp_path / "features" / entity_id
+    feature_dir.mkdir(parents=True)
+    (feature_dir / ".meta.json").write_text(
+        json.dumps({"id": "001", "slug": "shared", "status": "active", "mode": "standard"})
+    )
+    (feature_dir / "shape.md").write_text("# Shape\n")
+
+    rows = [(this_workspace, this_workspace_kind), (other_workspace, "feature")]
+    db_file = str(tmp_path / "entities.db")
+    conn = sqlite3.connect(db_file)
+    try:
+        for workspace_uuid, kind in rows:
+            entity_type, lifecycle_class = _derive_type_and_lifecycle(kind)
+            conn.execute(
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, "
+                "name, status, artifact_path, created_at, updated_at, type, kind, "
+                "lifecycle_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(_uuid.uuid4()), workspace_uuid, type_id, entity_id,
+                 f"Shared id stored as {kind}", "active", str(feature_dir),
+                 _NOW, _NOW, entity_type, kind, lifecycle_class),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    db.create_workflow_phase(type_id, workflow_phase="specify", kanban_column="backlog")
+    # The insert trigger fills workspace_uuid from whichever entities row
+    # its subquery meets first; pin it to this workspace, the scope the
+    # engine's update_workflow_phase asserts.
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(
+            "UPDATE workflow_phases SET workspace_uuid = ? WHERE type_id = ?",
+            (this_workspace, type_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(wss, "_workspace_uuid", this_workspace)
+    assert db.get_entity(type_id) is None  # the edge: the unscoped read is ambiguous
+    return type_id
+
+
 class TestTransitionPhaseKanbanFollowsKindColumn:
 
     def test_feature_kind_under_a_backlog_prefix_moves_its_kanban_column(self, db, tmp_path):
@@ -162,53 +216,8 @@ class TestTransitionPhaseKanbanOnTheCrossWorkspaceEdge:
     must then come from THIS workspace's row.
     """
 
-    def _seed_shared_type_id(self, db, tmp_path, monkeypatch, *, this_workspace_kind):
-        type_id, entity_id = "feature:001-shared", "001-shared"
-        this_workspace = bootstrap_test_workspace(db, "c8-h2-this")
-        other_workspace = bootstrap_test_workspace(db, "c8-h2-other")
-        feature_dir = tmp_path / "features" / entity_id
-        feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text(
-            json.dumps({"id": "001", "slug": "shared", "status": "active", "mode": "standard"})
-        )
-        (feature_dir / "shape.md").write_text("# Shape\n")
-
-        rows = [(this_workspace, this_workspace_kind), (other_workspace, "feature")]
-        db_file = str(tmp_path / "entities.db")
-        conn = sqlite3.connect(db_file)
-        try:
-            for workspace_uuid, kind in rows:
-                entity_type, lifecycle_class = _derive_type_and_lifecycle(kind)
-                conn.execute(
-                    "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, "
-                    "name, status, artifact_path, created_at, updated_at, type, kind, "
-                    "lifecycle_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (str(_uuid.uuid4()), workspace_uuid, type_id, entity_id,
-                     f"Shared id stored as {kind}", "active", str(feature_dir),
-                     _NOW, _NOW, entity_type, kind, lifecycle_class),
-                )
-            conn.commit()
-        finally:
-            conn.close()
-        db.create_workflow_phase(type_id, workflow_phase="specify", kanban_column="backlog")
-        # The insert trigger fills workspace_uuid from whichever entities row
-        # its subquery meets first; pin it to this workspace, the scope the
-        # engine's update_workflow_phase asserts.
-        conn = sqlite3.connect(db_file)
-        try:
-            conn.execute(
-                "UPDATE workflow_phases SET workspace_uuid = ? WHERE type_id = ?",
-                (this_workspace, type_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        monkeypatch.setattr(wss, "_workspace_uuid", this_workspace)
-        assert db.get_entity(type_id) is None  # the edge: the unscoped read is ambiguous
-        return type_id
-
     def test_this_workspaces_feature_moves_the_kanban_column(self, db, tmp_path, monkeypatch):
-        type_id = self._seed_shared_type_id(
+        type_id = _seed_shared_type_id(
             db, tmp_path, monkeypatch, this_workspace_kind="feature",
         )
 
@@ -220,7 +229,7 @@ class TestTransitionPhaseKanbanOnTheCrossWorkspaceEdge:
     def test_this_workspaces_backlog_keeps_the_kanban_column(self, db, tmp_path, monkeypatch):
         # The other workspace's row is a feature. The kind that counts is
         # this workspace's row, and neither the text nor the other row.
-        type_id = self._seed_shared_type_id(
+        type_id = _seed_shared_type_id(
             db, tmp_path, monkeypatch, this_workspace_kind="backlog",
         )
 
@@ -292,3 +301,89 @@ class TestTransitionPhaseKanbanForASoftDeletedEntity:
 
         assert result["transitioned"] is True
         assert db.get_workflow_phase(type_id)["kanban_column"] == "prioritised"
+
+
+class TestTransitionPhaseTimingOnTheLiveReadEdges:
+    """``transition_phase`` stamps ``phase_timing[target]["started"]`` into
+    the row's metadata, and ``update_entity`` merges metadata one level deep:
+    the ``phase_timing`` it is handed REPLACES the stored one. On both edges
+    above the live ``get_entity`` read is None, so a merge started from that
+    read's empty metadata erases every earlier phase's timing. The merge, and
+    the reply's ``started_at``, must read the row ``update_entity`` writes.
+
+    Non-vacuity: the stored specify timing carries fields no transition
+    writes (``completed``, ``iterations``), so it survives only when the merge
+    read this row; ``started_at`` is None when the reply reads the live read.
+    """
+
+    EARLIER_TIMING = {
+        "specify": {
+            "started": "2026-09-20T00:00:00Z",
+            "completed": "2026-09-21T00:00:00Z",
+            "iterations": 2,
+        },
+    }
+
+    def _assert_earlier_timing_kept(self, result: dict, metadata: dict) -> None:
+        assert result["transitioned"] is True
+        assert metadata["phase_timing"].get("specify") == self.EARLIER_TIMING["specify"]
+        assert result["started_at"] is not None
+        assert metadata["phase_timing"] == {
+            **self.EARLIER_TIMING,
+            "design": {"started": result["started_at"]},
+        }
+
+    def test_this_workspaces_timing_survives_on_the_cross_workspace_edge(
+        self, db, tmp_path, monkeypatch,
+    ):
+        type_id = _seed_shared_type_id(
+            db, tmp_path, monkeypatch, this_workspace_kind="feature",
+        )
+        this_workspace = wss._workspace_uuid
+        other_workspace = bootstrap_test_workspace(db, "c8-h2-other")
+        db.update_entity(type_id, metadata={"phase_timing": self.EARLIER_TIMING},
+                         workspace_uuid=this_workspace)
+        db.update_entity(type_id, metadata={"phase_timing": {"specify": {"started": _NOW}}},
+                         workspace_uuid=other_workspace)
+        this_uuid, _ = db.resolve_entity_uuid(this_workspace, type_id)
+        other_uuid, _ = db.resolve_entity_uuid(other_workspace, type_id)
+        other_metadata_before = db.get_entity_by_uuid(other_uuid)["metadata"]
+
+        result = _transition_to_design(db, tmp_path, type_id)
+
+        self._assert_earlier_timing_kept(
+            result, parse_metadata(db.get_entity_by_uuid(this_uuid)["metadata"]),
+        )
+        # The other workspace's row is neither the merge base nor written.
+        assert db.get_entity_by_uuid(other_uuid)["metadata"] == other_metadata_before
+
+    @pytest.mark.parametrize("server_scope", ["unscoped", "scoped"])
+    def test_a_soft_deleted_features_timing_survives(
+        self, db, tmp_path, monkeypatch, server_scope,
+    ):
+        workspace_uuid = bootstrap_test_workspace(db, "c8-workflow-state-kind")
+        feature_dir = tmp_path / "features" / "302-timed-then-deleted"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / ".meta.json").write_text(json.dumps(
+            {"id": "302", "slug": "timed-then-deleted", "status": "active", "mode": "standard"}
+        ))
+        (feature_dir / "shape.md").write_text("# Shape\n")
+        db.register_entity(
+            "feature", name="Timed, then soft-deleted", seq=302,
+            slug="timed-then-deleted", workspace_uuid=workspace_uuid,
+            artifact_path=str(feature_dir), status="active",
+            metadata={"phase_timing": self.EARLIER_TIMING},
+        )
+        type_id = "feature:302-timed-then-deleted"
+        db.create_workflow_phase(type_id, workflow_phase="specify", kanban_column="backlog")
+        db.delete_entity(type_id)
+        assert db.get_entity(type_id) is None  # the edge: the live read hides the row
+        if server_scope == "scoped":
+            monkeypatch.setattr(wss, "_workspace_uuid", workspace_uuid)
+
+        result = _transition_to_design(db, tmp_path, type_id)
+
+        self._assert_earlier_timing_kept(
+            result,
+            parse_metadata(db.get_entity(type_id, include_deleted=True)["metadata"]),
+        )

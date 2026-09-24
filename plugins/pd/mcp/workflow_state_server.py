@@ -1012,14 +1012,14 @@ def _process_get_phase(engine: WorkflowStateEngine, feature_type_id: str) -> str
     return json.dumps(_serialize_state(state))
 
 
-def _transitioned_entity_kind(
+def _transitioned_entity_row(
     db: EntityDatabase, feature_type_id: str, entity: dict | None,
-) -> str | None:
-    """Kind of the entity a transition just wrote, from its ``kind`` column
-    (C8), never from the type_id text.
+) -> dict | None:
+    """The entities row a transition writes.
 
-    *entity* is the caller's live, unscoped ``get_entity`` read. It is None
-    in two cases where the transition still went through:
+    *entity* is the caller's live, unscoped ``get_entity`` read, and is that
+    row whenever it is not None. It is None in two cases where the
+    transition still goes through:
 
     * the type_id exists in more than one workspace (the qa-server H2
       edge), so the unscoped read is ambiguous;
@@ -1029,20 +1029,24 @@ def _transitioned_entity_kind(
 
     The row is then re-read the way ``update_entity`` resolved it: in this
     server's workspace when one is set, otherwise by the globally unique
-    type_id, soft-deleted rows included. Returns None when no row is found:
-    the kind is unknown.
+    type_id, soft-deleted rows included. Returns None when no row is found.
+
+    Every read of the written row goes through this:
+
+    * the ``phase_timing`` merge. ``update_entity`` merges metadata one
+      level deep, so a merge started from the None read's empty metadata
+      would replace every earlier phase's timing;
+    * the kind (C8), from the row's ``kind`` column, never the type_id text;
+    * the reply's ``started_at``.
     """
     if entity is not None:
-        return entity["kind"]
+        return entity
     if _workspace_uuid:
         scoped_uuid, _ = db.resolve_entity_uuid(_workspace_uuid, feature_type_id)
-        row = (
-            db.get_entity_by_uuid(scoped_uuid, include_deleted=True)
-            if scoped_uuid is not None else None
-        )
-    else:
-        row = db.get_entity(feature_type_id, include_deleted=True)
-    return row["kind"] if row is not None else None
+        if scoped_uuid is None:
+            return None
+        return db.get_entity_by_uuid(scoped_uuid, include_deleted=True)
+    return db.get_entity(feature_type_id, include_deleted=True)
 
 
 @_with_error_handling
@@ -1147,9 +1151,14 @@ def _process_transition_phase(
             transitioned = all(r.allowed for r in response.results)
 
             if transitioned:
-                # Store phase timing in entity metadata
+                # Store phase timing in entity metadata, merged into the
+                # metadata of the row update_entity writes below. The live
+                # read can be None while that row exists (the
+                # cross-workspace unscoped-read edge, or a soft-deleted
+                # entity; see _transitioned_entity_row).
                 entity = db.get_entity(feature_type_id)
-                raw_metadata = entity.get("metadata") if entity else None
+                written_row = _transitioned_entity_row(db, feature_type_id, entity)
+                raw_metadata = written_row.get("metadata") if written_row else None
                 if raw_metadata:
                     metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
                 else:
@@ -1173,11 +1182,9 @@ def _process_transition_phase(
                 )
 
                 # Update kanban_column for features based on phase. The kind
-                # is the transitioned row's kind column (C8), never the type_id
-                # text. When the live read above is None (the cross-workspace
-                # unscoped-read edge noted below, or a soft-deleted entity),
-                # the helper re-reads the row the transition wrote.
-                if _transitioned_entity_kind(db, feature_type_id, entity) == "feature":
+                # is the written row's kind column (C8), never the type_id
+                # text.
+                if written_row is not None and written_row["kind"] == "feature":
                     kanban = _kanban_column_for("active", target_phase)
                     db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
@@ -1227,13 +1234,16 @@ def _process_transition_phase(
         except sqlite3.OperationalError as exc:
             warning = f"projection skipped (db busy): {exc}"
 
-        # Retrieve started_at from committed data (qa-server M5: a "locked"
-        # here must not re-run the committed transaction via @_with_retry)
+        # Retrieve started_at from committed data, in the row the
+        # transaction wrote (qa-server M5: a "locked" here must not re-run
+        # the committed transaction via @_with_retry)
         try:
-            entity = db.get_entity(feature_type_id)
+            written_row = _transitioned_entity_row(
+                db, feature_type_id, db.get_entity(feature_type_id),
+            )
         except sqlite3.OperationalError:
-            entity = None
-        raw_metadata = entity.get("metadata") if entity else None
+            written_row = None
+        raw_metadata = written_row.get("metadata") if written_row else None
         if raw_metadata:
             metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
         else:
