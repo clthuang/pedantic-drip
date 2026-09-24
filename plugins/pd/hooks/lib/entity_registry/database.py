@@ -7911,6 +7911,10 @@ class EntityDatabase:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
             JOIN on ``workspaces.project_id_legacy``.
 
+        Writes no event. :meth:`reparent_entity` is the event-emitting,
+        uuid-only, same-workspace move; the two share the self-parent and
+        cycle guard, :meth:`_refuse_self_or_cyclic_parent`.
+
         Returns
         -------
         str
@@ -7933,7 +7937,41 @@ class EntityDatabase:
             workspace_uuid=workspace_uuid,
         )
 
-        # Self-parent check using UUIDs
+        self._refuse_self_or_cyclic_parent(
+            child_uuid, parent_uuid, child_ref=type_id, parent_ref=parent_type_id,
+        )
+
+        self._conn.execute(
+            "UPDATE entities SET parent_uuid = ?, updated_at = ? "
+            "WHERE uuid = ?",
+            (parent_uuid, self._now_iso(), child_uuid),
+        )
+        self._commit()
+        return child_uuid
+
+    def _refuse_self_or_cyclic_parent(
+        self,
+        child_uuid: str,
+        parent_uuid: str,
+        *,
+        child_ref: str,
+        parent_ref: str,
+    ) -> None:
+        """Raise ``ValueError`` if *parent_uuid* may not parent *child_uuid*.
+
+        The one guard shared by :meth:`set_parent` and
+        :meth:`reparent_entity`. It refuses:
+
+        - **self-parenting** — the two uuids are equal. The
+          ``enforce_no_self_parent_uuid_*`` triggers refuse it again at the
+          schema level, for writers that bypass both methods.
+        - **a cycle** — *child_uuid* is already an ancestor of
+          *parent_uuid*. The ancestor walk is depth-guarded
+          (``a.depth < 10``), so it terminates on legacy cycles too.
+
+        *child_ref* and *parent_ref* are the caller's own spelling of the
+        two entities, used only in the error message.
+        """
         if child_uuid == parent_uuid:
             raise ValueError("entity cannot be its own parent")
 
@@ -7954,16 +7992,128 @@ class EntityDatabase:
         )
         if cur.fetchone() is not None:
             raise ValueError(
-                f"Circular reference detected: setting {parent_type_id!r} "
-                f"as parent of {type_id!r} would create a cycle"
+                f"Circular reference detected: setting {parent_ref!r} "
+                f"as parent of {child_ref!r} would create a cycle"
             )
 
-        self._conn.execute(
-            "UPDATE entities SET parent_uuid = ?, updated_at = ? "
-            "WHERE uuid = ?",
-            (parent_uuid, self._now_iso(), child_uuid),
-        )
-        self._commit()
+    def reparent_entity(
+        self,
+        type_id: str,
+        new_parent_uuid: str,
+        *,
+        workspace_uuid: str | None = None,
+    ) -> str:
+        """Move an entity under a new parent named by uuid, and record the move.
+
+        The parent-change API that recreating legacy projects uses (C22,
+        structural-identity completion plan decision 3). It differs from
+        :meth:`set_parent` in four ways:
+
+        - **The parent is a uuid, never text.** *new_parent_uuid* is matched
+          exactly against ``entities.uuid``. A type_id is refused, not
+          resolved, even when it names an existing entity.
+        - **Same workspace only.** A parent in another workspace is refused.
+          The registry already carries legacy cross-workspace parent links;
+          no new path may add more. (Moving a child OFF a cross-workspace
+          parent, onto one in its own workspace, is allowed.)
+        - **Soft-deleted rows are refused on either end.** :meth:`delete_entity`
+          keeps deleted rows childless; this keeps that true from the other
+          side, and does not move rows that reads no longer show.
+        - **It emits an event.** One ``reparented`` row on the ``lifecycle``
+          axis — ``from_value`` the old parent uuid (NULL when there was
+          none), ``to_value`` the new one — in the same transaction as the
+          UPDATE, like ``delete_entity``'s ``entity_deleted`` and
+          ``rename_entity``'s ``renamed``. v1-generation files have no
+          ``events`` table, so there the move is recorded nowhere.
+
+        Self-parenting and cycles are refused by the guard shared with
+        :meth:`set_parent`; the ``enforce_no_self_parent_uuid_update``
+        trigger still applies underneath. Moving an entity onto the parent
+        it already has writes nothing and emits nothing, so a re-run after
+        a partial batch is safe. Every refusal writes nothing.
+
+        Parameters
+        ----------
+        type_id:
+            The entity to move (UUID or type_id).
+        new_parent_uuid:
+            The uuid of an existing, non-deleted entity in the same
+            workspace as the entity being moved.
+        workspace_uuid:
+            If provided, scope a type_id lookup of *type_id* to this
+            workspace. The new parent is never looked up by type_id.
+
+        Returns
+        -------
+        str
+            The UUID of the moved entity.
+
+        Raises
+        ------
+        ValueError
+            If the entity is not found (or its type_id is ambiguous across
+            workspaces), *new_parent_uuid* is not the uuid of an existing
+            entity, either row is soft-deleted, the two sit in different
+            workspaces, or the move would self-parent or create a cycle.
+        """
+        with self.transaction():
+            child_uuid, _child_type_id = self._resolve_identifier(
+                type_id, workspace_uuid=workspace_uuid,
+            )
+            child = self._conn.execute(
+                "SELECT workspace_uuid, parent_uuid, is_deleted "
+                "FROM entities WHERE uuid = ?",
+                (child_uuid,),
+            ).fetchone()
+            new_parent = self._conn.execute(
+                "SELECT workspace_uuid, is_deleted FROM entities WHERE uuid = ?",
+                (new_parent_uuid,),
+            ).fetchone()
+            if new_parent is None:
+                raise ValueError(
+                    f"reparent_entity: {new_parent_uuid!r} is not the uuid of "
+                    f"an existing entity (the new parent is named by uuid "
+                    f"only; a type_id is not resolved)"
+                )
+            if child["is_deleted"]:
+                raise ValueError(
+                    f"reparent_entity: {type_id!r} is soft-deleted; restore "
+                    f"it before moving it"
+                )
+            if new_parent["is_deleted"]:
+                raise ValueError(
+                    f"reparent_entity: new parent {new_parent_uuid!r} is "
+                    f"soft-deleted and cannot take children"
+                )
+            if child["workspace_uuid"] != new_parent["workspace_uuid"]:
+                raise ValueError(
+                    f"reparent_entity: refusing a cross-workspace re-parent: "
+                    f"{type_id!r} is in workspace {child['workspace_uuid']!r}, "
+                    f"new parent {new_parent_uuid!r} is in workspace "
+                    f"{new_parent['workspace_uuid']!r}"
+                )
+            self._refuse_self_or_cyclic_parent(
+                child_uuid, new_parent_uuid,
+                child_ref=type_id, parent_ref=new_parent_uuid,
+            )
+
+            old_parent_uuid = child["parent_uuid"]
+            if old_parent_uuid == new_parent_uuid:
+                return child_uuid
+
+            self._conn.execute(
+                "UPDATE entities SET parent_uuid = ?, updated_at = ? "
+                "WHERE uuid = ?",
+                (new_parent_uuid, self._now_iso(), child_uuid),
+            )
+            self._emit_v2_event(
+                entity_uuid=child_uuid,
+                event_type="reparented",
+                axis="lifecycle",
+                from_value=old_parent_uuid,
+                to_value=new_parent_uuid,
+                actor="live:reparent_entity",
+            )
         return child_uuid
 
     def get_entity(
@@ -10860,8 +11010,9 @@ class EntityDatabase:
         between call sites (design D5's explicit rationale for a single
         helper).
 
-        Callers invoke this from INSIDE their own already-open
-        ``self.transaction()`` -- ALL five writers, including
+        Callers invoke this from INSIDE a transaction they already hold
+        open (``self.transaction()``; ``delete_entity`` issues its own
+        ``BEGIN IMMEDIATE``) -- every writer, including
         ``create_workflow_phase`` (whose earlier bare-implicit-transaction
         shape was a battery-r1 blocker: propagation without ROLLBACK left
         the v1 INSERT pending, not rolled back) -- :func:`append_event`
