@@ -547,6 +547,16 @@ Then read both keys back. Without this, the first pd MCP server to start runs ba
 
 **4. Restart normally.** Migration 7 (B8's `is_legacy` trigger) does not wait for Wave 2. It reached the live plugin with B8, and the live file is still at `schema_version 6` only because no pd MCP server has started since; the next one to start, in any workspace, applies it. **Rehearsed 2026-09-23** by opening a `.backup` copy of the live registry with `EntityDatabase`, the same open an MCP start performs: schema 6 → 7; entities 579, `is_legacy` 180 and display rows 399 all unchanged; trigger installed and refusing an `is_legacy` UPDATE; integrity ok; 0 foreign-key violations.
 
+**Executed 2026-09-24, on the operator's cue.**
+
+1. **Stopped world:** 0 pd MCP processes and 0 holders of the live file, checked again immediately before the one live write.
+2. **Snapshot:** `entities.db.pre-wave2-20260924` by `.backup`. Through an immutable open: integrity ok, 0 foreign-key violations, schema 6, 579 entities (180 legacy), 399 display rows, 523 `workflow_phases` rows, 1,459 phase events, 21 workspaces, 20 cross-workspace parent links (`agent_sandbox/2026-09-24/wave2-gate/baseline.json`).
+3. **Rehearsal:** the first MCP start, in `entity_server`'s startup order, replayed on marked copies of the snapshot, once per build. Both wrote the same: schema 6 → 7, the `is_legacy` trigger, and 28 `workflow_phases` rows for backlog items registered since the last start (`backfill_workflow_phases`, which Wave 2 did not touch). Neither changed an entity, a display row or a workspace. The two results are identical table for table, so the cutover's first start writes nothing today's build would not.
+4. **Marker (3a):** written to the live file and read back: `backfill_complete=1`, `backfill_version=4`; schema still 6, counts unchanged.
+5. **Merge:** `wave2-core` into develop, `fe40082c`.
+6. **Publish:** `test-hooks.sh` from the main checkout, 66/66 with 1 skipped. Its Test 12 published the build; the plugin cache matches the merged `plugins/pd` file for file, by content. `./validate.sh` 0/0.
+7. **Pending:** the first MCP start on the new build, which a new session performs, then the read-only check against the baseline and the rehearsal.
+
 ### Build order — never red
 
 Rev 1 ordered the work C5 → C7 → codemod → C6 and accepted ~751 red tests across three steps. **That red window was never necessary.** The strict gate at `database.py:7575` only *rejects* non-conformant ids — conformant ones already pass today — and no display row is written either way while `strict` is false (`:7708`). So the id migration is independently shippable **green, right now**, before any signature change. Rev 1's "red is expected and is the point of using a branch" was an assertion, not a justification.
