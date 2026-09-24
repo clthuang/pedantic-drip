@@ -29,7 +29,7 @@ Every number below was read from the live registry or the tree today. Re-derive 
 | Hook integration tests | 66/66 passed, 1 skipped |
 | `register_entity`/`upsert_entity`/`register_entities_batch`/`_register_entity_no_display` call sites | **13 external production · 3 internal · 1,152 test** across 48 files at `38935d59` (a 3-name census undercounts by 25; `scripts/census_register_sites.py`, step 0) |
 | Tests that fail once identity is mandatory (`STRICT_ID_FORMAT=1`) | **751** (707 failed + 44 errors) across 26 files — **693** `EntityIdFormatError`, 14 assertion-shaped (13 downstream of it, **1 a second class**) |
-| Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 is already in the live plugin and applies at the next pd MCP start; rehearsed on a copy 2026-09-23 (see the gate, step 4) |
+| Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 is already in the live plugin and applies at the next pd MCP start; rehearsed on a copy 2026-09-23 (see the gate, step 4). **Corrected 2026-09-24:** pd is disabled, so no MCP server starts; applied by hand, gate step 7 |
 | Brainstorms | 100 · **97 carry display rows** (all non-legacy) · 3 without, all `is_legacy=1` |
 | Workspaces with no `project_id_legacy` | **10 of 24** — 7 are deleted directories (4 stranded entities, a dead counter at 88); **3 are live worktrees of project_illium**, which `project_id` resolves to the **parent's** workspace (measured 2026-09-23). **C17a (`833095a9`) retired the 3 worktree rows: 21 workspaces remain** |
 | Feature directories the registry has never seen | **152** — project_illium 78, fractorg 57, terry_agent 16, pedantic-drip 1 (read-only scan, 2026-09-23) |
@@ -555,7 +555,7 @@ Then read both keys back. Without this, the first pd MCP server to start runs ba
 4. **Marker (3a):** written to the live file and read back: `backfill_complete=1`, `backfill_version=4`; schema still 6, counts unchanged.
 5. **Merge:** `wave2-core` into develop, `fe40082c`.
 6. **Publish:** `test-hooks.sh` from the main checkout, 66/66 with 1 skipped. Its Test 12 published the build; the plugin cache matches the merged `plugins/pd` file for file, by content. `./validate.sh` 0/0.
-7. **Pending: migration 7 on the live file, then the read-only check.** Procedure: [2026-09-24-wave2-cutover-runbook.md](./2026-09-24-wave2-cutover-runbook.md).
+7. **Migration 7 applied 2026-09-24**, on the operator's go-ahead, by the runbook's option A ([2026-09-24-wave2-cutover-runbook.md](./2026-09-24-wave2-cutover-runbook.md)). Result: schema 6 → 7 and the trigger. The quick check read 7, 1, 1, 180, ok. The full check passed 7/7, and entities, display rows and workflow_phases were +0 -0 ~0, with phase events at 1,459 before and after, as the runbook's rehearsal of option A predicted. Its workflow_phases line also printed "rehearsal predicted +28"; that figure is the MCP-start rehearsal, which option A does not run. The first attempt at each check failed with "unable to open database file". The migration's close had left no `-wal` or `-shm`, and the macOS `sqlite3` CLI and the pyenv `python3`, both on SQLite 3.51.0, will not open a WAL-mode file without `-shm` (gate step 3). Both checks now pick the read-only mode by whether a `-wal` file exists.
 
 **Corrected 2026-09-24, after the gate:**
 
@@ -686,6 +686,11 @@ Both pre-existing, neither caused by Wave 2, neither blocking it:
 - **`_compute_legacy_project_id`'s docstring is false** (`project_identity.py:811`). It says migration-only, but it is `project_id`'s live source in both MCP servers (`entity_server.py:235`, `workflow_state_server.py:237`) and in `reconciliation_orchestrator/__main__.py:104` and `task_promotion.py:354`. What it hid is D1's worktree misrouting. **Fixed with it in C17a (`833095a9`).**
 
 **Found at the review, out of scope: the live registry already holds 20 cross-workspace parent links.** In every snapshot's `before.db`, 20 children have a parent in another workspace. Backfill no longer adds any, since the review round. These 20 predate Wave 2 and are left for a registry cleanup.
+
+**Found at cutover, out of scope:**
+
+- **`scripts/migrate_db.py migrate` backs up with `shutil.copy2`.** It copies the main file only, so on a WAL-mode registry the backup can miss committed writes. Its check, `integrity_check` plus the entity count, catches lost inserts but not lost updates. `--dry-run` makes the same copy. The fix is the `sqlite3` backup API, which `cmd_backup` in the same file already uses.
+- **`~/.claude/pd/memory/memory.db` has no owner.** It is 8 MB, last written 2026-06-21, at its own `schema_version` 7. The semantic-memory subsystem that used it was torn down in `ea0b15e1`, and no code in the repo opens it. Archiving or deleting it is the operator's call.
 
 ### Calvin ledger — Wave 2 (2026-09-23)
 
