@@ -555,7 +555,13 @@ Then read both keys back. Without this, the first pd MCP server to start runs ba
 4. **Marker (3a):** written to the live file and read back: `backfill_complete=1`, `backfill_version=4`; schema still 6, counts unchanged.
 5. **Merge:** `wave2-core` into develop, `fe40082c`.
 6. **Publish:** `test-hooks.sh` from the main checkout, 66/66 with 1 skipped. Its Test 12 published the build; the plugin cache matches the merged `plugins/pd` file for file, by content. `./validate.sh` 0/0.
-7. **Pending:** the first MCP start on the new build, which a new session performs, then the read-only check against the baseline and the rehearsal.
+7. **Pending: migration 7 on the live file, then the read-only check.** Procedure: [2026-09-24-wave2-cutover-runbook.md](./2026-09-24-wave2-cutover-runbook.md).
+
+**Corrected 2026-09-24, after the gate:**
+
+- **Step 4's premise does not hold today.** The pd plugin is disabled at user level: `~/.claude/settings.json` sets `"pd@pedantic-drip-marketplace": false`, and no workspace's project settings turn it back on.
+- **No new session applies migration 7.** No session starts a pd hook or MCP server, so the migration is applied deliberately, as the runbook's option A. The plugin cache also has no `.venv` for its MCP servers to start from. pd's own logs were last written on 2026-07-25, the v6.0.0 release.
+- **The gate held regardless.** While pd is disabled, no SessionStart runs `sync-cache.sh`, and `test-hooks.sh` Test 12 is the only publisher. That is the publish step 6 records, and it made the world's "stopped" state trivially true.
 
 ### Build order — never red
 
