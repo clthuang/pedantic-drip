@@ -251,7 +251,7 @@ def test_generate_entity_id_allocates_from_the_workspace_uuid_it_is_given(two_wo
      "pd:doctor --fix, then restart the session (MCP servers cache the workspace UUID "
      "at startup)."),
 ])
-def test_upsert_insert_branch_refusals_are_the_base_messages(two_workspaces, workspace, message):
+def test_upsert_insert_branch_refusals_name_register_entity(two_workspaces, workspace, message):
     """The insert branch validates its workspace inside register_entity, so a
     refusal names register_entity() as before C5b; the reconciler records
     these strings as its warnings. (The missing-workspace message lost its
