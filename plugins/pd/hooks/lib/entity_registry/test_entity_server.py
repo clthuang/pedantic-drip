@@ -1014,13 +1014,12 @@ class TestRegisterEntityBlankNameGuard:
 # Test-deepening addition (feature 132 D6.4): the register_entity MCP
 # tool's caller-facing project_id passthrough kwarg was dropped from the
 # signature (only entity_server's OWN legacy-project-id global is
-# consulted internally now). No existing test proves REMOVAL -- every
-# `project_id=` reference in this file targets EntityDatabase.
-# register_entity (the DB method, which retains the kwarg per the
-# amended FR132-5b reading), never this MCP tool function. Proves the
-# structural removal non-vacuously: passing project_id= must raise
-# TypeError synchronously (argument binding fails before the coroutine
-# is even scheduled), the same as any other unknown kwarg would.
+# consulted internally now). No other test in this file proves REMOVAL --
+# none of its other `project_id=` references calls this MCP tool
+# function. Proves the structural removal non-vacuously: passing
+# project_id= must raise TypeError synchronously (argument binding fails
+# before the coroutine is even scheduled), the same as any other unknown
+# kwarg would.
 # dimension:adversarial
 # ---------------------------------------------------------------------------
 class TestRegisterEntityToolProjectIdKwargRemoved:
