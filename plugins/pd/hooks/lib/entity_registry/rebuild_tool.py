@@ -1544,7 +1544,9 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_LIVE_DB_PATH,
         help="Path to the LIVE v1 entities.db the staging path is derived "
         "beside, and (unless --staging-only) backfilled FROM via a "
-        "read-only connection (default: ~/.claude/pd/entities/entities.db).",
+        "read-only connection (default: ~/.claude/pd/entities/entities.db). "
+        "A file without an entity_display table or an entities.is_legacy "
+        "column is refused: migrate a copy first.",
     )
     parser.add_argument(
         "--staging-path",
