@@ -35,12 +35,12 @@ def idioms(src: str) -> set[str]:
 
 @pytest.mark.parametrize("receiver", [
     "entity_id",            # the only spelling the old grep knew
-    "eid",                  # database.py:10281
+    "eid",                  # database.py:929
     "tid",
     "type_id",
-    "feature_type_id",      # engine.py:376, feature_lifecycle.py:97
-    "old_type_id",          # database.py:7815
-    "parent_type_id",       # backfill.py:752
+    "feature_type_id",      # engine.py:376, feature_lifecycle.py:98
+    "old_type_id",
+    "parent_type_id",
     "proj_entity_id",
 ])
 def test_bare_name_receivers_are_recognised(receiver):
@@ -50,7 +50,7 @@ def test_bare_name_receivers_are_recognised(receiver):
 @pytest.mark.parametrize("expr", [
     'entity["type_id"]',        # frontmatter_sync.py:109
     "row['entity_id']",         # reconciliation.py:787
-    'anomaly["type_id"]',       # rebuild_tool.py:1138
+    'anomaly["type_id"]',
     'entity.get("type_id")',
     "self.entity_id",
 ])

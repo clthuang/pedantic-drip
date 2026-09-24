@@ -514,8 +514,8 @@ _INFERENCE_SCAN_ROOTS = [
 #
 #   database.py:929        sits inside _schema_expansion_v6 (v1 migration 6),
 #                          seeding next_seq_{type} from historical entity_id
-#                          text at migration time. Same class as :2756, :4199
-#                          and :4262. Sanctioned; relabelled, not fixed.
+#                          text at migration time. Same class as :2756, :4163
+#                          and :4226. Sanctioned; relabelled, not fixed.
 #
 #   feature_lifecycle.py:98  _validate_feature_type_id splits type_id on ":"
 #                          to build {artifacts_root}/features/{slug}. The path
