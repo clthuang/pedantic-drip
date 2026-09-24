@@ -623,11 +623,14 @@ def test_identity_inference_inventory_is_exact() -> None:
 #       as text from files and tool arguments; its receiver name hid it from
 #       the scanner. Renamed so the scanner sees it, and declared: a new
 #       parser, raised in the diff that adds it, as this table requires
+#   24  C13 (2026-09-24) removed backfill's synthetic-parent type_id split
+#   22  C19/C20b (2026-09-24) removed rebuild_tool's text-census regex and
+#       its dedup type_id split; lowered at the integration of both
 #
 # Raising this is a deliberate act with a line in that table, not a way to
 # quiet a red test. If the number rose because production grew a NEW parser,
 # the entry belongs in the diff being reviewed, not here.
-_INVENTORY_HIGH_WATER = 25
+_INVENTORY_HIGH_WATER = 22
 
 
 def test_inventory_shrinks_to_zero_eventually() -> None:
