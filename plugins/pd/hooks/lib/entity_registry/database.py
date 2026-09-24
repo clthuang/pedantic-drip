@@ -8095,6 +8095,51 @@ class EntityDatabase:
                 f"as parent of {child_ref!r} would create a cycle"
             )
 
+    def refuse_deleted_or_cross_workspace_parent(
+        self,
+        parent_uuid: str,
+        *,
+        workspace_uuid: str,
+        child_ref: str,
+        caller: str,
+    ) -> None:
+        """Raise ``ValueError`` if *parent_uuid* may not take a child that
+        lives in *workspace_uuid*.
+
+        The parent rules shared by :meth:`reparent_entity` and
+        ``feature_lifecycle.init_project_state`` (C22a):
+
+        - **A soft-deleted parent is refused.** :meth:`delete_entity` keeps
+          deleted rows childless; this keeps that true from the other side.
+        - **A parent in another workspace is refused.** The registry already
+          carries legacy cross-workspace parent links; no new path may add
+          more.
+
+        A uuid that names no entity passes. Each caller refuses a missing
+        parent its own way: :meth:`reparent_entity` by name, before this
+        runs; a registration through the ``entities.parent_uuid`` foreign
+        key, on INSERT.
+
+        *child_ref* and *caller* are used only in the error message.
+        """
+        parent = self._conn.execute(
+            "SELECT workspace_uuid, is_deleted FROM entities WHERE uuid = ?",
+            (parent_uuid,),
+        ).fetchone()
+        if parent is None:
+            return
+        if parent["is_deleted"]:
+            raise ValueError(
+                f"{caller}: parent {parent_uuid!r} is soft-deleted and "
+                f"cannot take children"
+            )
+        if parent["workspace_uuid"] != workspace_uuid:
+            raise ValueError(
+                f"{caller}: refusing a cross-workspace parent: {child_ref!r} "
+                f"is in workspace {workspace_uuid!r}, parent {parent_uuid!r} "
+                f"is in workspace {parent['workspace_uuid']!r}"
+            )
+
     def reparent_entity(
         self,
         type_id: str,
@@ -8125,6 +8170,9 @@ class EntityDatabase:
           ``rename_entity``'s ``renamed``. v1-generation files have no
           ``events`` table, so there the move is recorded nowhere.
 
+        The parent half of the workspace and soft-delete rules is
+        :meth:`refuse_deleted_or_cross_workspace_parent`, which
+        ``init_project_state`` applies to a new project's parent too.
         Self-parenting and cycles are refused by the guard shared with
         :meth:`set_parent`; the ``enforce_no_self_parent_uuid_update``
         trigger still applies underneath. Moving an entity onto the parent
@@ -8164,11 +8212,10 @@ class EntityDatabase:
                 "FROM entities WHERE uuid = ?",
                 (child_uuid,),
             ).fetchone()
-            new_parent = self._conn.execute(
-                "SELECT workspace_uuid, is_deleted FROM entities WHERE uuid = ?",
-                (new_parent_uuid,),
+            new_parent_exists = self._conn.execute(
+                "SELECT 1 FROM entities WHERE uuid = ?", (new_parent_uuid,),
             ).fetchone()
-            if new_parent is None:
+            if new_parent_exists is None:
                 raise ValueError(
                     f"reparent_entity: {new_parent_uuid!r} is not the uuid of "
                     f"an existing entity (the new parent is named by uuid "
@@ -8179,18 +8226,12 @@ class EntityDatabase:
                     f"reparent_entity: {type_id!r} is soft-deleted; restore "
                     f"it before moving it"
                 )
-            if new_parent["is_deleted"]:
-                raise ValueError(
-                    f"reparent_entity: new parent {new_parent_uuid!r} is "
-                    f"soft-deleted and cannot take children"
-                )
-            if child["workspace_uuid"] != new_parent["workspace_uuid"]:
-                raise ValueError(
-                    f"reparent_entity: refusing a cross-workspace re-parent: "
-                    f"{type_id!r} is in workspace {child['workspace_uuid']!r}, "
-                    f"new parent {new_parent_uuid!r} is in workspace "
-                    f"{new_parent['workspace_uuid']!r}"
-                )
+            self.refuse_deleted_or_cross_workspace_parent(
+                new_parent_uuid,
+                workspace_uuid=child["workspace_uuid"],
+                child_ref=type_id,
+                caller="reparent_entity",
+            )
             self._refuse_self_or_cyclic_parent(
                 child_uuid, new_parent_uuid,
                 child_ref=type_id, parent_ref=new_parent_uuid,

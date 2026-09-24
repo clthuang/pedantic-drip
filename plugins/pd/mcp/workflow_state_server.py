@@ -2542,7 +2542,8 @@ async def init_project_state(
     project. ``project_dir`` is ``{artifacts_root}/projects/{id}-{slug}`` and
     need not exist — it is created only after registration succeeds, so a
     registration error leaves no directory. ``parent_uuid`` registers the
-    project under its brainstorm. The result carries ``project_uuid``.
+    project under its brainstorm; a soft-deleted parent, or one in another
+    workspace, is an error. The result carries ``project_uuid``.
     Re-running the same call after it stopped past registration resumes
     that row (``resumed``: true); any other project holding the id — a
     deleted one, or one with another directory or parent — is an error.

@@ -298,6 +298,81 @@ def test_a_row_registered_under_another_parent_is_refused_before_the_directory(d
 
 
 # ---------------------------------------------------------------------------
+# The parent must be live and in the project's workspace — the parent rules
+# reparent_entity enforces (C22a) — checked before registration
+# ---------------------------------------------------------------------------
+
+
+def test_a_soft_deleted_parent_is_refused_before_registration(db, artifacts_root, monkeypatch):
+    """Deleted rows stay childless: registering under one would give a row
+    that reads no longer show a child."""
+    project_dir = _project_dir(artifacts_root)
+    deleted_brainstorm = _register_brainstorm(db, "20260901-gone")
+    db.delete_entity(deleted_brainstorm)
+    attempts = RegistrationAttempts(db, monkeypatch, project_dir)
+
+    with pytest.raises(ValueError, match="parent .* is soft-deleted"):
+        _init(db, artifacts_root, project_dir, parent_uuid=deleted_brainstorm)
+
+    assert attempts.calls == []
+    assert db.get_entity(PROJECT_TYPE_ID, include_deleted=True) is None
+    assert _creation_events(db) == []
+    assert not os.path.exists(project_dir)
+
+
+@pytest.mark.parametrize(
+    "project_workspace_name", [None, "home"],
+    ids=["project in the default workspace", "project in a named workspace"],
+)
+def test_a_parent_in_another_workspace_is_refused_before_registration(
+    project_workspace_name, db, artifacts_root, monkeypatch,
+):
+    """No new path may add a cross-workspace parent link. Without a
+    workspace_uuid the project registers in the default ``__unknown__``
+    workspace, so a parent in a named workspace is in another one too."""
+    project_dir = _project_dir(artifacts_root)
+    project_workspace = (
+        None if project_workspace_name is None
+        else bootstrap_test_workspace(db, project_workspace_name)
+    )
+    elsewhere = bootstrap_test_workspace(db, "elsewhere")
+    foreign_brainstorm = db.register_entity(
+        "brainstorm", name="alpha brainstorm", display_id="20260924-alpha",
+        workspace_uuid=elsewhere,
+    )
+    attempts = RegistrationAttempts(db, monkeypatch, project_dir)
+
+    with pytest.raises(ValueError, match="cross-workspace parent"):
+        _init(
+            db, artifacts_root, project_dir,
+            workspace_uuid=project_workspace, parent_uuid=foreign_brainstorm,
+        )
+
+    assert attempts.calls == []
+    assert db.list_entities(entity_type="project", include_deleted=True) == []
+    assert not os.path.exists(project_dir)
+
+
+def test_a_live_parent_in_the_projects_named_workspace_is_accepted(db, artifacts_root):
+    """The positive side of the workspace rule, outside the default
+    workspace: the check compares against the workspace the project
+    registers in, not a fixed one."""
+    home = bootstrap_test_workspace(db, "home")
+    brainstorm_uuid = db.register_entity(
+        "brainstorm", name="alpha brainstorm", display_id="20260924-alpha",
+        workspace_uuid=home,
+    )
+
+    result = _init(
+        db, artifacts_root, _project_dir(artifacts_root),
+        workspace_uuid=home, parent_uuid=brainstorm_uuid,
+    )
+
+    project = db.get_entity_by_uuid(result["project_uuid"])
+    assert (project["workspace_uuid"], project["parent_uuid"]) == (home, brainstorm_uuid)
+
+
+# ---------------------------------------------------------------------------
 # C15 — one attempt, one creation event
 # ---------------------------------------------------------------------------
 

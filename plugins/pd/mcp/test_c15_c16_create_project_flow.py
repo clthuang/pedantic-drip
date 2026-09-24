@@ -225,6 +225,26 @@ def test_a_missing_parent_fails_registration_through_the_tool_and_leaves_no_dire
     assert not os.path.exists(project_dir)
 
 
+def test_a_soft_deleted_parent_is_refused_by_the_tool_before_any_registry_write(
+    db, artifacts_root, monkeypatch,
+):
+    project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
+    brainstorm_uuid = db.register_entity(
+        "brainstorm", name=BRAINSTORM_STEM, display_id=BRAINSTORM_STEM,
+        project_id="__unknown__",
+    )
+    db.delete_entity(brainstorm_uuid)
+    attempts = _record_registration_attempts(db, monkeypatch, project_dir)
+
+    result = _init_project_state_tool(project_dir=project_dir, parent_uuid=brainstorm_uuid)
+
+    assert result["error"] is True
+    assert "soft-deleted" in result["message"]
+    assert attempts == []
+    assert db.get_entity(PROJECT_TYPE_ID, include_deleted=True) is None
+    assert not os.path.exists(project_dir)
+
+
 def test_an_out_of_root_directory_is_refused_by_the_tool_before_any_registry_write(
     db, artifacts_root, tmp_path, monkeypatch,
 ):

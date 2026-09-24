@@ -11,7 +11,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 
-from entity_registry.database import EntityDatabase, EntityExistsError
+from entity_registry.database import _UNKNOWN_WORKSPACE_UUID, EntityDatabase, EntityExistsError
 from entity_registry.id_generator import registration_identity
 from workflow_engine.engine import WorkflowStateEngine
 
@@ -378,7 +378,10 @@ def init_project_state(
     1. **Validate** ``project_dir`` (``_validate_project_dir``; it need not
        exist yet), the id (the allocator must have issued it), and the
        ``features``/``milestones`` JSON.
-    2. **Register** the project, under ``parent_uuid`` when given.
+    2. **Register** the project, under ``parent_uuid`` when given. That
+       parent must be live and in the project's workspace
+       (``refuse_deleted_or_cross_workspace_parent``, in the registration's
+       transaction).
     3. **Create** the directory.
     4. **Write** ``.meta.json``.
 
@@ -397,8 +400,9 @@ def init_project_state(
 
     Raises:
         ValueError: if project_id with slug is not an id the allocator issues
-            (``invalid_input: … is not an allocated id``), or project_dir is
-            invalid; nothing is written.
+            (``invalid_input: … is not an allocated id``), project_dir is
+            invalid, or parent_uuid names a soft-deleted entity or one in
+            another workspace; nothing is written.
         RuntimeError: ``Project registration conflict …`` when a row that is
             not this call's earlier attempt holds the id; nothing is written.
         A registration error propagates before the directory exists. An
@@ -430,18 +434,35 @@ def init_project_state(
     # C4 dropped the project "P" prefix: projects render "{NNN}-{slug}"
     # like every other sequence-numbered kind, so the allocated id splits
     # into seq and slug and the display row is written.
+    #
+    # The parent must be live and in the workspace the project registers in
+    # (the parent rules reparent_entity enforces, C22a). The check shares the
+    # registration's transaction, so the parent cannot change between the
+    # two. Without a workspace_uuid, the project registers in the default
+    # __unknown__ workspace (the project_id argument below).
+    project_workspace_uuid = (
+        workspace_uuid if workspace_uuid is not None else _UNKNOWN_WORKSPACE_UUID
+    )
     try:
-        project_uuid = db.register_entity(
-            entity_type="project",
-            **identity,
-            name=slug.replace("-", " ").title(),
-            artifact_path=project_dir,
-            status=status,
-            parent_uuid=parent_uuid,
-            metadata=metadata,
-            workspace_uuid=workspace_uuid,
-            project_id="__unknown__" if workspace_uuid is None else None,
-        )
+        with db.transaction():
+            if parent_uuid is not None:
+                db.refuse_deleted_or_cross_workspace_parent(
+                    parent_uuid,
+                    workspace_uuid=project_workspace_uuid,
+                    child_ref=project_type_id,
+                    caller="init_project_state",
+                )
+            project_uuid = db.register_entity(
+                entity_type="project",
+                **identity,
+                name=slug.replace("-", " ").title(),
+                artifact_path=project_dir,
+                status=status,
+                parent_uuid=parent_uuid,
+                metadata=metadata,
+                workspace_uuid=workspace_uuid,
+                project_id="__unknown__" if workspace_uuid is None else None,
+            )
         resumed = False
     except EntityExistsError as conflict:
         # The conflict is scoped to this workspace. The row is resumed only
