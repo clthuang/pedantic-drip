@@ -37,7 +37,9 @@ and backlog #067); a consumer with a frequently-polled per-entity read
 should query ``entity_axis_state`` directly (per-axis, indexed) instead.
 
 The lifecycle axis stays vocabulary-FREE at 122 by design: feature 121's
-rename events carry type_ids in ``to_value``, not a fixed enum, so no
+rename events carry type_ids in ``to_value`` (and
+``EntityDatabase.reparent_entity``'s ``reparented`` events carry parent
+uuids), not a fixed enum, so no
 lifecycle CHECK trigger exists here and ``entity_phase_status`` does not
 expose a lifecycle column (FR-6 names exactly two axes) — any future
 lifecycle vocabulary belongs to feature 123's per-kind transition
