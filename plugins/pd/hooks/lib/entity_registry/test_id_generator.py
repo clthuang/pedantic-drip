@@ -12,7 +12,7 @@ from entity_registry.id_generator import (
     generate_entity_id,
     registration_identity,
 )
-from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry.test_helpers import TEST_PROJECT_ID, workspace_uuid_for
 
 
 # ---------------------------------------------------------------------------
@@ -25,9 +25,8 @@ def db():
     """In-memory EntityDatabase with TEST_PROJECT_ID workspace pre-registered.
 
     Post-Migration-11: the sequences and entities tables are keyed on
-    workspace_uuid. Tests using the legacy ``project_id`` API need a
-    workspaces row whose ``project_id_legacy`` matches ``TEST_PROJECT_ID``
-    so the compat shim can resolve it.
+    workspace_uuid. The allocator takes the workspace's uuid; the
+    ``workspace`` fixture reads it back.
     """
     database = EntityDatabase(":memory:")
     # Bootstrap the workspaces row for TEST_PROJECT_ID.
@@ -42,6 +41,12 @@ def db():
     database._conn.commit()
     yield database
     database.close()
+
+
+@pytest.fixture
+def workspace(db) -> str:
+    """The uuid of the workspace the ``db`` fixture seeded."""
+    return workspace_uuid_for(db, TEST_PROJECT_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -96,77 +101,75 @@ class TestSlugify:
 
 
 class TestGenerateEntityId:
-    def test_generation_works_and_increments(self, db: EntityDatabase):
+    def test_generation_works_and_increments(self, db: EntityDatabase, workspace: str):
         """generate_entity_id returns sequential (seq, slug) pairs via the sequences table."""
-        id1 = generate_entity_id(db, "backlog", "test item", project_id=TEST_PROJECT_ID)
+        id1 = generate_entity_id(db, "backlog", "test item", workspace_uuid=workspace)
         assert id1 == (1, "test-item")
-        id2 = generate_entity_id(db, "backlog", "second item", project_id=TEST_PROJECT_ID)
+        id2 = generate_entity_id(db, "backlog", "second item", workspace_uuid=workspace)
         assert id2 == (2, "second-item")
 
     def test_scan_existing_max_seq_deleted(self):
         """_scan_existing_max_seq function must be deleted, not just unused."""
         assert not hasattr(id_generator_mod, "_scan_existing_max_seq")
 
-    def test_first_id_for_new_type(self, db: EntityDatabase):
+    def test_first_id_for_new_type(self, db: EntityDatabase, workspace: str):
         """New type with no existing entities starts at 001."""
-        result = generate_entity_id(db, "task", "My First Task", project_id=TEST_PROJECT_ID)
+        result = generate_entity_id(db, "task", "My First Task", workspace_uuid=workspace)
         assert result == (1, "my-first-task")
 
-    def test_sequential_ids(self, db: EntityDatabase):
+    def test_sequential_ids(self, db: EntityDatabase, workspace: str):
         """Multiple calls increment the sequence."""
-        id1 = generate_entity_id(db, "task", "Task One", project_id=TEST_PROJECT_ID)
-        id2 = generate_entity_id(db, "task", "Task Two", project_id=TEST_PROJECT_ID)
-        id3 = generate_entity_id(db, "task", "Task Three", project_id=TEST_PROJECT_ID)
+        id1 = generate_entity_id(db, "task", "Task One", workspace_uuid=workspace)
+        id2 = generate_entity_id(db, "task", "Task Two", workspace_uuid=workspace)
+        id3 = generate_entity_id(db, "task", "Task Three", workspace_uuid=workspace)
         assert id1 == (1, "task-one")
         assert id2 == (2, "task-two")
         assert id3 == (3, "task-three")
 
-    def test_per_type_counters(self, db: EntityDatabase):
+    def test_per_type_counters(self, db: EntityDatabase, workspace: str):
         """Each entity type has its own independent counter."""
-        id_task = generate_entity_id(db, "task", "A Task", project_id=TEST_PROJECT_ID)
-        id_init = generate_entity_id(db, "initiative", "An Initiative", project_id=TEST_PROJECT_ID)
+        id_task = generate_entity_id(db, "task", "A Task", workspace_uuid=workspace)
+        id_init = generate_entity_id(db, "initiative", "An Initiative", workspace_uuid=workspace)
         assert id_task == (1, "a-task")
         assert id_init == (1, "an-initiative")
 
-    def test_slug_max_30_chars(self, db: EntityDatabase):
+    def test_slug_max_30_chars(self, db: EntityDatabase, workspace: str):
         long_name = "A Very Long Entity Name That Definitely Exceeds Thirty Characters"
-        result = generate_entity_id(db, "task", long_name, project_id=TEST_PROJECT_ID)
+        result = generate_entity_id(db, "task", long_name, workspace_uuid=workspace)
         _, slug = result
         assert len(slug) <= 30
 
-    def test_slug_lowercase_hyphens(self, db: EntityDatabase):
-        result = generate_entity_id(db, "initiative", "Enterprise Reliability", project_id=TEST_PROJECT_ID)
+    def test_slug_lowercase_hyphens(self, db: EntityDatabase, workspace: str):
+        result = generate_entity_id(db, "initiative", "Enterprise Reliability", workspace_uuid=workspace)
         assert result == (1, "enterprise-reliability")
 
-    def test_empty_name_fallback(self, db: EntityDatabase):
+    def test_empty_name_fallback(self, db: EntityDatabase, workspace: str):
         """Empty name produces 'unnamed' slug."""
-        result = generate_entity_id(db, "task", "", project_id=TEST_PROJECT_ID)
+        result = generate_entity_id(db, "task", "", workspace_uuid=workspace)
         assert result == (1, "unnamed")
 
-    def test_special_chars_in_name(self, db: EntityDatabase):
-        result = generate_entity_id(db, "task", "Fix bug #123 (urgent!)", project_id=TEST_PROJECT_ID)
+    def test_special_chars_in_name(self, db: EntityDatabase, workspace: str):
+        result = generate_entity_id(db, "task", "Fix bug #123 (urgent!)", workspace_uuid=workspace)
         assert result == (1, "fix-bug-123-urgent")
 
-    def test_project_id_required(self, db: EntityDatabase):
-        """project_id is a required parameter."""
-        with pytest.raises(TypeError):
+    def test_workspace_uuid_required(self, db: EntityDatabase):
+        """workspace_uuid is a required parameter: a counter has no scope
+        without one."""
+        with pytest.raises(TypeError, match="workspace_uuid"):
             generate_entity_id(db, "task", "Test")
+        with pytest.raises(TypeError, match="workspace_uuid"):
+            generate_entity_id(db, "task", "Test", workspace_uuid=None)
 
-    def test_continues_from_existing_via_sequences(self, db: EntityDatabase):
+    def test_continues_from_existing_via_sequences(self, db: EntityDatabase, workspace: str):
         """Existing sequences bootstrap the counter."""
-        # Post-Migration-11: sequences keyed on workspace_uuid. Resolve the
-        # TEST_PROJECT_ID workspace and seed by UUID.
-        ws_row = db._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            (TEST_PROJECT_ID,),
-        ).fetchone()
+        # Post-Migration-11: sequences keyed on workspace_uuid.
         db._conn.execute(
             "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
             "VALUES(?, 'feature', 53)",
-            (ws_row["uuid"],),
+            (workspace,),
         )
         db._conn.commit()
-        result = generate_entity_id(db, "feature", "Structured Logging", project_id=TEST_PROJECT_ID)
+        result = generate_entity_id(db, "feature", "Structured Logging", workspace_uuid=workspace)
         assert result == (53, "structured-logging")
 
 

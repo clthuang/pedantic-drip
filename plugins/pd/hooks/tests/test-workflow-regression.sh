@@ -164,13 +164,18 @@ test_entity_db_registration() {
         "$PLUGIN_PY" - <<'PY' 2>&1
 import os, sys
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import bootstrap_test_workspace
 
 db = EntityDatabase(os.environ["ENTITY_DB_PATH"])
+# Registration takes a workspace uuid; this workspace's legacy id is the
+# project_id the query step reads back.
+workspace_uuid = bootstrap_test_workspace(db, "test-regression")
 uuid = db.register_entity(
     entity_type="task",
-    entity_id="regression-t1-2",
+    seq=1,
+    slug="regression-t1-2",
     name="regression test",
-    project_id="test-regression",
+    workspace_uuid=workspace_uuid,
     status="active",
 )
 if not uuid:
@@ -194,20 +199,20 @@ import os, sys
 from entity_registry.database import EntityDatabase
 
 db = EntityDatabase(os.environ["ENTITY_DB_PATH"])
-ent = db.get_entity("task:regression-t1-2")
+ent = db.get_entity("task:001-regression-t1-2")
 if ent is None:
-    print("entity not found for type_id=task:regression-t1-2", file=sys.stderr)
+    print("entity not found for type_id=task:001-regression-t1-2", file=sys.stderr)
     sys.exit(1)
 
 # Assert on the fields we set. status is the key acceptance criterion;
 # the other three guard against silent schema drift.
 checks = {
     "entity_type": "task",
-    "entity_id": "regression-t1-2",
+    "entity_id": "001-regression-t1-2",
     "name": "regression test",
     "status": "active",
     "project_id": "test-regression",
-    "type_id": "task:regression-t1-2",
+    "type_id": "task:001-regression-t1-2",
 }
 for field, expected in checks.items():
     actual = ent.get(field)
@@ -272,6 +277,7 @@ import os
 import sys
 
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import bootstrap_test_workspace
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_state_server import _process_complete_phase
 
@@ -289,9 +295,10 @@ db = EntityDatabase(db_path)
 # projection carries the prior phase forward (mirrors real-world state).
 db.register_entity(
     entity_type="feature",
-    entity_id="999-mock-feature",
+    seq=999,
+    slug="mock-feature",
     name="Mock Feature",
-    project_id="test-regression",
+    workspace_uuid=bootstrap_test_workspace(db, "test-regression"),
     status="active",
     artifact_path=feature_dir,
     metadata={
@@ -406,10 +413,11 @@ PY
 # Regression test (T1.4): exercise the workflow engine's phase transition
 # guards. Verifies the valid/invalid contract from FR-5:
 #   - transition_phase(target="design") SUCCEEDS when feature is in specify
-#     and spec.md exists (G-08 hard prerequisite satisfied).
+#     and shape.md exists (G-08 hard prerequisite satisfied; feature 134
+#     FR-11 made shape.md the one artifact specify and design share).
 #   - transition_phase(target="implement") FAILS when feature is in specify
-#     and implement-phase artifacts (design.md / plan.md / tasks.md) are
-#     absent (G-08 blocks with allowed=False).
+#     and plan.md, implement's other prerequisite, is absent (G-08 blocks
+#     with allowed=False).
 #
 # Uses an isolated mock feature (998-mock-transition) with its own in-memory
 # DB so this test does not depend on, or mutate, state from T1.2/T1.3.
@@ -419,13 +427,13 @@ T14_MOCK_FEATURE_DIRNAME="${T14_MOCK_FEATURE_ID}-${T14_MOCK_FEATURE_SLUG}"
 
 setup_t14_mock_feature() {
     # Create the feature dir under the shared features root and write a
-    # spec.md that satisfies the 4 levels of artifact validation for design:
+    # shape.md that satisfies the 4 levels of artifact validation for design:
     #   G-02 exists, G-03 size, G-04 headers, G-05/G-06 required sections.
-    # Deliberately DO NOT create design.md / plan.md / tasks.md — their
-    # absence is the precondition for the invalid-transition assertion.
+    # Deliberately DO NOT create plan.md — its absence is the precondition
+    # for the invalid-transition assertion.
     local feat_dir="${FEATURES_ROOT}/${T14_MOCK_FEATURE_DIRNAME}"
     mkdir -p "$feat_dir"
-    cat > "${feat_dir}/spec.md" <<'EOF'
+    cat > "${feat_dir}/shape.md" <<'EOF'
 # Spec: Mock Transition Feature
 
 ## Overview
@@ -463,7 +471,8 @@ test_phase_transition_guards() {
     if ! py_output=$(
         PLUGIN_ROOT="$PLUGIN_ROOT" \
         ENGINE_ROOT="$TMPDIR_TEST" \
-        FEATURE_SLUG="$T14_MOCK_FEATURE_DIRNAME" \
+        FEATURE_SEQ="$T14_MOCK_FEATURE_ID" \
+        FEATURE_SLUG="$T14_MOCK_FEATURE_SLUG" \
         FEATURE_TYPE_ID="feature:${T14_MOCK_FEATURE_DIRNAME}" \
         PYTHONPATH="$PLUGIN_PYPATH:$mcp_dir" \
         "$PLUGIN_PY" - <<'PY' 2>&1
@@ -471,24 +480,25 @@ import json
 import os
 import sys
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import _UNKNOWN_WORKSPACE_UUID, EntityDatabase
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_state_server import _process_transition_phase
 
 engine_root = os.environ["ENGINE_ROOT"]
+feature_seq = int(os.environ["FEATURE_SEQ"])
 feature_slug = os.environ["FEATURE_SLUG"]
 feature_type_id = os.environ["FEATURE_TYPE_ID"]
 
 db = EntityDatabase(":memory:")
 db.register_entity(
-    "feature", feature_slug, "Mock Transition Feature",
-    status="active", project_id="__unknown__",
+    "feature", seq=feature_seq, slug=feature_slug, name="Mock Transition Feature",
+    status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
 )
 db.create_workflow_phase(feature_type_id, workflow_phase="specify")
 
 engine = WorkflowStateEngine(db, engine_root)
 
-# --- Valid transition: specify -> design (spec.md exists). ---
+# --- Valid transition: specify -> design (shape.md exists). ---
 valid_raw = _process_transition_phase(
     engine, feature_type_id, "design", False, db=db,
 )
@@ -553,8 +563,8 @@ if invalid.get("transitioned") is not False:
     errors.append(f"expected invalid specify->implement transitioned=False, got {invalid}")
 if not invalid.get("blocking_guards"):
     errors.append(f"expected at least one blocking guard on invalid transition, got {invalid}")
-# G-08 is the authoritative blocker: implement requires design.md / plan.md /
-# tasks.md, none of which exist in the mock feature dir.
+# G-08 is the authoritative blocker: implement requires shape.md and plan.md,
+# and plan.md does not exist in the mock feature dir.
 if "G-08" not in invalid.get("guard_ids", []):
     errors.append(f"expected G-08 to fire for missing implement prereqs, got {invalid}")
 

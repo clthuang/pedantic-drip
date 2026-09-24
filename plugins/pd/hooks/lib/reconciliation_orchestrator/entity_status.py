@@ -170,9 +170,11 @@ def _sync_brainstorm_entities(
     # FR-10: suppress project_id when workspace_uuid is supplied (see _sync_meta_json_entities).
     effective_project_id = project_id if workspace_uuid is None else None
     # Registration takes one workspace (C5b): the given one, else the one the
-    # legacy project_id names, resolved as register_entity resolved that alias.
-    # Resolved at the first registration, so a sync that registers nothing
-    # reports an unknown project_id from the read in Part 2, as before.
+    # legacy project_id names, resolved under register_entity's name, so an
+    # unknown project_id reports the message register_entity's former
+    # project_id parameter gave. Resolved at the first registration, so a
+    # sync that registers nothing reports an unknown project_id from the read
+    # in Part 2, as before.
     registration_workspace_uuid = None
 
     # Part 1: scan filesystem for .prd.md files, register new entities
