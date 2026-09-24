@@ -59,10 +59,17 @@ it replaces under the registered metadata key ``RECREATED_FROM_KEY``. A
 re-run reads it to know an original is done. A project registered by an
 interrupted run before its record was written is recognized by what
 ``init_project_state`` wrote (its directory, slug and parent) and adopted,
-not registered a second time.
+not registered a second time. Its directory is compared by where it
+resolves; an unrecorded project with that slug and parent at any other
+directory is refused.
 
-**Guard.** A ``--db`` under ``~/.claude/pd`` (symlinks resolved) is refused
-in either mode unless ``--i-mean-the-live-registry`` is given.
+**Guard.** A ``--db`` that reaches ``~/.claude/pd`` is refused in either
+mode unless ``--i-mean-the-live-registry`` is given. "Reaches" means the
+directory, anything under it, or its registry file under another name,
+compared by resolved path and by file identity, so case variants,
+firmlinks and hard links are refused too. ``plan_only`` and ``apply``
+enforce it themselves (keyword ``live_registry_confirmed``), so an
+importer gets the same refusal.
 
 Usage::
 
@@ -98,6 +105,9 @@ from entity_registry.project_identity import _compute_legacy_project_id  # noqa:
 from entity_registry.schema_v2 import V2_SCHEMA_VERSION  # noqa: E402
 
 LIVE_REGISTRY_DIR = "~/.claude/pd"
+# The registry file in it, relative to it: ENTITY_DB_PATH's default. A hard
+# link to this file is the live registry under a name outside the directory.
+LIVE_REGISTRY_FILE = "entities/entities.db"
 LIVE_REGISTRY_FLAG = "--i-mean-the-live-registry"
 
 EXIT_OK = 0
@@ -173,10 +183,42 @@ class ApplyError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def is_under_live_registry(db_path: str) -> bool:
-    live_dir = Path(LIVE_REGISTRY_DIR).expanduser().resolve()
-    target = Path(db_path).expanduser().resolve()
-    return target == live_dir or live_dir in target.parents
+def reaches_the_live_registry(db_path: str) -> bool:
+    """Whether *db_path* reaches the live registry: ``~/.claude/pd`` itself,
+    anything under it, or its registry file under another name.
+
+    The resolved text (symlinks followed) is compared first. It misses other
+    spellings of the same place, so file identity (``os.path.samefile``) is
+    compared as well:
+
+    - **Case.** APFS is case-insensitive by default, and ``Path.resolve``
+      keeps the case as typed: ``~/.Claude/PD`` is the same directory.
+    - **Firmlinks.** ``/System/Volumes/Data/Users/...`` is ``/Users/...``.
+    - **Hard links.** A hard link to the registry file can have any name.
+
+    A path that does not exist yet is judged by those of its ancestors that do.
+    """
+    live_dir = Path(LIVE_REGISTRY_DIR).expanduser()
+    target = Path(os.path.expanduser(db_path)).absolute()
+    resolved_live, resolved_target = live_dir.resolve(), target.resolve()
+    if resolved_target == resolved_live or resolved_live in resolved_target.parents:
+        return True
+    same_file_checks = [(ancestor, live_dir) for ancestor in (target, *target.parents)]
+    same_file_checks.append((target, live_dir / LIVE_REGISTRY_FILE))
+    for path, live in same_file_checks:
+        with contextlib.suppress(OSError):  # either side missing
+            if os.path.samefile(path, live):
+                return True
+    return False
+
+
+def refuse_the_live_registry(db_path: str, *, live_registry_confirmed: bool) -> None:
+    """Raise Refusal for a *db_path* that reaches the live registry, unless
+    the caller confirmed it (``--i-mean-the-live-registry``)."""
+    if reaches_the_live_registry(db_path) and not live_registry_confirmed:
+        raise Refusal(f"{db_path} reaches the live registry ({LIVE_REGISTRY_DIR}, compared by "
+                      f"path and by file identity). A rehearsal runs on a copy; to write the "
+                      f"live file, pass {LIVE_REGISTRY_FLAG}.")
 
 
 def open_read_only(db_path: str, *, other_connection_open: bool = False) -> sqlite3.Connection:
@@ -477,21 +519,39 @@ def _unrecorded_project(conn: sqlite3.Connection, workspace: Workspace, artifact
                         new: dict) -> tuple[Row, int] | None:
     """A project an interrupted run registered with init_project_state but
     did not record: same workspace, slug and parent, and the artifact_path
-    init_project_state records for the number it holds."""
-    found = []
+    init_project_state records for the number it holds.
+
+    - **Directories compare by where they resolve** (``os.path.realpath``,
+      as init_project_state's containment check does), so a resume that
+      spells ``--artifacts-root`` through a symlink still finds the project.
+    - **Anywhere else is refused.** An unrecorded project with this slug and
+      parent at a directory this run's artifacts root does not reach would
+      otherwise be passed over: the allocator would issue a second number
+      for the same originals and leave the first project unrecorded.
+    """
+    found, elsewhere = [], []
     for record in conn.execute(
             f"SELECT {_select('e')}, d.seq AS display_seq, d.slug AS display_slug "
             f"FROM entities e JOIN entity_display d ON d.uuid = e.uuid "
             f"WHERE e.workspace_uuid = ? AND e.kind = 'project' AND e.is_legacy = 0 "
             f"AND e.is_deleted = 0 AND d.slug = ?", (workspace.uuid, new["slug"])):
         row = Row.of(record)
-        if RECREATED_FROM_KEY in row.metadata:
+        if RECREATED_FROM_KEY in row.metadata or row.parent_uuid != new["parent_uuid"]:
             continue
         directory = os.path.join(artifacts_root, "projects",
                                  render_display_id("project", record["display_seq"],
                                                    record["display_slug"]))
-        if row.artifact_path == directory and row.parent_uuid == new["parent_uuid"]:
+        if row.artifact_path and os.path.realpath(row.artifact_path) == os.path.realpath(directory):
             found.append((row, record["display_seq"]))
+        else:
+            elsewhere.append((row, directory))
+    if elsewhere:
+        raise Refusal("; ".join(
+            f"{row.type_id} has the slug {new['slug']!r} and parent {new['parent']!r} of a "
+            f"planned replacement and no record, but is registered at {row.artifact_path!r}, "
+            f"not at {directory!r} under this run's --artifacts-root. If an interrupted run "
+            f"registered it, re-run with that run's --artifacts-root; otherwise resolve it by hand"
+            for row, directory in elsewhere))
     if len(found) > 1:
         raise Refusal(f"{len(found)} unrecorded projects look like the replacement for slug "
                       f"{new['slug']!r}: {[row.type_id for row, _ in found]}")
@@ -804,11 +864,14 @@ def _record_replacement(context: Context, replacement_uuid: str, originals: list
                              workspace_uuid=context.workspace.uuid)
 
 
-def _init_project(context: Context, group: Group, entity_id: str, slug: str) -> str:
-    """init_project_state for the allocated *entity_id*; returns the project uuid."""
+def _init_project(context: Context, group: Group, entity_id: str, slug: str,
+                  project_dir: str | None = None) -> str:
+    """init_project_state for the allocated *entity_id*, in *project_dir*
+    (by default ``{artifacts_root}/projects/{entity_id}``); returns the
+    project uuid."""
     new = group.new
     arguments = {
-        "project_dir": os.path.join(context.artifacts_root, "projects", entity_id),
+        "project_dir": project_dir or os.path.join(context.artifacts_root, "projects", entity_id),
         # init_project_state composes {project_id}-{slug}: pass the number as
         # the allocator rendered it, not the full id (create-project step 6).
         "project_id": entity_id.removesuffix(f"-{slug}"),
@@ -843,10 +906,12 @@ def _create_project(context: Context, group: Group) -> Row:
 
 def _adopt_project(context: Context, group: Group) -> Row:
     """Finish a project an interrupted run registered but did not record:
-    the same init_project_state call resumes its own registration."""
+    the same init_project_state call resumes its own registration. It is
+    given the directory as that run recorded it, because init_project_state
+    resumes only a row whose artifact_path is the project_dir it is given."""
     row, seq = group.unrecorded_project
     project_uuid = _init_project(context, group, render_display_id("project", seq, group.new["slug"]),
-                                 group.new["slug"])
+                                 group.new["slug"], project_dir=row.artifact_path)
     if project_uuid != row.uuid:
         raise ApplyError(f"init_project_state resumed {project_uuid}, expected {row.uuid}")
     _record_replacement(context, project_uuid, group.originals)
@@ -969,7 +1034,9 @@ def verify(conn: sqlite3.Connection, plan: Plan) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def plan_only(db_path: str, workspace_root: str, artifacts_root: str) -> dict:
+def plan_only(db_path: str, workspace_root: str, artifacts_root: str, *,
+              live_registry_confirmed: bool = False) -> dict:
+    refuse_the_live_registry(db_path, live_registry_confirmed=live_registry_confirmed)
     with contextlib.closing(open_read_only(db_path)) as conn:
         check_schema(conn)
         plan = derive_plan(conn, workspace_root, artifacts_root)
@@ -979,7 +1046,8 @@ def plan_only(db_path: str, workspace_root: str, artifacts_root: str) -> dict:
 
 
 def apply(db_path: str, workspace_root: str, artifacts_root: str, *,
-          locked_scope: dict | None) -> dict:
+          locked_scope: dict | None, live_registry_confirmed: bool = False) -> dict:
+    refuse_the_live_registry(db_path, live_registry_confirmed=live_registry_confirmed)
     with contextlib.closing(open_read_only(db_path)) as conn:
         check_schema(conn)
         plan = derive_plan(conn, workspace_root, artifacts_root)
@@ -1013,27 +1081,29 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     mode.add_argument("--plan", action="store_true", help="read-only: print the manifest")
     mode.add_argument("--apply", action="store_true", help="recreate, move, archive, verify")
     parser.add_argument(LIVE_REGISTRY_FLAG, dest="live_registry_confirmed", action="store_true",
-                        help=f"allow a --db under {LIVE_REGISTRY_DIR}")
+                        help=f"allow a --db that reaches {LIVE_REGISTRY_DIR}")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     db_path = os.path.abspath(args.db)
-    if is_under_live_registry(db_path) and not args.live_registry_confirmed:
-        print(f"refused: {db_path} is under {LIVE_REGISTRY_DIR}, the live registry. A rehearsal "
-              f"runs on a copy; to write the live file, pass {LIVE_REGISTRY_FLAG}.",
-              file=sys.stderr)
-        return EXIT_REFUSED
-    if not os.path.isfile(db_path):
-        print(f"refused: {db_path} is not a file", file=sys.stderr)
-        return EXIT_REFUSED
     artifacts_root = os.path.abspath(args.artifacts_root)
+    confirmed = args.live_registry_confirmed
     try:
+        # plan_only and apply refuse the live registry themselves; checking
+        # first here makes that refusal, not "not a file", name a missing
+        # path that reaches it.
+        refuse_the_live_registry(db_path, live_registry_confirmed=confirmed)
+        if not os.path.isfile(db_path):
+            raise Refusal(f"{db_path} is not a file")
         if args.plan:
-            print(json.dumps(plan_only(db_path, args.workspace_root, artifacts_root), indent=2))
+            manifest = plan_only(db_path, args.workspace_root, artifacts_root,
+                                 live_registry_confirmed=confirmed)
+            print(json.dumps(manifest, indent=2))
             return EXIT_OK
-        report = apply(db_path, args.workspace_root, artifacts_root, locked_scope=LOCKED_SCOPE)
+        report = apply(db_path, args.workspace_root, artifacts_root, locked_scope=LOCKED_SCOPE,
+                       live_registry_confirmed=confirmed)
     except Refusal as refusal:
         print(f"refused: {refusal}", file=sys.stderr)
         return EXIT_REFUSED

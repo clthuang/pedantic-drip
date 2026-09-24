@@ -21,6 +21,7 @@ registry snapshot and asserts the file's full diff. It runs only when
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -174,7 +175,8 @@ def _feature(db: EntityDatabase, workspace_uuid: str, display_id: str, parent_uu
     )
 
 
-def _build_registry(root: Path, *, archived_half_created_later: bool = False) -> Registry:
+def _build_registry(root: Path, *, archived_half_created_later: bool = False,
+                    p001_pair_created_together: bool = False) -> Registry:
     root.mkdir(parents=True, exist_ok=True)
     db_path = root / "entities.db"
     rebuild_tool.build_staging_database(str(db_path))
@@ -209,11 +211,12 @@ def _build_registry(root: Path, *, archived_half_created_later: bool = False) ->
             "brainstorm", display_id="20260710-153600-entity-db-redesign",
             name="entity db redesign", workspace_uuid=ws)
 
-        _legacy(db, ws, "project", "P001", "P001", None, "2026-03-26T14:54:54.133536+00:00",
+        p001_created_at = "2026-03-26T14:54:54.133536+00:00"
+        _legacy(db, ws, "project", "P001", "P001", None, p001_created_at,
                 artifact_path=f"{workspace_root}/docs/projects/P001-iflow-arch-evolution")
         openclaw = _legacy(
             db, ws, "project", "P001-openclaw-gap-analysis", "Openclaw Gap Analysis", "active",
-            "2026-03-26T01:27:55.096791+00:00",
+            p001_created_at if p001_pair_created_together else "2026-03-26T01:27:55.096791+00:00",
             artifact_path="docs/projects/P001-openclaw-gap-analysis",
             metadata=json.dumps({"id": "P001", "slug": "openclaw-gap-analysis", "features": [],
                                  "milestones": [], "brainstorm_source": OPENCLAW_BRAINSTORM_SOURCE}))
@@ -425,11 +428,17 @@ def test_plan_writes_nothing_and_names_every_choice(registry, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_refuses_a_database_under_the_live_registry_directory(registry, tmp_path, capsys):
+def _live_registry_copy(registry: Registry) -> Path:
+    """The fixture registry, copied to the live registry's place under this test's HOME."""
     live_dir = Path(os.environ["HOME"]) / ".claude" / "pd" / "entities"
     live_dir.mkdir(parents=True)
     live_db = live_dir / "entities.db"
     shutil.copy(registry.db_path, live_db)
+    return live_db
+
+
+def test_refuses_a_database_under_the_live_registry_directory(registry, tmp_path, capsys):
+    live_db = _live_registry_copy(registry)
     alias = tmp_path / "alias.db"
     alias.symlink_to(live_db)
     before = _file_fingerprint(live_db)
@@ -443,6 +452,58 @@ def test_refuses_a_database_under_the_live_registry_directory(registry, tmp_path
     # The flag, and only the flag, lets the same run through.
     assert c22.main(_args(registry, "--plan", db=live_db) + ["--i-mean-the-live-registry"]) == 0
     assert json.loads(capsys.readouterr().out)["groups"]
+    assert _file_fingerprint(live_db) == before
+
+
+def _spellings_text_cannot_see(live_db: Path, tmp_path: Path) -> dict[str, Path]:
+    """Paths that reach the live registry although their resolved text is not
+    under ``~/.claude/pd``. A hard link works on any filesystem; the case
+    variants need a case-insensitive one (APFS's default), and the firmlink
+    needs macOS's ``/System/Volumes/Data``."""
+    home = Path(os.environ["HOME"])
+    spellings = {"hard link": tmp_path / "hard-link.db"}
+    os.link(live_db, spellings["hard link"])
+    case_variant = home / ".Claude" / "PD" / "entities" / "entities.db"
+    if case_variant.exists():
+        spellings["case variant"] = case_variant
+        spellings["new file in a case-variant directory"] = home / ".Claude" / "PD" / "new.db"
+    firmlink = Path("/System/Volumes/Data" + str(live_db))
+    if firmlink.exists() and os.path.samefile(firmlink, live_db):
+        spellings["firmlink"] = firmlink
+    live_dir = (home / ".claude" / "pd").resolve()
+    for label, path in spellings.items():  # the resolved text alone lets each one through
+        assert live_dir not in path.resolve().parents, label
+    return spellings
+
+
+def test_the_guard_compares_file_identity_not_path_text(registry, tmp_path, capsys):
+    live_db = _live_registry_copy(registry)
+    before = _file_fingerprint(live_db)
+    spellings = _spellings_text_cannot_see(live_db, tmp_path)
+
+    for label, db in spellings.items():
+        for mode in ("--plan", "--apply"):
+            assert c22.main(_args(registry, mode, db=db)) == 2, (label, mode)
+            assert "--i-mean-the-live-registry" in capsys.readouterr().err, (label, mode)
+    assert _file_fingerprint(live_db) == before
+    assert not registry.artifacts_root.exists()
+
+
+def test_plan_only_and_apply_refuse_the_live_registry_when_called_directly(registry, capsys):
+    """The guard is not main()'s alone: an importer calling the entry points
+    gets the same refusal, and only the keyword lets the call through."""
+    live_db = _live_registry_copy(registry)
+    before = _file_fingerprint(live_db)
+    arguments = (str(live_db), str(registry.workspace_root), str(registry.artifacts_root))
+
+    with pytest.raises(c22.Refusal, match="--i-mean-the-live-registry"):
+        c22.plan_only(*arguments)
+    with pytest.raises(c22.Refusal, match="--i-mean-the-live-registry"):
+        c22.apply(*arguments, locked_scope=None)
+    assert _file_fingerprint(live_db) == before
+    assert not registry.artifacts_root.exists()
+
+    assert c22.plan_only(*arguments, live_registry_confirmed=True)["groups"]
     assert _file_fingerprint(live_db) == before
 
 
@@ -706,19 +767,26 @@ def test_an_apply_interrupted_after_the_backlog_half_resumes_to_the_same_end_sta
     assert _end_state(interrupted) == _end_state(straight)
 
 
-def test_a_project_registered_before_its_record_is_adopted_not_duplicated(
-        registry, monkeypatch, capsys):
-    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+def _stop_before_the_first_record(monkeypatch) -> list[str]:
+    """Stop the run once, between the first project's init_project_state and
+    its record; returns the uuid of the project left unrecorded."""
     record_replacement = c22._record_replacement
-    crashes = []
+    stopped: list[str] = []
 
-    def crash_before_the_first_record(context, replacement_uuid, originals):
-        if not crashes:
-            crashes.append(replacement_uuid)
+    def stop_once(context, replacement_uuid, originals):
+        if not stopped:
+            stopped.append(replacement_uuid)
             raise KeyboardInterrupt
         return record_replacement(context, replacement_uuid, originals)
 
-    monkeypatch.setattr(c22, "_record_replacement", crash_before_the_first_record)
+    monkeypatch.setattr(c22, "_record_replacement", stop_once)
+    return stopped
+
+
+def test_a_project_registered_before_its_record_is_adopted_not_duplicated(
+        registry, monkeypatch, capsys):
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    crashes = _stop_before_the_first_record(monkeypatch)
     with pytest.raises(KeyboardInterrupt):
         c22.main(_args(registry, "--apply"))
     capsys.readouterr()
@@ -739,6 +807,261 @@ def test_a_project_registered_before_its_record_is_adopted_not_duplicated(
                            "AND entity_type = 'project'", (registry.workspace_uuid,)).fetchone()[0]
     assert counter == 9  # four numbers issued, none burned by the crash
     assert report["verification"] == {"passed": True, "failures": []}
+
+
+def test_an_apply_stopped_before_a_backlog_items_workflow_row_gives_it_one_on_resume(
+        tmp_path, monkeypatch, capsys):
+    """/pd:add-to-backlog step 4 on the resume path: a run that stopped after
+    register_entity and before init_entity_workflow leaves a recorded item
+    with no workflow row. The re-run takes the item as already recreated and
+    still writes its row."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    straight = _build_registry(tmp_path / "straight")
+    interrupted = _build_registry(tmp_path / "interrupted")
+    assert c22.main(_args(straight, "--apply")) == 0
+    first_item = "backlog:279-pre-review-lint-for-curly"
+
+    ensure_backlog_workflow = c22._ensure_backlog_workflow
+
+    def stop_before_the_workflow_row(context, replacement):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(c22, "_ensure_backlog_workflow", stop_before_the_workflow_row)
+    with pytest.raises(KeyboardInterrupt):
+        c22.main(_args(interrupted, "--apply"))
+
+    midway = _connect(interrupted.db_path)
+    assert sorted(_replacements(midway, interrupted.workspace_uuid)) == [first_item]
+    assert midway.execute("SELECT COUNT(*) FROM workflow_phases WHERE type_id = ?",
+                          (first_item,)).fetchone()[0] == 0
+    assert _entity(midway, interrupted.workspace_uuid, "backlog:00059")["is_archived"] == 0
+    midway.close()
+
+    monkeypatch.setattr(c22, "_ensure_backlog_workflow", ensure_backlog_workflow)
+    capsys.readouterr()
+    assert c22.main(_args(interrupted, "--apply")) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert {a["group"]: a["how"] for a in report["actions"]}["backlog:00059"] == "already recreated"
+    conn = _connect(interrupted.db_path)
+    assert tuple(conn.execute("SELECT workflow_phase, kanban_column FROM workflow_phases "
+                              "WHERE type_id = ?", (first_item,)).fetchone()) == ("open", "backlog")
+    conn.close()
+    assert _end_state(interrupted) == _end_state(straight)
+
+
+def _with_artifacts_root(args: list[str], artifacts_root: Path) -> list[str]:
+    args = list(args)
+    args[args.index("--artifacts-root") + 1] = str(artifacts_root)
+    return args
+
+
+def test_a_resume_through_a_symlinked_artifacts_root_adopts_the_unrecorded_project(
+        registry, tmp_path, monkeypatch, capsys):
+    """Adoption compares where the directories resolve, as init_project_state's
+    own containment check does, and resumes the registration under the
+    directory the earlier run recorded."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    stopped = _stop_before_the_first_record(monkeypatch)
+    with pytest.raises(KeyboardInterrupt):
+        c22.main(_args(registry, "--apply"))
+    capsys.readouterr()
+    alias = tmp_path / "artifacts-alias"
+    alias.symlink_to(registry.artifacts_root, target_is_directory=True)
+
+    assert c22.main(_with_artifacts_root(_args(registry, "--apply"), alias)) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert [(a["replacement"], a["replacement_uuid"]) for a in report["actions"]
+            if a["how"] == "adopted"] == [("project:005-iflow-arch-evolution", stopped[0])]
+    conn = _connect(registry.db_path)
+    projects = conn.execute("SELECT type_id FROM entities WHERE workspace_uuid = ? "
+                            "AND kind = 'project' AND is_legacy = 0",
+                            (registry.workspace_uuid,)).fetchall()
+    assert sorted(r[0] for r in projects) == sorted(
+        {v for v in REPLACEMENT_OF.values() if v.startswith("project:")})
+    assert _entity(conn, registry.workspace_uuid, "project:005-iflow-arch-evolution")[
+        "artifact_path"] == str(registry.artifacts_root / "projects" / "005-iflow-arch-evolution")
+    assert report["verification"] == {"passed": True, "failures": []}
+
+
+def test_a_resume_with_another_artifacts_root_refuses_rather_than_register_twice(
+        registry, tmp_path, monkeypatch, capsys):
+    """A project with the planned slug and parent, unrecorded, at a directory
+    this run's artifacts root does not reach: the allocator would issue a
+    second number for the same originals. The run refuses instead."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    _stop_before_the_first_record(monkeypatch)
+    with pytest.raises(KeyboardInterrupt):
+        c22.main(_args(registry, "--apply"))
+    capsys.readouterr()
+    elsewhere = tmp_path / "elsewhere"
+    before = _file_fingerprint(registry.db_path)
+
+    for mode in ("--plan", "--apply"):
+        assert c22.main(_with_artifacts_root(_args(registry, mode), elsewhere)) == 2
+        err = capsys.readouterr().err
+        assert "project:005-iflow-arch-evolution" in err, mode
+        assert str(registry.artifacts_root / "projects" / "005-iflow-arch-evolution") in err, mode
+    assert _file_fingerprint(registry.db_path) == before
+    assert not elsewhere.exists()
+
+
+# ---------------------------------------------------------------------------
+# verify(): the run's own last check, and --apply's exit code
+# ---------------------------------------------------------------------------
+
+
+def test_apply_exits_1_and_names_a_child_it_failed_to_move(registry, monkeypatch, capsys):
+    """A production path that quietly did not do its part is caught by
+    verify(), which sets the exit code; the re-run finishes the move."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    conn = _connect(registry.db_path)
+    left_behind = _entity(conn, registry.workspace_uuid, "feature:118-uuidv7-identity")["uuid"]
+    conn.close()
+    reparent_entity = EntityDatabase.reparent_entity
+
+    def skip_one_child(self, type_id, new_parent_uuid, **kwargs):
+        if type_id == left_behind:
+            return type_id
+        return reparent_entity(self, type_id, new_parent_uuid, **kwargs)
+
+    monkeypatch.setattr(EntityDatabase, "reparent_entity", skip_one_child)
+    assert c22.main(_args(registry, "--apply")) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["verification"] == {"passed": False, "failures": [
+        "feature:118-uuidv7-identity did not move onto project:008-entity-db-redesign",
+        "['feature:118-uuidv7-identity'] still point at project:P004-entity-db-redesign",
+    ]}
+
+    monkeypatch.setattr(EntityDatabase, "reparent_entity", reparent_entity)
+    assert c22.main(_args(registry, "--apply")) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert [(a["replacement"], a["children_moved"]) for a in report["actions"]
+            if a["children_moved"]] == [("project:008-entity-db-redesign",
+                                         ["feature:118-uuidv7-identity"])]
+    assert report["verification"] == {"passed": True, "failures": []}
+
+
+def _plan_before_apply(registry: Registry) -> c22.Plan:
+    with contextlib.closing(c22.open_read_only(str(registry.db_path))) as conn:
+        return c22.derive_plan(conn, str(registry.workspace_root), str(registry.artifacts_root))
+
+
+def _write_with_entity_database(registry: Registry, write) -> None:
+    db = EntityDatabase(str(registry.db_path))
+    try:
+        write(db)
+    finally:
+        db.close()
+
+
+def _write_sql(registry: Registry, statement: str, parameters: tuple = ()) -> None:
+    """A write no production path makes: it stands for damage."""
+    conn = sqlite3.connect(registry.db_path)
+    try:
+        conn.execute(statement, parameters)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# Each breaks one fact after a clean apply and returns the start of every
+# failure verify() must then report, in its order. Production paths where
+# one exists; else the file, an artifact, or the plan verify compares with.
+def _unarchive_an_original(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.set_archived(
+        "project:P002", archived=False, workspace_uuid=registry.workspace_uuid))
+    return ["project:P002 is not archived"]
+
+
+def _change_an_originals_status(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.update_entity(
+        uuid_of["project:P002"], status="completed", workspace_uuid=registry.workspace_uuid))
+    return ["project:P002's status moved 'active' -> 'completed'"]
+
+
+def _move_a_child_back_onto_its_original(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.reparent_entity(
+        uuid_of["feature:079-fts5-backfill"], uuid_of["project:P002"],
+        workspace_uuid=registry.workspace_uuid))
+    return ["feature:079-fts5-backfill did not move onto project:006-memory-flywheel",
+            "['feature:079-fts5-backfill'] still point at project:P002"]
+
+
+def _move_the_residue_child(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.reparent_entity(
+        uuid_of["feature:112-workspace-identity-cleanup"],
+        uuid_of["project:007-entity-system-redesign"], workspace_uuid=registry.workspace_uuid))
+    return ["residue child feature:112-workspace-identity-cleanup left "
+            "project:P003-entity-system-redesign"]
+
+
+def _empty_a_replacements_record(registry, plan, uuid_of):
+    _write_with_entity_database(registry, lambda db: db.update_entity(
+        uuid_of["project:006-memory-flywheel"], metadata={RECREATED_FROM_KEY: []},
+        workspace_uuid=registry.workspace_uuid))
+    return ["project:P002: 0 recorded replacements"]
+
+
+def _delete_a_backlog_items_workflow_row(registry, plan, uuid_of):
+    _write_sql(registry, "DELETE FROM workflow_phases WHERE type_id = ?",
+               ("backlog:279-pre-review-lint-for-curly",))
+    return ["backlog:279-pre-review-lint-for-curly lacks its backlog workflow row"]
+
+
+def _remove_a_projects_meta_json(registry, plan, uuid_of):
+    directory = registry.artifacts_root / "projects" / "006-memory-flywheel"
+    (directory / ".meta.json").unlink()
+    return [f"project:006-memory-flywheel has no .meta.json at {directory}"]
+
+
+def _delete_a_features_display_row(registry, plan, uuid_of):
+    child = uuid_of["feature:079-fts5-backfill"]
+    _write_sql(registry, "DELETE FROM entity_display WHERE uuid = ?", (child,))
+    return [f"display_row_invariant: Entity '{child}' (feature:079-fts5-backfill) has no "
+            f"entity_display row"]
+
+
+def _raise_the_project_high_water_mark_to_the_first_issued_number(registry, plan, uuid_of):
+    plan.buckets["project"]["legacy_high_water"] = 5
+    return ["project:005-iflow-arch-evolution: 5 does not clear the legacy high-water mark 5"]
+
+
+def _count_an_issued_number_as_legacy(registry, plan, uuid_of):
+    plan.legacy_numbers["backlog"].add(280)
+    return ["backlog:280-low-security-resolve-project reuses legacy number 280"]
+
+
+@pytest.mark.parametrize("break_one_fact", [
+    _unarchive_an_original,
+    _change_an_originals_status,
+    _move_a_child_back_onto_its_original,
+    _move_the_residue_child,
+    _empty_a_replacements_record,
+    _delete_a_backlog_items_workflow_row,
+    _remove_a_projects_meta_json,
+    _delete_a_features_display_row,
+    _raise_the_project_high_water_mark_to_the_first_issued_number,
+    _count_an_issued_number_as_legacy,
+], ids=lambda breaker: breaker.__name__.strip("_"))
+def test_verify_names_each_fact_that_does_not_hold(registry, monkeypatch, capsys, break_one_fact):
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    plan = _plan_before_apply(registry)
+    assert c22.main(_args(registry, "--apply")) == 0
+    capsys.readouterr()
+    with contextlib.closing(c22.open_read_only(str(registry.db_path))) as conn:
+        assert c22.verify(conn, plan) == []
+        uuid_of = {r["type_id"]: r["uuid"] for r in conn.execute(
+            "SELECT type_id, uuid FROM entities WHERE workspace_uuid = ?",
+            (registry.workspace_uuid,))}
+
+    expected = break_one_fact(registry, plan, uuid_of)
+
+    with contextlib.closing(c22.open_read_only(str(registry.db_path))) as conn:
+        failures = c22.verify(conn, plan)
+    assert len(failures) == len(expected), failures
+    for failure, start in zip(failures, expected):
+        assert failure.startswith(start), failures
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +1091,22 @@ def test_refuses_a_group_whose_later_row_is_out_of_scope(tmp_path, monkeypatch, 
     assert _file_fingerprint(registry.db_path) == before
 
 
+def test_refuses_a_group_with_no_single_latest_row(tmp_path, monkeypatch, capsys):
+    """The survivor is the row with the later created_at; two rows at the
+    group's latest created_at leave no survivor to pick."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    registry = _build_registry(tmp_path / "registry", p001_pair_created_together=True)
+    before = _file_fingerprint(registry.db_path)
+
+    for mode in ("--plan", "--apply"):
+        assert c22.main(_args(registry, mode)) == 2
+        err = capsys.readouterr().err
+        assert "['project:P001', 'project:P001-openclaw-gap-analysis'] share the latest " \
+               "created_at of their group; no survivor" in err, mode
+    assert _file_fingerprint(registry.db_path) == before
+    assert not registry.artifacts_root.exists()
+
+
 def test_refuses_when_a_project_directory_already_holds_the_next_number(
         registry, monkeypatch, capsys):
     """/pd:create-project step 4: a number at or below an existing project
@@ -780,6 +1119,98 @@ def test_refuses_when_a_project_directory_already_holds_the_next_number(
 
     assert "P005-already-on-disk" in capsys.readouterr().err
     assert _file_fingerprint(registry.db_path) == before
+
+
+# Each puts the fixture in a state C22 must refuse; the test then shows the
+# refusal names that state and writes nothing.
+def _state_schema_version_6(registry):
+    _write_sql(registry, "UPDATE _metadata SET value = '6' WHERE key = 'schema_version'")
+
+
+def _record_another_checkouts_project_id(registry):
+    _write_sql(registry, "UPDATE workspaces SET project_id_legacy = 'another-checkout' "
+                         "WHERE uuid = ?", (registry.workspace_uuid,))
+
+
+def _name_the_other_workspace_in_workspace_json(registry):
+    workspace_file = registry.workspace_root / ".claude" / "pd" / "workspace.json"
+    workspace_file.parent.mkdir(parents=True)
+    workspace_file.write_text(json.dumps({"workspace_uuid": registry.other_workspace_uuid}))
+
+
+def _record_one_replacement_for_two_groups(registry):
+    def register(db):
+        originals = [db.resolve_ref(type_id, workspace_uuid=registry.workspace_uuid)
+                     for type_id in ("backlog:00059", "backlog:00177")]
+        db.register_entity("backlog", name="made by hand", seq=400, slug="made-by-hand",
+                           status="open", workspace_uuid=registry.workspace_uuid,
+                           metadata={RECREATED_FROM_KEY: originals})
+    _write_with_entity_database(registry, register)
+
+
+def _lower_the_backlog_counter_to_its_legacy_high_water(registry):
+    _write_sql(registry, "UPDATE sequences SET next_val = 177 WHERE workspace_uuid = ? "
+                         "AND entity_type = 'backlog'", (registry.workspace_uuid,))
+
+
+def _drop_the_project_counter(registry):
+    _write_sql(registry, "DELETE FROM sequences WHERE workspace_uuid = ? "
+                         "AND entity_type = 'project'", (registry.workspace_uuid,))
+
+
+@pytest.mark.parametrize("put_in_state, modes, reason", [
+    (_state_schema_version_6, ("--plan", "--apply"),
+     "would migrate anything else on open"),
+    (_record_another_checkouts_project_id, ("--plan", "--apply"),
+     "records project_id_legacy 'another-checkout'"),
+    (_name_the_other_workspace_in_workspace_json, ("--plan", "--apply"),
+     "workspace.json names workspace"),
+    (_record_one_replacement_for_two_groups, ("--plan", "--apply"),
+     "but backlog:00059's group is"),
+    (_lower_the_backlog_counter_to_its_legacy_high_water, ("--apply",),
+     "the backlog counter 177 does not clear its legacy high-water mark 177"),
+    (_drop_the_project_counter, ("--apply",),
+     "the project bucket has no sequences counter"),
+], ids=lambda value: value.__name__.strip("_") if callable(value) else None)
+def test_each_refusal_names_its_reason_and_writes_nothing(
+        registry, monkeypatch, capsys, put_in_state, modes, reason):
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    put_in_state(registry)
+    before = _file_fingerprint(registry.db_path)
+
+    for mode in modes:
+        assert c22.main(_args(registry, mode)) == 2, mode
+        assert reason in capsys.readouterr().err, mode
+    assert _file_fingerprint(registry.db_path) == before
+    assert not registry.artifacts_root.exists()
+
+
+def test_a_project_directory_appearing_after_preflight_stops_before_registering(
+        registry, monkeypatch, capsys):
+    """The number allocate_entity_id issued is checked against the project
+    directories again before init_project_state, so a directory that
+    appeared after preflight (another /pd:create-project) stops the run: the
+    number is spent, nothing is registered under it."""
+    monkeypatch.setattr(c22, "LOCKED_SCOPE", FIXTURE_SCOPE)
+    preflight = c22.preflight
+    appeared = registry.artifacts_root / "projects" / "P005-appeared-meanwhile"
+
+    def a_directory_appears_after_preflight(plan):
+        preflight(plan)
+        appeared.mkdir(parents=True)
+
+    monkeypatch.setattr(c22, "preflight", a_directory_appears_after_preflight)
+    assert c22.main(_args(registry, "--apply")) == 1
+
+    err = capsys.readouterr().err
+    assert "P005-appeared-meanwhile" in err and "number 5 is spent, nothing registered" in err
+    conn = _connect(registry.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM entities WHERE workspace_uuid = ? AND kind = 'project' "
+                        "AND is_legacy = 0", (registry.workspace_uuid,)).fetchone()[0] == 0
+    assert conn.execute("SELECT next_val FROM sequences WHERE workspace_uuid = ? "
+                        "AND entity_type = 'project'", (registry.workspace_uuid,)).fetchone()[0] == 6
+    conn.close()
+    assert [p.name for p in (registry.artifacts_root / "projects").iterdir()] == [appeared.name]
 
 
 def test_the_script_holds_no_sql_that_writes():
