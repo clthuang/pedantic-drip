@@ -22,4 +22,5 @@ dev = [
 [tool.pytest.ini_options]
 markers = [
     "benchmark: opt-in performance stress benchmarks (not run by default in validate.sh)",
+    "slow: wall-clock timing checks that still run by default",
 ]
