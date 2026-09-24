@@ -10334,6 +10334,7 @@ class EntityDatabase:
         kanban_column: str | None = None,
         workflow_phase: str | None = None,
         workspace_uuid: str | None = None,
+        include_archived: bool = True,
     ) -> list[dict]:
         """List workflow_phases rows with optional filters.
 
@@ -10350,6 +10351,13 @@ class EntityDatabase:
             RETAINED under scope for anomaly visibility (declared output
             change — see design D2/D4). ``None`` preserves today's
             unscoped return exactly.
+        include_archived:
+            ``True`` (the default) returns the rows of archived entities
+            too; every caller except the kanban board relies on that.
+            ``False`` drops the rows whose joined entity has
+            ``is_archived = 1`` — the board's view (``ui/routes/board.py``).
+            Orphan rows are kept either way, and ``is_deleted`` plays no
+            part.
 
         Returns
         -------
@@ -10371,6 +10379,11 @@ class EntityDatabase:
         if workspace_uuid is not None:
             clauses.append("(e.workspace_uuid = ? OR e.uuid IS NULL)")
             params.append(workspace_uuid)
+        if not include_archived:
+            # WHERE, not the join's ON: there an archived entity would fail
+            # the join and its row would come back as an orphan, which this
+            # clause and the workspace scope both keep.
+            clauses.append("(e.uuid IS NULL OR e.is_archived = 0)")
 
         # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
         # result-set key for caller compatibility (TD-8 public API surface).

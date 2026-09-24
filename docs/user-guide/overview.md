@@ -39,7 +39,7 @@ YOLO mode lets pd run the full workflow without pausing for confirmation at each
 
 ### Kanban Board
 
-A local web UI starts automatically at `http://localhost:8718/` each session. It shows all features, brainstorms, backlog items, and projects with their current phase — no setup required.
+A local web UI starts automatically at `http://localhost:8718/` each session. It shows all features, brainstorms, backlog items, and projects with their current phase, except archived ones — no setup required.
 
 ### Execution-Grounded QA
 
