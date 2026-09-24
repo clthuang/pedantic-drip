@@ -672,10 +672,18 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     """Atomically allocate the next {seq:03d}-{slug} entity id for a type.
 
     Direct plumbing over ``next_sequence_value`` + ``_slugify`` (design
-    D1) — the same atomic ``BEGIN IMMEDIATE`` counter every registration
-    path uses, exposed standalone so callers (create-feature, decomposing)
-    can mint an id BEFORE any filesystem/DB write (feature 121 SC1). No
-    sequence value is consumed when an error envelope is returned.
+    D1) — the same atomic ``BEGIN IMMEDIATE`` counter every allocating
+    path uses (``generate_entity_id`` included), exposed standalone so
+    callers (create-feature, create-project, decomposing) can mint an id
+    BEFORE any filesystem/DB write (feature 121 SC1). No sequence value
+    is consumed when an error envelope is returned.
+
+    The number comes from the registry alone, never the disk: it is
+    above every display number registered for that kind in the workspace
+    (C1/C2), but a directory the registry has no row for is invisible to
+    it. That is why ``/pd:create-feature`` and ``/pd:create-project``
+    still compare it with the directories on disk before creating
+    anything.
 
     Parameters
     ----------
