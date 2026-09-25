@@ -461,7 +461,7 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 
 **Metadata Module:** `plugins/pd/hooks/lib/entity_registry/metadata.py` — centralized `parse_metadata()` (returns `{}` for None/invalid, never `None`) and `validate_metadata()` (warn-only schema checks per entity type). All entity_registry and workflow_engine modules import from here instead of hand-rolling `json.loads` patterns.
 
-**Batch Registration:** `EntityDatabase.register_entities_batch()` registers multiple entities in a single transaction (~7x faster). Supports intra-batch parent references (parent must appear earlier in the list).
+**Batch Registration:** `EntityDatabase.register_entities_batch()` registers multiple entities in one transaction. Each item names its parent by the `parent_uuid` of an entity that is already registered; items cannot reference each other, and an item key the method does not read is refused with `TypeError`.
 
 **Backfill Scanner:** `plugins/pd/hooks/lib/entity_registry/backfill.py` scans existing artifact directories (features/, brainstorms/, projects/, backlog.md) and registers entities in topological order (backlog -> brainstorm -> project -> feature). Runs once on first server start; subsequent runs are skipped via a `backfill_complete` metadata marker.
 
