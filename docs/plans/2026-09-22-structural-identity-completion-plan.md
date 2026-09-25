@@ -884,6 +884,11 @@ sqlite3 'file:<snapshot>?mode=ro&immutable=1' "PRAGMA integrity_check; SELECT CO
 
 Each one behaves the same on the develop that preceded it; none is a Release C regression. The reviews and premortems found them, and each was verified by a probe.
 
+**Triaged and designed 2026-09-25:**
+- **Design:** `docs/plans/2026-09-25-release-c-followups-design.md`, with a triage table for these 11 and 13 more problems the investigation found.
+- **Plan:** `docs/plans/2026-09-25-release-c-followups-implementation-plan.md`.
+- **Evidence:** `agent_sandbox/2026-09-25/release-c-followups/`.
+
 **Identity across workspaces**
 1. **Shared feature type_ids.** When two workspaces hold one feature type_id, the seq/slug readers answer "entity not found" (fail closed), and the all-workspaces board shows two cards. The fix needs `workflow_phases` keyed per workspace; its PRIMARY KEY is `type_id` alone.
 2. **Namesake directories cross workspaces.** Bulk reconciliation pairs `features/D` with `feature:D` in any workspace, so an unscoped run can reach another workspace's row.
