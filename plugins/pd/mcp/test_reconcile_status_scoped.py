@@ -3,8 +3,9 @@
 Design: ``docs/plans/2026-09-25-release-c-followups-design.md``, W1 change 6
 and its Tests ("Scoped, healthy status").
 
-- **Scoped:** the tool reports the server's workspace only; features that
-  only another workspace holds are omitted.
+- **Scoped:** a feature only another workspace holds, with no projection in
+  this checkout, is omitted. (A namesake projection here is still compared
+  against that workspace's row: ``workflow_phases`` is keyed by type_id.)
 - **Health:** only a feature whose DB state and projection disagree
   (``db_ahead``, ``meta_json_ahead``) makes it unhealthy. A row with no
   projection (``db_only``) or a projection with no row (``meta_json_only``)

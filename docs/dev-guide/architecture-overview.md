@@ -109,7 +109,7 @@ Two MCP servers provide persistent state to Claude across sessions:
 
 ### Entity Registry Server (`mcp/entity_server.py`)
 
-Tools (19): `register_entity`, `issue_spawn`, `set_parent`, `get_entity`, `get_lineage`, `update_entity`, `export_lineage_markdown`, `search_entities`, `export_entities`, `delete_entity`, `add_entity_tag`, `get_entity_tags`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `get_okr_alignments`, `create_key_result`, `update_kr_score`, `list_projects`
+Tools (20): `allocate_entity_id`, `register_entity`, `issue_spawn`, `set_parent`, `get_entity`, `get_lineage`, `update_entity`, `export_lineage_markdown`, `search_entities`, `export_entities`, `delete_entity`, `add_entity_tag`, `get_entity_tags`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `get_okr_alignments`, `create_key_result`, `update_kr_score`, `list_projects`
 
 Tracks lineage of pd artifacts (backlog items, brainstorms, projects, features) in a cross-project SQLite DB at `~/.claude/pd/entities/entities.db`. The `type_id` format is `{entity_type}:{entity_id}` with a colon separator (e.g., `feature:075-phase-context-accumulation`).
 

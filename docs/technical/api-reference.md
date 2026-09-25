@@ -70,8 +70,8 @@ reconcile_status(summary_only: bool = False) -> {"workflow_drift": dict, "frontm
     # summary_only=True -> {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
 ```
 
-- **Scope:** the server's workspace; a feature only another workspace holds is omitted.
-- **Health:** only `db_ahead` and `meta_json_ahead` (DB state and projection disagree) make `reconcile_status` unhealthy, and only they are counted in `workflow_drift_count`. `db_only` (no projection) and `meta_json_only` (no row) are listed, not counted.
+- **Scope:** the server's workspace: a feature only another workspace holds is omitted, unless this checkout holds a `.meta.json` of its type_id. Workflow rows are keyed by type_id, so that projection is compared against the other workspace's row, and counts toward health when the two disagree.
+- **Health:** only `db_ahead` and `meta_json_ahead` (DB state and projection disagree) make `reconcile_status` unhealthy, and only they are counted in `workflow_drift_count`. `db_only` (no projection), `meta_json_only` (no row) and `error` reports are listed, not counted.
 
 ## MCP: Entity Registry Server
 

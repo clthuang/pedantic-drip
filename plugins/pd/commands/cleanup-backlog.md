@@ -18,7 +18,7 @@ AskUserQuestion:
     "question": "Archive {N} fully-closed backlog sections?",
     "header": "Cleanup",
     "options": [
-      {"label": "Apply", "description": "Flip status to archived in the DB and re-project"},
+      {"label": "Apply", "description": "Set the archive flag in the DB and re-project"},
       {"label": "Cancel", "description": "Do nothing"}
     ],
     "multiSelect": false

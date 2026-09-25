@@ -5173,7 +5173,7 @@ class TestEndToEndWorkflow:
         entity = db.get_entity("feature:100-lifecycle")
         assert entity["status"] == "active"
 
-        # When transitioning to "specify" (engine auto-hydrates workflow phase from .meta.json)
+        # When transitioning to "specify" (on the workflow row init_feature_state seeded)
         result = _process_transition_phase(
             engine, "feature:100-lifecycle", "specify", False,
             db=db, skipped_phases=None,

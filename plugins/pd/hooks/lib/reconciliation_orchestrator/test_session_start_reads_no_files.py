@@ -13,7 +13,8 @@ and a temp git repo.
 
 **The two workspaces.** The checkout under test is workspace A. Workspace B
 is another pd repo registered in the same registry, the way every pd project
-on a machine shares one ``entities.db``.
+on a machine shares one ``entities.db``. One test adds a third: a second
+clone of A's repository, whose workspace has no legacy project id.
 """
 from __future__ import annotations
 
@@ -53,6 +54,19 @@ def _make_pd_repo(path, root_message: str) -> str:
     _git("init", "-q", "-b", "main", str(path))
     _git("-C", str(path), "commit", "-q", "--allow-empty", "-m", root_message)
     (path / ".claude").mkdir()
+    return os.path.realpath(str(path))
+
+
+def _clone_pd_repo(source: str, path) -> str:
+    """A second clone of *source*, pd-enabled, with an empty ``docs/``.
+
+    The clone shares its source's root commit, so its workspace row gets no
+    legacy project id: that id is already the source workspace's, and the
+    column is unique (``project_identity._insert_workspace_row_if_absent``).
+    """
+    _git("clone", "-q", source, str(path))
+    (path / ".claude").mkdir()
+    (path / "docs").mkdir()
     return os.path.realpath(str(path))
 
 
@@ -275,6 +289,66 @@ def test_cascade_recovery_rolls_up_the_sessions_parent_by_uuid(checkout):
     assert result["errors"] == []
 
 
+def test_cascade_recovery_rescores_only_the_sessions_objective(checkout):
+    """An objective type_id held by A and B, each with a met key result and
+    a stale stored score of 0.0. A's session start rescores A's objective,
+    by uuid, and leaves B's objective and key result untouched: the
+    objective scan lists only A's entities."""
+    c, db = checkout, checkout["db"]
+    objectives, key_results = {}, {}
+    for workspace in (c["A"], c["B"]):
+        objective = _register(db, "objective", workspace, seq=60,
+                              slug="shared-goal", metadata={"score": 0.0})
+        key_result = _register(
+            db, "key_result", workspace, seq=61, slug="goal-met",
+            parent_uuid=objective["uuid"],
+            metadata={"metric_type": "baseline_target", "score": 1.0},
+        )
+        objectives[workspace] = objective["uuid"]
+        key_results[workspace] = key_result["uuid"]
+    assert (db.get_entity_by_uuid(objectives[c["A"]])["type_id"]
+            == db.get_entity_by_uuid(objectives[c["B"]])["type_id"])
+    b_objective_before = dict(db.get_entity_by_uuid(objectives[c["B"]]))
+    b_key_result_before = dict(db.get_entity_by_uuid(key_results[c["B"]]))
+
+    result = _session_start(c)
+
+    a_meta = parse_metadata(db.get_entity_by_uuid(objectives[c["A"]])["metadata"])
+    assert a_meta["score"] == 1.0
+    assert (dict(db.get_entity_by_uuid(objectives[c["B"]]))
+            == b_objective_before)
+    assert (dict(db.get_entity_by_uuid(key_results[c["B"]]))
+            == b_key_result_before)
+    assert result["cascade_recovery"] == 1
+    assert result["errors"] == []
+
+
+def test_a_rollup_stops_at_the_first_ancestor_outside_the_workspace(checkout):
+    """A's completed feature, under A's project, under B's programme. A's
+    session start rolls A's project up and stops there: B's programme is
+    B's to recover."""
+    c, db = checkout, checkout["db"]
+    b_programme = seed_legacy_entity(
+        db, "project", "P009", "B's programme", workspace_uuid=c["B"],
+        status="active",
+    )
+    a_project = _register(db, "project", c["A"], seq=40, slug="a-project",
+                          parent_uuid=b_programme)
+    _register(db, "feature", c["A"], seq=41, slug="finished",
+              status="completed", parent_uuid=a_project["uuid"])
+    b_programme_before = dict(db.get_entity_by_uuid(b_programme))
+
+    result = _session_start(c)
+
+    a_progress = parse_metadata(
+        db.get_entity_by_uuid(a_project["uuid"])["metadata"]
+    ).get("progress")
+    assert a_progress == 1.0
+    assert dict(db.get_entity_by_uuid(b_programme)) == b_programme_before
+    assert result["cascade_recovery"] == 1
+    assert result["errors"] == []
+
+
 def test_dependency_flip_by_uuid_for_a_shared_type_id(checkout):
     """A blocked dependent in A whose type_id B also holds flips to
     ``ready`` once its blocker is resolved; B's namesake is untouched, and
@@ -297,6 +371,33 @@ def test_dependency_flip_by_uuid_for_a_shared_type_id(checkout):
     assert [event["project_id"] for event in events] == [
         dependent["project_id"]
     ]
+    assert result["dependency_cleanup"] == 1
+    assert result["errors"] == []
+
+
+def test_a_flip_in_a_workspace_without_a_legacy_id_records_its_uuid(
+    checkout, tmp_path,
+):
+    """A second clone of A's repository resolves to its own workspace, which
+    has no legacy project id. A dependent flipped there records that
+    workspace's uuid as the ``cascade_ready`` event's project id, never
+    ``__unknown__``."""
+    c, db = checkout, checkout["db"]
+    clone = _clone_pd_repo(c["repo"], tmp_path / "second-clone")
+    ws_clone = resolve_workspace_uuid(clone, db_path=c["db_path"])
+    assert ws_clone not in (c["A"], c["B"])
+    blocker = _register(db, "feature", ws_clone, seq=51, slug="landed",
+                        status="completed")
+    dependent = _register(db, "feature", ws_clone, seq=52, slug="waiting",
+                          status="blocked")
+    assert dependent["project_id"] is None
+    db.add_dependency(dependent["uuid"], blocker["uuid"])
+
+    result = _session_start(c, project_root=clone)
+
+    assert db.get_entity_by_uuid(dependent["uuid"])["status"] == "ready"
+    events = _cascade_ready_events(db, dependent["type_id"])
+    assert [event["project_id"] for event in events] == [ws_clone]
     assert result["dependency_cleanup"] == 1
     assert result["errors"] == []
 

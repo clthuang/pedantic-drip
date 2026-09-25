@@ -2082,8 +2082,13 @@ def _process_reconcile_status(
     {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
 
     - **Scoped** (W1.6): ``workspace_uuid`` goes to ``check_workflow_drift``,
-      so a feature only another workspace holds is omitted, and to
-      ``scan_all`` (feature 113 FR-11.3) for the frontmatter scan.
+      whose ``db_only`` scan then omits a feature only another workspace
+      holds, and to ``scan_all`` (feature 113 FR-11.3) for the frontmatter
+      scan. Not scoped: each ``.meta.json`` in this checkout is compared
+      against the row of its type_id (``workflow_phases`` is keyed by
+      type_id), so a namesake projection of a feature only another
+      workspace holds is reported, and counts toward health when it
+      disagrees with that workspace's row.
     - **Health** (W1.6): only a feature whose DB state and projection
       disagree (``db_ahead``, ``meta_json_ahead``) is workflow drift: it
       makes the report unhealthy and is what ``workflow_drift_count``
@@ -2092,7 +2097,7 @@ def _process_reconcile_status(
       counted. Frontmatter drift and ``artifact_missing_count`` never
       affect health.
     """
-    # Workflow drift, this workspace's features only
+    # Workflow drift: this workspace's rows and this checkout's projections
     workflow_result = check_workflow_drift(
         engine, db, artifacts_root, workspace_uuid=workspace_uuid,
     )
@@ -2539,10 +2544,13 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
 async def reconcile_status(summary_only: bool = False) -> str:
     """Unified health report across workflow state and frontmatter drift.
 
-    Reports this workspace's features only. Unhealthy only when a feature's
+    Reports this workspace's features: its workflow rows and this checkout's
+    .meta.json projections. Workflow rows are keyed by type_id, so a
+    projection here of a feature only another workspace holds is still
+    compared against that workspace's row. Unhealthy only when a feature's
     DB state and its .meta.json projection disagree (db_ahead,
-    meta_json_ahead); a row with no projection (db_only) or a projection
-    with no row (meta_json_only) is listed but not counted.
+    meta_json_ahead); a row with no projection (db_only), a projection with
+    no row (meta_json_only) and an error report are listed but not counted.
     """
     err = _check_db_available()
     if err:

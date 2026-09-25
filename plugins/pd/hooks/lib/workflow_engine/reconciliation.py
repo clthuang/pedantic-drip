@@ -539,7 +539,11 @@ def check_workflow_drift(
         ``db.list_workflow_phases`` call so db_only detection is
         workspace-scoped. ``None`` preserves today's unscoped behavior
         exactly (orphan workflow_phases rows are always retained --
-        see ``list_workflow_phases`` docstring).
+        see ``list_workflow_phases`` docstring). The per-feature
+        comparison is not scoped: it reads the row by type_id alone
+        (``workflow_phases`` is keyed by type_id), so a ``.meta.json`` of
+        a feature only another workspace holds is compared against that
+        workspace's row.
 
     Returns
     -------
