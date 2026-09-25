@@ -879,3 +879,29 @@ sqlite3 'file:<snapshot>?mode=ro&immutable=1' "PRAGMA integrity_check; SELECT CO
 - The vestigial date-valued `brainstorm` counters (`next_val = 20260711` and four siblings). No creation path allocates from them; brainstorm identity is a timestamp. Leave them; do not "repair" them toward a real date.
 - The v2 `sequences` shape divergence (RCA S8) — no live importer.
 - Renaming existing `P00N-*` directories on disk. They belong to entities the clean break marked legacy; nothing renames them.
+
+## Follow-ups found during Release C (2026-09-25; not fixed)
+
+Each one behaves the same on the develop that preceded it; none is a Release C regression. The reviews and premortems found them, and each was verified by a probe.
+
+**Identity across workspaces**
+1. **Shared feature type_ids.** When two workspaces hold one feature type_id, the seq/slug readers answer "entity not found" (fail closed), and the all-workspaces board shows two cards. The fix needs `workflow_phases` keyed per workspace; its PRIMARY KEY is `type_id` alone.
+2. **Namesake directories cross workspaces.** Bulk reconciliation pairs `features/D` with `feature:D` in any workspace, so an unscoped run can reach another workspace's row.
+3. **One-sided workspace failure.** `init_project_state` and `init_feature_state` register in `__unknown__` when only the workflow server failed to resolve its workspace, while `allocate_entity_id` refuses. Suggested fix: a `workspace_unresolved` envelope.
+4. **`create_key_result` parent lookup.** It can place a key result and its parent objective in different workspaces (the unscoped parent lookup at `entity_server.py` ~469-481).
+
+**Worktrees and checkouts**
+5. **A fresh worktree archives every feature.** Session-start Task 1 (`entity_status._sync_meta_json_entities`) archives each feature whose folder lacks `.meta.json`, and that file is gitignored, so every new worktree or clone triggers it.
+6. **Writer and reader use different checkouts.** `_project_meta_json`, `_check_artifact_completeness` and `task_promotion.py` ~311 use the stored `artifact_path`. For absolute rows in a worktree session, they write and read the main checkout.
+7. **`detect_project_root` (`common.sh`) matches only a `.git` directory.** A nested linked worktree resolves its enclosing main checkout; a sibling worktree resolves `$PWD`.
+8. **`backfill_workflow_phases` path.** It reads `.meta.json` through the raw stored path, relative to the server's cwd.
+
+**Tooling and docs**
+9. **`display.rename_entity` breaks the column invariant if wired up.** It rewrites `type_id` alone. If it is ever wired to the registry, it must take a new `entity_id` and compose the type_id from it, to keep `type_id = kind || ':' || entity_id`, which C11 relies on.
+10. **Unguarded shell tests.** The alias exit scan reads `.py` files only, and nothing automated runs `test-workflow-regression.sh` or `test-sqlite-concurrency.sh`.
+11. **`README.md`'s board sentence** does not say archived entities are hidden. It was left alone because the main checkout holds uncommitted user edits to README.md.
+
+**Review-gate deviations (process record).** The one-fix-round rule was exceeded twice:
+- **C11 (path-based):** four rounds on `si-c11`, then escalated to the user, who chose the redesign.
+- **C22:** two fix rounds.
+Every other task and phase finished within one fix round, followed by independent QA.
