@@ -71,6 +71,7 @@ from workflow_engine.task_promotion import (
     promote_task as _lib_promote_task,
     query_ready_tasks as _lib_query_ready_tasks,
 )
+from workflow_engine.feature_paths import check_feature_dir_name, feature_dir_path
 from workflow_engine.models import FeatureWorkflowState
 from workflow_engine.rollup import get_ancestor_progress as _lib_get_ancestor_progress
 from workflow_engine.notifications import NotificationQueue
@@ -409,6 +410,50 @@ def _read_entity_display(
     return metadata.get("id", ""), metadata.get("slug", "")
 
 
+def _artifact_dir(
+    db: EntityDatabase,
+    engine: WorkflowStateEngine | None,
+    entity: dict,
+) -> str | None:
+    """The directory in this session's checkout that holds *entity*'s
+    artifacts, named, never read from the stored ``artifact_path`` (W2.2).
+
+    The stored path may point into another checkout (a main checkout seen
+    from a linked worktree), and features registered since feature 134
+    have none.
+
+    - **Feature:** ``{artifacts_root}/features/<name>``, named by
+      ``feature_dir_path``: ``feature_dir_name`` plus the engine's
+      containment check.
+    - **Project:** ``{artifacts_root}/projects/<last component of the
+      stored artifact_path>``, a trailing ``/`` stripped first. A project's
+      entity_id need not be its directory's name, so only the stored path's
+      last component names it; it must be one safe path component, and the
+      path must resolve inside ``artifacts_root``.
+    - **Any other kind, or nothing to name it:** None.
+
+    ``artifacts_root`` is the engine's, or this server's when the engine is
+    None. The directory need not exist; existence is the caller's check.
+
+    Raises ``ValueError`` when the name is refused.
+    """
+    root = engine.artifacts_root if engine is not None else _artifacts_root
+    if entity["kind"] == "feature":
+        return feature_dir_path(db, root, entity["type_id"])
+    if entity["kind"] != "project":
+        return None
+    stored = (entity.get("artifact_path") or "").rstrip("/")
+    if not stored:
+        return None
+    name = check_feature_dir_name(os.path.basename(stored))
+    path = os.path.join(root, "projects", name)
+    if not os.path.realpath(path).startswith(os.path.realpath(root) + os.sep):
+        raise ValueError(
+            f"Invalid project directory (path traversal): {entity['type_id']}"
+        )
+    return path
+
+
 def _project_meta_json(
     db: EntityDatabase,
     engine: WorkflowStateEngine | None,
@@ -416,6 +461,13 @@ def _project_meta_json(
     feature_dir: str | None = None,
 ) -> str | None:
     """Regenerate .meta.json from DB + engine state. Returns warning string or None.
+
+    **Where it writes** (W2.2): *feature_dir* when the caller passes one
+    (``init_feature_state``, which has just made it); otherwise the
+    directory ``_artifact_dir`` names in this session's checkout, never the
+    stored ``artifact_path``. A refused name, no name, or a directory that
+    does not exist returns a ``projection skipped: ...`` warning and writes
+    nothing; the caller's DB write has already committed.
 
     Kind-dispatches (feature 123 D5): ``feature`` builds the projection
     below unchanged; ``project`` builds the PROJECT shape (id/slug/status/
@@ -449,9 +501,14 @@ def _project_meta_json(
         return None
 
     if feature_dir is None:
-        feature_dir = entity.get("artifact_path")
-        if not feature_dir:
-            return f"artifact_path not set and no feature_dir provided: {feature_type_id}"
+        try:
+            feature_dir = _artifact_dir(db, engine, entity)
+        except ValueError as exc:
+            return f"projection skipped: {exc}"
+        if feature_dir is None:
+            return f"projection skipped: no directory is named for {feature_type_id}"
+        if not os.path.isdir(feature_dir):
+            return f"projection skipped: directory does not exist: {feature_dir}"
 
     meta_path = os.path.join(feature_dir, ".meta.json")
 
@@ -1279,14 +1336,24 @@ _EXPECTED_ARTIFACTS: dict[str, list[str]] = {
 def _check_artifact_completeness(
     db: EntityDatabase,
     feature_type_id: str,
+    engine: WorkflowStateEngine | None = None,
 ) -> list[str]:
-    """Check for missing expected artifacts on finish. Returns list of warnings."""
+    """Check for missing expected artifacts on finish. Returns list of warnings.
+
+    The directory checked is the one ``_artifact_dir`` names in this
+    session's checkout (W2.3), with the engine's ``artifacts_root`` (this
+    server's when *engine* is None), never the stored ``artifact_path``. A
+    refused name, no name, or a missing directory checks nothing.
+    """
     entity = db.get_entity(feature_type_id)
     if entity is None:
         return []
 
-    artifact_path = entity.get("artifact_path")
-    if not artifact_path or not os.path.isdir(artifact_path):
+    try:
+        artifact_path = _artifact_dir(db, engine, entity)
+    except ValueError:
+        return []
+    if artifact_path is None or not os.path.isdir(artifact_path):
         return []
 
     # Read mode from workflow_phases table
@@ -1638,7 +1705,7 @@ def _process_complete_phase(
         # Artifact completeness warning on finish (AC-5)
         if phase == "finish":
             artifact_warnings = _check_artifact_completeness(
-                db, feature_type_id,
+                db, feature_type_id, engine,
             )
             if artifact_warnings:
                 result["artifact_warnings"] = artifact_warnings
@@ -1685,11 +1752,12 @@ def _process_reproject_meta_json(
     projection through the sanctioned MCP boundary instead of a denied
     direct Write. ``artifacts_root`` mirrors the sibling mutation
     handlers' signature shape but is unused here: ``_project_meta_json``
-    resolves ``feature_dir`` from the entity's own ``artifact_path``
-    column, not from ``artifacts_root``.
+    names the directory under the engine's ``artifacts_root`` (W2.2),
+    never from the entity's stored ``artifact_path`` column.
 
-    A non-None ``warning`` means NO file was written (entity missing or
-    ``artifact_path`` unset) -- ``projected`` is False in that case.
+    A non-None ``warning`` means NO file was written (entity missing, or
+    no directory named, or the named directory missing in this checkout)
+    -- ``projected`` is False in that case.
     """
     warning = _project_meta_json(db, engine, feature_type_id)
     return json.dumps({
@@ -2715,6 +2783,7 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     try:
         result = _lib_promote_task(
             _db, feature_ref, task_heading,
+            artifacts_root=_artifacts_root,
             workspace_uuid=_workspace_uuid or None,
         )
         return json.dumps(result)

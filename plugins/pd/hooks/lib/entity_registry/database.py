@@ -9948,10 +9948,42 @@ class EntityDatabase:
     # Workflow Phase CRUD
     # ------------------------------------------------------------------
 
+    def _workflow_row_owner(
+        self, type_id: str, workspace_uuid: str | None
+    ) -> sqlite3.Row:
+        """The entity a ``workflow_phases`` row write belongs to (W2.1).
+
+        Resolved with :meth:`_resolve_identifier`: scoped to
+        *workspace_uuid* when one is given, otherwise the type_id must be
+        globally unique, so a type_id two workspaces hold is refused
+        instead of guessed. Returns the entity's ``uuid``, ``type_id``,
+        ``workspace_uuid`` and ``kind``; the row writers insert the first
+        three explicitly, so the ``wp_autofill_workspace_uuid`` trigger
+        never picks a workspace.
+
+        Raises ``ValueError``: ``Entity not found: <type_id>`` (the writers'
+        existing phrasing), or ``_resolve_identifier``'s ``Ambiguous type_id
+        ...`` refusal unchanged.
+        """
+        try:
+            entity_uuid, _ = self._resolve_identifier(
+                type_id, workspace_uuid=workspace_uuid
+            )
+        except ValueError as exc:
+            if str(exc).startswith("Entity not found"):
+                raise ValueError(f"Entity not found: {type_id}") from exc
+            raise
+        return self._conn.execute(
+            "SELECT uuid, type_id, workspace_uuid, kind FROM entities "
+            "WHERE uuid = ?",
+            (entity_uuid,),
+        ).fetchone()
+
     def create_workflow_phase(
         self,
         type_id: str,
         *,
+        workspace_uuid: str | None = None,
         kanban_column: str = "backlog",
         workflow_phase: str | None = None,
         last_completed_phase: str | None = None,
@@ -9960,10 +9992,19 @@ class EntityDatabase:
     ) -> dict:
         """Create a workflow_phases row for an existing entity.
 
+        The row stores the resolved entity's ``type_id``, ``workspace_uuid``
+        and ``uuid`` explicitly (W2.1), so the ``wp_autofill_workspace_uuid``
+        trigger never guesses the workspace.
+
         Parameters
         ----------
         type_id:
             The entity type_id (must exist in the entities table).
+        workspace_uuid:
+            The workspace whose entity the row belongs to. Given, the
+            type_id is looked up in that workspace only. Omitted, the
+            type_id must be globally unique: a type_id two workspaces hold
+            is refused, never resolved to one of them.
         kanban_column:
             Kanban column (default ``"backlog"``).
         workflow_phase:
@@ -9983,17 +10024,15 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If the entity does not exist, a row already exists, or a
-            CHECK constraint is violated.
+            If the entity does not exist (in *workspace_uuid*, when given),
+            the type_id is ambiguous across workspaces and no workspace was
+            given, a row already exists, or a CHECK constraint is violated.
         """
-        # FK check: entity must exist. uuid + kind are also fetched here
-        # (feature 132 D5) so the v2 establishment emit below can resolve
-        # entity_uuid and route pipeline-vs-lifecycle without a second query.
-        row = self._conn.execute(
-            "SELECT type_id, uuid, kind FROM entities WHERE type_id = ?", (type_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"Entity not found: {type_id}")
+        # The entity must exist. Its uuid and kind also feed the v2
+        # establishment emit below (feature 132 D5): the uuid names the
+        # event's entity, the kind routes pipeline-vs-lifecycle.
+        owner = self._workflow_row_owner(type_id, workspace_uuid)
+        type_id = owner["type_id"]
 
         now = self._now_iso()
         try:
@@ -10016,17 +10055,18 @@ class EntityDatabase:
             with self.transaction():
                 self._conn.execute(
                     "INSERT INTO workflow_phases "
-                    "(type_id, kanban_column, workflow_phase, "
-                    "last_completed_phase, mode, backward_transition_reason, "
-                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (type_id, kanban_column, workflow_phase,
-                     last_completed_phase, mode, backward_transition_reason,
-                     now),
+                    "(type_id, workspace_uuid, uuid, kanban_column, "
+                    "workflow_phase, last_completed_phase, mode, "
+                    "backward_transition_reason, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (type_id, owner["workspace_uuid"], owner["uuid"],
+                     kanban_column, workflow_phase, last_completed_phase,
+                     mode, backward_transition_reason, now),
                 )
                 self._emit_v2_event(
-                    entity_uuid=row["uuid"],
+                    entity_uuid=owner["uuid"],
                     event_type="workflow_established",
-                    axis="pipeline" if row["kind"] == "feature" else "lifecycle",
+                    axis="pipeline" if owner["kind"] == "feature" else "lifecycle",
                     to_value=workflow_phase,
                     actor="live:create_workflow_phase",
                 )
@@ -10103,8 +10143,10 @@ class EntityDatabase:
             When non-None, SELECTs the stored ``workspace_uuid`` from
             ``workflow_phases`` and raises ``ValueError`` on mismatch BEFORE
             the UPDATE proceeds. Does NOT appear in the UPDATE SET clause —
-            the column is immutable post-Migration-11 (autofill at INSERT
-            only via ``wp_autofill_workspace_uuid`` trigger). Default ``None``
+            the column is immutable post-Migration-11 (set at INSERT only:
+            explicitly by :meth:`create_workflow_phase` and
+            :meth:`upsert_workflow_phase` since W2.1, otherwise by the
+            ``wp_autofill_workspace_uuid`` trigger). Default ``None``
             preserves prior no-check behavior.
 
         Returns
@@ -10188,9 +10230,15 @@ class EntityDatabase:
     ) -> None:
         """Insert or update a workflow_phases row atomically.
 
-        Uses INSERT OR IGNORE followed by UPDATE to handle both new and
-        existing rows in a single call. Column names in *kwargs* are
-        validated against an allow-list to prevent SQL injection.
+        Inserts the row when absent, then updates the given columns, in one
+        transaction. Column names in *kwargs* are validated against an
+        allow-list to prevent SQL injection.
+
+        W2.1: the entity is resolved the way :meth:`create_workflow_phase`
+        resolves it, and an inserted row stores the resolved entity's
+        ``workspace_uuid`` and ``uuid`` explicitly, so the
+        ``wp_autofill_workspace_uuid`` trigger never guesses. A row that
+        belongs to another workspace is refused, never overwritten.
 
         Feature 132 D5: deliberately EXCLUDED from v2 dual-write duty --
         presentational, same rationale as :meth:`update_workflow_phase`'s
@@ -10203,11 +10251,11 @@ class EntityDatabase:
         project_id:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
             the shared workspace-identity resolution (feature 132 D6.4).
-            Defaults to ``"__unknown__"`` when neither this nor
-            ``workspace_uuid`` is supplied.
         workspace_uuid:
-            Workspace scope for entity existence check. Post-Migration-11
-            the entities table is keyed on (workspace_uuid, type_id).
+            The workspace whose entity the row belongs to. With neither this
+            nor ``project_id``, the type_id must be globally unique: a
+            type_id two workspaces hold is refused, never resolved to one
+            of them (there is no ``__unknown__`` default).
         **kwargs:
             Mutable columns to set. Allowed keys: ``workflow_phase``,
             ``kanban_column``, ``last_completed_phase``, ``mode``,
@@ -10216,7 +10264,9 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If entity not found in the specified workspace, or if any
+            If the entity is not found in the specified workspace, the
+            type_id is ambiguous across workspaces and no workspace was
+            given, the existing row belongs to another workspace, or any
             key in *kwargs* is not in the allow-list.
         """
         ALLOWED_COLUMNS = {
@@ -10231,39 +10281,39 @@ class EntityDatabase:
         if invalid:
             raise ValueError(f"Invalid workflow_phases columns: {invalid}")
 
-        # Resolve workspace identity (default __unknown__ when both omitted)
-        if workspace_uuid is None and project_id is None:
-            project_id = "__unknown__"
-        try:
-            ws_uuid = self._resolve_optional_workspace_filter(
-                workspace_uuid, project_id, _caller="upsert_workflow_phase"
-            )
-            if ws_uuid is None:
-                raise ValueError(
-                    "upsert_workflow_phase() requires workspace_uuid or "
-                    "project_id"
+        # A given workspace identity must resolve and pass the split-brain
+        # guard; with none, the type_id itself must be globally unique.
+        ws_uuid = None
+        if workspace_uuid is not None or project_id is not None:
+            try:
+                ws_uuid = self._resolve_optional_workspace_filter(
+                    workspace_uuid, project_id, _caller="upsert_workflow_phase"
                 )
-            ws_uuid = self._validated_provided_workspace_uuid(
-                ws_uuid, "upsert_workflow_phase"
-            )
-        except ValueError:
-            # Unknown project_id_legacy → entity is "not found in project"
-            raise ValueError(
-                f"Entity {type_id!r} not found in project {project_id!r}"
-            )
+                if ws_uuid is None:
+                    raise ValueError(
+                        "upsert_workflow_phase() requires workspace_uuid or "
+                        "project_id"
+                    )
+                ws_uuid = self._validated_provided_workspace_uuid(
+                    ws_uuid, "upsert_workflow_phase"
+                )
+            except ValueError:
+                # Unknown project_id_legacy → entity is "not found in project"
+                raise ValueError(
+                    f"Entity {type_id!r} not found in project {project_id!r}"
+                )
 
-        # Entity existence check scoped by workspace_uuid
-        entity_row = self._conn.execute(
-            "SELECT uuid FROM entities "
-            "WHERE workspace_uuid = ? AND type_id = ?",
-            (ws_uuid, type_id),
-        ).fetchone()
-        if entity_row is None:
+        try:
+            owner = self._workflow_row_owner(type_id, ws_uuid)
+        except ValueError as exc:
+            if not str(exc).startswith("Entity not found"):
+                raise  # ambiguous across workspaces: refused as raised
             # Compat error message preserves the legacy phrasing.
             scope = project_id if project_id is not None else ws_uuid
             raise ValueError(
                 f"Entity {type_id!r} not found in project {scope!r}"
-            )
+            ) from exc
+        type_id = owner["type_id"]
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         now = self._now_iso()
@@ -10271,12 +10321,27 @@ class EntityDatabase:
         kc = kwargs.get("kanban_column", "backlog")
 
         with self.transaction():
-            self._conn.execute(
-                "INSERT OR IGNORE INTO workflow_phases "
-                "(type_id, workflow_phase, kanban_column, updated_at) "
-                "VALUES (?, ?, ?, ?)",
-                (type_id, wf, kc, now),
-            )
+            existing = self._conn.execute(
+                "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+                (type_id,),
+            ).fetchone()
+            if existing is None:
+                self._conn.execute(
+                    "INSERT INTO workflow_phases "
+                    "(type_id, workspace_uuid, uuid, workflow_phase, "
+                    "kanban_column, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (type_id, owner["workspace_uuid"], owner["uuid"], wf, kc,
+                     now),
+                )
+            elif (
+                existing["workspace_uuid"] is not None
+                and existing["workspace_uuid"] != owner["workspace_uuid"]
+            ):
+                raise ValueError(
+                    f"workflow_phases row for {type_id!r} belongs to workspace "
+                    f"{existing['workspace_uuid']!r}, not "
+                    f"{owner['workspace_uuid']!r}; refusing to overwrite it"
+                )
 
             kwargs["updated_at"] = now
             set_parts = []

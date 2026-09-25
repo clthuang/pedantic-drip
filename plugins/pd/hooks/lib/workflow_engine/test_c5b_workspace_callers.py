@@ -167,7 +167,8 @@ def test_promote_task_allocates_and_registers_in_the_callers_workspace(
     monkeypatch.setattr(task_promotion, "_compute_legacy_project_id", lambda *_a, **_k: LEGACY_A)
     feature_type_id = _feature_with_plan(db, tmp_path, ws_b)
 
-    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING, workspace_uuid=ws_b)
+    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING,
+                                          artifacts_root=str(tmp_path), workspace_uuid=ws_b)
 
     task_type_id = result["task_type_id"]
     assert _counter(db, ws_b, "task") is not None
@@ -187,7 +188,8 @@ def test_promote_task_without_a_workspace_resolves_the_legacy_id_once(
     allocations = _record_calls(monkeypatch, db, "next_sequence_value")
     registrations = _record_calls(monkeypatch, db, "register_entity")
 
-    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING)
+    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING,
+                                          artifacts_root=str(tmp_path))
 
     task_type_id = result["task_type_id"]
     _assert_no_alias(allocations, ws_a)
@@ -209,7 +211,8 @@ def test_promote_task_with_a_workspace_does_not_need_the_legacy_id(
                         lambda *_a, **_k: "no-such-legacy-id")
     feature_type_id = _feature_with_plan(db, tmp_path, ws_b)
 
-    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING, workspace_uuid=ws_b)
+    result = task_promotion.promote_task(db, feature_type_id, _TASK_HEADING,
+                                          artifacts_root=str(tmp_path), workspace_uuid=ws_b)
 
     assert result["promoted"] is True
     assert _row_workspace(db, result["task_type_id"]) == ws_b
@@ -224,5 +227,6 @@ def test_promote_task_names_the_workspace_it_could_not_resolve(
     feature_type_id = _feature_with_plan(db, tmp_path, ws_a)
 
     with pytest.raises(ValueError, match="project_id='no-such-legacy-id' has no matching"):
-        task_promotion.promote_task(db, feature_type_id, _TASK_HEADING)
+        task_promotion.promote_task(db, feature_type_id, _TASK_HEADING,
+                                    artifacts_root=str(tmp_path))
     assert _counter(db, ws_a, "task") is None

@@ -72,7 +72,7 @@ class TestParentUuidPreference:
             json.dump(meta, f)
 
         # Run backfill_workflow_phases
-        result = backfill_workflow_phases(db, artifacts_root, project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Brainstorm should get a workflow_phases row
         # The child completion detection should have worked
@@ -125,7 +125,7 @@ class TestParentUuidPreference:
         with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
             json.dump(meta, f)
 
-        result = backfill_workflow_phases(db, artifacts_root, project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert result["errors"] == []
 
     def test_parent_uuid_resolves_children_correctly(self, db_and_root):
@@ -155,7 +155,7 @@ class TestParentUuidPreference:
             with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
                 json.dump(meta, f)
 
-        result = backfill_workflow_phases(db, artifacts_root, project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert result["errors"] == []
 
         # Check brainstorm got completed kanban due to all children complete
@@ -198,7 +198,7 @@ class TestParentUuidPreference:
             with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
                 json.dump(meta, f)
 
-        result = backfill_workflow_phases(db, artifacts_root, project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert result["errors"] == []
 
         # Both children should be found (via uuid or type_id fallback)

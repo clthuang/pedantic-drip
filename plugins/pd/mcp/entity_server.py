@@ -278,20 +278,29 @@ async def lifespan(server):
         except Exception as exc:
             print(f"entity-server: backfill failed: {exc}", file=sys.stderr)
 
-        # Always run workflow_phases backfill (has its own INSERT OR IGNORE idempotency).
-        # Called OUTSIDE the backfill_complete guard so newly registered entities
-        # get workflow_phases rows on every startup.
-        try:
-            from entity_registry.backfill import backfill_workflow_phases
+        # Seed missing workflow_phases rows on every startup, OUTSIDE the
+        # backfill_complete guard, so newly registered entities get rows (an
+        # existing row is kept; only a brainstorm's or backlog item's NULL
+        # phase is filled in). W2.6: it reads the registry only, never a
+        # .meta.json, and seeds this server's workspace only, so it is
+        # skipped when no workspace resolved.
+        if _workspace_uuid:
+            try:
+                from entity_registry.backfill import backfill_workflow_phases
 
-            result = backfill_workflow_phases(_db, _artifacts_root, project_id=_project_id)
-            if result["created"] > 0:
-                print(
-                    f"entity-server: workflow_phases backfill created {result['created']} rows",
-                    file=sys.stderr,
-                )
-        except Exception as exc:
-            print(f"entity-server: workflow_phases backfill failed: {exc}", file=sys.stderr)
+                result = backfill_workflow_phases(_db, workspace_uuid=_workspace_uuid)
+                if result["created"] > 0:
+                    print(
+                        f"entity-server: workflow_phases backfill created {result['created']} rows",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                print(f"entity-server: workflow_phases backfill failed: {exc}", file=sys.stderr)
+        else:
+            print(
+                "entity-server: workflow_phases backfill skipped: workspace unresolved",
+                file=sys.stderr,
+            )
 
         print(
             f"entity-server: started (db={db_path}, artifacts={_artifacts_root})",

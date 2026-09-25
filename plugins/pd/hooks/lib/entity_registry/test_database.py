@@ -3757,7 +3757,10 @@ class TestListWorkflowPhasesWorkspaceScoping:
         db.register_entity(
             "feature", name="Feature In B", seq=2, slug="collide", workspace_uuid=ws_b
         )
-        db.create_workflow_phase("feature:002-collide", kanban_column="wip")
+        # The type_id is ambiguous, so the row names its workspace (W2.1).
+        db.create_workflow_phase(
+            "feature:002-collide", workspace_uuid=ws_a, kanban_column="wip"
+        )
 
         result = db.list_workflow_phases(workspace_uuid=ws_a)
         assert len(result) == 1

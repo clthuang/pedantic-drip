@@ -147,7 +147,7 @@ class TestPromoteTaskExactMatch:
         # Update entity to have artifact_path
         db.update_entity(type_id, artifact_path=artifact_path)
 
-        result = promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        result = promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
 
         assert result["promoted"] is True
         assert result["entity_type"] == "task"
@@ -166,7 +166,7 @@ class TestPromoteTaskExactMatch:
         artifact_path = _write_plan_md(tmp_path)
         db.update_entity(type_id, artifact_path=artifact_path)
 
-        result = promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        result = promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
 
         task_type_id = result["task_type_id"]
         wp = db.get_workflow_phase(task_type_id)
@@ -179,7 +179,7 @@ class TestPromoteTaskExactMatch:
         artifact_path = _write_plan_md(tmp_path)
         db.update_entity(type_id, artifact_path=artifact_path)
 
-        result = promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        result = promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
 
         task_type_id = result["task_type_id"]
         wp = db.get_workflow_phase(task_type_id)
@@ -200,7 +200,7 @@ class TestPromoteTaskFuzzyMatch:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         # Partial match — "Add structured log fields" should match
-        result = promote_task(db, type_id, "Add structured log fields")
+        result = promote_task(db, type_id, "Add structured log fields", artifacts_root=str(tmp_path))
 
         assert result["promoted"] is True
         assert "task_uuid" in result
@@ -211,7 +211,7 @@ class TestPromoteTaskFuzzyMatch:
         artifact_path = _write_plan_md(tmp_path)
         db.update_entity(type_id, artifact_path=artifact_path)
 
-        result = promote_task(db, type_id, "add structured log fields")
+        result = promote_task(db, type_id, "add structured log fields", artifacts_root=str(tmp_path))
         assert result["promoted"] is True
 
     def test_ambiguous_heading_returns_candidates(self, tmp_path):
@@ -221,7 +221,7 @@ class TestPromoteTaskFuzzyMatch:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         # "Add" matches both "Add structured log fields" and "Add health check endpoint"
-        result = promote_task(db, type_id, "Add")
+        result = promote_task(db, type_id, "Add", artifacts_root=str(tmp_path))
 
         assert result["promoted"] is False
         assert "candidates" in result
@@ -234,7 +234,7 @@ class TestPromoteTaskFuzzyMatch:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         with pytest.raises(TaskNotFoundError, match="No matching task"):
-            promote_task(db, type_id, "Completely unrelated heading xyz")
+            promote_task(db, type_id, "Completely unrelated heading xyz", artifacts_root=str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +250,11 @@ class TestPromoteTaskAlreadyPromoted:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         # First promotion succeeds
-        promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
 
         # Second promotion of same task fails
         with pytest.raises(TaskAlreadyPromotedError, match="already promoted"):
-            promote_task(db, type_id, "Task 3.1: Add structured log fields")
+            promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +271,9 @@ class TestPromoteTaskDependencies:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         # Promote task 3.1 first (no deps)
-        r1 = promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        r1 = promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
         # Promote task 3.2 (depends on 3.1)
-        r2 = promote_task(db, type_id, "Task 3.2: Implement retry middleware")
+        r2 = promote_task(db, type_id, "Task 3.2: Implement retry middleware", artifacts_root=str(tmp_path))
 
         # Check dependency was created
         blockers = dep_mgr.get_blockers(db, r2["task_uuid"])
@@ -288,7 +288,7 @@ class TestPromoteTaskDependencies:
         db.update_entity(type_id, artifact_path=artifact_path)
 
         # Promote task 3.2 without promoting 3.1 first
-        r2 = promote_task(db, type_id, "Task 3.2: Implement retry middleware")
+        r2 = promote_task(db, type_id, "Task 3.2: Implement retry middleware", artifacts_root=str(tmp_path))
 
         # No blockers since 3.1 not promoted
         blockers = dep_mgr.get_blockers(db, r2["task_uuid"])
@@ -307,30 +307,36 @@ class TestPromoteTaskRefResolution:
         artifact_path = _write_plan_md(tmp_path)
         db.update_entity(type_id, artifact_path=artifact_path)
 
-        result = promote_task(db, type_id, "Task 3.1: Add structured log fields")
+        result = promote_task(db, type_id, "Task 3.1: Add structured log fields", artifacts_root=str(tmp_path))
         assert result["promoted"] is True
 
     def test_feature_not_found_raises(self, tmp_path):
         db = _make_db()
         with pytest.raises(ValueError, match="No entity found"):
-            promote_task(db, "feature:nonexistent", "anything")
+            promote_task(db, "feature:nonexistent", "anything", artifacts_root=str(tmp_path))
 
-    def test_feature_without_artifact_path_raises(self, tmp_path):
+    def test_feature_without_artifact_path_is_promoted_from_its_named_directory(self, tmp_path):
+        """W2.4: plan.md is found by name under artifacts_root; the stored
+        artifact_path (unset for every feature since 134) is not needed."""
         db = _make_db()
         type_id, _ = _register_feature(db)
-        # Don't set artifact_path
-        with pytest.raises(ValueError, match="artifact_path"):
-            promote_task(db, type_id, "anything")
+        _write_plan_md(tmp_path)  # {tmp_path}/features/<entity_id>/plan.md
+        assert db.get_entity(type_id)["artifact_path"] is None
+
+        result = promote_task(
+            db, type_id, "Task 3.1: Add structured log fields",
+            artifacts_root=str(tmp_path),
+        )
+        assert result["promoted"] is True
 
     def test_feature_without_plan_md_raises(self, tmp_path):
         db = _make_db()
         type_id, _ = _register_feature(db)
-        # Set artifact_path to a dir without plan.md
-        empty_dir = tmp_path / "features" / "empty"
-        empty_dir.mkdir(parents=True)
-        db.update_entity(type_id, artifact_path=str(empty_dir))
+        # The named directory exists, without plan.md
+        named_dir = tmp_path / "features" / "052-reactive-entity-consistency"
+        named_dir.mkdir(parents=True)
         with pytest.raises(FileNotFoundError, match="plan.md"):
-            promote_task(db, type_id, "anything")
+            promote_task(db, type_id, "anything", artifacts_root=str(tmp_path))
 
 
 # ---------------------------------------------------------------------------

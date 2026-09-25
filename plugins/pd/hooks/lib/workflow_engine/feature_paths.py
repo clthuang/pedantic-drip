@@ -14,7 +14,8 @@ place:
    is composed from the listed name, never parsed.
 
 Either way the name passes ``check_feature_dir_name``. Joining it under
-``features/`` and checking where it resolves stays with each caller.
+``features/`` and checking where it resolves stays with each caller, or
+``feature_dir_path`` does both.
 """
 from __future__ import annotations
 
@@ -88,3 +89,32 @@ def feature_dir_name(
     if name is None:
         return None
     return check_feature_dir_name(name)
+
+
+def feature_dir_path(
+    db: EntityDatabase | None, artifacts_root: str, type_id: str
+) -> str | None:
+    """``{artifacts_root}/features/<name>`` for the feature *type_id*, or
+    None when nothing names a directory.
+
+    The name is ``feature_dir_name``'s. The path must resolve inside
+    ``artifacts_root``, symlinks included: the containment check
+    ``WorkflowStateEngine._contained_feature_dir_name`` makes, with its
+    refusal text. The directory need not exist; existence is the caller's
+    check. Callers that must not follow a stored ``artifact_path`` into
+    another checkout name the directory here instead (W2).
+
+    Raises:
+        ValueError: ``feature_dir_name``'s refusals (``feature_not_found:
+            ...``), or ``Invalid feature_type_id (path traversal): ...``
+            when the path resolves outside ``artifacts_root``.
+        sqlite3.Error: when the registry read fails.
+    """
+    name = feature_dir_name(db, artifacts_root, type_id)
+    if name is None:
+        return None
+    path = os.path.join(artifacts_root, "features", name)
+    root = os.path.realpath(artifacts_root)
+    if not os.path.realpath(path).startswith(root + os.sep):
+        raise ValueError(f"Invalid feature_type_id (path traversal): {type_id}")
+    return path

@@ -977,7 +977,6 @@ from entity_registry.backfill import (
     VALID_MODES,
     _derive_next_phase,
     _kanban_column_for,
-    _resolve_meta_path,
     backfill_workflow_phases,
 )
 
@@ -1038,70 +1037,14 @@ class TestWorkflowPhaseBackfill:
         assert _derive_next_phase("unknown-phase") is None
 
     # -------------------------------------------------------------------
-    # Task 3.3: _resolve_meta_path
+    # Task 3.3b: status resolution (W2.6: the registry's status, 'planned'
+    # when unset; no .meta.json is read)
     # -------------------------------------------------------------------
-
-    def test_resolve_meta_path_directory_artifact_path(self, tmp_path, db):
-        """Entity with artifact_path directory -> {artifact_path}/.meta.json."""
-        feat_dir = tmp_path / "features" / "001-test"
-        feat_dir.mkdir(parents=True)
-        meta_file = feat_dir / ".meta.json"
-        meta_file.write_text('{"id": "001"}')
-
-        entity = {"artifact_path": str(feat_dir), "entity_type": "feature", "entity_id": "001-test"}
-        result = _resolve_meta_path(entity, str(tmp_path))
-        assert result == str(meta_file)
-
-    def test_resolve_meta_path_file_artifact_path_falls_through(self, tmp_path, db):
-        """Entity with file artifact_path (e.g., .prd.md) -> derived path doesn't exist, falls to convention."""
-        prd_file = tmp_path / "brainstorms" / "test.prd.md"
-        prd_file.parent.mkdir(parents=True)
-        prd_file.write_text("content")
-        # No .meta.json at {prd_file}/.meta.json (doesn't make sense for a file)
-        # No convention path either
-
-        entity = {"artifact_path": str(prd_file), "entity_type": "brainstorm", "entity_id": "003-test"}
-        result = _resolve_meta_path(entity, str(tmp_path))
-        assert result is None
-
-    def test_resolve_meta_path_convention_fallback(self, tmp_path, db):
-        """Entity without artifact_path -> convention fallback path."""
-        feat_dir = tmp_path / "features" / "002-slug"
-        feat_dir.mkdir(parents=True)
-        meta_file = feat_dir / ".meta.json"
-        meta_file.write_text('{"id": "002"}')
-
-        entity = {"artifact_path": None, "entity_type": "feature", "entity_id": "002-slug"}
-        result = _resolve_meta_path(entity, str(tmp_path))
-        assert result == str(meta_file)
-
-    def test_resolve_meta_path_neither_exists_returns_none(self, tmp_path, db):
-        """No artifact_path, no convention path -> returns None."""
-        entity = {"artifact_path": None, "entity_type": "feature", "entity_id": "001-nonexistent"}
-        result = _resolve_meta_path(entity, str(tmp_path))
-        assert result is None
-
-    # -------------------------------------------------------------------
-    # Task 3.3b: 3-tier status resolution fallback chain
-    # -------------------------------------------------------------------
-
-    def test_status_from_meta_json_when_db_status_null(self, tmp_path, db):
-        """Entity with .meta.json status=active and entities.status=NULL -> uses active."""
-        feat_dir = tmp_path / "features" / "001-s1-test"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text('{"status": "active", "lastCompletedPhase": "specify"}')
-
-        db.register_entity("feature", name="Status Test 1", seq=1, slug="s1-test", artifact_path=str(feat_dir), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-s1-test")
-        assert wp is not None
-        assert wp["kanban_column"] == "prioritised"  # active + design phase -> prioritised
 
     def test_status_from_db_when_no_meta_json(self, tmp_path, db):
         """Entity with no .meta.json and entities.status=completed -> uses completed."""
         db.register_entity("feature", name="Status Test 2", seq=1, slug="s2-test", status="completed", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-s2-test")
         assert wp is not None
@@ -1110,26 +1053,11 @@ class TestWorkflowPhaseBackfill:
     def test_status_defaults_to_planned_when_no_source(self, tmp_path, db):
         """Entity with no .meta.json and entities.status=NULL -> defaults to planned -> backlog."""
         db.register_entity("feature", name="Status Test 3", seq=1, slug="s3-test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-s3-test")
         assert wp is not None
         assert wp["kanban_column"] == "backlog"
-
-    def test_meta_json_status_wins_over_db_status(self, tmp_path, db):
-        """Entity with .meta.json status=active AND entities.status=completed -> .meta.json wins."""
-        feat_dir = tmp_path / "features" / "001-s4-test"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text('{"status": "active", "lastCompletedPhase": "design"}')
-
-        db.register_entity("feature", name="Status Test 4", seq=1, slug="s4-test",
-                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-                           status="completed", artifact_path=str(feat_dir))
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-s4-test")
-        assert wp is not None
-        assert wp["kanban_column"] == "prioritised"  # active + create-plan phase -> prioritised (not completed)
 
     def test_unmapped_status_defaults_to_planned_with_warning(self, tmp_path, db, caplog):
         """Unmapped status (e.g., 'draft') -> default to planned -> backlog, with warning."""
@@ -1138,7 +1066,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Status Test 5", seq=1, slug="s5-test", status="draft", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         with caplog.at_level(logging.WARNING):
-            backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+            backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-s5-test")
         assert wp is not None
@@ -1150,8 +1078,9 @@ class TestWorkflowPhaseBackfill:
     # Task 3.4: Integration tests for backfill feature entities
     # -------------------------------------------------------------------
 
-    def test_backfill_active_feature_with_meta(self, tmp_path, db):
-        """Active feature with .meta.json -> correct kanban, workflow_phase, last_completed_phase, mode."""
+    def test_backfill_active_feature_row_ignores_its_meta_json(self, tmp_path, db):
+        """Active feature -> kanban=backlog, no phase, last_completed_phase or
+        mode: the registry names none, and its .meta.json is not read (W2.6)."""
         feat_dir = tmp_path / "features" / "001-f1-active"
         feat_dir.mkdir(parents=True)
         (feat_dir / ".meta.json").write_text(json.dumps({
@@ -1163,14 +1092,14 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Active Feature", seq=1, slug="f1-active",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            artifact_path=str(feat_dir), status="active")
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-f1-active")
         assert wp is not None
-        assert wp["kanban_column"] == "prioritised"  # active + create-plan -> prioritised
-        assert wp["workflow_phase"] == "create-plan"  # next after design
-        assert wp["last_completed_phase"] == "design"
-        assert wp["mode"] == "standard"
+        assert wp["kanban_column"] == "backlog"  # active + no phase -> backlog
+        assert wp["workflow_phase"] is None  # the file's design is not read
+        assert wp["last_completed_phase"] is None
+        assert wp["mode"] is None
         assert result["created"] >= 1
 
     def test_backfill_completed_feature(self, tmp_path, db):
@@ -1186,7 +1115,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Done Feature", seq=1, slug="f2-done",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            artifact_path=str(feat_dir), status="completed")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-f2-done")
         assert wp is not None
@@ -1196,15 +1125,16 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_planned_feature(self, tmp_path, db):
         """Planned feature -> kanban=backlog, workflow_phase=NULL."""
         db.register_entity("feature", name="Planned Feature", seq=1, slug="f3-planned", status="planned", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-f3-planned")
         assert wp is not None
         assert wp["kanban_column"] == "backlog"
         assert wp["workflow_phase"] is None
 
-    def test_backfill_abandoned_feature_with_last_phase(self, tmp_path, db):
-        """Abandoned feature with lastCompletedPhase -> kanban=completed, workflow_phase=next-after-last."""
+    def test_backfill_abandoned_feature_row_ignores_its_meta_json(self, tmp_path, db):
+        """Abandoned feature -> kanban=completed, no phase: only a completed
+        feature is at finish, and its .meta.json is not read (W2.6)."""
         feat_dir = tmp_path / "features" / "001-f4-abandoned"
         feat_dir.mkdir(parents=True)
         (feat_dir / ".meta.json").write_text(json.dumps({
@@ -1216,14 +1146,14 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Abandoned Feature", seq=1, slug="f4-abandoned",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            artifact_path=str(feat_dir), status="abandoned")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-f4-abandoned")
         assert wp is not None
         assert wp["kanban_column"] == "completed"  # abandoned -> completed
-        assert wp["workflow_phase"] == "implement"  # next after create-plan
-        assert wp["last_completed_phase"] == "create-plan"
-        assert wp["mode"] == "full"
+        assert wp["workflow_phase"] is None  # the file's create-plan is not read
+        assert wp["last_completed_phase"] is None
+        assert wp["mode"] is None
 
     # -------------------------------------------------------------------
     # Task 3.5: Brainstorm/backlog entities
@@ -1232,7 +1162,7 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_brainstorm_entity(self, tmp_path, db):
         """Brainstorm entity -> workflow_phase=draft, kanban_column=wip."""
         db.register_entity("brainstorm", name="Test Brainstorm", display_id="20260101-000012-bs-test", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000012-bs-test")
         assert wp is not None
@@ -1242,7 +1172,7 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_backlog_entity(self, tmp_path, db):
         """Backlog entity -> workflow_phase=open, kanban_column=backlog."""
         db.register_entity("backlog", name="Test Backlog", seq=1, slug="bl-test", status="planned", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("backlog:001-bl-test")
         assert wp is not None
@@ -1264,7 +1194,7 @@ class TestWorkflowPhaseBackfill:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.set_parent(child_tid, "brainstorm:20260101-000011-bs-parent")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000011-bs-parent")
         assert wp is not None
@@ -1278,7 +1208,7 @@ class TestWorkflowPhaseBackfill:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         db.set_parent(child_tid, "backlog:001-bl-parent")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("backlog:001-bl-parent")
         assert wp is not None
@@ -1291,7 +1221,7 @@ class TestWorkflowPhaseBackfill:
         c2 = db.register_entity("feature", name="WIP", seq=1, slug="f-wip", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.set_parent(c1, "brainstorm:20260101-000007-bs-mixed")
         db.set_parent(c2, "brainstorm:20260101-000007-bs-mixed")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000007-bs-mixed")
         assert wp is not None
@@ -1301,7 +1231,7 @@ class TestWorkflowPhaseBackfill:
     def test_brainstorm_with_no_children_stays_at_default_kanban(self, tmp_path, db):
         """Brainstorm with no child features -> kanban uses brainstorm default (wip)."""
         db.register_entity("brainstorm", name="Lonely Brainstorm", display_id="20260101-000005-bs-lonely", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000005-bs-lonely")
         assert wp is not None
@@ -1315,7 +1245,7 @@ class TestWorkflowPhaseBackfill:
         """Project entities should NOT get workflow_phases rows."""
         db.register_entity("project", name="Test Project", seq=2, slug="p1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         db.register_entity("feature", name="Test Feature", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         assert db.get_workflow_phase("project:002-p1") is None
         assert db.get_workflow_phase("feature:001-f1") is not None  # feature gets a row
@@ -1327,10 +1257,10 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_idempotent_second_run_no_creates(self, tmp_path, db):
         """Second backfill run creates 0, skips all, no errors."""
         db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        result1 = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result1 = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert result1["created"] >= 1
 
-        result2 = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result2 = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert result2["created"] == 0
         assert result2["skipped"] >= 1
         assert len(result2["errors"]) == 0
@@ -1338,17 +1268,17 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_idempotent_existing_rows_not_modified(self, tmp_path, db):
         """Existing rows should not be modified on re-run."""
         db.register_entity("feature", name="Feature 1", seq=1, slug="f1", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         wp1 = db.get_workflow_phase("feature:001-f1")
 
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         wp2 = db.get_workflow_phase("feature:001-f1")
 
         assert wp1["updated_at"] == wp2["updated_at"]
 
     def test_backfill_returns_dict_with_required_keys(self, tmp_path, db):
         """Return dict has created/skipped/errors keys."""
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         assert "created" in result
         assert "skipped" in result
         assert "errors" in result
@@ -1357,84 +1287,18 @@ class TestWorkflowPhaseBackfill:
         assert isinstance(result["errors"], list)
 
     # -------------------------------------------------------------------
-    # Task 3.8: .meta.json error tolerance
+    # Task 3.8: no .meta.json needed (W2.6: none is read)
     # -------------------------------------------------------------------
-
-    def test_backfill_malformed_json_uses_defaults(self, tmp_path, db, caplog):
-        """Malformed .meta.json -> warning logged, defaults used."""
-        import logging
-
-        feat_dir = tmp_path / "features" / "001-bad-json"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text("{ not valid json }")
-
-        db.register_entity("feature", name="Bad JSON", seq=1, slug="bad-json", artifact_path=str(feat_dir), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-
-        with caplog.at_level(logging.WARNING):
-            result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-bad-json")
-        assert wp is not None
-        assert wp["kanban_column"] == "backlog"  # defaults applied
-        assert len(result["errors"]) == 0  # not an error, just a warning
-        # AC-18: warning must be logged for malformed JSON
-        assert any("Malformed JSON" in rec.message for rec in caplog.records), (
-            f"Expected 'Malformed JSON' warning in log, got: {[r.message for r in caplog.records]}"
-        )
 
     def test_backfill_missing_meta_json_uses_defaults(self, tmp_path, db):
         """Missing .meta.json -> defaults used, no error."""
         db.register_entity("feature", name="No Meta", seq=1, slug="no-meta", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-no-meta")
         assert wp is not None
         assert wp["kanban_column"] == "backlog"
         assert len(result["errors"]) == 0
-
-    def test_backfill_invalid_last_completed_phase_null_with_warning(self, tmp_path, db, caplog):
-        """Invalid lastCompletedPhase -> NULL, warning logged."""
-        import logging
-
-        feat_dir = tmp_path / "features" / "001-bad-phase"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "status": "active",
-            "lastCompletedPhase": "not-a-valid-phase",
-            "mode": "standard",
-        }))
-
-        db.register_entity("feature", name="Bad Phase", seq=1, slug="bad-phase", artifact_path=str(feat_dir), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-
-        with caplog.at_level(logging.WARNING):
-            backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-bad-phase")
-        assert wp is not None
-        assert wp["last_completed_phase"] is None  # invalid -> NULL
-        assert wp["workflow_phase"] is None  # can't derive from invalid
-
-    def test_backfill_invalid_mode_null_with_warning(self, tmp_path, db, caplog):
-        """Invalid mode -> NULL, warning logged."""
-        import logging
-
-        feat_dir = tmp_path / "features" / "001-bad-mode"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "status": "active",
-            "lastCompletedPhase": "design",
-            "mode": "invalid-mode",
-        }))
-
-        db.register_entity("feature", name="Bad Mode", seq=1, slug="bad-mode", artifact_path=str(feat_dir), workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-
-        with caplog.at_level(logging.WARNING):
-            backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-bad-mode")
-        assert wp is not None
-        assert wp["mode"] is None  # invalid -> NULL
-        assert wp["last_completed_phase"] == "design"  # this is valid
 
     # -------------------------------------------------------------------
     # Deepened: Abandoned vs Completed distinguishability (D-5)
@@ -1450,30 +1314,17 @@ class TestWorkflowPhaseBackfill:
         abandoned and completed features would be indistinguishable.
         derived_from: spec:D-5, dimension:adversarial
         """
-        # Given a completed feature (lastCompletedPhase=finish)
-        done_dir = tmp_path / "features" / "001-comp-feat"
-        done_dir.mkdir(parents=True)
-        (done_dir / ".meta.json").write_text(json.dumps({
-            "status": "completed",
-            "lastCompletedPhase": "finish",
-        }))
+        # Given a completed feature and an abandoned one (the registry's
+        # statuses: W2.6 reads no .meta.json)
         db.register_entity("feature", name="Completed", seq=1, slug="comp-feat",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-                           artifact_path=str(done_dir), status="completed")
-
-        # And an abandoned feature (lastCompletedPhase=design, stopped mid-work)
-        aband_dir = tmp_path / "features" / "001-aband-feat"
-        aband_dir.mkdir(parents=True)
-        (aband_dir / ".meta.json").write_text(json.dumps({
-            "status": "abandoned",
-            "lastCompletedPhase": "design",
-        }))
+                           status="completed")
         db.register_entity("feature", name="Abandoned", seq=1, slug="aband-feat",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-                           artifact_path=str(aband_dir), status="abandoned")
+                           status="abandoned")
 
         # When backfill runs
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then both have kanban_column='completed'
         completed = db.get_workflow_phase("feature:001-comp-feat")
@@ -1483,42 +1334,8 @@ class TestWorkflowPhaseBackfill:
 
         # But they are distinguishable by workflow_phase
         assert completed["workflow_phase"] == "finish"
-        assert abandoned["workflow_phase"] == "create-plan"  # next after design
+        assert abandoned["workflow_phase"] is None  # only completed is at finish
         assert completed["workflow_phase"] != abandoned["workflow_phase"]
-
-    # -------------------------------------------------------------------
-    # Deepened: Active feature with finish as lastCompletedPhase
-    # -------------------------------------------------------------------
-
-    def test_backfill_active_feature_with_finish_as_last_completed_phase(
-        self, tmp_path, db,
-    ):
-        """Active feature where lastCompletedPhase=finish: workflow_phase should
-        be 'finish' (terminal state per D-5), not None.
-
-        Anticipate: _derive_next_phase("finish") returns "finish" (terminal),
-        but then status=="completed" override also sets "finish". For status=="active"
-        with lastCompletedPhase=="finish", the implementation must still derive
-        "finish" without the completed override. A bug would return None if
-        _derive_next_phase tried to find idx+1 past the end.
-        derived_from: spec:D-5, dimension:boundary_values
-        """
-        feat_dir = tmp_path / "features" / "001-active-finish"
-        feat_dir.mkdir(parents=True)
-        (feat_dir / ".meta.json").write_text(json.dumps({
-            "status": "active",
-            "lastCompletedPhase": "finish",
-        }))
-        db.register_entity("feature", name="Active But Finish", seq=1, slug="active-finish",
-                               workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-                           artifact_path=str(feat_dir), status="active")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
-
-        wp = db.get_workflow_phase("feature:001-active-finish")
-        assert wp is not None
-        assert wp["kanban_column"] == "documenting"  # active + finish phase -> documenting
-        assert wp["workflow_phase"] == "finish"  # terminal: finish -> finish
-        assert wp["last_completed_phase"] == "finish"
 
     # -------------------------------------------------------------------
     # Deepened: Active feature with NULL lastCompletedPhase
@@ -1527,12 +1344,11 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_active_feature_with_null_last_completed_phase(
         self, tmp_path, db,
     ):
-        """Active feature without lastCompletedPhase in .meta.json:
-        workflow_phase should be NULL (can't derive next).
+        """Active feature: workflow_phase should be NULL (the registry
+        names no phase for it; its .meta.json is not read, W2.6).
 
-        Anticipate: If backfill defaults to a phase instead of None when
-        lastCompletedPhase is missing, active features with unknown progress
-        would be misrepresented.
+        Anticipate: If backfill defaults to a phase instead of None,
+        active features with unknown progress would be misrepresented.
         derived_from: spec:D-5, dimension:boundary_values
         """
         feat_dir = tmp_path / "features" / "001-active-nolcp"
@@ -1543,7 +1359,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Active No LCP", seq=1, slug="active-nolcp",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            artifact_path=str(feat_dir), status="active")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-active-nolcp")
         assert wp is not None
@@ -1575,7 +1391,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Abandoned No LCP", seq=1, slug="aband-nolcp",
                                workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
                            artifact_path=str(feat_dir), status="abandoned")
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("feature:001-aband-nolcp")
         assert wp is not None
@@ -1601,7 +1417,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Manual Edit Test", seq=1, slug="manual-edit", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # And first backfill creates a row
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         wp_before = db.get_workflow_phase("feature:001-manual-edit")
         assert wp_before is not None
         assert wp_before["kanban_column"] == "backlog"
@@ -1614,7 +1430,7 @@ class TestWorkflowPhaseBackfill:
         )
 
         # When backfill runs again
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then the manually-updated values are preserved (INSERT OR IGNORE)
         wp_after = db.get_workflow_phase("feature:001-manual-edit")
@@ -1642,7 +1458,7 @@ class TestWorkflowPhaseBackfill:
         db.register_entity("feature", name="Another Good", seq=1, slug="another-good", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # When: backfill runs for both
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then: both succeed
         assert result["created"] == 2
@@ -1654,7 +1470,7 @@ class TestWorkflowPhaseBackfill:
         db._conn.commit()
 
         # When: re-backfill with all three
-        result2 = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result2 = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then: all three get workflow_phases rows
         assert result2["created"] >= 3
@@ -1722,7 +1538,7 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_brainstorm_no_row_creates_draft(self, tmp_path, db):
         """Brainstorm entity with no workflow_phases row -> INSERT with draft/wip."""
         db.register_entity("brainstorm", name="New Brainstorm", display_id="20260101-000009-bs-new", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000009-bs-new")
         assert wp is not None
@@ -1733,7 +1549,7 @@ class TestWorkflowPhaseBackfill:
     def test_backfill_backlog_no_row_creates_open(self, tmp_path, db):
         """Backlog entity with no workflow_phases row -> INSERT with open/backlog."""
         db.register_entity("backlog", name="New Backlog", seq=1, slug="bl-new", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("backlog:001-bl-new")
         assert wp is not None
@@ -1752,7 +1568,7 @@ class TestWorkflowPhaseBackfill:
         )
         db._conn.commit()
 
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000006-bs-managed")
         assert wp["workflow_phase"] == "reviewing"  # preserved, not overwritten
@@ -1770,7 +1586,7 @@ class TestWorkflowPhaseBackfill:
         )
         db._conn.commit()
 
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000004-bs-legacy")
         assert wp["workflow_phase"] == "draft"
@@ -1788,7 +1604,7 @@ class TestWorkflowPhaseBackfill:
         )
         db._conn.commit()
 
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("backlog:001-bl-legacy")
         assert wp["workflow_phase"] == "open"
@@ -1804,7 +1620,7 @@ class TestWorkflowPhaseBackfill:
         )
         db.set_parent(child_tid, "brainstorm:20260101-000003-bs-done-parent")
 
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         wp = db.get_workflow_phase("brainstorm:20260101-000003-bs-done-parent")
         assert wp is not None
@@ -1824,7 +1640,7 @@ class TestWorkflowPhaseBackfill:
             )
         db._conn.commit()
 
-        result = backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        result = backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         assert "updated" in result
         assert isinstance(result["updated"], int)
@@ -1850,7 +1666,7 @@ class TestWorkflowPhaseBackfill:
             db.set_parent(child_uuid, "brainstorm:20260101-000008-bs-multi-done")
 
         # When running backfill
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then brainstorm kanban_column is 'completed'
         wp = db.get_workflow_phase("brainstorm:20260101-000008-bs-multi-done")
@@ -1879,7 +1695,7 @@ class TestWorkflowPhaseBackfill:
         db.set_parent(child2, "brainstorm:20260101-000007-bs-mixed")
 
         # When running backfill
-        backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+        backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # Then brainstorm kanban_column should NOT be 'completed'
         wp = db.get_workflow_phase("brainstorm:20260101-000007-bs-mixed")
@@ -1945,7 +1761,7 @@ class TestWorkflowPhaseBackfill:
             return CountingContextManager(original_transaction())
 
         with patch.object(db, "transaction", counting_transaction):
-            backfill_workflow_phases(db, str(tmp_path), project_id="__unknown__")
+            backfill_workflow_phases(db, workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
 
         # 25 entities / batch size 20 = 2 batches
         assert top_level_count == 2, (

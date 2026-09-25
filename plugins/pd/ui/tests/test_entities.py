@@ -1816,7 +1816,8 @@ def test_build_workflow_lookup_scoped_to_workspace_on_type_id_collision(tmp_path
     ws_b = _bootstrap_workspace(db_file)
     db.register_entity("feature", name="Feature In A", seq=1, slug="collide", workspace_uuid=ws_a)
     db.register_entity("feature", name="Feature In B", seq=1, slug="collide", workspace_uuid=ws_b)
-    db.create_workflow_phase("feature:001-collide", kanban_column="wip")
+    # The type_id is ambiguous, so the row names its workspace (W2.1).
+    db.create_workflow_phase("feature:001-collide", workspace_uuid=ws_a, kanban_column="wip")
 
     result = _build_workflow_lookup(db, workspace_uuid=ws_a)
 

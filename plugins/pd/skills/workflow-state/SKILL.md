@@ -15,6 +15,7 @@ Statuses (owned here; commands point, never restate): `planned`, `active`, `comp
 Planned features are targeted explicitly: `--feature=<id>-<slug>`.
 
 1. Confirm start (YOLO: yes). If another feature is already active, confirm that too.
-2. `activate_feature(feature_type_id="feature:{id}-{slug}")` — engine sets status/mode/branch fields and projects `.meta.json`.
-3. `git checkout -b feature/{id}-{slug}`.
-4. Continue into the requested phase command.
+2. `mkdir -p {pd_artifacts_root}/features/{id}-{slug}/` — a decomposed feature has no directory yet, and activation creates none.
+3. `activate_feature(feature_type_id="feature:{id}-{slug}")` — sets the status to active, seeds the workflow row, and projects `.meta.json`.
+4. `git checkout -b feature/{id}-{slug}`.
+5. Continue into the requested phase command.

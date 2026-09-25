@@ -183,6 +183,9 @@ async def test_promote_task_reports_the_refusal_not_invalid_input(registry, monk
     offending = _break_bucket(database, workspace_uuid, "task")
     monkeypatch.setattr(task_promotion, "_compute_legacy_project_id",
                         lambda *args, **kwargs: _WORKSPACE_LEGACY_ID)
+    # The wrapper names plan.md's directory under the server's artifacts
+    # root (W2.4), as the lifespan sets it.
+    monkeypatch.setattr(workflow_state_server, "_artifacts_root", str(tmp_path))
     allocations = _count_allocations(monkeypatch, database)
 
     envelope = json.loads(await workflow_state_server.promote_task(

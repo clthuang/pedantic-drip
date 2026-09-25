@@ -150,19 +150,12 @@ def _seed_shared_type_id(db, tmp_path, monkeypatch, *, this_workspace_kind) -> s
         conn.commit()
     finally:
         conn.close()
-    db.create_workflow_phase(type_id, workflow_phase="specify", kanban_column="backlog")
-    # The insert trigger fills workspace_uuid from whichever entities row
-    # its subquery meets first; pin it to this workspace, the scope the
-    # engine's update_workflow_phase asserts.
-    conn = sqlite3.connect(db_file)
-    try:
-        conn.execute(
-            "UPDATE workflow_phases SET workspace_uuid = ? WHERE type_id = ?",
-            (this_workspace, type_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    # The type_id is ambiguous, so the row names its workspace (W2.1): this
+    # one, the scope the engine's update_workflow_phase asserts.
+    db.create_workflow_phase(
+        type_id, workspace_uuid=this_workspace,
+        workflow_phase="specify", kanban_column="backlog",
+    )
     monkeypatch.setattr(wss, "_workspace_uuid", this_workspace)
     assert db.get_entity(type_id) is None  # the edge: the unscoped read is ambiguous
     return type_id

@@ -4326,12 +4326,17 @@ class TestProjectMetaJson:
         assert meta["lastCompletedPhase"] == "brainstorm"
         assert meta["mode"] == "full"
 
-    def test_resolves_feature_dir_from_entity_artifact_path(self, db, tmp_path):
-        """Resolves feature_dir from entity['artifact_path'] when not provided."""
+    def test_names_feature_dir_when_not_provided(self, db, tmp_path, monkeypatch):
+        """With no feature_dir and no engine, the directory is named under
+        the server's artifacts root (W2.2), never read from the stored
+        entity['artifact_path'], which here points at another directory."""
+        import workflow_state_server
 
-
+        monkeypatch.setattr(workflow_state_server, "_artifacts_root", str(tmp_path))
         feature_dir = os.path.join(str(tmp_path), "features", "036-resolve")
         os.makedirs(feature_dir, exist_ok=True)
+        stored_dir = os.path.join(str(tmp_path), "elsewhere", "036-resolve")
+        os.makedirs(stored_dir, exist_ok=True)
 
         metadata = {
             "id": "036",
@@ -4342,18 +4347,18 @@ class TestProjectMetaJson:
         }
         db.register_entity(
             "feature", name="resolve", seq=36, slug="resolve",
-            artifact_path=feature_dir,
+            artifact_path=stored_dir,
             status="active",
             metadata=metadata,
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
-        # feature_dir=None -- should resolve from entity["artifact_path"]
+        # feature_dir=None -- named {artifacts_root}/features/036-resolve
         result = _project_meta_json(db, None, "feature:036-resolve", None)
         assert result is None
 
-        meta_path = os.path.join(feature_dir, ".meta.json")
-        assert os.path.isfile(meta_path)
+        assert os.path.isfile(os.path.join(feature_dir, ".meta.json"))
+        assert not os.path.exists(os.path.join(stored_dir, ".meta.json"))
 
     def test_phase_timing_with_iterations_and_reviewer_notes(self, db, tmp_path):
         """Phase timing with iterations and reviewerNotes projected correctly."""
@@ -8385,7 +8390,18 @@ class TestReconcileStatusHealthyWithFrontmatterDriftDeepened:
 
 
 class TestCheckArtifactCompleteness:
-    """Unit tests for _check_artifact_completeness helper."""
+    """Unit tests for _check_artifact_completeness helper.
+
+    The directory checked is named under the server's artifacts root (W2.3),
+    never read from the stored artifact_path: each test's
+    ``{tmp_path}/features/<entity_id>`` is that directory.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _server_artifacts_root(self, tmp_path, monkeypatch):
+        import workflow_state_server
+
+        monkeypatch.setattr(workflow_state_server, "_artifacts_root", str(tmp_path))
 
     def test_standard_mode_all_present_no_warnings(self, db, tmp_path):
         """Standard mode with all expected artifacts produces no warnings."""
@@ -8501,7 +8517,8 @@ class TestCheckArtifactCompleteness:
         assert warnings == []
 
     def test_no_artifact_path_returns_empty(self, db):
-        """Entity without artifact_path returns no warnings (graceful)."""
+        """Entity without artifact_path, and with no directory named for it
+        in this checkout, returns no warnings (graceful)."""
         db.register_entity(
             "feature", name="nopath", seq=205, slug="nopath",
             metadata={"id": "205", "slug": "nopath", "mode": "standard"},
@@ -11284,15 +11301,16 @@ class TestReprojectMetaJson:
         assert data["projected"] is True
         assert data["feature_type_id"] == "feature:095-winner"
 
-    def test_reproject_entity_without_artifact_path_returns_projected_false_with_warning(
+    def test_reproject_feature_without_a_directory_returns_projected_false_with_warning(
         self, db, tmp_path
     ):
-        """`_project_meta_json` surfaces a non-None warning when
-        `artifact_path` is unset (:400-403) -- no existing test drives this
-        branch; the 3 original tests all assert `warning is None` /
-        `projected: true`. A mutation hard-coding `"projected": True`
-        unconditionally (or dropping the `warning` key) would pass every
-        current test and only be caught here.
+        """`_project_meta_json` surfaces a non-None warning when this
+        checkout has no directory for the feature (W2.2: the directory is
+        named, and here none exists; nor is there an `artifact_path`) -- no
+        existing test drives this branch; the 3 original tests all assert
+        `warning is None` / `projected: true`. A mutation hard-coding
+        `"projected": True` unconditionally (or dropping the `warning` key)
+        would pass every current test and only be caught here.
         """
         import asyncio
         import workflow_state_server as wss
@@ -11315,7 +11333,10 @@ class TestReprojectMetaJson:
         assert data["projected"] is False
         assert data["feature_type_id"] == "feature:096-noartifact"
         assert data["warning"] is not None
-        assert "artifact_path" in data["warning"]
+        assert "does not exist" in data["warning"]
+        assert not os.path.exists(
+            os.path.join(str(tmp_path), "features", "096-noartifact")
+        )
 
     def test_reproject_feature_id_produces_exact_feature_shape_keys(
         self, db, tmp_path,

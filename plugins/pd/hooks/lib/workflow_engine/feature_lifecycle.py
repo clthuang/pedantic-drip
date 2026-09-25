@@ -300,9 +300,14 @@ def init_feature_state(
     try:
         db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
     except ValueError:
-        # Row may not exist if engine initialization failed — create it.
+        # Row may not exist if engine initialization failed — create it, for
+        # this call's workspace (W2.1: without one, the type_id must be
+        # globally unique).
         try:
-            db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
+            db.create_workflow_phase(
+                feature_type_id, kanban_column=init_kanban,
+                workspace_uuid=workspace_uuid,
+            )
         except ValueError:
             pass  # Entity itself may be missing; workflow row cannot be created
 
@@ -553,28 +558,53 @@ def activate_feature(
     *,
     workspace_uuid: str | None = None,
 ) -> dict:
-    """Transition a planned feature to active status.
+    """Transition a planned feature to active status, seeding its workflow row.
 
-    Pre-condition: entity status must be 'planned'.
-    Post-condition: entity status becomes 'active'.
+    Pre-condition: entity status must be 'planned', and the feature's
+    directory must exist. Activation creates no directory: a session rooted
+    in another checkout keeps the loud ``feature_not_found`` instead of
+    passing against an empty directory (W2.5).
+    Post-condition: entity status becomes 'active', and the feature has a
+    ``workflow_phases`` row, so the first ``transition_phase`` finds one
+    (N1).
+
+    One ``db.transaction()`` holds all three steps (W2.5):
+
+    1. validate: the directory, the entity, its 'planned' status;
+    2. with no ``workflow_phases`` row, create one for *workspace_uuid*
+       (``create_workflow_phase``): kanban column
+       ``_kanban_column_for("active", None)``, no phase yet;
+    3. flip the status to 'active'.
+
+    A lock between the two writes therefore strands nothing: the
+    transaction rolls both back, and ``@_with_retry`` re-runs the whole call.
 
     Returns dict with keys: activated, feature_type_id, previous_status, new_status.
     Optionally includes projection_warning (not set here — added by MCP wrapper).
     """
-    _validate_feature_type_id(db, feature_type_id, artifacts_root)
+    with db.transaction():
+        _validate_feature_type_id(db, feature_type_id, artifacts_root)
 
-    entity = db.get_entity(feature_type_id)
-    if entity is None:
-        raise ValueError(f"feature_not_found: {feature_type_id}")
+        entity = db.get_entity(feature_type_id)
+        if entity is None:
+            raise ValueError(f"feature_not_found: {feature_type_id}")
 
-    current_status = entity.get("status")
-    if current_status != "planned":
-        raise ValueError(
-            f"invalid_transition: feature status is '{current_status}', "
-            f"expected 'planned' for activation"
-        )
+        current_status = entity.get("status")
+        if current_status != "planned":
+            raise ValueError(
+                f"invalid_transition: feature status is '{current_status}', "
+                f"expected 'planned' for activation"
+            )
 
-    db.update_entity(feature_type_id, status="active", workspace_uuid=workspace_uuid)
+        if db.get_workflow_phase(feature_type_id) is None:
+            db.create_workflow_phase(
+                feature_type_id,
+                workspace_uuid=workspace_uuid,
+                kanban_column=_kanban_column_for("active", None),
+                workflow_phase=None,
+            )
+
+        db.update_entity(feature_type_id, status="active", workspace_uuid=workspace_uuid)
 
     return {
         "activated": True,

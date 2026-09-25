@@ -156,10 +156,11 @@ def test_express_completeness_expects_only_retro(tool_env, tmp_path):
     """qa-prose B5: a recorded mini_spec means shape/plan are not expected —
     only retro.md — so express finish is not drowned in artifact warnings."""
     db = tool_env
+    # The directory named for feature:134-t under the engine's artifacts
+    # root (W2.3), not a stored artifact_path.
     feat_dir = tmp_path / "features" / "134-t"
     feat_dir.mkdir(parents=True)
-    db.update_entity("feature:134-t", artifact_path=str(feat_dir))
     asyncio.run(wss.record_mini_spec(feature_type_id="feature:134-t", text="t"))
-    warnings = wss._check_artifact_completeness(db, "feature:134-t")
+    warnings = wss._check_artifact_completeness(db, "feature:134-t", wss._engine)
     assert warnings and all("retro.md" in w for w in warnings), warnings
     assert not any("shape.md" in w or "plan.md" in w for w in warnings), warnings

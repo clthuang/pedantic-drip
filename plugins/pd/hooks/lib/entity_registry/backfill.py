@@ -124,34 +124,6 @@ def _derive_next_phase(last_completed: str | None) -> str | None:
     return None
 
 
-def _resolve_meta_path(
-    entity: dict, artifacts_root: str
-) -> str | None:
-    """Resolve .meta.json path from artifact_path or convention fallback.
-
-    Returns None for entities without artifact_path and no matching
-    convention directory (expected for brainstorms/backlogs without
-    artifact directories).
-    """
-    # Priority 1: artifact_path based lookup
-    artifact_path = entity.get("artifact_path")
-    if artifact_path is not None:
-        candidate = os.path.join(artifact_path, ".meta.json")
-        if os.path.isfile(candidate):
-            return candidate
-
-    # Priority 2: convention fallback
-    entity_type = entity["entity_type"]
-    entity_id = entity["entity_id"]
-    convention = os.path.join(
-        artifacts_root, f"{entity_type}s", entity_id, ".meta.json"
-    )
-    if os.path.isfile(convention):
-        return convention
-
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -225,33 +197,53 @@ def run_backfill(
 
 def backfill_workflow_phases(
     db: EntityDatabase,
-    artifacts_root: str,
-    project_id: str = "__unknown__",
+    workspace_uuid: str,
 ) -> dict:
-    """Backfill workflow_phases rows for all eligible entities.
+    """Seed missing workflow_phases rows for one workspace's entities.
 
-    Reads entity data from DB + .meta.json files. Creates rows
-    using INSERT OR IGNORE for idempotency.
+    Runs at every entity-server start (W2.6: reads no files, and stays in
+    its workspace):
+
+    - **Source:** the registry alone. The status is the entity's own; a
+      feature's phase is ``finish`` when it is completed, otherwise None;
+      ``last_completed_phase`` and ``mode`` stay None. No ``.meta.json`` is
+      read: a checkout's projection may be stale, or another checkout's.
+    - **Scope:** only *workspace_uuid*'s entities are iterated, and every
+      write passes *workspace_uuid*. A row that belongs to another
+      workspace is refused (recorded in ``errors``), never rewritten, and a
+      type_id two workspaces hold is seeded for this one.
+    - **No overwrite:** an existing row is skipped, except a brainstorm's
+      or backlog item's NULL phase, which is filled in.
 
     Parameters
     ----------
     db:
         Open EntityDatabase instance.
-    artifacts_root:
-        Root directory containing feature/brainstorm/backlog artifacts.
+    workspace_uuid:
+        The calling server's resolved workspace. Required: an unresolved
+        workspace skips the backfill at the caller, and an empty value
+        raises here rather than iterate every workspace.
 
     Returns
     -------
     dict
         {"created": int, "updated": int, "skipped": int, "errors": list[str]}
+
+    Raises
+    ------
+    ValueError
+        If *workspace_uuid* is empty.
     """
+    if not workspace_uuid:
+        raise ValueError("backfill_workflow_phases() requires a workspace_uuid")
+
     created = 0
     updated = 0
     skipped = 0
     errors: list[str] = []
 
-    # Query all entities via public API, exclude projects in Python
-    all_entities = db.list_entities()
+    # This workspace's entities, via the public API; projects excluded in Python
+    all_entities = db.list_entities(workspace_uuid=workspace_uuid)
     entities = [e for e in all_entities if e["entity_type"] != "project"]
 
     for batch in _chunked(entities, BACKFILL_BATCH_SIZE):
@@ -260,18 +252,6 @@ def backfill_workflow_phases(
                 try:
                     type_id = entity["type_id"]
                     entity_type = entity["entity_type"]
-
-                    # Resolve .meta.json
-                    meta_path = _resolve_meta_path(entity, artifacts_root)
-                    meta = None
-                    if meta_path is not None:
-                        meta = _read_json(meta_path)
-                        # Distinguish "malformed JSON" from "file not found" (D-9, AC-18)
-                        if meta is None and os.path.isfile(meta_path):
-                            logger.warning(
-                                "Malformed JSON in %s for entity %s, using defaults",
-                                meta_path, type_id,
-                            )
 
                     # Early handling for brainstorm/backlog — skip kanban derivation
                     if entity_type in ("brainstorm", "backlog"):
@@ -312,12 +292,14 @@ def backfill_workflow_phases(
                         if all_children_completed:
                             kanban_column = "completed"
 
-                        # Case 3: existing row with NULL phase -> UPDATE
+                        # Case 3: existing row with NULL phase -> UPDATE, refused
+                        # when the row is another workspace's
                         if existing_row and existing_row["workflow_phase"] is None:
                             db.update_workflow_phase(
                                 type_id,
                                 workflow_phase=workflow_phase,
                                 kanban_column=kanban_column,
+                                workspace_uuid=workspace_uuid,
                             )
                             updated += 1
                             continue
@@ -325,19 +307,15 @@ def backfill_workflow_phases(
                         # Case 1: no row -> INSERT (upsert for idempotency)
                         db.upsert_workflow_phase(
                             type_id,
-                            project_id=project_id,
+                            workspace_uuid=workspace_uuid,
                             workflow_phase=workflow_phase,
                             kanban_column=kanban_column,
                         )
                         created += 1
                         continue
 
-                    # 3-tier status resolution
-                    status = None
-                    if meta is not None and "status" in meta:
-                        status = meta["status"]
-                    if status is None and entity["status"] is not None:
-                        status = entity["status"]
+                    # Status: the registry's, 'planned' when unset
+                    status = entity["status"]
                     if status is None:
                         status = "planned"
 
@@ -349,40 +327,11 @@ def backfill_workflow_phases(
                         )
                         status = "planned"
 
-                    # Feature-specific: derive workflow_phase, last_completed_phase, mode
+                    # A completed feature is at finish; nothing else has a
+                    # phase the registry alone can name
                     workflow_phase = None
-                    last_completed_phase = None
-                    mode = None
-
-                    if entity_type == "feature":
-                        # last_completed_phase from .meta.json
-                        if meta is not None:
-                            last_completed_phase = meta.get("lastCompletedPhase")
-                        # Validate last_completed_phase
-                        if last_completed_phase is not None and last_completed_phase not in PHASE_SEQUENCE:
-                            logger.warning(
-                                "Unrecognized lastCompletedPhase %r for entity %s, setting to None",
-                                last_completed_phase, type_id,
-                            )
-                            last_completed_phase = None
-
-                        # Derive workflow_phase
-                        workflow_phase = _derive_next_phase(last_completed_phase)
-
-                        # Special case: completed status -> workflow_phase = finish
-                        if status == "completed":
-                            workflow_phase = "finish"
-
-                        # mode from .meta.json
-                        if meta is not None:
-                            mode = meta.get("mode")
-                        # Validate mode
-                        if mode is not None and mode not in VALID_MODES:
-                            logger.warning(
-                                "Invalid mode %r for entity %s, setting to None",
-                                mode, type_id,
-                            )
-                            mode = None
+                    if entity_type == "feature" and status == "completed":
+                        workflow_phase = "finish"
 
                     kanban_column = _kanban_column_for(status, workflow_phase)
 
@@ -391,14 +340,14 @@ def backfill_workflow_phases(
                         skipped += 1
                         continue
 
-                    # Upsert for idempotency (INSERT OR IGNORE + UPDATE)
+                    # Upsert for idempotency (inserts, then sets the columns)
                     db.upsert_workflow_phase(
                         type_id,
-                        project_id=project_id,
+                        workspace_uuid=workspace_uuid,
                         workflow_phase=workflow_phase,
                         kanban_column=kanban_column,
-                        last_completed_phase=last_completed_phase,
-                        mode=mode,
+                        last_completed_phase=None,
+                        mode=None,
                     )
                     created += 1
 

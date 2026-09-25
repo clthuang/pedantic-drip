@@ -17,6 +17,7 @@ from entity_registry.database import EntityExistsError
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id, render_display_id
 from entity_registry.project_identity import _compute_legacy_project_id
+from workflow_engine.feature_paths import feature_dir_path
 
 if TYPE_CHECKING:
     from entity_registry.database import EntityDatabase
@@ -266,6 +267,7 @@ def promote_task(
     feature_ref: str,
     task_heading: str,
     *,
+    artifacts_root: str,
     workspace_uuid: str | None = None,
 ) -> dict:
     """Promote a task from plan.md to a tracked entity.
@@ -278,10 +280,17 @@ def promote_task(
         Feature type_id, UUID, or partial ref to resolve.
     task_heading:
         Full or partial task heading to match against plan.md.
+    artifacts_root:
+        This checkout's artifacts root. plan.md is read from
+        ``{artifacts_root}/features/<name>``, the feature's directory named
+        by ``feature_paths.feature_dir_path`` (W2.4), never from the stored
+        ``artifact_path``, which may point into another checkout.
     workspace_uuid:
         The workspace that allocates the task's number and holds its row
         (C17). When None, the workspace whose ``project_id_legacy`` is the
-        project root's legacy id (``_compute_legacy_project_id``).
+        project root's legacy id (``_compute_legacy_project_id``). The
+        task's ``workflow_phases`` row is created for the same workspace
+        (W2.1).
 
     Returns
     -------
@@ -292,9 +301,9 @@ def promote_task(
     Raises
     ------
     ValueError
-        If feature_ref cannot be resolved or feature lacks artifact_path, or,
-        with no workspace_uuid, no workspace carries the project root's
-        legacy id.
+        If feature_ref cannot be resolved, nothing names the feature's
+        directory or the name is refused (``feature_dir_path``), or, with no
+        workspace_uuid, no workspace carries the project root's legacy id.
     TaskNotFoundError
         If no heading matches the query.
     TaskAlreadyPromotedError
@@ -313,13 +322,15 @@ def promote_task(
     feature_uuid = feature["uuid"]
     feature_type_id = feature["type_id"]
 
-    # 2. Find plan.md
-    artifact_path = feature.get("artifact_path")
-    if not artifact_path:
+    # 2. Find plan.md in this checkout's directory for the feature, named
+    # (W2.4): the stored artifact_path may point into another checkout.
+    feature_dir = feature_dir_path(db, artifacts_root, feature_type_id)
+    if feature_dir is None:
         raise ValueError(
-            f"Feature {feature_type_id} has no artifact_path set"
+            f"No directory is named for {feature_type_id} under "
+            f"{os.path.join(artifacts_root, 'features')}"
         )
-    plan_md_path = os.path.join(artifact_path, "plan.md")
+    plan_md_path = os.path.join(feature_dir, "plan.md")
     if not os.path.isfile(plan_md_path):
         raise FileNotFoundError(f"plan.md not found: {plan_md_path}")
 
@@ -379,7 +390,7 @@ def promote_task(
     task_metadata = {"source_heading": matched_heading}
     # Feature 112 / FR-4: resolve parent at the call site and pass parent_uuid
     # directly. The parent feature entity was already fetched (and required to
-    # exist) earlier in this function for the artifact_path validation.
+    # exist) earlier in this function, before its directory was named.
     parent_entity = db.get_entity(feature_type_id)
     parent_uuid = parent_entity["uuid"] if parent_entity else None
     # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
@@ -399,8 +410,11 @@ def promote_task(
             f"Task registration conflict for {task_type_id}"
         ) from e
 
-    # 9. Create workflow_phase row for the task
-    db.create_workflow_phase(task_type_id, mode=mode)
+    # 9. Create workflow_phase row for the task, in the workspace that holds
+    # it (W2.1)
+    db.create_workflow_phase(
+        task_type_id, mode=mode, workspace_uuid=task_workspace_uuid,
+    )
 
     # 10. Create dependencies (only for already-promoted sibling tasks)
     dep_mgr = DependencyManager()
