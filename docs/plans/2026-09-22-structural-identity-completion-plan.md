@@ -45,7 +45,7 @@ Every number below was read from the live registry or the tree today. Re-derive 
 
 This **corrects parent B7's Contract**, which says marked entities do not appear and would therefore hide 6 open items (`00059`, `00060`, `00177`, `00180`, `00183`, `00190`) that are unfinished work whose ids merely predate the structural model. "Is this row old?" and "is this work open?" are different facts; a backlog view wants the second. Filtering on `is_legacy` would be the same category error this effort exists to remove — inferring a semantic fact from a structural accident. B7 rewrites the Contract rather than implementing it.
 
-**2. C22 recreates the 11 unarchived live rows, collapsing to 10.** 6 backlog items + 4 projects (`P001` after `P001-openclaw-gap-analysis` collapses in, `P002`, `P003`, `P004-entity-db-redesign`).
+**2. C22 recreates the 11 unarchived live rows, collapsing to 10.** 6 backlog items + 4 projects (`P001` after `P001-openclaw-gap-analysis` collapses in, `P002`, `P003`, `P004-entity-db-redesign`). **Superseded in part 2026-09-24 (C22 lineage decision):** `P001-openclaw-gap-analysis` is not absorbed. It is a different project (OpenClaw is terry_agent's work; its brainstorm and directory are absent from this repository). It is archived with no replacement, so `project:005-iflow-arch-evolution` records only `P001` in `recreated_from`. The count is unchanged: 11 originals archived, 10 entities created.
 
 The 5 archived live-status rows stay archived — recreating them would contradict the flag, and after decision 1 none appear in any projection. Two of them hold children, which decision 3 handles. Two are in terry_agent, which C22 cannot reach.
 
@@ -736,7 +736,15 @@ Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author 
 
 **C1 and C2 SHIPPED 2026-09-22 (`e9f5774f`).**
 
+**C3 SHIPPED 2026-09-24** (Release C phase 1, merged to develop at `b881f8ff`). The exemption set is `is_legacy = 1 OR kind IN NON_SEQUENCE_KINDS`. The soft-deleted exemption was dropped in review, and one SQL builder is shared with `check_display_row_invariant`.
+
 ## Wave 4 — readers and producers
+
+**Wave 4 SHIPPED 2026-09-25, except C11.** Each task was implemented, independently reviewed, fixed at most once, and independently QA'd. Each phase then had an integration review and QA.
+- **Phase 1 → develop `b881f8ff`:** C13/C18, C15/C16, C19/C20b (plus C3 and C22a).
+- **Phase 2 → develop `3d4d125e`:** C14, C9/C10/C12, C8 (plus C22's script).
+- **Phase 3 → develop `b3e0cb5d`:** C5b + C17.
+- **C11:** redesigned after four path-based fix rounds (branch `si-c11`, not merged). The design is `2026-09-25-c11-name-not-path-design.md`, rev 3.1: the directory name comes from the `entities.entity_id` column. It is implemented on `si-c11b`; see its own record.
 
 Parallel once Wave 2 lands: **C8–C12**, **C13**, **C14**, **C15–C16**, **C17**, **C18**, **C19/C20b**.
 
@@ -753,11 +761,24 @@ Apply **correction 3b** (from B3b): C8 gains the orphan-row fixture; C11 gains `
 
 ## Wave 5 — recreate and gate
 
+**C22 APPLIED LIVE 2026-09-25**, with the user's go-ahead, from develop `3d4d125e` (runbook `agent_sandbox/2026-09-24/structural-identity-orchestration/c22_live_apply.sh`).
+- **Rehearsal:** a fresh `.backup` of the live file was rehearsed with the same code revision; verification passed and a re-run was a no-op. The live `--plan` equalled the rehearsal plan.
+- **`--apply`:** verification passed, with 0 failures.
+  - **Created (10):** backlog 279–284; projects 005-iflow-arch-evolution, 006-memory-flywheel, 007-entity-system-redesign, 008-entity-db-redesign.
+  - **Archived (11):** backlog 00059, 00060, 00177, 00180, 00183, 00190; projects P001, P001-openclaw-gap-analysis, P002, P003, P004-entity-db-redesign.
+  - **Moved (25 children):** 16 onto 008, 5 onto 006, 4 onto 007.
+  - **Tables:** `entity_display` +10, `workflow_phases` +6; integrity ok.
+- **Effect:** identical, by type_id, to the rehearsal.
+- **Rollback copy:** `agent_sandbox/2026-09-24/c22-live/pre-apply.db`.
+- **Fingerprints (mtime, size, sha256 prefix):**
+  - before: 1790214552, 4083712, f81105ff907dcc76;
+  - after: 1790286038, 4083712, 2814bb4434e8faa0.
+
 **C22** then **C21**.
 
 Apply **correction 3**: re-derive the four pair groups at execution time. Neither this document's literals nor the parent's are complete, and the set drifts every time any workspace creates a project.
 
-**C22's scope is decision 2: the 11 unarchived live rows, collapsing to 10** — 6 backlog + `P001` (absorbing `P001-openclaw-gap-analysis`), `P002`, `P003`, `P004-entity-db-redesign`. Add **C22a — `reparent_entity`** (decision 3) as a prerequisite: `EntityDatabase.reparent_entity(type_id, new_parent_uuid)`, uuid-to-uuid, event-emitting, tested in isolation. C22 calls it for the 25 children of recreated projects.
+**C22's scope is decision 2: the 11 unarchived live rows, collapsing to 10** — 6 backlog + `P001` (absorbing `P001-openclaw-gap-analysis`), `P002`, `P003`, `P004-entity-db-redesign`. Add **C22a — `reparent_entity`** (decision 3) as a prerequisite: `EntityDatabase.reparent_entity(type_id, new_parent_uuid)`, uuid-to-uuid, event-emitting, tested in isolation. C22 calls it for the 25 children of recreated projects. *(Lineage: see decision 2's 2026-09-24 note; `P001-openclaw-gap-analysis` is archived without replacement, not absorbed.)*
 
 **Verify C22a red-first:** re-parent a child, assert the new `parent_uuid`, assert the old parent's child count dropped and the new parent's rose, and assert the self-reference trigger still rejects `parent_uuid = uuid`. Then assert `P004-entity-db-redesign`'s replacement holds 16 children and the archived original holds 0 — the assertion that fails if C22 skips the unpaired project, which its parent Verify cannot see.
 

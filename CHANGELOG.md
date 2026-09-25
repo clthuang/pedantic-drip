@@ -7,17 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`EntityDatabase.reparent_entity(type_id, new_parent_uuid)`** (C22a) moves an entity to a new parent by uuid. It emits a `reparented` event and refuses a cross-workspace, soft-deleted, self or cyclic parent, sharing `set_parent`'s checks.
+- **`scripts/c22_recreate_live_remainder.py`** (C22) recreates a workspace's live legacy rows in the new shape through production paths. Its `--plan` mode is read-only; `--apply` is resumable and verifies itself. It refuses the live registry without `--i-mean-the-live-registry`. It was applied to the live registry on 2026-09-25: 10 entities created, 11 legacy originals archived, 25 children moved. The metadata key `recreated_from` records the lineage.
+
 ### Changed
 
+- **Allocation refuses an incomplete bucket** (C3). `next_sequence_value` refuses a bucket holding a non-exempt entity with no `entity_display` row, and leaves the counter unchanged. It raises `IncompleteBucketError`; the MCP allocation paths return an `incomplete_bucket` envelope. Legacy rows and kinds without a sequence are exempt. The guard and `check_display_row_invariant` share one SQL builder.
+- **Readers use columns, not type_id text** (C8, C9, C10, C12). Kind comes from `entities.kind`, seq and slug from `entity_display`, and a parent from `parent_uuid` (its stored `entity_id` read opaquely). Rendered width comes from the display renderer.
+- **One owner registers a project** (C15/C16). `init_project_state` is the only project registrar. It registers before it creates the directory, keeps the directory inside `{artifacts_root}/projects`, and shares the parent rules with registration.
+- **Backfill reports a missing parent** (C13/C18) instead of minting a synthetic one.
+- **Rebuild carries display rows** (C19/C20b). `rebuild_tool` keeps `entity_display` rows and the legacy, archived and deleted flags. It seeds each counter at the larger of the stored counter and the census maximum plus one, and refuses an old file that lacks the structure.
+- **One workspace for a number and its row** (C17). `promote_task`, the `register_entity` tool's `auto_id`, `issue_spawn` and `create_key_result` resolve the workspace once and pass it to both allocation and registration.
+- **The kanban board hides archived entities.** `list_workflow_phases(include_archived=False)` is used by the board only; every other caller, the entities page and `docs/backlog.md` are unchanged.
+- **`register_entities_batch` refuses unknown item keys** with a `TypeError` naming the key, so a stale `parent_type_id` or `project_id` key can no longer silently drop a parent.
 - **Registration takes structured identity (structural-identity Wave 2)** — `register_entity`, `upsert_entity` and `register_entities_batch` take `seq` and `slug` for sequence kinds (the display row is always written) or `display_id` for brainstorms; nothing parses an id string any more. The MCP `register_entity` tool takes the same parameters; `allocate_entity_id` also returns `slug`; `generate_entity_id` returns `(seq, slug)`. `create-feature` and `create-project` register with the allocated `seq`/`slug`.
 - **Backfill skips legacy ids** (`00019`, `P001`) with a log line instead of stopping at the first one, and no longer marks other workspaces' phases finished, replaces parents set since, mints phantom brainstorms, overwrites a real row's status with a placeholder, or registers a second copy of a row stored under an unpadded id.
 
 ### Fixed
 
+- **`transition_phase` no longer erases `phase_timing`** when its entity read comes back empty (a type_id held by two workspaces on a scoped server, or a soft-deleted feature). It now reads the transitioned row once, scoped, and uses it for the metadata merge, the kind check and `started_at`.
+- **A `SyntaxWarning` in `ui/routes/workspace.py`** (an invalid `\h` escape in a docstring), and the unregistered `slow` pytest mark.
 - **`create_key_result`** — it had never registered anything: it passed `validate_metadata` a JSON string, and its name-derived id failed the id check. Key results now take a real allocation.
 
 ### Removed
 
+- **The registration aliases** (C5b). `register_entity` and `upsert_entity` no longer take `project_id` or `parent_type_id`, and `register_entities_batch` no longer takes `project_id`; pass `workspace_uuid` and `parent_uuid`. The allocator lost its `project_id` axis: `generate_entity_id(db, entity_type, name, *, workspace_uuid)` and `next_sequence_value(*, entity_type, workspace_uuid)`. The `entity_created` label comes from the workspace's `project_id_legacy`, else `__unknown__`, and is byte-identical to before for every production path.
+- **`_register_synthetic_for_missing_parent`** (C13), and the Migration 11 test that copied the live registry on every suite run.
 - **The `entity_id` text form, `_strict_id_format`, `PD_REGISTER_ENTITY_STRICT_ID_FORMAT`, `EntityIdFormatError` and `_register_entity_no_display`** — with every caller on structured identity, the strict gate and its escape hatches have nothing left to guard.
 - **`promote_entity` and `PromotionConflictError`** — feature 109 built them to replace the backlog→feature promotion path, but no caller was ever switched over: the only non-test commit to touch them was the one that added them. Nothing is lost — promotion registers a new feature entity (`/pd:create-feature`), and every status/phase change goes through `append_phase_event()`. `promote_entity` was the only runtime writer of `entities.kind`, so the kind-based exemption in the display-row invariant no longer depends on an accident of the `type`/`kind` CHECK; it also held one identity-inference site (`type_id.split(":", 1)`, owned by C12), so the inventory drops to 28. Its six tests go with it; the three trigger-removal tests that shared the file move to `test_immutable_trigger_removal.py`. The unused `PromotionConflictError` import in `entity_server.py` is removed.
 
