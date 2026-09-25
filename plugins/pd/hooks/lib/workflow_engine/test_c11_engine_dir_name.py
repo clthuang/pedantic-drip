@@ -19,12 +19,18 @@ registry, so it reads the listed directory whose name composes to the
 type_id: the recorded divergence of design D4, impossible for live data.
 
 **Parity guards.** Some tests pin behaviour develop already has, so they
-are green on develop too: the containment refusal each reader raises for a
-directory symlinked out of ``artifacts_root`` (the check moved with the
-name, design D1a), hydration's precondition order for a shared type_id
-(D6.4), the closed-DB transition text (D6.5), the degraded reader's listed
-read of the disagreeing row (D4), and validate's listing fallback when the
-lookup's registry read fails (D3c).
+are green on develop too:
+
+- the containment refusal each reader raises for a directory symlinked out
+  of ``artifacts_root`` (the check moved with the name, design D1a);
+- hydration's precondition order for a shared type_id (D6.4);
+- the closed-DB transition text (D6.5);
+- the degraded reader's listed read of the disagreeing row (D4);
+- validate's listing read, both when the lookup's registry read fails
+  (D3c) and in degraded mode (D3). shape.md exists only in the listed
+  directory, so a validate that read no directory fails them;
+- the gates' evaluation on no artifacts when nothing names a directory
+  (D3b), in transition and validate, instead of a refusal.
 """
 from __future__ import annotations
 
@@ -192,14 +198,103 @@ class TestLookupReadFailure:
 
     def test_validate_falls_back_to_the_listing(self, db, db_path, artifacts_root, monkeypatch):
         _seed_disagreeing_row(db, db_path, artifacts_root)
+        # Move shape.md so that only the listed (text-named) directory holds
+        # it. G-08 then passes only if validate read the listing: a failed
+        # read treated as "no directory" ([] artifacts) blocks G-08, and so
+        # does any read of the column's directory.
+        features = os.path.join(artifacts_root, "features")
+        os.remove(os.path.join(features, COLUMN_NAME, "shape.md"))
+        _write_feature_dir(
+            os.path.join(features, TEXT_NAME), last_completed="specify", artifacts=("shape.md",)
+        )
         db.create_workflow_phase(DISAGREEING_TYPE_ID, workflow_phase="specify")
         engine = WorkflowStateEngine(db, artifacts_root)
         monkeypatch.setattr(db, "feature_entity_id", _failing_lookup, raising=False)
 
         results = engine.validate_prerequisites(DISAGREEING_TYPE_ID, "design")
 
-        # The listed (text-named) directory has no shape.md.
-        assert _gate(results, "G-08").allowed is False
+        assert _gate(results, "G-08").allowed is True
+
+
+# ---------------------------------------------------------------------------
+# D3: validate in degraded mode reads the listing (parity guard)
+# ---------------------------------------------------------------------------
+
+
+class TestDegradedValidate:
+    def test_evaluates_the_gates_on_the_listed_directory(self, db, artifacts_root):
+        # shape.md exists only in the listed directory, so G-08 passes only
+        # if degraded validate read it; treating degraded mode as "no
+        # directory" ([] artifacts) blocks G-08.
+        type_id = "feature:018-degraded"
+        workspace = bootstrap_test_workspace(db, "c11-t3-degraded-validate")
+        db.register_entity("feature", name="Degraded", seq=18, slug="degraded", status="active",
+                           workspace_uuid=workspace)
+        db.create_workflow_phase(type_id, workflow_phase="specify")
+        _write_feature_dir(
+            os.path.join(artifacts_root, "features", "018-degraded"),
+            last_completed="specify", artifacts=("shape.md",),
+        )
+        engine = WorkflowStateEngine(db, artifacts_root)
+        db.close()
+
+        # The degraded branch is the one under test.
+        assert engine.get_state(type_id).source == "meta_json_fallback"
+
+        results = engine.validate_prerequisites(type_id, "design")
+
+        assert _gate(results, "G-08").allowed is True
+
+
+# ---------------------------------------------------------------------------
+# D3b: nothing names a directory, so the gates see no artifacts (parity guards)
+# ---------------------------------------------------------------------------
+
+
+ORPHAN_TYPE_ID = "feature:019-orphan-nodir"
+
+
+def _insert_orphan_workflow_row(db, db_path: str, type_id: str, workflow_phase: str) -> None:
+    """Raw SQL: a workflow_phases row with NO entities row and no directory,
+    so neither the column nor the listing names one. The explicit
+    workspace_uuid is what lets it past the wp_reject_orphaned_insert
+    trigger."""
+    workspace = bootstrap_test_workspace(db, f"c11-t3-{_uuid.uuid4().hex[:8]}")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO workflow_phases (type_id, kanban_column, updated_at, "
+            "workspace_uuid, workflow_phase) VALUES (?, ?, ?, ?, ?)",
+            (type_id, "backlog", _NOW, workspace, workflow_phase),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestNoDirectoryIsNamed:
+    # A reader that refused a None name would raise instead; these pin that
+    # the gates run on [] (G-08 reports the missing shape.md).
+    _NO_SHAPE = "Missing prerequisites for design: shape.md"
+
+    def test_transition_evaluates_the_gates_on_no_artifacts(self, db, db_path, artifacts_root):
+        _insert_orphan_workflow_row(db, db_path, ORPHAN_TYPE_ID, "specify")
+        engine = WorkflowStateEngine(db, artifacts_root)
+
+        response = engine.transition_phase(ORPHAN_TYPE_ID, "design")
+
+        g08 = _gate(response.results, "G-08")
+        assert (g08.allowed, g08.reason) == (False, self._NO_SHAPE)
+        assert db.get_workflow_phase(ORPHAN_TYPE_ID)["workflow_phase"] == "specify"
+
+    def test_validate_evaluates_the_gates_on_no_artifacts(self, db, db_path, artifacts_root):
+        _insert_orphan_workflow_row(db, db_path, ORPHAN_TYPE_ID, "specify")
+        engine = WorkflowStateEngine(db, artifacts_root)
+
+        results = engine.validate_prerequisites(ORPHAN_TYPE_ID, "design")
+
+        g08 = _gate(results, "G-08")
+        assert (g08.allowed, g08.reason) == (False, self._NO_SHAPE)
 
 
 # ---------------------------------------------------------------------------
