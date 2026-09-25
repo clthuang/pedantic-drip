@@ -39,6 +39,13 @@ Each problem in the design's two triage tables is closed when the check named fo
      - **A ruling that differs from a default:** the affected tasks are re-planned before they start.
      - **The concurrency cap:** confirm it in the same question.
   3. Take the live registry's first fingerprint (`stat -f '%m %z'` and a sha256 prefix). F1, F2 and Done-when #4 compare against it.
+- **Kickoff record (2026-09-26):**
+  - **Rulings:** D1 and D5 take their defaults: delete the file→registry writers, and keep feature 129's link rule.
+  - **D3 does not.** The user's words: "survey, build an inventory, create a precise re-key playbook and manual, review and verify using an agent, then execute. Make sure the re-key is consistent with the new design and also future proof."
+    - **What it changes:** the re-key moves into this round as Phase R. Task 2B's contracts (W3.1–W3.3) are re-planned into Phase R's playbook.
+    - **Unaffected:** Phase 1, 2A, 2C, 3A, 4A and 4B.
+  - **Concurrency:** the cap of 6 is confirmed; the user chose "at most 6 at a time".
+  - **Live registry fingerprint:** `1790286038 4083712 2814bb4434e8faa0`.
 - **Evidence and reports** live in the main checkout's gitignored `agent_sandbox/`, by absolute path. A task worktree's own `agent_sandbox/` is deleted with the worktree.
   - **Evidence:** `/Users/terry/projects/pedantic-drip/agent_sandbox/2026-09-25/release-c-followups/`.
   - **Reports:** `/Users/terry/projects/pedantic-drip/agent_sandbox/<date>/release-c-followups-execution/`, with one directory per phase and one per task. The task report holds:
@@ -208,7 +215,9 @@ It starts when Phase 1 has landed.
   - rewrite about 24 fixtures that relied on `__unknown__`, including `test_issue_spawn.py::TestAC95ParentValidation::test_cross_workspace_parent_spawn_succeeds` (its fixture sets a workspace; its assertion is unchanged);
   - delete the 4 recovery-thread tests.
 
-**2B: the board, links and the remaining guards** (W3.1–W3.3).
+**2B: re-planned into Phase R (D3 ruling).** Under a key per entity, the board join, the links and the writer guards change shape. So Phase R's playbook restates W3.1–W3.3 for the new key, and its execution implements them. The rev 2 text below is kept as the contract Phase R must still meet: one card per row, working links, no silent cross-workspace write.
+
+**2B (rev 2 text, superseded by Phase R): the board, links and the remaining guards** (W3.1–W3.3).
 - **Files:**
   - `database.py`: `list_workflow_phases`, the re-attribution cascade, and `append_phase_event`'s fallback;
   - `plugins/pd/ui/`: routes, templates and `mermaid.py`.
@@ -224,6 +233,63 @@ It starts when Phase 1 has landed.
   - the keep-green `set_parent`-by-uuid test;
   - one W3.4 tool answering `workspace_unresolved`.
 - **Existing tests:** feature 129's four cross-workspace tests (named in W3.4) pass with their assertions unchanged.
+
+## Phase R (P1): re-key `workflow_phases` per entity (D3 ruling)
+
+**Why:** the user ruled that the re-key happens this round, through a survey, an inventory, a precise playbook and manual, and independent agent verification, before any code changes. It must be consistent with the design (rev 2.1) and future-proof.
+
+**R0: survey and inventory.** Read-only; it can run during Phase 1.
+- **What it covers:** every reader and writer of `workflow_phases` and of `phase_events`, and every unscoped entity read by type_id (the design's "39 `get_entity` reads"). That means:
+  - DDL, triggers, views and indexes;
+  - the v1 and v2 migration chains, the rebuild tool and the doctor's checks and fixes;
+  - the engines, MCP servers, UI and `scripts/`;
+  - hooks, commands and skills;
+  - tests with raw SQL.
+- **Per site:** file:line, what it does, the key it uses, whether it is workspace-scoped, its fate under Phase 1 (deleted by which W1 change, changed by which W2 change, or unchanged), and what a re-key requires of it.
+- **The live data,** measured read-only:
+  - row counts;
+  - NULL `uuid` rows;
+  - orphan rows;
+  - workspace mismatches;
+  - shared type_ids across both tables.
+- **Output:** `docs/plans/2026-09-26-workflow-phases-rekey-inventory.md`. A completeness critic, independent of the surveyors, checks it before it is used.
+
+**R1: re-key design.** It must meet these future-proof criteria, each shown with evidence:
+1. **One row per entity,** enforced by the schema.
+2. **It survives every identity change:** a type_id rename, workspace re-attribution, reparenting, archive and soft delete, and a type_id shared across workspaces.
+3. **No identity copy can drift silently:** a kept copy is enforced by a trigger or foreign key, or derived by a view.
+4. **No code path can reach another workspace's row by type_id,** enforced by the API's shape and by a guard test that fails when new code keys the table by type_id alone.
+5. **One target schema:** fresh (v1-generation) and live (v2) databases reach it. The migration is resumable, uses the copy-rename pattern with `foreign_key_check`, and has a live-copy rehearsal and a rollback.
+6. **It fits the v2 direction** (entity-uuid events and views), so a later retirement of `workflow_phases` gets no harder.
+7. **It is consistent with design rev 2.1:**
+   - W2.1's call-site contract, a type_id plus the caller's workspace;
+   - W3.4's resolution in the caller's workspace;
+   - D5's link rule;
+   - W1's deletions.
+
+**The design also decides,** with the inventory as evidence:
+- whether `phase_events` gains the entity key in this round;
+- whether the unscoped type_id entity reads are scoped in this round. The I1 correction says both halves are needed to solve problem 1.
+
+**Output:** `docs/plans/2026-09-26-workflow-phases-rekey-design.md`.
+
+**R2: playbook and manual.** `docs/plans/2026-09-26-workflow-phases-rekey-playbook.md`.
+- **The playbook:** implementation tasks in order, each with its inventory rows as the checklist, its red-first tests and its gates.
+- **The migration:** exact SQL for both chains, pre-flight checks, verification queries and rollback.
+- **The operator manual:** how the live registry is migrated. That covers backup (the safety section's immutable copy), apply, verify and roll back, with a fingerprint at each step. The live apply needs the user's yes, as F3 says.
+- **W3.1–W3.3:** restated for the new key.
+
+**R3: independent verification.** Agents that wrote none of R0–R2:
+- a premortem;
+- a code verification that builds the playbook's changes in a scratch export of develop after Phase 1 and runs G1–G5;
+- a rehearsal of the migration on a live copy, with the rollback exercised.
+
+At most one revision absorbs their findings; remaining blockers go to the user.
+
+**R4: execute.**
+- **Order:** once Phase 1 and 2A have landed, the playbook's tasks run under this plan's review protocol, gates and landing rules.
+- **Then:** F1 on the phase branch.
+- **The live migration** follows only on the user's yes, using the manual.
 
 ## Phase 3 (P1): root detection and the plugin cache (W4.4–W4.5)
 
@@ -294,7 +360,9 @@ A new failure that is explained but not fixed does not pass. It goes through the
   - **Why a clone:** its `.git` is a directory, so the suite roots and publishes as a main checkout does.
   - **Expected at `84fc9376`:** 66/66.
 - **G5:** `python -m pytest scripts/test_*.py -q -p no:cacheprovider`.
-  - **Base:** the task's base, measured in the same environment. With `ENTITY_DB_PATH` set to a temp DB, `84fc9376` has 16 failures (N13); unset, the count is measured at kickoff.
+  - **Base:** the task's base, measured in the same environment.
+    - **Unset, as G5 runs:** 7 fail at kickoff (2026-09-26), all in `scripts/test_migrate_db.py::TestMigration6`; 150 pass and 1 is skipped.
+    - **Set to a temp DB:** 16 fail (N13): the same 7, plus the 9 `test_migrate_e2e.py` tests.
   - **After 4B:** 0 failures.
 
 ## Final checks
@@ -349,6 +417,7 @@ A new failure that is explained but not fixed does not pass. It goes through the
 
 **F3: hand-offs to the user.** Nothing is published, pushed or written live without a yes.
 - **After Phase 1 lands,** the orchestrator asks whether to publish the plugin cache (`sync-cache.sh` from the main checkout) and push develop. With Phase 1 published, the user can re-enable pd in their settings; the plan never re-enables it.
+- **After Phase R's code lands,** it asks whether to migrate the live registry, per Phase R's manual.
 - **After F2,** it asks about:
   - publishing and pushing again;
   - D2 (leave, or restore the archived features);

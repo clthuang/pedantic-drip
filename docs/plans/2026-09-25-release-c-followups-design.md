@@ -140,7 +140,12 @@ Each has a recommended default. The plan follows the default unless the user rul
   - **The projects need nothing.** The two then-active projects it hid (`P002-memory-flywheel`, `P003-entity-system-redesign`) were superseded by C22's recreated `006-memory-flywheel` and `007-entity-system-redesign`, so un-archiving them would bring back duplicates.
   - **What's left is 125 completed features.** Archiving only hides a row from the board and two list filters (`board.py:74`, `workflow_state_server.py:678`).
   - **Restoring** puts them back in the board's Completed column. After W1, `update_entity(archived=false)` does it through MCP; it is a gated live write either way.
-- **D3. Shared type_ids: guard now, defer the re-key (recommended).**
+- **D3 ruling (2026-09-26): the re-key is in this round.** It goes through a survey, an inventory, a playbook and manual, and independent agent verification before execution, and it must be consistent with this design and future-proof.
+  - **Where it's planned:** Phase R of the implementation plan.
+  - **What it supersedes:** the "Deferred" rows for the re-key and for the read-scoping and type_id-only writers.
+  - **What it absorbs:** W3.1–W3.3's contracts, restated by Phase R's playbook.
+  - **The options offered, kept for the record:** the next bullet.
+- **D3 (as offered). Shared type_ids: guard now, defer the re-key (recommended).**
   - **Now:** W2 and W3 stop the silent writes and fix the visible symptoms.
   - **Deferred (A):** re-keying `workflow_phases` by entity uuid (a migration plus about 45 call sites) waits until two workspaces must run live workflows on one type_id.
   - **Deferred (B):** refusing, at registration, a type_id another workspace holds would change feature 109's per-workspace identity design. It waits for a natural collision.
@@ -535,8 +540,8 @@ Each has a recommended default. The plan follows the default unless the user rul
 
 | Item | Reopen when |
 |------|-------------|
-| Re-key `workflow_phases` by entity uuid (D3) | Two workspaces must run live workflows on one type_id |
-| Scope the 39 unscoped `get_entity` reads, and guard `update_workflow_phase`, the step-5 projection, `delete_workflow_phase`, `resolve_ref`'s exact match and `fix_kanban_columns.py` | With the re-key |
+| Re-key `workflow_phases` by entity uuid (D3) | **In scope since the D3 ruling (2026-09-26):** Phase R |
+| Scope the 39 unscoped `get_entity` reads, and guard `update_workflow_phase`, the step-5 projection, `delete_workflow_phase`, `resolve_ref`'s exact match and `fix_kanban_columns.py` | Decided by Phase R's re-key design, from its inventory |
 | Refuse cross-workspace duplicate type_ids at registration (D3) | The first natural collision |
 | Per-workspace `.meta.json` import, which also covers `run_backfill`'s scanners that import a checkout's projections on a fresh DB or a version bump (`backfill.py:611-690`) (D1) | The user wants an external repo's committed projections in the registry |
 | The library's `__unknown__` defaults in `feature_lifecycle.py:270` and `:484` (59 test edits); MCP callers always pass a workspace after W4 | Next cleanup of the library API |
