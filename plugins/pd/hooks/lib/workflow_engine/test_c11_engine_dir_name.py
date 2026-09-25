@@ -18,6 +18,13 @@ Healthy readers read the column's directory. The degraded reader has no
 registry, so it reads the listed directory whose name composes to the
 type_id: the recorded divergence of design D4, impossible for live data.
 
+**Degraded mode with a readable registry.** A degraded test that closes the
+DB cannot tell a reader that never asks the registry from one that asks and
+falls back to the listing when the read fails.
+``TestDegradedReaderWithAReadableRegistry`` keeps the DB open and fails only
+the health probe, so a degraded reader that asked the registry would read
+the column's directory (design D4).
+
 **Parity guards.** Some tests pin behaviour develop already has, so they
 are green on develop too:
 
@@ -160,7 +167,10 @@ class TestDisagreeingRowDegradedReader:
     def test_the_degraded_reader_reads_the_listed_directory(self, db, db_path, artifacts_root):
         # Design D4's recorded divergence: no registry, so the listing names
         # the directory. Green on develop too (the text and the listed name
-        # coincide); it pins that degraded mode never reads the column.
+        # coincide). The DB is closed, so a registry read would fail and a
+        # reader that fell back to the listing would pass as well: this pins
+        # the answer only. TestDegradedReaderWithAReadableRegistry pins that
+        # degraded mode never asks the registry.
         _seed_disagreeing_row(db, db_path, artifacts_root)
         engine = WorkflowStateEngine(db, artifacts_root)
         db.close()
@@ -169,6 +179,54 @@ class TestDisagreeingRowDegradedReader:
 
         assert state is not None and state.source == "meta_json_fallback"
         assert state.last_completed_phase == "specify"
+
+
+def _record_name_lookups(db, monkeypatch) -> list[str]:
+    """Wrap ``db.feature_entity_id`` so that every registry name lookup
+    records its type_id, then answers as before."""
+    lookups: list[str] = []
+    real_lookup = db.feature_entity_id
+
+    def recording_lookup(type_id):
+        lookups.append(type_id)
+        return real_lookup(type_id)
+
+    monkeypatch.setattr(db, "feature_entity_id", recording_lookup)
+    return lookups
+
+
+class TestDegradedReaderWithAReadableRegistry:
+    """Design D4: degraded mode never asks the registry for a name.
+
+    The DB stays open and readable; only the health probe fails. A degraded
+    reader that asked the registry first would get the column's name here,
+    not an error, and read ``010-column-name/``.
+    """
+
+    def test_reads_the_listed_directory(self, db, db_path, artifacts_root, monkeypatch):
+        _seed_disagreeing_row(db, db_path, artifacts_root)
+        engine = WorkflowStateEngine(db, artifacts_root)
+        monkeypatch.setattr(engine, "_check_db_health", lambda: False)
+
+        state = engine.get_state(DISAGREEING_TYPE_ID)
+
+        # The listed directory completed specify; the column's, design.
+        assert state is not None and state.source == "meta_json_fallback"
+        assert state.last_completed_phase == "specify"
+
+    def test_asks_the_registry_for_no_name(self, db, db_path, artifacts_root, monkeypatch):
+        _seed_disagreeing_row(db, db_path, artifacts_root)
+        lookups = _record_name_lookups(db, monkeypatch)
+        engine = WorkflowStateEngine(db, artifacts_root)
+        monkeypatch.setattr(engine, "_check_db_health", lambda: False)
+
+        state = engine.get_state(DISAGREEING_TYPE_ID)
+
+        assert state is not None and state.source == "meta_json_fallback"
+        assert lookups == []
+        # Control: the recorder sees a lookup the engine does make.
+        assert engine._feature_dir_name(DISAGREEING_TYPE_ID) == COLUMN_NAME
+        assert lookups == [DISAGREEING_TYPE_ID]
 
 
 # ---------------------------------------------------------------------------
