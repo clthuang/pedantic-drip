@@ -517,13 +517,18 @@ _INFERENCE_SCAN_ROOTS = [
 #                          text at migration time. Same class as :2756, :4163
 #                          and :4226. Sanctioned; relabelled, not fixed.
 #
-#   feature_lifecycle.py:98  _validate_feature_type_id splits type_id on ":"
-#                          to build {artifacts_root}/features/{slug}. The path
-#                          belongs in entities.artifact_path -> C11. NOTE it is
-#                          a TRUST BOUNDARY: it rejects NUL and does a realpath
-#                          containment check. A stored artifact_path is not
-#                          more trustworthy than a parsed slug -- C11 must move
-#                          the source WITHOUT removing the containment check.
+#   feature_lifecycle.py:98  RESOLVED by C11, with engine.py's _extract_slug:
+#                          both split type_id on ":" to name the feature's
+#                          directory. The name now comes from the row's
+#                          stored entities.entity_id column, or with no row
+#                          the features/ listing matched whole-string
+#                          (workflow_engine/feature_paths.py). The trust
+#                          boundary stays: the validator keeps its NUL
+#                          refusal and realpath containment check, the
+#                          engine's containment check moved unchanged into
+#                          _contained_feature_dir_name, and
+#                          check_feature_dir_name refuses anything but one
+#                          safe path component (test_c11_*.py).
 #
 #   reconciliation.py:787  RESOLVED by C8: the db_only filter reads the
 #                          joined kind (entity_type) instead of the type_id
@@ -539,8 +544,6 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/database.py",           4163, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4226, "sql",         "migration internal - sanctioned"),
     ("entity_registry/id_generator.py",       131, "split",       "SANCTIONED - round-trip gate for ids read as text"),
-    ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
-    ("workflow_engine/feature_lifecycle.py",  98, "split",       "C11 artifact path"),
 ]
 
 
@@ -617,11 +620,13 @@ def test_identity_inference_inventory_is_exact() -> None:
 #   10  C8 (2026-09-24) removed reconciliation's and workflow_state_server's
 #       kind-prefix checks (one and two), router's two splits and
 #       _card.html's two; both lowered at the phase-2 integration
+#    8  C11 (2026-09-25) 10 -> 8: removed engine.py's _extract_slug and
+#       feature_lifecycle.py's _validate_feature_type_id type_id splits
 #
 # Raising this is a deliberate act with a line in that table, not a way to
 # quiet a red test. If the number rose because production grew a NEW parser,
 # the entry belongs in the diff being reviewed, not here.
-_INVENTORY_HIGH_WATER = 10
+_INVENTORY_HIGH_WATER = 8
 
 
 def test_inventory_shrinks_to_zero_eventually() -> None:

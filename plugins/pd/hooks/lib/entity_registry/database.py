@@ -8244,6 +8244,38 @@ class EntityDatabase:
             return None
         return result
 
+    def feature_entity_id(self, type_id: str) -> str | None:
+        """The stored ``entity_id`` column of the rows holding *type_id* (C11).
+
+        A feature's directory is ``{artifacts_root}/features/<entity_id>``;
+        ``workflow_engine.feature_paths.feature_dir_name`` asks here first.
+        Reading the column opaquely is a column read, never a parse of the
+        type_id text.
+
+        - **No filter:** no workspace, deleted, archived or kind condition,
+          so a soft-deleted or archived row still names its directory and a
+          type_id held in two workspaces answers once.
+        - **No row:** ``None``.
+        - **Rows that disagree:** two or more distinct values raise
+          ``ValueError("feature_not_found: ...")`` naming them; callers treat
+          it as any ``feature_not_found`` refusal.
+        - **A failed read** raises ``sqlite3.Error``; the caller decides.
+        """
+        rows = self._conn.execute(
+            "SELECT DISTINCT entity_id FROM entities WHERE type_id = ? "
+            "ORDER BY entity_id",
+            (type_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            values = ", ".join(repr(row["entity_id"]) for row in rows)
+            raise ValueError(
+                f"feature_not_found: {type_id} has {len(rows)} distinct "
+                f"entity_id values: {values}"
+            )
+        return rows[0]["entity_id"]
+
     def list_entities(
         self,
         entity_type: str | None = None,

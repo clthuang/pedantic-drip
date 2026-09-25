@@ -32,10 +32,11 @@ def tmp_artifacts(tmp_path):
 def feature_dir(tmp_artifacts):
     """Create a feature directory under artifacts_root.
 
-    The directory name must match the slug used in feature_type_id.
-    For feature_id='001', slug='001-my-feature', the type_id slug becomes
-    '001-001-my-feature', which _validate_feature_type_id resolves against
-    artifacts_root/features/.
+    The directory name is the feature's entity_id. For feature_id='001',
+    slug='001-my-feature' that is '001-001-my-feature': init_feature_state
+    composes it from its inputs, and activate_feature's validator reads it
+    from the row's entity_id column (the activate tests stub
+    ``feature_entity_id`` on the MagicMock db).
     """
     d = os.path.join(tmp_artifacts, "features", "001-001-my-feature")
     os.makedirs(d, exist_ok=True)
@@ -597,6 +598,7 @@ class TestActivateFeature:
 
     def test_activates_planned_feature(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
         mock_db.get_entity.return_value = {"status": "planned"}
+        mock_db.feature_entity_id.return_value = "001-001-my-feature"
 
         result = activate_feature(
             db=mock_db,
@@ -615,6 +617,7 @@ class TestActivateFeature:
 
     def test_feature_not_found_raises(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
         mock_db.get_entity.return_value = None
+        mock_db.feature_entity_id.return_value = "001-001-my-feature"
 
         with pytest.raises(ValueError, match="feature_not_found"):
             activate_feature(
@@ -626,6 +629,7 @@ class TestActivateFeature:
 
     def test_non_planned_status_raises(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
         mock_db.get_entity.return_value = {"status": "active"}
+        mock_db.feature_entity_id.return_value = "001-001-my-feature"
 
         with pytest.raises(ValueError, match="invalid_transition"):
             activate_feature(
@@ -638,6 +642,7 @@ class TestActivateFeature:
     def test_projection_warning_included(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
         """When _project_meta_json returns a warning, include it in result."""
         mock_db.get_entity.return_value = {"status": "planned"}
+        mock_db.feature_entity_id.return_value = "001-001-my-feature"
 
         # activate_feature does NOT call _project_meta_json — that stays in the server wrapper.
         # So there should be no projection_warning key.
