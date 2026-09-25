@@ -78,7 +78,11 @@ def _brainstorm(db, workspace_uuid, stem):
 def test_another_workspaces_null_phase_brainstorm_row_is_left_alone(db):
     """B's row with a NULL phase is not A's to fill in (before W2.6 it was
     rewritten through the NULL-phase update). A's own brainstorm is seeded
-    in the same run, so the run did work."""
+    in the same run, so the run did work.
+
+    No error either: a run as A never visits B's brainstorm. A run over
+    every workspace would reach it, and the scoped update would refuse it
+    and record the refusal in ``errors``."""
     brainstorm_b = _brainstorm(db, WORKSPACE_B, "20260925-000000-b-idea")
     db.create_workflow_phase(
         brainstorm_b["type_id"], workflow_phase=None, kanban_column="backlog",
@@ -86,8 +90,9 @@ def test_another_workspaces_null_phase_brainstorm_row_is_left_alone(db):
     row_b_before = dict(db.get_workflow_phase(brainstorm_b["type_id"]))
     brainstorm_a = _brainstorm(db, WORKSPACE_A, "20260925-000001-a-idea")
 
-    _backfill_as_the_server_of(db, WORKSPACE_A)
+    result = _backfill_as_the_server_of(db, WORKSPACE_A)
 
+    assert result["errors"] == []
     assert dict(db.get_workflow_phase(brainstorm_b["type_id"])) == row_b_before
     row_a = db.get_workflow_phase(brainstorm_a["type_id"])
     assert row_a is not None
@@ -115,9 +120,14 @@ def test_a_shared_type_ids_row_owned_by_another_workspace_is_left_alone(db):
 def test_a_shared_type_ids_missing_row_is_seeded_for_the_calling_workspace(db):
     """``feature:035``'s shape: both workspaces hold the type_id, no row
     exists, and only A's server runs. The row is A's, with A's entity uuid
-    (the trigger's guess would be B)."""
+    (the trigger's guess would be B).
+
+    The row's values are A's entity's too. B's entity is completed and
+    registered first, A's is active: a run that iterated every workspace
+    would visit B's entity first and seed A's row ``finish`` /
+    ``completed`` from it."""
     db.register_entity(
-        "feature", name="Shared", seq=35, slug="shared", status="active",
+        "feature", name="Shared", seq=35, slug="shared", status="completed",
         workspace_uuid=WORKSPACE_B,
     )
     uuid_a = db.register_entity(
@@ -125,11 +135,13 @@ def test_a_shared_type_ids_missing_row_is_seeded_for_the_calling_workspace(db):
         workspace_uuid=WORKSPACE_A,
     )
 
-    _backfill_as_the_server_of(db, WORKSPACE_A)
+    result = _backfill_as_the_server_of(db, WORKSPACE_A)
 
+    assert result["errors"] == []
     row = db.get_workflow_phase("feature:035-shared")
     assert row is not None
     assert (row["workspace_uuid"], row["uuid"]) == (WORKSPACE_A, uuid_a)
+    assert (row["workflow_phase"], row["kanban_column"]) == (None, "backlog")
 
 
 def test_a_completed_features_row_comes_from_the_registry_not_its_meta_json(db, artifacts_root):

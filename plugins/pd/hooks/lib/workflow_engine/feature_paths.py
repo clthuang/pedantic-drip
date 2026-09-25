@@ -14,8 +14,10 @@ place:
    is composed from the listed name, never parsed.
 
 Either way the name passes ``check_feature_dir_name``. Joining it under
-``features/`` and checking where it resolves stays with each caller, or
-``feature_dir_path`` does both.
+``features/`` and checking where it resolves is ``contained_feature_dir``,
+the one owner of that containment check (the engine's
+``_contained_feature_dir_name`` calls it); ``feature_dir_path`` does both
+steps.
 """
 from __future__ import annotations
 
@@ -91,18 +93,35 @@ def feature_dir_name(
     return check_feature_dir_name(name)
 
 
+def contained_feature_dir(artifacts_root: str, type_id: str, name: str) -> str:
+    """``{artifacts_root}/features/<name>``, when it resolves inside
+    ``artifacts_root``, symlinks included.
+
+    Defense-in-depth against path traversal. *name* is the directory name
+    of the feature *type_id*, which the refusal names. The directory need
+    not exist.
+
+    Raises ``ValueError("Invalid feature_type_id (path traversal):
+    <type_id>")``.
+    """
+    path = os.path.join(artifacts_root, "features", name)
+    root = os.path.realpath(artifacts_root)
+    if not os.path.realpath(path).startswith(root + os.sep):
+        raise ValueError(f"Invalid feature_type_id (path traversal): {type_id}")
+    return path
+
+
 def feature_dir_path(
     db: EntityDatabase | None, artifacts_root: str, type_id: str
 ) -> str | None:
     """``{artifacts_root}/features/<name>`` for the feature *type_id*, or
     None when nothing names a directory.
 
-    The name is ``feature_dir_name``'s. The path must resolve inside
-    ``artifacts_root``, symlinks included: the containment check
-    ``WorkflowStateEngine._contained_feature_dir_name`` makes, with its
-    refusal text. The directory need not exist; existence is the caller's
-    check. Callers that must not follow a stored ``artifact_path`` into
-    another checkout name the directory here instead (W2).
+    The name is ``feature_dir_name``'s, and the path passes
+    ``contained_feature_dir``, the containment check the engine makes. The
+    directory need not exist; existence is the caller's check. Callers that
+    must not follow a stored ``artifact_path`` into another checkout name
+    the directory here instead (W2).
 
     Raises:
         ValueError: ``feature_dir_name``'s refusals (``feature_not_found:
@@ -113,8 +132,4 @@ def feature_dir_path(
     name = feature_dir_name(db, artifacts_root, type_id)
     if name is None:
         return None
-    path = os.path.join(artifacts_root, "features", name)
-    root = os.path.realpath(artifacts_root)
-    if not os.path.realpath(path).startswith(root + os.sep):
-        raise ValueError(f"Invalid feature_type_id (path traversal): {type_id}")
-    return path
+    return contained_feature_dir(artifacts_root, type_id, name)

@@ -6912,12 +6912,15 @@ class EntityDatabase:
           value AS-IS — ``None`` means "no scoping", and an unrecognized
           ``workspace_uuid`` is not an error (a query against it just
           yields zero rows).
-        * Write paths (``update_entity``'s re-attribution branch,
-          ``upsert_workflow_phase``) additionally require a resolved value
-          AND run it through :meth:`_validated_provided_workspace_uuid` —
-          the split-brain fail-loud guard the retired shim used to apply
-          directly. This reproduces the old shim's exact behavior (same
-          messages, same ``stacklevel``) without a dedicated wrapper.
+        * Write paths: ``update_entity``'s re-attribution branch
+          additionally requires a resolved value AND runs it through
+          :meth:`_validated_provided_workspace_uuid` — the split-brain
+          fail-loud guard the retired shim used to apply directly. This
+          reproduces the old shim's exact behavior (same messages, same
+          ``stacklevel``) without a dedicated wrapper.
+          ``upsert_workflow_phase`` validates a given workspace identity
+          the same way, but requires none (W2.1): given neither value, it
+          resolves nothing here, and the type_id must be globally unique.
           Registration and allocation (``register_entity``,
           ``upsert_entity``, ``register_entities_batch``,
           ``next_sequence_value``) take no ``project_id`` (C5b): they
@@ -10142,7 +10145,9 @@ class EntityDatabase:
             Optional read-side workspace assertion (Feature 113 / FR-4.1).
             When non-None, SELECTs the stored ``workspace_uuid`` from
             ``workflow_phases`` and raises ``ValueError`` on mismatch BEFORE
-            the UPDATE proceeds. Does NOT appear in the UPDATE SET clause —
+            the UPDATE proceeds; a stored NULL (a pre-Migration-11 orphan
+            row) is a mismatch too, where :meth:`upsert_workflow_phase`
+            updates such a row. Does NOT appear in the UPDATE SET clause —
             the column is immutable post-Migration-11 (set at INSERT only:
             explicitly by :meth:`create_workflow_phase` and
             :meth:`upsert_workflow_phase` since W2.1, otherwise by the
@@ -10240,6 +10245,12 @@ class EntityDatabase:
         ``wp_autofill_workspace_uuid`` trigger never guesses. A row that
         belongs to another workspace is refused, never overwritten.
 
+        A legacy row whose ``workspace_uuid`` is NULL (an orphan from
+        before Migration 11; no insert makes one now) belongs to no
+        workspace, so it is updated, not refused, and stays NULL. Contrast
+        :meth:`update_workflow_phase`, whose optional workspace assertion
+        compares the stored value exactly and so refuses such a row.
+
         Feature 132 D5: deliberately EXCLUDED from v2 dual-write duty --
         presentational, same rationale as :meth:`update_workflow_phase`'s
         docstring (kanban_column/mode/etc. carry no axis meaning).
@@ -10264,7 +10275,9 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If the entity is not found in the specified workspace, the
+            If the entity is not found (``Entity '<type_id>' not found in
+            project '<scope>'`` when a workspace or legacy project id was
+            given, ``Entity '<type_id>' not found`` when none was), the
             type_id is ambiguous across workspaces and no workspace was
             given, the existing row belongs to another workspace, or any
             key in *kwargs* is not in the allow-list.
@@ -10281,38 +10294,36 @@ class EntityDatabase:
         if invalid:
             raise ValueError(f"Invalid workflow_phases columns: {invalid}")
 
+        # The scope a not-found names, in the legacy phrasing: the legacy
+        # project id, else the given workspace; unscoped, none.
+        scope = project_id if project_id is not None else workspace_uuid
+        not_found = (
+            f"Entity {type_id!r} not found"
+            if scope is None
+            else f"Entity {type_id!r} not found in project {scope!r}"
+        )
+
         # A given workspace identity must resolve and pass the split-brain
         # guard; with none, the type_id itself must be globally unique.
         ws_uuid = None
-        if workspace_uuid is not None or project_id is not None:
+        if scope is not None:
             try:
                 ws_uuid = self._resolve_optional_workspace_filter(
                     workspace_uuid, project_id, _caller="upsert_workflow_phase"
                 )
-                if ws_uuid is None:
-                    raise ValueError(
-                        "upsert_workflow_phase() requires workspace_uuid or "
-                        "project_id"
-                    )
                 ws_uuid = self._validated_provided_workspace_uuid(
                     ws_uuid, "upsert_workflow_phase"
                 )
             except ValueError:
                 # Unknown project_id_legacy → entity is "not found in project"
-                raise ValueError(
-                    f"Entity {type_id!r} not found in project {project_id!r}"
-                )
+                raise ValueError(not_found)
 
         try:
             owner = self._workflow_row_owner(type_id, ws_uuid)
         except ValueError as exc:
             if not str(exc).startswith("Entity not found"):
                 raise  # ambiguous across workspaces: refused as raised
-            # Compat error message preserves the legacy phrasing.
-            scope = project_id if project_id is not None else ws_uuid
-            raise ValueError(
-                f"Entity {type_id!r} not found in project {scope!r}"
-            ) from exc
+            raise ValueError(not_found) from exc
         type_id = owner["type_id"]
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE

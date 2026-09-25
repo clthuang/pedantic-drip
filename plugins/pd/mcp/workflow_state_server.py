@@ -2678,7 +2678,13 @@ async def init_project_state(
 
 @mcp.tool()
 async def activate_feature(feature_type_id: str | None = None, ref: str | None = None) -> str:
-    """Transition a planned feature to active status."""
+    """Transition a planned feature to active status.
+
+    The feature's directory ``{artifacts_root}/features/{id}-{slug}/`` must
+    already exist: activation creates none, and answers feature_not_found
+    without it. In the same transaction as the status change, a feature
+    with no workflow row gets one, so the first transition_phase finds it.
+    """
     err = _check_db_available()
     if err:
         return err

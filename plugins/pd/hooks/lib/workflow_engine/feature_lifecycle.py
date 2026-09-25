@@ -257,6 +257,9 @@ def init_feature_state(
     # be migrated via the existing __unknown__-bucket backfill paths.
     existing = db.get_entity(feature_type_id)
     if existing is None:
+        entity_workspace_uuid = (
+            workspace_uuid if workspace_uuid is not None else _UNKNOWN_WORKSPACE_UUID
+        )
         # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
         try:
             db.register_entity(
@@ -266,9 +269,7 @@ def init_feature_state(
                 artifact_path=feature_dir,
                 status=status,
                 metadata=metadata,
-                workspace_uuid=(
-                    workspace_uuid if workspace_uuid is not None else _UNKNOWN_WORKSPACE_UUID
-                ),
+                workspace_uuid=entity_workspace_uuid,
             )
         except EntityExistsError as e:
             raise RuntimeError(
@@ -292,6 +293,9 @@ def init_feature_state(
         if existing_meta.get("skipped_phases"):
             metadata["skipped_phases"] = existing_meta["skipped_phases"]
         db.update_entity(feature_type_id, status=status, metadata=metadata, workspace_uuid=workspace_uuid)
+        # The unscoped lookup found the type_id's only holder, and the
+        # update above refuses it unless it is in the given workspace.
+        entity_workspace_uuid = existing.get("workspace_uuid")
 
     # Fix kanban_column via _kanban_column_for (phase-aware single source of truth).
     wf_row = db.get_workflow_phase(feature_type_id)
@@ -300,13 +304,14 @@ def init_feature_state(
     try:
         db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
     except ValueError:
-        # Row may not exist if engine initialization failed — create it, for
-        # this call's workspace (W2.1: without one, the type_id must be
-        # globally unique).
+        # Row may not exist if engine initialization failed — create it for
+        # the workspace that holds the entity this call registered or
+        # updated (W2.1), so another workspace holding the same type_id
+        # cannot make the create ambiguous.
         try:
             db.create_workflow_phase(
                 feature_type_id, kanban_column=init_kanban,
-                workspace_uuid=workspace_uuid,
+                workspace_uuid=entity_workspace_uuid,
             )
         except ValueError:
             pass  # Entity itself may be missing; workflow row cannot be created

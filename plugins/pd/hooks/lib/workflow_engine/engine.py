@@ -21,7 +21,7 @@ from transition_gate import (
 )
 from transition_gate.constants import HARD_PREREQUISITES
 
-from .feature_paths import feature_dir_name
+from .feature_paths import contained_feature_dir, feature_dir_name
 from .models import FeatureWorkflowState, TransitionResponse, db_unavailable_error
 
 # Precomputed constants from immutable sources
@@ -411,17 +411,12 @@ class WorkflowStateEngine:
         """Return *name* when ``{artifacts_root}/features/<name>`` resolves
         inside ``artifacts_root``, symlinks included.
 
-        Defense-in-depth against path traversal. Raises
-        ``ValueError("Invalid feature_type_id (path traversal): ...")``.
+        Defense-in-depth against path traversal, checked by
+        ``feature_paths.contained_feature_dir``, the one owner of the check
+        (the projection and promotion name directories through it too).
+        Raises ``ValueError("Invalid feature_type_id (path traversal): ...")``.
         """
-        resolved = os.path.realpath(
-            os.path.join(self.artifacts_root, "features", name)
-        )
-        root = os.path.realpath(self.artifacts_root)
-        if not resolved.startswith(root + os.sep):
-            raise ValueError(
-                f"Invalid feature_type_id (path traversal): {feature_type_id}"
-            )
+        contained_feature_dir(self.artifacts_root, feature_type_id, name)
         return name
 
     def _derive_completed_phases(
