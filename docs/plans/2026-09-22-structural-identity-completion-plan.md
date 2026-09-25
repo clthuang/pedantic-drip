@@ -744,7 +744,7 @@ Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author 
 - **Phase 1 → develop `b881f8ff`:** C13/C18, C15/C16, C19/C20b (plus C3 and C22a).
 - **Phase 2 → develop `3d4d125e`:** C14, C9/C10/C12, C8 (plus C22's script).
 - **Phase 3 → develop `b3e0cb5d`:** C5b + C17.
-- **Final integration → develop (branch `si-final-int`):** C11, with C21's changelog and plan records.
+- **Final integration → develop `82d21404` (branch `si-final-int`):** C11, with C21's changelog and plan records.
   - **C11** was redesigned after four path-based fix rounds (branch `si-c11`, not merged). The design is `2026-09-25-c11-name-not-path-design.md`, rev 3.1: the directory name comes from the `entities.entity_id` column. Its steps are in `2026-09-25-c11-implementation-plan.md`, implemented on `si-c11b` (`db2d715b`, fix round `e9d2760c`).
   - **The integration's fix round** added the tests that kill three mutants the whole suite had missed: the bulk drift check, the degraded reader and degraded validate each asking the registry for a directory name.
 
@@ -777,6 +777,14 @@ Apply **correction 3b** (from B3b): C8 gains the orphan-row fixture; C11 gains `
   - after: 1790286038, 4083712, 2814bb4434e8faa0.
 
 **C22** then **C21**.
+
+**C21 PASSED 2026-09-25** on `si-final-int` `82d21404`, which fast-forwarded into develop. Gate results:
+- **Audit:** `test_audit_writes.py`: 7 passed, no `xfail` anywhere. The inventory equals the 8 sanctioned sites, and `_INVENTORY_HIGH_WATER = 8`.
+- **Suite:** the three-path suite gives 4355 passed, 2 skipped; `plugins/pd/scripts/tests` + the audit gives 56 passed, 1 skipped; `scripts/test_c22_recreate_live_remainder.py` gives 53 passed, 1 skipped.
+- **validate.sh:** 0 errors, 0 warnings, on a `git archive` export with `test-hooks.sh` removed. The FR-C-115 postmerge check exits 0.
+- **Hook suite:** `test-hooks.sh` gives 66/66 passed, 1 skipped ("not on main"). It was run from a scratch worktree with an isolated `HOME`, whose `installed_plugins.json` pointed at a temp cache, so Test 12's rsync published nothing real. The real cache was unchanged: 793 files.
+- **Independent final integration review and QA:** review found 2 blockers, both known surviving mutants, plus a third; the fix round killed all three, and QA passed. Live parity for C11 was checked on a scratch copy: 271/271 rows and 418/418 listed directories name the same directory as before.
+- **Not done:** publishing to the real plugin cache (`sync-cache.sh`) and pushing develop. Both need the user's go-ahead.
 
 Apply **correction 3**: re-derive the four pair groups at execution time. Neither this document's literals nor the parent's are complete, and the set drifts every time any workspace creates a project.
 

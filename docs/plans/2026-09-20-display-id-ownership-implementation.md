@@ -5,7 +5,7 @@
 
 32 subtasks in 3 releases (26 headings; C8–C12, C15–C16 and C19–C20 are grouped). Release B does **not** close before Release C — see C22. Each carries a **Contract** (what it guarantees), an **Interface** (exact signatures/schemas it changes), and a **Verify** step that is objectively checkable and fails before the work is done.
 
-> **Status — Release A shipped 2026-09-21 (`96b2f88a`), plus C20a (`12f1b571`). Release B completed 2026-09-22; Release C is in progress, tracked in the [completion plan](./2026-09-22-structural-identity-completion-plan.md).** This plan remediates the entity registry **as it stands on 2026-09-20** (schema_version 3, generation v2). It survived five adversarial review rounds — one native reviewer and four Codex passes — and every blocker from rounds 1-3 is absorbed. Round 4's findings are absorbed except where noted inline.
+> **Status — Release A shipped 2026-09-21 (`96b2f88a`), plus C20a (`12f1b571`). Release B completed 2026-09-22; Release C completed 2026-09-25 (develop `82d21404`; C21's gate passed; not yet pushed or published to the plugin cache), tracked in the [completion plan](./2026-09-22-structural-identity-completion-plan.md).** This plan remediates the entity registry **as it stands on 2026-09-20** (schema_version 3, generation v2). It survived five adversarial review rounds — one native reviewer and four Codex passes — and every blocker from rounds 1-3 is absorbed. Round 4's findings are absorbed except where noted inline.
 >
 > A ground-up redesign of the identity model is under consideration; if that proceeds, most of Release C is superseded. **Release A is worth shipping regardless** — it is non-destructive, depends on nothing else, and repairs a reconciliation path that is currently dead.
 >
