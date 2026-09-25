@@ -33,8 +33,8 @@ class TestCleanupStaleDependencies:
         )
         db._conn.commit()
 
-        # Run cleanup
-        count = cleanup_stale_dependencies(db)
+        # Run cleanup, scoped to the workspace holding both entities (W1.8)
+        count = cleanup_stale_dependencies(db, _UNKNOWN_WORKSPACE_UUID)
 
         # 1 entity flipped (the reworked blocked-downstream scan still
         # returns a flip-count here — one blocked entity, one flip).

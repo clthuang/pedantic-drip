@@ -80,7 +80,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
 # Transition gate (gate functions, constants, models)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 
-# Workflow engine (state engine, hydration, transitions, degradation)
+# Workflow engine (state engine, transitions, degradation)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
 # Workflow state MCP server (processing + reconciliation integration)

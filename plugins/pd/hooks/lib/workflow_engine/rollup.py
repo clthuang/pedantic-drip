@@ -192,8 +192,9 @@ def compute_okr_score(db: "EntityDatabase", kr_uuid: str) -> float:
         # Unrecognised metric_type → un-scored
         return 0.0
 
-    # Store score in KR metadata
-    db.update_entity(entity["type_id"], metadata={"score": score})
+    # Store score in KR metadata, by uuid: a type_id another workspace also
+    # holds is never ambiguous (W1.7).
+    db.update_entity(entity["uuid"], metadata={"score": score})
     return score
 
 
@@ -265,7 +266,7 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     traffic_light = compute_traffic_light(score)
 
     db.update_entity(
-        entity["type_id"],
+        entity["uuid"],
         metadata={"score": score, "traffic_light": traffic_light},
     )
     return score
@@ -333,7 +334,12 @@ def get_ancestor_progress(
     return result
 
 
-def rollup_parent(db: "EntityDatabase", child_uuid: str) -> None:
+def rollup_parent(
+    db: "EntityDatabase",
+    child_uuid: str,
+    *,
+    workspace_uuid: str | None = None,
+) -> None:
     """Walk up the parent chain and recompute progress for each ancestor.
 
     Starting from the child's parent, recomputes progress at each level
@@ -347,10 +353,17 @@ def rollup_parent(db: "EntityDatabase", child_uuid: str) -> None:
         EntityDatabase instance for data access.
     child_uuid:
         UUID of the child entity that triggered the rollup.
+    workspace_uuid:
+        When given, the walk also stops at the first ancestor outside this
+        workspace, which it leaves unwritten (W1.7: cascade recovery rolls
+        up only the session's workspace). None walks the whole chain.
 
     Notes
     -----
     This is a no-op if the child has no parent.
+
+    Each ancestor is written by its uuid, so a type_id another workspace
+    also holds is never ambiguous (W1.7).
 
     ``update_entity()`` with ``metadata`` kwarg performs a dict MERGE
     (not replace) -- existing metadata keys are preserved, only provided
@@ -367,11 +380,16 @@ def rollup_parent(db: "EntityDatabase", child_uuid: str) -> None:
         parent = db.get_entity_by_uuid(parent_uuid)
         if parent is None:
             break
+        if (
+            workspace_uuid is not None
+            and parent.get("workspace_uuid") != workspace_uuid
+        ):
+            break
 
         progress = compute_progress(db, parent_uuid)
         traffic_light = compute_traffic_light(progress)
         db.update_entity(
-            parent["type_id"],
+            parent["uuid"],
             metadata={"progress": progress, "traffic_light": traffic_light},
         )
 

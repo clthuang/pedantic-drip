@@ -41,7 +41,6 @@ from entity_registry.test_helpers import bootstrap_test_workspace
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.reconciliation import (
     _read_single_meta_json,
-    apply_workflow_reconciliation,
     check_workflow_drift,
 )
 
@@ -119,10 +118,6 @@ def _insert_orphan_workflow_row(db_path: str, workspace: str, type_id: str) -> N
 
 def _reports(result) -> list[dict]:
     return [asdict(report) for report in result.features]
-
-
-def _actions(result) -> list[dict]:
-    return [asdict(action) for action in result.actions]
 
 
 # ---------------------------------------------------------------------------
@@ -281,35 +276,6 @@ class TestUnregisteredDirectory:
             ("feature:020-unreg", "meta_json_only", _UNREGISTERED_META_JSON),
         ]
 
-    def test_bulk_dry_run_would_create_it(self, db, artifacts_root, unregistered_directory):
-        engine = WorkflowStateEngine(db, artifacts_root)
-
-        result = apply_workflow_reconciliation(engine, db, artifacts_root, dry_run=True)
-
-        assert [(a["feature_type_id"], a["action"], a["message"]) for a in _actions(result)] == [
-            ("feature:020-unreg", "created", "Created DB row from .meta.json"),
-        ]
-
-    def test_bulk_apply_reports_the_missing_entity(self, db, artifacts_root, unregistered_directory):
-        engine = WorkflowStateEngine(db, artifacts_root)
-
-        result = apply_workflow_reconciliation(engine, db, artifacts_root, dry_run=False)
-
-        assert [(a["feature_type_id"], a["action"], a["message"]) for a in _actions(result)] == [
-            ("feature:020-unreg", "error", "Create failed: Entity not found: feature:020-unreg"),
-        ]
-
-    def test_single_apply_reports_the_missing_entity(self, db, artifacts_root, unregistered_directory):
-        engine = WorkflowStateEngine(db, artifacts_root)
-
-        result = apply_workflow_reconciliation(
-            engine, db, artifacts_root, unregistered_directory, dry_run=False
-        )
-
-        assert [(a["feature_type_id"], a["action"], a["message"]) for a in _actions(result)] == [
-            ("feature:020-unreg", "error", "Create failed: Entity not found: feature:020-unreg"),
-        ]
-
 
 # ---------------------------------------------------------------------------
 # D6.3: orphan workflow rows (parity)
@@ -349,22 +315,17 @@ class TestOrphanWorkflowRow:
         assert report["status"] == "db_only"
         assert report["meta_json"] is None
 
-    def test_bulk_check_and_apply_as_on_develop(self, db, db_path, workspace, artifacts_root):
+    def test_bulk_check_as_on_develop(self, db, db_path, workspace, artifacts_root):
         _insert_orphan_workflow_row(db_path, workspace, "feature:030-orphan")
         _insert_orphan_workflow_row(db_path, workspace, "feature:031-orphan-nodir")
         _write_meta(os.path.join(artifacts_root, "features", "030-orphan"), "specify")
         engine = WorkflowStateEngine(db, artifacts_root)
 
         checked = check_workflow_drift(engine, db, artifacts_root)
-        applied = apply_workflow_reconciliation(engine, db, artifacts_root, dry_run=False)
 
         assert [(r["feature_type_id"], r["status"]) for r in _reports(checked)] == [
             ("feature:030-orphan", "meta_json_ahead"),
             ("feature:031-orphan-nodir", "db_only"),
-        ]
-        assert [(a["feature_type_id"], a["action"], a["message"]) for a in _actions(applied)] == [
-            ("feature:030-orphan", "reconciled", "Updated DB to match .meta.json"),
-            ("feature:031-orphan-nodir", "skipped", "No .meta.json to reconcile from"),
         ]
 
 

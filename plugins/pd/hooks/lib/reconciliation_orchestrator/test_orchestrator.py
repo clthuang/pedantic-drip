@@ -82,7 +82,7 @@ class TestFullRunOutputsValidJson:
 
         data = json.loads(output)
 
-        expected_keys = {"entity_sync", "workflow_reconcile",
+        expected_keys = {"entity_sync", "cascade_recovery",
                          "dependency_cleanup", "elapsed_ms", "errors"}
         assert set(data.keys()) == expected_keys, (
             f"Expected keys {expected_keys}, got {set(data.keys())}"
@@ -92,10 +92,15 @@ class TestFullRunOutputsValidJson:
         assert isinstance(data["errors"], list)
 
     def test_full_run_with_fixtures(self, tmp_path):
-        """Full run with actual feature and brainstorm fixtures produces correct counts."""
+        """Full run with actual feature and brainstorm fixtures produces correct counts.
+
+        Task 1 registers the new brainstorm file and skips the registered
+        one; the feature's projection is not read (W1.1). Tasks 2 and 3 run
+        in the resolved workspace and find nothing to do.
+        """
         entity_db_path = str(tmp_path / "entities.db")
 
-        # Seed entity DB with one feature
+        # Seed entity DB with one feature and one registered brainstorm
         db = EntityDatabase(entity_db_path)
         db.register_entity(
             entity_type="feature",
@@ -104,12 +109,25 @@ class TestFullRunOutputsValidJson:
             status="active",
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
+        db.register_entity(
+            entity_type="brainstorm",
+            display_id="20260101-000001-known",
+            name="known",
+            status="active",
+            artifact_path="docs/brainstorms/20260101-000001-known.prd.md",
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+        )
         db.close()
 
-        # Write .meta.json matching the DB status (no drift)
+        # A stale .meta.json that session start must not read back
         feature_dir = tmp_path / "docs" / "features" / "001-test-feature"
         feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text(json.dumps({"status": "active"}))
+        (feature_dir / ".meta.json").write_text(json.dumps({"status": "completed"}))
+
+        brainstorms_dir = tmp_path / "docs" / "brainstorms"
+        brainstorms_dir.mkdir(parents=True)
+        (brainstorms_dir / "20260101-000001-known.prd.md").touch()
+        (brainstorms_dir / "20260101-000002-new.prd.md").touch()
 
         # Workspace identity foundation: resolve_workspace_uuid requires
         # .claude/ to exist for the precedence chain to bootstrap a workspace.
@@ -123,10 +141,15 @@ class TestFullRunOutputsValidJson:
 
         assert result.returncode == 0
         data = json.loads(result.stdout.strip())
-        assert data["entity_sync"]["skipped"] >= 1  # matching status → skipped
-        assert "registered" in data["entity_sync"]
-        assert "deleted" in data["entity_sync"]
+        assert data["entity_sync"] == {"registered": 1, "skipped": 1, "warnings": []}
+        assert data["cascade_recovery"] == 0
+        assert data["dependency_cleanup"] == 0
         assert data["errors"] == []
+        db = EntityDatabase(entity_db_path)
+        try:
+            assert db.get_entity("feature:001-test-feature")["status"] == "active"
+        finally:
+            db.close()
 
 
 class TestPerTaskErrorIsolation:
@@ -154,7 +177,8 @@ class TestPerTaskErrorIsolation:
                     project_root=str(tmp_path),
                     artifacts_root="docs",
                     entity_db=entity_db_path,
-                        )
+                    workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                )
                 written_chunks = []
                 mock_stdout.write = lambda s: written_chunks.append(s)
 
@@ -169,11 +193,10 @@ class TestPerTaskErrorIsolation:
             assert data["entity_sync"] is None or "error" in str(data.get("errors", [])), (
                 f"Expected entity_sync error captured; got: {data}"
             )
-            # Other tasks should still have run (keys present with results)
-            assert "workflow_reconcile" in data
-            assert "dependency_cleanup" in data
-            assert len(data["errors"]) >= 1
-            assert "entity_status" in data["errors"][0].lower() or "forced" in data["errors"][0].lower()
+            # Other tasks should still have run (their results are set)
+            assert data["cascade_recovery"] == 0
+            assert data["dependency_cleanup"] == 0
+            assert data["errors"] == ["entity_status: forced entity_status failure"]
 
 
 class TestDbConnectionsClosed:
@@ -383,80 +406,10 @@ class TestExitCodeAlwaysZero:
 # ---------------------------------------------------------------------------
 
 
-class TestWorkflowReconcileKeyPresent:
-    """Output JSON includes `workflow_reconcile` key with summary dict."""
+class TestCascadeRecoveryErrorIsolation:
+    """Patch _recover_pending_cascades (Task 2) to raise, verify other tasks still run."""
 
-    def test_workflow_reconcile_key_in_output(self, tmp_path):
-        """Subprocess run includes workflow_reconcile key (empty DB = all zeros)."""
-        entity_db_path = str(tmp_path / "entities.db")
-        _make_entity_db(entity_db_path)
-
-        result = _run_cli(
-            project_root=str(tmp_path),
-            artifacts_root="docs",
-            entity_db=entity_db_path,
-        )
-
-        assert result.returncode == 0
-        data = json.loads(result.stdout.strip())
-        assert "workflow_reconcile" in data, f"Missing workflow_reconcile key: {data}"
-        # With empty DB, summary should have all-zero counts
-        summary = data["workflow_reconcile"]
-        assert isinstance(summary, dict), f"Expected dict, got {type(summary)}"
-        assert summary.get("reconciled", -1) == 0
-        assert summary.get("skipped", -1) == 0
-
-
-class TestWorkflowReconcileAppliesDrift:
-    """Create feature with .meta.json ahead of DB, verify reconciliation."""
-
-    def test_reconciles_drifted_feature(self, tmp_path):
-        """Feature with .meta.json phase ahead of DB gets reconciled."""
-        entity_db_path = str(tmp_path / "entities.db")
-
-        # Seed entity DB with a feature at "specifying" phase
-        db = EntityDatabase(entity_db_path)
-        db.register_entity(
-            entity_type="feature",
-            seq=99, slug="drift-test",
-            name="099-drift-test",
-            status="active",
-            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-        )
-        # Set workflow phase to "specify" in DB (behind .meta.json)
-        db.create_workflow_phase(
-            "feature:099-drift-test",
-            workflow_phase="specify",
-            kanban_column="wip",
-        )
-        db.close()
-
-        # Write .meta.json with lastCompletedPhase="create-plan" → derived phase "implement"
-        # This is ahead of DB's "specify", creating drift
-        feature_dir = tmp_path / "docs" / "features" / "099-drift-test"
-        feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text(json.dumps({
-            "status": "active",
-            "lastCompletedPhase": "create-plan",
-        }))
-
-        result = _run_cli(
-            project_root=str(tmp_path),
-            artifacts_root="docs",
-            entity_db=entity_db_path,
-        )
-
-        assert result.returncode == 0
-        data = json.loads(result.stdout.strip())
-        summary = data.get("workflow_reconcile")
-        assert summary is not None, f"workflow_reconcile is None: {data}"
-        assert summary["reconciled"] >= 1, f"Expected >=1 reconciled, got: {summary}"
-
-
-class TestWorkflowReconcileErrorIsolation:
-    """Patch apply_workflow_reconciliation to raise, verify other tasks still run."""
-
-    def test_workflow_error_does_not_block_other_tasks(self, tmp_path):
+    def test_cascade_recovery_error_does_not_block_other_tasks(self, tmp_path):
         entity_db_path = str(tmp_path / "entities.db")
         _make_entity_db(entity_db_path)
 
@@ -467,11 +420,12 @@ class TestWorkflowReconcileErrorIsolation:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
+            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
         with patch(
-            "workflow_engine.reconciliation.apply_workflow_reconciliation",
-            side_effect=RuntimeError("forced workflow reconcile failure"),
+            "workflow_engine.reconciliation._recover_pending_cascades",
+            side_effect=RuntimeError("forced cascade recovery failure"),
         ):
             written_chunks = []
 
@@ -487,55 +441,10 @@ class TestWorkflowReconcileErrorIsolation:
 
             data = json.loads("".join(written_chunks))
 
-        # Other tasks should still have results
-        assert "entity_sync" in data
-        assert "dependency_cleanup" in data
-        # workflow_reconcile should be None (error before assignment)
-        assert data["workflow_reconcile"] is None
+        # Tasks 1 and 3 still ran
+        assert data["entity_sync"] == {"registered": 0, "skipped": 0, "warnings": []}
+        assert data["dependency_cleanup"] == 0
+        # cascade_recovery stays None (error before assignment)
+        assert data["cascade_recovery"] is None
         # Error captured
-        assert any("workflow_reconcile" in e for e in data["errors"])
-
-
-class TestWorkflowReconcileImportDiagnostic:
-    """Patch import to raise ImportError, verify diagnostic in errors."""
-
-    def test_import_error_captured_in_errors(self, tmp_path):
-        entity_db_path = str(tmp_path / "entities.db")
-        _make_entity_db(entity_db_path)
-
-        import reconciliation_orchestrator.__main__ as orch_main
-        import argparse
-        import builtins
-
-        args = argparse.Namespace(
-            project_root=str(tmp_path),
-            artifacts_root="docs",
-            entity_db=entity_db_path,
-        )
-
-        original_import = builtins.__import__
-
-        def mock_import(name, *a, **kw):
-            if name == "workflow_engine.engine" or name == "workflow_engine.reconciliation":
-                raise ImportError(f"mocked missing: {name}")
-            return original_import(name, *a, **kw)
-
-        with patch("builtins.__import__", side_effect=mock_import):
-            written_chunks = []
-
-            def fake_exit(code):
-                raise SystemExit(code)
-
-            with patch("sys.stdout") as mock_stdout, patch("sys.exit", side_effect=fake_exit):
-                mock_stdout.write = lambda s: written_chunks.append(s)
-                try:
-                    orch_main.run(args)
-                except SystemExit:
-                    pass
-
-            data = json.loads("".join(written_chunks))
-
-        # workflow_reconcile stays None
-        assert data["workflow_reconcile"] is None
-        # Diagnostic error captured
-        assert any("import skipped" in e for e in data["errors"])
+        assert data["errors"] == ["cascade_recovery: forced cascade recovery failure"]

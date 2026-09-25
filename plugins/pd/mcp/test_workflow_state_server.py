@@ -24,7 +24,6 @@ from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 
 from entity_registry.frontmatter_sync import DriftReport, FieldMismatch
 from workflow_engine.reconciliation import (
-    ReconcileAction,
     WorkflowDriftReport,
     WorkflowDriftResult,
     WorkflowMismatch,
@@ -75,7 +74,6 @@ from workflow_state_server import (
     _process_init_project_state,
     _process_list_features_by_phase,
     _process_list_features_by_status,
-    _process_reconcile_apply,
     _process_reconcile_check,
     _process_reconcile_frontmatter,
     _process_reconcile_status,
@@ -86,7 +84,6 @@ from workflow_state_server import (
     _project_meta_json,
     _read_entity_display,
     _serialize_drift_report,
-    _serialize_reconcile_action,
     _serialize_result,
     _serialize_state,
     _serialize_workflow_drift_report,
@@ -2179,7 +2176,7 @@ class TestValidateFeatureTypeId:
 
 
 # ---------------------------------------------------------------------------
-# Task 4.1: _serialize_workflow_drift_report and _serialize_reconcile_action
+# Task 4.1: _serialize_workflow_drift_report
 # ---------------------------------------------------------------------------
 
 
@@ -2236,60 +2233,6 @@ class TestSerializeWorkflowDriftReport:
         result = _serialize_workflow_drift_report(report)
         assert result["meta_json"] is None
         assert result["db"] is None
-
-
-class TestSerializeReconcileAction:
-    """Serialization of ReconcileAction dataclass."""
-
-    def test_changes_use_old_new_value_convention(self):
-        """ReconcileAction changes serialize as old_value=db, new_value=meta_json."""
-        action = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="reconciled",
-            direction="meta_json_to_db",
-            changes=(
-                WorkflowMismatch(field="last_completed_phase",
-                                 meta_json_value="implement", db_value="design"),
-            ),
-            message="Updated DB to match .meta.json",
-        )
-        result = _serialize_reconcile_action(action)
-        assert result["feature_type_id"] == "feature:010-test"
-        assert result["action"] == "reconciled"
-        assert result["direction"] == "meta_json_to_db"
-        assert len(result["changes"]) == 1
-        assert result["changes"][0]["field"] == "last_completed_phase"
-        assert result["changes"][0]["old_value"] == "design"
-        assert result["changes"][0]["new_value"] == "implement"
-        assert result["message"] == "Updated DB to match .meta.json"
-
-    def test_empty_changes(self):
-        """Skipped action with no changes serializes correctly."""
-        action = ReconcileAction(
-            feature_type_id="feature:009-test",
-            action="skipped",
-            direction="meta_json_to_db",
-            changes=(),
-            message="Already in sync",
-        )
-        result = _serialize_reconcile_action(action)
-        assert result["changes"] == []
-
-    def test_none_values_in_changes(self):
-        """Changes with None old/new values serialize correctly (meta_json_only case)."""
-        action = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="created",
-            direction="meta_json_to_db",
-            changes=(
-                WorkflowMismatch(field="workflow_phase",
-                                 meta_json_value="specify", db_value=None),
-            ),
-            message="Created DB row from .meta.json",
-        )
-        result = _serialize_reconcile_action(action)
-        assert result["changes"][0]["old_value"] is None
-        assert result["changes"][0]["new_value"] == "specify"
 
 
 # ---------------------------------------------------------------------------
@@ -2429,94 +2372,6 @@ class TestProcessReconcileCheck:
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_check(
             engine, db, str(tmp_path), "featurenocolon"
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-
-
-# ---------------------------------------------------------------------------
-# Task 5.2: _process_reconcile_apply
-# ---------------------------------------------------------------------------
-
-
-class TestProcessReconcileApply:
-    """Processing function for workflow reconciliation."""
-
-    @pytest.fixture
-    def reconcile_env(self, db, tmp_path):
-        """Feature with .meta.json ahead of DB."""
-        db.register_entity("feature", name="Apply Test", seq=11, slug="app", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        db.create_workflow_phase(
-            "feature:011-app",
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-            mode="standard",
-        )
-
-        feat_dir = os.path.join(str(tmp_path), "features", "011-app")
-        os.makedirs(feat_dir, exist_ok=True)
-        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
-            json.dump({
-                "id": "011",
-                "slug": "011-app",
-                "status": "active",
-                "mode": "standard",
-                "lastCompletedPhase": "implement",
-                "phases": {
-                    "brainstorm": {"status": "completed"},
-                    "specify": {"status": "completed"},
-                    "design": {"status": "completed"},
-                    "create-plan": {"status": "completed"},
-                    "create-plan": {"status": "completed"},
-                    "implement": {"status": "completed"},
-                },
-            }, f)
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        return engine, db, str(tmp_path)
-
-    def test_reconcile_returns_actions(self, reconcile_env):
-        """Reconcile returns JSON with action list."""
-        engine, db, arts = reconcile_env
-        result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", False
-        )
-        data = json.loads(result)
-        assert "error" not in data
-        assert len(data["actions"]) >= 1
-        assert data["actions"][0]["action"] == "reconciled"
-
-    def test_dry_run(self, reconcile_env):
-        """dry_run returns changes without applying."""
-        engine, db, arts = reconcile_env
-        result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", True
-        )
-        data = json.loads(result)
-        assert "error" not in data
-        assert data["summary"]["dry_run"] >= 1
-
-        # Verify DB was NOT updated
-        check = _process_reconcile_check(engine, db, arts, "feature:011-app")
-        check_data = json.loads(check)
-        assert check_data["features"][0]["status"] == "meta_json_ahead"
-
-    def test_nonexistent_slug_returns_feature_not_found(self, db, tmp_path):
-        """Non-existent slug -> feature_not_found (AC-18)."""
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:999-missing", False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "feature_not_found"
-
-    def test_malformed_no_colon_returns_invalid_transition(self, db, tmp_path):
-        """Missing colon -> invalid_transition (AC-18 case 2)."""
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "nocolon", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -2819,16 +2674,15 @@ class TestProcessReconcileStatus:
 
 
 class TestReconciliationNotInitializedGuards:
-    """Verify all 4 reconciliation handlers have None guards (AC-16)."""
+    """Verify all 3 reconciliation handlers have None guards (AC-16)."""
 
-    def test_all_4_reconciliation_handlers_have_guard(self):
-        """Inspect source of all 4 reconciliation handlers for None guard."""
+    def test_all_3_reconciliation_handlers_have_guard(self):
+        """Inspect source of all 3 reconciliation handlers for None guard."""
         import inspect
         import workflow_state_server as mod
 
         handlers = [
             mod.reconcile_check,
-            mod.reconcile_apply,
             mod.reconcile_frontmatter,
             mod.reconcile_status,
         ]
@@ -2848,70 +2702,6 @@ class TestReconciliationNotInitializedGuards:
 
 class TestReconciliationEndToEnd:
     """End-to-end integration tests for reconciliation processing functions."""
-
-    def test_reconcile_status_healthy_after_apply(self, db, tmp_path):
-        """reconcile_status returns healthy=true after reconcile_apply syncs drift.
-
-        Fixture: 2 features with .meta.json ahead, run apply, then verify status.
-        """
-        features = [
-            ("011-e2e-a", "brainstorm", "implement"),
-            ("011-e2e-b", "design", "create-plan"),
-        ]
-        for slug, db_last, meta_last in features:
-            db.register_entity("feature", name=f"E2E {slug}", **identity_kwargs("feature", slug), status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-            db.create_workflow_phase(
-                f"feature:{slug}",
-                workflow_phase="specify",
-                last_completed_phase=db_last,
-                mode="standard",
-            )
-            feat_dir = os.path.join(str(tmp_path), "features", slug)
-            os.makedirs(feat_dir, exist_ok=True)
-            # Build phases dict
-            from transition_gate.constants import PHASE_SEQUENCE
-            phase_values = [p.value for p in PHASE_SEQUENCE]
-            meta_idx = phase_values.index(meta_last)
-            phases = {
-                p: {"status": "completed"}
-                for p in phase_values[: meta_idx + 1]
-            }
-            with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
-                json.dump({
-                    "id": slug.split("-")[0],
-                    "slug": slug,
-                    "status": "active",
-                    "mode": "standard",
-                    "lastCompletedPhase": meta_last,
-                    "phases": phases,
-                }, f)
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Step 1: Verify unhealthy before apply
-        status_before = json.loads(
-            _process_reconcile_status(engine, db, str(tmp_path))
-        )
-        assert status_before["healthy"] is False
-
-        # Step 2: Apply reconciliation
-        apply_result = json.loads(
-            _process_reconcile_apply(
-                engine, db, str(tmp_path), None, False
-            )
-        )
-        assert "error" not in apply_result
-        assert apply_result["summary"]["reconciled"] >= 2
-
-        # Step 3: Verify healthy after apply
-        status_after = json.loads(
-            _process_reconcile_status(engine, db, str(tmp_path))
-        )
-        assert status_after["healthy"] is True
-        wf_summary = status_after["workflow_drift"]["summary"]
-        assert wf_summary["meta_json_ahead"] == 0
-        assert wf_summary["db_ahead"] == 0
-        assert wf_summary["error"] == 0
 
     def test_reconcile_frontmatter_with_real_headers(self, db, tmp_path):
         """reconcile_frontmatter with real temp files containing frontmatter headers."""
@@ -2963,11 +2753,10 @@ class TestReconciliationEndToEnd:
         try:
             # Run the async handlers synchronously
             result_check = asyncio.run(mod.reconcile_check())
-            result_apply = asyncio.run(mod.reconcile_apply())
             result_fm = asyncio.run(mod.reconcile_frontmatter())
             result_status = asyncio.run(mod.reconcile_status())
 
-            for result in [result_check, result_apply, result_fm, result_status]:
+            for result in [result_check, result_fm, result_status]:
                 data = json.loads(result)
                 assert data["error"] is True
                 assert data["error_type"] == "not_initialized"
@@ -3026,26 +2815,6 @@ class TestReconciliationBoundaryValues:
         assert all(v == 0 for v in data["summary"].values())
         assert data["features"] == []
 
-    def test_reconcile_apply_empty_feature_set_returns_zero_summary(self, db, tmp_path):
-        """Bulk reconcile_apply with zero features returns all-zero summary.
-        derived_from: dimension:boundary_values (empty collection)
-
-        Anticipate: Empty action list might not produce the 5-key summary,
-        or dry_run count might be undefined.
-        """
-        # Given an engine with no features
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When applying reconciliation in bulk
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, False
-        )
-        data = json.loads(result)
-        # Then summary has all 5 keys, all zero
-        assert "error" not in data
-        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed", "cascades_recovered"}
-        assert set(data["summary"].keys()) == expected_keys
-        assert all(v == 0 for v in data["summary"].values())
-
     def test_reconcile_check_response_json_shape(self, db, tmp_path):
         """reconcile_check response has exactly {features, summary} top-level keys.
         derived_from: dimension:boundary_values (JSON shape contract)
@@ -3077,20 +2846,6 @@ class TestReconciliationBoundaryValues:
         # Then exact top-level key set (phase_events_drift added in feature 088
         # Bundle L for FR-10.9 / AC-42 — additive sibling of features/summary).
         assert set(data.keys()) == {"features", "summary", "phase_events_drift"}
-
-    def test_reconcile_apply_response_json_shape(self, db, tmp_path):
-        """reconcile_apply response has exactly {actions, summary, phase_events_drift_count} top-level keys.
-        derived_from: dimension:boundary_values (JSON shape contract)
-
-        Anticipate: Missing "summary" or extra keys would break clients.
-        """
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, False
-        )
-        data = json.loads(result)
-        # phase_events_drift_count added in feature 088 Bundle L (FR-10.9 / AC-42b).
-        assert set(data.keys()) == {"actions", "summary", "phase_events_drift_count"}
 
     def test_reconcile_status_response_json_shape(self, db, tmp_path):
         """reconcile_status response has exactly 5 top-level keys.
@@ -3130,22 +2885,6 @@ class TestReconciliationAdversarial:
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_check(
             engine, db, str(tmp_path), "feature:../../etc/passwd"
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "feature_not_found"
-
-    def test_path_traversal_in_reconcile_apply(self, db, tmp_path):
-        """Path traversal in feature_type_id blocked for reconcile_apply.
-        derived_from: dimension:adversarial (path traversal)
-
-        Anticipate: reconcile_apply calls _validate_feature_type_id too.
-        If the validation is missing, an attacker could trigger DB writes
-        based on external .meta.json content.
-        """
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:../../../evil", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -3212,45 +2951,6 @@ class TestReconciliationAdversarial:
                 "feature_type_id", "status", "meta_json", "db", "mismatches"
             }
 
-    def test_reconcile_apply_action_per_feature_shape(self, db, tmp_path):
-        """Each action in reconcile_apply has exactly 5 keys per spec R2.
-        derived_from: dimension:adversarial (JSON shape contract)
-        """
-        # Set up a meta_json_ahead feature
-        db.register_entity("feature", name="Shape3", seq=11, slug="shape3", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        db.create_workflow_phase(
-            "feature:011-shape3",
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-            mode="standard",
-        )
-        feat_dir = os.path.join(str(tmp_path), "features", "011-shape3")
-        os.makedirs(feat_dir, exist_ok=True)
-        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
-            json.dump({
-                "id": "011", "slug": "011-shape3", "status": "active",
-                "mode": "standard", "lastCompletedPhase": "implement",
-                "phases": {
-                    "brainstorm": {"status": "completed"},
-                    "specify": {"status": "completed"},
-                    "design": {"status": "completed"},
-                    "create-plan": {"status": "completed"},
-                    "create-plan": {"status": "completed"},
-                    "implement": {"status": "completed"},
-                },
-            }, f)
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-shape3", False
-        )
-        data = json.loads(result)
-
-        for action in data["actions"]:
-            assert set(action.keys()) == {
-                "feature_type_id", "action", "direction", "changes", "message"
-            }
-
 
 # ===========================================================================
 # Feature 088 Bundle L (FR-10.9 / AC-42, AC-42b): phase_events drift detection
@@ -3261,7 +2961,7 @@ class TestReconcilePhaseEventsDrift:
     """Drift between entities.metadata.phase_timing and phase_events rows.
 
     AC-42  — reconcile_check surfaces drift in a ``phase_events_drift`` list.
-    AC-42b — reconcile_apply does NOT modify phase_events (warns via stderr).
+    (AC-42b pinned the apply tool, deleted by design W1.4.)
     """
 
     def _seed_feature_with_phase_timing_drift(self, db, tmp_path, slug):
@@ -3335,55 +3035,6 @@ class TestReconcilePhaseEventsDrift:
         assert entry["type_id"] == type_id
         assert entry["phase"] == "design"
         assert entry["metadata_completed_at"] == "2026-04-19T00:00:00Z"
-
-    def test_reconcile_apply_does_not_modify_phase_events(
-        self, db, tmp_path, capsys,
-    ):
-        """AC-42b: reconcile_apply warns via stderr and does NOT auto-insert
-        or otherwise modify phase_events rows when drift is detected."""
-        slug = "088-l-apply"
-        type_id = self._seed_feature_with_phase_timing_drift(db, tmp_path, slug)
-
-        # Seed a few unrelated phase_events rows so we can count pre/post.
-        # Per feature 109 Group 9 ``_REQUIRED_PARAMS``, ``completed`` requires
-        # ``iterations``. Tuple: (phase, event_type, timestamp, extras).
-        for phase, ev, ts, extras in [
-            ("brainstorm", "started", "2026-04-17T00:00:00Z", {}),
-            ("brainstorm", "completed", "2026-04-17T01:00:00Z",
-             {"iterations": 1}),
-            ("specify", "started", "2026-04-17T02:00:00Z", {}),
-        ]:
-            db.append_phase_event(
-                type_id=type_id, project_id="__unknown__", phase=phase,
-                event_type=ev, timestamp=ts, source="live", **extras,
-            )
-
-        pre_rows = db.query_phase_events(type_id=type_id, limit=500)
-        pre_count = len(pre_rows)
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # Drain captured output up to this point so capsys.readouterr() below
-        # only sees stderr from the reconcile_apply call.
-        capsys.readouterr()
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), type_id, False,
-        )
-        data = json.loads(result)
-        captured = capsys.readouterr()
-
-        post_rows = db.query_phase_events(type_id=type_id, limit=500)
-        post_count = len(post_rows)
-
-        # (a) no phase_events table modification
-        assert post_count == pre_count
-        # (b) stderr warning emitted
-        import re
-        assert re.search(r"\[reconcile\] phase_events drift", captured.err), (
-            f"Expected stderr reconcile drift warning; got: {captured.err!r}"
-        )
-        # (c) response has phase_events_drift_count >= 1
-        assert "phase_events_drift_count" in data
-        assert data["phase_events_drift_count"] >= 1
 
 
 # ===========================================================================
@@ -3659,30 +3310,6 @@ class TestReconciliationErrorPropagation:
 
         monkeypatch.setattr(mod, "check_workflow_drift", original)
 
-    def test_reconcile_apply_sqlite_error_returns_db_unavailable(
-        self, db, tmp_path, monkeypatch
-    ):
-        """sqlite3.Error in reconcile_apply returns db_unavailable.
-        derived_from: dimension:error_propagation (DB exceptions)
-        """
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        import workflow_state_server as mod
-        original = mod.apply_workflow_reconciliation
-
-        def raise_sqlite(*a, **kw):
-            raise sqlite3.DatabaseError("disk I/O error")
-
-        monkeypatch.setattr(mod, "apply_workflow_reconciliation", raise_sqlite)
-
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "db_unavailable"
-
-        monkeypatch.setattr(mod, "apply_workflow_reconciliation", original)
-
     def test_reconcile_frontmatter_sqlite_error_returns_db_unavailable(
         self, db, tmp_path, monkeypatch
     ):
@@ -3741,38 +3368,6 @@ class TestReconciliationMutationMindset:
     """Tests to catch specific mutations in reconciliation MCP code.
     derived_from: dimension:mutation_mindset
     """
-
-    def test_serialization_direction_old_new_not_swapped(self):
-        """old_value = db_value, new_value = meta_json_value (not swapped).
-        derived_from: dimension:mutation_mindset (arithmetic swap: old/new)
-
-        Anticipate: Swapping db_value and meta_json_value in
-        _serialize_reconcile_action would cause callers to see the
-        wrong "before" and "after" values.
-        """
-        from workflow_engine.reconciliation import WorkflowMismatch, ReconcileAction
-
-        action = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="reconciled",
-            direction="meta_json_to_db",
-            changes=(
-                WorkflowMismatch(
-                    field="last_completed_phase",
-                    meta_json_value="implement",
-                    db_value="design",
-                ),
-            ),
-            message="Updated",
-        )
-        result = _serialize_reconcile_action(action)
-
-        # old_value = db_value (what was in DB before)
-        assert result["changes"][0]["old_value"] == "design"
-        # new_value = meta_json_value (what .meta.json has)
-        assert result["changes"][0]["new_value"] == "implement"
-        # NOT swapped
-        assert result["changes"][0]["old_value"] != result["changes"][0]["new_value"]
 
     def test_healthy_flag_false_when_only_workflow_drift(self, db, tmp_path):
         """healthy=False when workflow drift exists but frontmatter is clean.
@@ -3849,41 +3444,6 @@ class TestReconciliationMutationMindset:
         for k, v in wf_summary.items():
             if k != "in_sync":
                 assert v == 0, f"Expected {k}=0 for healthy, got {v}"
-
-    def test_dry_run_summary_includes_created_count(self, db, tmp_path):
-        """dry_run summary counts 'created' actions in dry_run total.
-        derived_from: dimension:mutation_mindset (line deletion)
-
-        Anticipate: If the dry_run count formula omits 'created'
-        (only counts 'reconciled'), meta_json_only features would
-        not appear in the preview count.
-        """
-        # Set up a meta_json_only feature (entity exists, no workflow_phases row)
-        db.register_entity("feature", name="Create Test", seq=11, slug="create", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-        feat_dir = os.path.join(str(tmp_path), "features", "011-create")
-        os.makedirs(feat_dir, exist_ok=True)
-        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
-            json.dump({
-                "id": "011", "slug": "011-create", "status": "active",
-                "mode": "standard", "lastCompletedPhase": "design",
-                "phases": {
-                    "brainstorm": {"status": "completed"},
-                    "specify": {"status": "completed"},
-                    "design": {"status": "completed"},
-                },
-            }, f)
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-create", True
-        )
-        data = json.loads(result)
-
-        # dry_run count must include the "created" action
-        assert data["summary"]["created"] == 1
-        assert data["summary"]["dry_run"] >= 1, (
-            "dry_run count should include 'created' actions"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -8237,41 +7797,6 @@ class TestSerializeStateDegradedLogicDeepened:
             )
 
 
-class TestReconcileApplyNoDirectionParamDeepened:
-    """Verify reconcile_apply has no direction parameter (hardcoded meta_json_to_db).
-    derived_from: spec:AC-14 (direction hardcoded, no user param)
-    """
-
-    def test_reconcile_apply_no_direction_param(self):
-        """AC-14: _process_reconcile_apply does not accept a direction parameter.
-        derived_from: spec:AC-14, dimension:bdd_scenarios
-
-        Anticipate: If a developer adds a 'direction' param to allow
-        db_to_meta_json sync, it would bypass the spec requirement that
-        only meta_json_to_db is supported. This signature test catches
-        accidental param additions.
-        """
-        import inspect
-
-        # Given the processing function
-        sig = inspect.signature(_process_reconcile_apply)
-        param_names = set(sig.parameters.keys())
-        # Then it must not have a 'direction' parameter
-        assert "direction" not in param_names, (
-            "_process_reconcile_apply should not expose a direction parameter; "
-            "direction is hardcoded to meta_json_to_db per spec AC-14"
-        )
-        # And it must have exactly these params
-        # Feature 113 FR-11.3: workspace_uuid kwarg added.
-        expected_params = {
-            "engine", "db", "artifacts_root", "feature_type_id", "dry_run",
-            "workspace_uuid",
-        }
-        assert param_names == expected_params, (
-            f"Unexpected params: {param_names - expected_params}"
-        )
-
-
 class TestReconcileFrontmatterBulkBoundaryDeepened:
     """Boundary tests for reconcile_frontmatter bulk scan.
     derived_from: spec:AC-11/AC-12 (frontmatter drift), dimension:boundary_values
@@ -10932,7 +10457,7 @@ class TestFeature089BundleE:
 class TestReconcileHandlersForwardWorkspaceUuid:
     """FR-11.3/4/5 boundary pins: each reconcile_* MCP handler forwards
     its module-level ``_workspace_uuid`` to the underlying orchestrator
-    (``apply_workflow_reconciliation`` / ``scan_all``).
+    (``check_workflow_drift`` / ``scan_all``).
 
     Mutation pin: removing ``workspace_uuid=_workspace_uuid or None`` from
     any of the 3 async handler bodies fails the corresponding test.
@@ -10979,52 +10504,6 @@ class TestReconcileHandlersForwardWorkspaceUuid:
         assert captured, "check_workflow_drift was never invoked"
         assert captured[0].get("workspace_uuid") == ws_a, (
             f"workspace_uuid not forwarded from reconcile_check; "
-            f"captured kwargs={captured!r}"
-        )
-
-    def test_reconcile_apply_forwards_workspace_uuid(self, tmp_path, monkeypatch):
-        """FR-11.3 pin: reconcile_apply → _process_reconcile_apply →
-        apply_workflow_reconciliation receives workspace_uuid kwarg.
-        """
-        import asyncio
-        import workflow_state_server as wss
-
-        db = EntityDatabase(str(tmp_path / "ws.db"))
-        from entity_registry.test_helpers import bootstrap_test_workspace
-        ws_a = bootstrap_test_workspace(db, "ws_a_recapply")
-
-        wss._db = db
-        wss._db_unavailable = False
-        wss._engine = WorkflowStateEngine(db, str(tmp_path))
-        wss._workspace_uuid = ws_a
-        wss._artifacts_root = str(tmp_path)
-
-        captured: list[dict] = []
-
-        def capture_apply(*args, **kwargs):
-            captured.append(dict(kwargs))
-            # Return a minimal ReconciliationResult-shaped object so the
-            # caller's JSON serialization step still succeeds.
-            from workflow_engine.reconciliation import ReconciliationResult
-            return ReconciliationResult(
-                actions=(),
-                summary={
-                    "reconciled": 0, "created": 0, "skipped": 0,
-                    "error": 0, "dry_run": 0, "kanban_fixed": 0,
-                    "cascades_recovered": 0,
-                },
-            )
-
-        monkeypatch.setattr(wss, "apply_workflow_reconciliation", capture_apply)
-
-        result = asyncio.run(wss.reconcile_apply())
-        # Sanity: handler did not error out before reaching apply.
-        data = json.loads(result)
-        assert "error" not in data, f"handler errored: {data!r}"
-
-        assert captured, "apply_workflow_reconciliation was never invoked"
-        assert captured[0].get("workspace_uuid") == ws_a, (
-            f"workspace_uuid not forwarded from reconcile_apply; "
             f"captured kwargs={captured!r}"
         )
 

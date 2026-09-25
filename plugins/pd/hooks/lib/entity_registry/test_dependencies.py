@@ -424,13 +424,13 @@ class TestEvaluateAndFlipBatchFailureBehavior:
         for dependent in (b1, b2, b3):
             mgr.add_dependency(db, dependent, a)
 
-        b2_type_id = db.get_entity_by_uuid(b2)["type_id"]
         original_update_entity = db.update_entity
 
-        def flaky_update_entity(type_id, *args, **kwargs):
-            if type_id == b2_type_id:
+        def flaky_update_entity(identifier, *args, **kwargs):
+            # W1.7: the flip writes the dependent's status by its uuid.
+            if identifier == b2:
                 raise RuntimeError("simulated update_entity failure")
-            return original_update_entity(type_id, *args, **kwargs)
+            return original_update_entity(identifier, *args, **kwargs)
 
         monkeypatch.setattr(db, "update_entity", flaky_update_entity)
 

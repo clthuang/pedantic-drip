@@ -22,7 +22,7 @@ AskUserQuestion:
 ```
 
 3. Confirm the selected set once with a single-select Yes/Cancel question before any deletion.
-4. Per confirmed file: delete it, then `update_entity(type_id="brainstorm:{stem}", status="archived")` where `{stem}` drops the `.prd.md` suffix. Entity missing or MCP error → warn for that stem and continue; the file stays deleted.
+4. Per confirmed file: delete it, then `update_entity(type_id="brainstorm:{stem}", archived=true)` where `{stem}` drops the `.prd.md` suffix. This sets the entity's archive flag and leaves its status alone; session start never archives a brainstorm whose file is missing. Entity missing or MCP error → warn for that stem and continue; the file stays deleted.
 5. Report the deleted count.
 
 **Constraints:** the confirmation lists every selected filename, so nothing is deleted behind a count-only prompt; a brainstorm already promoted to a feature keeps its entity — only the scratch file goes.

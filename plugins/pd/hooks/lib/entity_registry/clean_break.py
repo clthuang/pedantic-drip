@@ -79,9 +79,10 @@ class LegacyRow:
     def is_live(self) -> bool:
         """Live means someone may still be relying on it.
 
-        Not ``TERMINAL_STATUSES`` — that set is the brainstorm re-archival
-        guard and treats 'dropped' and 'completed' as live, which counts
-        133 rows where 15 are actually at stake.
+        Not the complement of a terminal-status set (such as the retired
+        brainstorm re-archival guard's): that treats 'dropped' and
+        'completed' as live, which counts 133 rows where 15 are actually at
+        stake.
         """
         return (self.status or "") in {"open", "active", "planned", ""}
 

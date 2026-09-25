@@ -8455,13 +8455,20 @@ class EntityDatabase:
         guard governs ``status``/``workflow_phase``, neither of which this
         touches.
 
+        *type_id* may also be the entity's uuid (W1.2), which names exactly
+        one row: the ``update_entity`` MCP tool archives the entity it
+        resolved by that uuid. A type_id with no *workspace_uuid* flags
+        every row holding it.
+
         Raises ``ValueError`` when *type_id* resolves to no entity in the
         given workspace — same contract as ``update_entity``.
         """
-        params: list = [1 if archived else 0, self._now_iso(), type_id]
+        by_uuid = bool(_UUID_RE.match(type_id.lower()))
+        key_column, key = ("uuid", type_id.lower()) if by_uuid else ("type_id", type_id)
+        params: list = [1 if archived else 0, self._now_iso(), key]
         sql = (
             "UPDATE entities SET is_archived = ?, updated_at = ? "
-            "WHERE type_id = ?"
+            f"WHERE {key_column} = ?"
         )
         if workspace_uuid is not None:
             sql += " AND workspace_uuid = ?"
@@ -8470,7 +8477,7 @@ class EntityDatabase:
             cur = self._conn.execute(sql, params)
             if cur.rowcount == 0:
                 raise ValueError(
-                    f"no entity with type_id {type_id!r}"
+                    f"no entity with {key_column} {key!r}"
                     + (f" in workspace {workspace_uuid!r}" if workspace_uuid else "")
                 )
 
@@ -9964,18 +9971,12 @@ class EntityDatabase:
         three explicitly, so the ``wp_autofill_workspace_uuid`` trigger
         never picks a workspace.
 
-        Raises ``ValueError``: ``Entity not found: <type_id>`` (the writers'
-        existing phrasing), or ``_resolve_identifier``'s ``Ambiguous type_id
-        ...`` refusal unchanged.
+        Raises ``ValueError``: ``_resolve_identifier``'s ``Entity not found:
+        '<type_id>'`` or ``Ambiguous type_id ...`` refusal, unchanged.
         """
-        try:
-            entity_uuid, _ = self._resolve_identifier(
-                type_id, workspace_uuid=workspace_uuid
-            )
-        except ValueError as exc:
-            if str(exc).startswith("Entity not found"):
-                raise ValueError(f"Entity not found: {type_id}") from exc
-            raise
+        entity_uuid, _ = self._resolve_identifier(
+            type_id, workspace_uuid=workspace_uuid
+        )
         return self._conn.execute(
             "SELECT uuid, type_id, workspace_uuid, kind FROM entities "
             "WHERE uuid = ?",

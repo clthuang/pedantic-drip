@@ -35,7 +35,9 @@ _ALL_HARD_ARTIFACTS: frozenset[str] = frozenset(
 # own copy instead of importing the shared kanban.py helper). Byte-identical to
 # its siblings in backfill.py / feature_lifecycle.py / reconciliation.py /
 # workflow_state_server.py — kept in sync via test_constants.py's parity
-# pin.
+# pin. Its only caller here was the lazy .meta.json hydration, deleted by
+# design W1.5; the copy remains the parity pins' representative producer
+# (test_constants.py ``_REPRESENTATIVE``).
 _PHASE_TO_KANBAN: dict[str, str] = {
     "brainstorm": "backlog",
     "specify": "backlog",
@@ -89,7 +91,14 @@ class WorkflowStateEngine:
     # ------------------------------------------------------------------
 
     def get_state(self, feature_type_id: str) -> FeatureWorkflowState | None:
-        """Read feature workflow state, falling back to .meta.json if DB unavailable."""
+        """Read feature workflow state from its ``workflow_phases`` row.
+
+        None when a healthy DB has no row: rows come from activation and the
+        startup backfill, never from a ``.meta.json`` (W1.5; that file is a
+        projection of the row). Only when the DB is unavailable (the health
+        probe fails, or the read raises ``sqlite3.Error``) does it fall back
+        to reading ``.meta.json``, which writes nothing.
+        """
         if not self._check_db_health():
             print(
                 f"workflow-engine: DB unhealthy, falling back to .meta.json "
@@ -102,7 +111,7 @@ class WorkflowStateEngine:
             row = self.db.get_workflow_phase(feature_type_id)
             if row is not None:
                 return self._row_to_state(row)
-            return self._hydrate_from_meta_json(feature_type_id)
+            return None
         except sqlite3.Error as exc:
             print(
                 f"workflow-engine: DB error in get_state, falling back to "
@@ -459,8 +468,10 @@ class WorkflowStateEngine:
     ) -> FeatureWorkflowState | None:
         """Shared phase derivation from .meta.json dict.
 
-        Used by both _hydrate_from_meta_json (DB-backed hydration) and
-        _read_state_from_meta_json (pure-filesystem fallback).
+        Used by the degraded-mode reads (``_read_state_from_meta_json``,
+        ``_scan_features_filesystem``, ``_scan_features_by_status``) and by
+        drift detection (``reconciliation._check_single_feature``). Nothing
+        it derives is written to the DB.
         """
         status = meta.get("status")
         mode = meta.get("mode")
@@ -506,9 +517,10 @@ class WorkflowStateEngine:
     ) -> FeatureWorkflowState | None:
         """Standalone .meta.json reader for degraded-mode fallback.
 
-        Unlike _hydrate_from_meta_json, this method:
+        Reached only when the DB is unavailable (``get_state``'s two
+        fallback branches). This method:
         - Does NOT check entity existence in the DB
-        - Does NOT backfill the DB row
+        - Writes nothing
         - Names the directory from the features/ listing only, never the
           registry; a type_id no listed name composes to returns None
         - Catches OSError in addition to json.JSONDecodeError, so a missing
@@ -583,70 +595,6 @@ class WorkflowStateEngine:
             if state is not None:
                 results.append(state)
         return results
-
-    def _hydrate_from_meta_json(
-        self, feature_type_id: str
-    ) -> FeatureWorkflowState | None:
-        """Lazy hydration: parse .meta.json, derive state, backfill DB row."""
-        # Precondition: entity must exist. Checked FIRST: an ambiguous,
-        # soft-deleted or unregistered type_id returns None before the
-        # directory lookup and writes nothing.
-        entity = self.db.get_entity(feature_type_id)
-        if entity is None:
-            return None
-
-        # The name lookup's own refusals (an unsafe stored name, rows that
-        # disagree) mean "not found": None, nothing written. The containment
-        # refusal below propagates, exactly as _feature_dir_name's does for
-        # every other reader.
-        try:
-            name = feature_dir_name(self.db, self.artifacts_root, feature_type_id)
-        except ValueError:
-            return None
-        if name is None:
-            return None
-        dir_name = self._contained_feature_dir_name(feature_type_id, name)
-        meta_path = os.path.join(
-            self.artifacts_root, "features", dir_name, ".meta.json"
-        )
-        if not os.path.exists(meta_path):
-            return None
-
-        try:
-            with open(meta_path) as f:
-                meta = json.load(f)
-        except json.JSONDecodeError:
-            return None
-
-        # Delegate phase derivation to shared helper (was inline before)
-        state = self._derive_state_from_meta(meta, feature_type_id, source="meta_json")
-        if state is None:
-            return None
-
-        # Backfill DB row
-        try:
-            self.db.create_workflow_phase(
-                feature_type_id,
-                kanban_column=_kanban_column_for("active", state.current_phase),
-                workflow_phase=state.current_phase,
-                last_completed_phase=state.last_completed_phase,
-                mode=state.mode,
-            )
-        except ValueError:
-            # Three ValueError sources post-132 (battery-r2 count): a
-            # duplicate-row conflict (another writer won the race), a v1
-            # CHECK-constraint rejection (bad values from parsed
-            # .meta.json), or a rolled-back v2 emit failure
-            # (create_workflow_phase is transaction-wrapped, so its row
-            # is GONE on that path). The re-fetch discriminates: a row
-            # exists only for the duplicate case -- return it; the other
-            # two find nothing and re-raise loudly.
-            row = self.db.get_workflow_phase(feature_type_id)
-            if row is not None:
-                return self._row_to_state(row, source="meta_json")
-            raise
-
-        return state
 
     @staticmethod
     def _run_gate(

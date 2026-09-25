@@ -27,13 +27,13 @@ bash plugins/pd/mcp/test_entity_server.sh
 # Run transition gate tests (gate functions, constants, models)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 
-# Run workflow engine tests (state engine, hydration, transitions, degradation)
+# Run workflow engine tests (state engine, transitions, degradation)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
-# Run reconciliation orchestrator tests (entity sync, backlog parsing, brainstorm archive)
+# Run reconciliation orchestrator tests (brainstorm registration, cascade recovery, dependency cleanup)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/reconciliation_orchestrator/ -v
 
-# Run reconciliation module tests (drift detection, apply, frontmatter sync)
+# Run reconciliation module tests (drift detection, cascade recovery)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v
 
 # Run workflow state MCP server tests (processing + reconciliation integration)

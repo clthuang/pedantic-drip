@@ -146,7 +146,7 @@ class TestSelectLegacyEntities:
         assert g[("/repo/ws-a", "project", "active")] == 1
 
     def test_dropped_and_completed_are_not_live(self):
-        """'live' is open/active/planned/NULL — not TERMINAL_STATUSES' complement."""
+        """'live' is open/active/planned/NULL — not a terminal-status set's complement."""
         conn = make_conn(entities=[
             ("u1", "ws-a", "backlog", "00001", "dropped"),
             ("u2", "ws-a", "backlog", "00002", "completed"),

@@ -172,6 +172,12 @@ class DependencyManager:
         write and the `cascade_ready` phase_events row land together via a
         RE-ENTRANT `db.transaction()` (never begin_immediate, which raises
         under any caller-held transaction).
+
+        Both writes name the dependent itself (W1.7), so a type_id another
+        workspace also holds is never ambiguous: the status by the entity's
+        uuid, the event by its type_id within its own workspace. The event's
+        project id is that workspace's legacy id, else the workspace uuid;
+        never ``__unknown__``.
         """
         flipped: list[str] = []
         for uid in dependent_uuids:
@@ -181,11 +187,11 @@ class DependencyManager:
             if not self._all_blockers_resolved(db, uid):
                 continue
             with db.transaction():
-                db.update_entity(entity["type_id"], status="ready")
+                db.update_entity(entity["uuid"], status="ready")
                 db.append_phase_event(
                     type_id=entity["type_id"],
-                    project_id=entity.get("project_id") or "__unknown__",
-                    workspace_uuid=entity.get("workspace_uuid"),
+                    project_id=entity.get("project_id") or entity["workspace_uuid"],
+                    workspace_uuid=entity["workspace_uuid"],
                     event_type="cascade_ready",
                     phase=None,
                     metadata={

@@ -127,7 +127,7 @@ The entity registry server (`mcp/entity_server.py`) exposes 20 tools for entity 
 | `set_parent` | Set a parent-child relationship between two entities |
 | `get_entity` | Retrieve entity details by type_id |
 | `get_lineage` | Get the full lineage tree for an entity (ancestors and descendants) |
-| `update_entity` | Update entity name, status, or metadata |
+| `update_entity` | Update entity name, status, or metadata; `archived=true`/`false` archives or un-archives it |
 | `export_lineage_markdown` | Export lineage tree as a markdown file |
 | `export_entities` | Export all entities as structured data |
 | `delete_entity` | Delete an entity by type_id or UUID |
@@ -146,7 +146,7 @@ The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin
 
 ### Workflow Engine Server
 
-The workflow engine server (`mcp/workflow_state_server.py`) exposes 24 tools for workflow state management:
+The workflow engine server (`mcp/workflow_state_server.py`) exposes 23 tools for workflow state management:
 
 | Tool | Purpose |
 |------|---------|
@@ -159,10 +159,9 @@ The workflow engine server (`mcp/workflow_state_server.py`) exposes 24 tools for
 | `reproject_meta_json` | Re-render a feature's `.meta.json` from DB state (e.g. after a status change via `update_entity`, since direct writes to it are denied) |
 | `list_features_by_phase` | List all features currently in a given phase |
 | `list_features_by_status` | List all features with a given status |
-| `reconcile_check` | Check for drift between state file and artifacts |
-| `reconcile_apply` | Apply reconciliation fixes for detected drift |
+| `reconcile_check` | Report drift between a feature's DB state and its `.meta.json` projection (read-only) |
 | `reconcile_frontmatter` | Sync frontmatter metadata across feature artifacts |
-| `reconcile_status` | Get overall reconciliation status summary |
+| `reconcile_status` | Workflow and frontmatter drift for this workspace; unhealthy only when a feature's DB state and projection disagree |
 | `init_feature_state` | Initialize workflow state for a new feature |
 | `init_project_state` | Initialize workflow state for a new project |
 | `activate_feature` | Activate a planned feature for development |

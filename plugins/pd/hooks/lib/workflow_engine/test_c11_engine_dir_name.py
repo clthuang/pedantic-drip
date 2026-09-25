@@ -1,9 +1,10 @@
 """C11 T3: the engine's readers name a feature's directory by the row's
 ``entities.entity_id`` column, never by taking the type_id text apart.
 
-Readers covered: ``transition_phase``, ``validate_prerequisites``, hydration
-(``get_state`` with no workflow row) and the degraded reader (``get_state``
-with the DB unusable).
+Readers covered: ``transition_phase``, ``validate_prerequisites`` and the
+degraded reader (``get_state`` with the DB unusable). Hydration (``get_state``
+with no workflow row reading ``.meta.json``) was deleted by design W1.5;
+``get_state`` with no row now answers None and writes nothing.
 
 **The disagreeing row** (design D6.1). Raw SQL builds a feature whose
 ``entity_id`` column differs from its type_id text; every write path keeps
@@ -32,7 +33,9 @@ are green on develop too:
 
 - the containment refusal each reader raises for a directory symlinked out
   of ``artifacts_root`` (the check moved with the name, design D1a);
-- hydration's precondition order for a shared type_id (D6.4);
+- ``get_state``'s None, with nothing written, for a row-less feature whose
+  name is unsafe or whose type_id two workspaces share (hydration's former
+  refusals, D6.4; W1.5 deleted hydration itself);
 - the closed-DB transition text (D6.5);
 - the degraded reader's listed read of the disagreeing row (D4);
 - validate's listing read, both when the lookup's registry read fails
@@ -151,18 +154,6 @@ class TestDisagreeingRowHealthyReaders:
         results = engine.validate_prerequisites(DISAGREEING_TYPE_ID, "design")
 
         assert _gate(results, "G-08").allowed is True
-
-    def test_hydration_reads_the_columns_directory(self, db, db_path, artifacts_root):
-        _seed_disagreeing_row(db, db_path, artifacts_root)
-        engine = WorkflowStateEngine(db, artifacts_root)
-
-        state = engine.get_state(DISAGREEING_TYPE_ID)
-
-        # The column's .meta.json completed design; the text one specify.
-        assert state is not None and state.source == "meta_json"
-        assert state.last_completed_phase == "design"
-        assert state.current_phase == "create-plan"
-        assert db.get_workflow_phase(DISAGREEING_TYPE_ID)["workflow_phase"] == "create-plan"
 
 
 class TestDisagreeingRowDegradedReader:
@@ -385,14 +376,15 @@ class TestNoDirectoryIsNamed:
 
 
 # ---------------------------------------------------------------------------
-# Hydration's refusals and precondition (D3, D6.4)
+# A row-less feature: None, nothing written (hydration's former refusals,
+# D3, D6.4; W1.5 deleted hydration)
 # ---------------------------------------------------------------------------
 
 
-class TestHydrationRefusals:
+class TestRowlessFeatureWritesNothing:
     def test_an_unsafe_stored_name_returns_none_and_writes_nothing(self, db, db_path, artifacts_root):
         # A directory literally named "015-back\\slash" exists and its row is
-        # otherwise ordinary, so the text path would hydrate it.
+        # otherwise ordinary, so the removed text path would have hydrated it.
         type_id, name = "feature:015-back\\slash", "015-back\\slash"
         _insert_feature_row(db, db_path, type_id, name)
         _write_feature_dir(os.path.join(artifacts_root, "features", name), last_completed="specify")
@@ -404,8 +396,8 @@ class TestHydrationRefusals:
     def test_a_shared_type_id_with_no_workflow_row_returns_none_and_writes_nothing(
         self, db, artifacts_root
     ):
-        # Parity guard (D6.4): the unscoped entity read stays FIRST, so an
-        # ambiguous type_id never reaches the lookup.
+        # Parity guard (D6.4): with no workflow row there is nothing to
+        # read, so an ambiguous type_id never reaches a directory lookup.
         first = bootstrap_test_workspace(db, "c11-t3-shared-a")
         second = bootstrap_test_workspace(db, "c11-t3-shared-b")
         db.register_entity("feature", name="Shared", seq=14, slug="shared", workspace_uuid=first)
@@ -482,15 +474,6 @@ class TestSymlinkedOutDirectoryIsRefused:
             engine.validate_prerequisites(linked_out_feature, "design")
 
         assert str(refused.value) == _CONTAINMENT_TEXT
-
-    def test_by_hydration(self, db, artifacts_root, linked_out_feature):
-        engine = WorkflowStateEngine(db, artifacts_root)
-
-        with pytest.raises(ValueError) as refused:
-            engine.get_state(linked_out_feature)
-
-        assert str(refused.value) == _CONTAINMENT_TEXT
-        assert db.get_workflow_phase(linked_out_feature) is None
 
     def test_by_the_degraded_reader(self, db, artifacts_root, linked_out_feature):
         engine = WorkflowStateEngine(db, artifacts_root)

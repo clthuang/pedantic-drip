@@ -16,8 +16,9 @@ functions, in the order of ``commands/create-feature.md`` steps 2-6.
 
 **What every lane checks first.** The seeded row, with its ``workspace_uuid``
 and ``uuid``, right after ``activate_feature`` and before any engine read.
-Hydration from ``.meta.json`` still exists until W1.5, and could otherwise
-supply a row the activation never seeded.
+(Written while hydration from ``.meta.json`` could still supply a row the
+activation never seeded; W1.5 has since deleted it, and the check stays as
+the activation's own pin.)
 """
 from __future__ import annotations
 

@@ -76,9 +76,7 @@ from workflow_engine.models import FeatureWorkflowState
 from workflow_engine.rollup import get_ancestor_progress as _lib_get_ancestor_progress
 from workflow_engine.notifications import NotificationQueue
 from workflow_engine.reconciliation import (
-    ReconcileAction,
     WorkflowDriftReport,
-    apply_workflow_reconciliation,
     check_workflow_drift,
 )
 
@@ -316,24 +314,6 @@ def _serialize_workflow_drift_report(report: WorkflowDriftReport) -> dict:
             {"field": m.field, "meta_json_value": m.meta_json_value, "db_value": m.db_value}
             for m in report.mismatches
         ],
-    }
-
-
-def _serialize_reconcile_action(action: ReconcileAction) -> dict:
-    """Convert ReconcileAction to JSON-serializable dict.
-
-    For meta_json_to_db direction: old_value = DB (being overwritten),
-    new_value = .meta.json (source of truth).
-    """
-    return {
-        "feature_type_id": action.feature_type_id,
-        "action": action.action,
-        "direction": action.direction,
-        "changes": [
-            {"field": c.field, "old_value": c.db_value, "new_value": c.meta_json_value}
-            for c in action.changes
-        ],
-        "message": action.message,
     }
 
 
@@ -1802,7 +1782,8 @@ def _detect_phase_events_drift(
     append-only log can accumulate when the analytics write (which runs
     OUTSIDE the main transaction per FR-5.1) fails silently or when
     historical rows pre-date migration 10. This helper enumerates the
-    drift — the apply path warns but does NOT auto-insert (additive-safe).
+    drift for ``reconcile_check``; nothing auto-inserts the missing rows (a
+    live backfill would falsify the ``created_at`` audit trail).
 
     Feature 089 FR-2.2 / AC-9 / #00150: uses ``query_phase_events_bulk``
     (single chunked IN query) instead of N+1 per-entity calls.
@@ -1914,47 +1895,6 @@ def _process_reconcile_check(
         "features": [_serialize_workflow_drift_report(r) for r in result.features],
         "summary": result.summary,
         "phase_events_drift": phase_events_drift,
-    })
-
-
-@_with_error_handling
-@_with_retry()
-@_catch_value_error
-def _process_reconcile_apply(
-    engine: WorkflowStateEngine,
-    db: EntityDatabase,
-    artifacts_root: str,
-    feature_type_id: str | None,
-    dry_run: bool,
-    *,
-    workspace_uuid: str | None = None,
-) -> str:
-    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string.
-
-    Feature 113 FR-11: forwards ``workspace_uuid`` to
-    ``apply_workflow_reconciliation`` so the FR-4.1 read-side assertion runs.
-    """
-    if feature_type_id is not None:
-        _validate_feature_type_id(db, feature_type_id, artifacts_root)
-    result = apply_workflow_reconciliation(
-        engine, db, artifacts_root, feature_type_id, dry_run,
-        workspace_uuid=workspace_uuid,
-    )
-    # Feature 088 FR-10.9 / AC-42b: detect phase_events-vs-metadata drift and
-    # emit stderr warnings. We do NOT auto-insert phase_events rows — drift of
-    # this kind requires manual inspection (a live row backfill would falsify
-    # the created_at audit trail).
-    phase_events_drift = _detect_phase_events_drift(db, feature_type_id)
-    for entry in phase_events_drift:
-        sys.stderr.write(
-            f"[reconcile] phase_events drift for {entry['type_id']}:{entry['phase']} "
-            f"(metadata completed={entry['metadata_completed_at']}, phase_events missing) — "
-            f"NOT auto-fixing (manual inspection recommended)\n"
-        )
-    return json.dumps({
-        "actions": [_serialize_reconcile_action(a) for a in result.actions],
-        "summary": result.summary,
-        "phase_events_drift_count": len(phase_events_drift),
     })
 
 
@@ -2121,6 +2061,12 @@ def _process_transition_entity_phase(
     ))
 
 
+# The workflow drift statuses that make ``reconcile_status`` unhealthy: the
+# DB state and the projection disagree. db_only (no projection) and
+# meta_json_only (no row) are a missing projection or row, not drift (W1.6).
+_WORKFLOW_DRIFT_STATUSES = frozenset({"db_ahead", "meta_json_ahead"})
+
+
 @_with_error_handling
 def _process_reconcile_status(
     engine: WorkflowStateEngine,
@@ -2135,11 +2081,26 @@ def _process_reconcile_status(
     When summary_only=True, returns a compact 3-field response:
     {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
 
-    Feature 113 FR-11.3: forwards ``workspace_uuid`` to ``scan_all`` so the
-    frontmatter scan is workspace-scoped.
+    - **Scoped** (W1.6): ``workspace_uuid`` goes to ``check_workflow_drift``,
+      so a feature only another workspace holds is omitted, and to
+      ``scan_all`` (feature 113 FR-11.3) for the frontmatter scan.
+    - **Health** (W1.6): only a feature whose DB state and projection
+      disagree (``db_ahead``, ``meta_json_ahead``) is workflow drift: it
+      makes the report unhealthy and is what ``workflow_drift_count``
+      counts. A row with no projection (``db_only``), a projection with no
+      row (``meta_json_only``) and an ``error`` report are listed, not
+      counted. Frontmatter drift and ``artifact_missing_count`` never
+      affect health.
     """
-    # Workflow drift
-    workflow_result = check_workflow_drift(engine, db, artifacts_root)
+    # Workflow drift, this workspace's features only
+    workflow_result = check_workflow_drift(
+        engine, db, artifacts_root, workspace_uuid=workspace_uuid,
+    )
+    wf_drift = sum(
+        1 for r in workflow_result.features
+        if r.status in _WORKFLOW_DRIFT_STATUSES
+    )
+    healthy = wf_drift == 0
 
     # Frontmatter drift
     frontmatter_reports = scan_all(
@@ -2147,27 +2108,16 @@ def _process_reconcile_status(
     )
 
     if summary_only:
-        wf_drift = sum(
-            1 for r in workflow_result.features if r.status != "in_sync"
-        )
         fm_drift = sum(
             1 for r in frontmatter_reports if r.status != "in_sync"
         )
         return json.dumps({
-            "healthy": wf_drift == 0,
+            "healthy": healthy,
             "workflow_drift_count": wf_drift,
             "frontmatter_drift_count": fm_drift,
         })
 
     fm_summary = _build_frontmatter_summary(frontmatter_reports)
-
-    # Healthy: workflow drift only (frontmatter drift excluded per AC-2,
-    # artifact_missing_count excluded — informational, not a health issue)
-    _HEALTH_EXCLUDED = {"in_sync", "artifact_missing_count"}
-    wf_healthy = all(
-        v == 0 for k, v in workflow_result.summary.items() if k not in _HEALTH_EXCLUDED
-    )
-    healthy = wf_healthy
 
     return json.dumps({
         "workflow_drift": {
@@ -2571,24 +2521,6 @@ async def reconcile_check(feature_type_id: str | None = None) -> str:
 
 
 @mcp.tool()
-async def reconcile_apply(
-    feature_type_id: str | None = None,
-    dry_run: bool = False,
-) -> str:
-    """Sync .meta.json workflow state to DB for features where .meta.json is ahead."""
-    err = _check_db_available()
-    if err:
-        return err
-    if _engine is None or _db is None:
-        return _NOT_INITIALIZED
-    return _process_reconcile_apply(
-        _engine, _db, _artifacts_root, feature_type_id, dry_run,
-        # FR-11.3: thread workspace_uuid; empty string == unset → None.
-        workspace_uuid=_workspace_uuid or None,
-    )
-
-
-@mcp.tool()
 async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
     """Check frontmatter headers against DB entity records for drift."""
     err = _check_db_available()
@@ -2605,7 +2537,13 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
 
 @mcp.tool()
 async def reconcile_status(summary_only: bool = False) -> str:
-    """Unified health report across workflow state and frontmatter drift."""
+    """Unified health report across workflow state and frontmatter drift.
+
+    Reports this workspace's features only. Unhealthy only when a feature's
+    DB state and its .meta.json projection disagree (db_ahead,
+    meta_json_ahead); a row with no projection (db_only) or a projection
+    with no row (meta_json_only) is listed but not counted.
+    """
     err = _check_db_available()
     if err:
         return err

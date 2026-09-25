@@ -335,7 +335,7 @@ def _validate_project_dir(project_dir: str, artifacts_root: str) -> str:
     - **NUL bytes** are refused outright.
     - **Containment** — the realpath (``..`` and symlinks resolved) must be
       a direct child of the realpath of ``{artifacts_root}/projects``, the
-      one place reconciliation and backfill look for projects.
+      one place backfill looks for projects and projections are written.
     - **Not a non-directory** — an existing file at the path is refused.
 
     Returns the resolved path. Raises ValueError (``invalid_input: …``).

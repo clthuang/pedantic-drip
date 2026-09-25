@@ -1,8 +1,9 @@
 """C11 T5: the MCP reconcile tools name a feature's directory by the row's
 ``entities.entity_id`` column, through ``_validate_feature_type_id``.
 
-Callers covered: the ``reconcile_check`` and ``reconcile_apply`` prechecks
-and ``reconcile_frontmatter``'s single-feature path.
+Callers covered: the ``reconcile_check`` precheck and
+``reconcile_frontmatter``'s single-feature path. (The apply tool's precheck
+went with that tool, deleted by design W1.4.)
 
 **The disagreeing row.** Raw SQL builds a feature whose ``entity_id`` column
 differs from its type_id text; only raw SQL can.
@@ -122,15 +123,6 @@ class TestPrechecksReadTheColumn:
         assert report["feature_type_id"] == DISAGREEING_TYPE_ID
         assert report["meta_json"]["last_completed_phase"] == "design"
 
-    def test_reconcile_apply(self, db, engine, artifacts_root, column_directory_only):
-        data = json.loads(
-            wss._process_reconcile_apply(engine, db, artifacts_root, DISAGREEING_TYPE_ID, True)
-        )
-
-        assert "error" not in data
-        (action,) = data["actions"]
-        assert (action["feature_type_id"], action["action"]) == (DISAGREEING_TYPE_ID, "reconciled")
-
 
 class TestReconcileFrontmatterReadsTheColumn:
     def test_scans_the_columns_directory(self, db, db_path, artifacts_root):
@@ -164,12 +156,11 @@ class TestErrorTypesAsOnDevelop:
     def test_through_every_validator_caller(self, db, engine, artifacts_root, type_id, error_type):
         replies = [
             wss._process_reconcile_check(engine, db, artifacts_root, type_id),
-            wss._process_reconcile_apply(engine, db, artifacts_root, type_id, True),
             wss._process_reconcile_frontmatter(db, artifacts_root, type_id),
             wss._process_activate_feature(db, engine, type_id, artifacts_root),
         ]
 
-        assert [json.loads(reply)["error_type"] for reply in replies] == [error_type] * 4
+        assert [json.loads(reply)["error_type"] for reply in replies] == [error_type] * 3
 
     def test_a_symlinked_out_directory_is_feature_not_found(
         self, db, engine, tmp_path, artifacts_root
@@ -183,9 +174,8 @@ class TestErrorTypesAsOnDevelop:
 
         replies = [
             wss._process_reconcile_check(engine, db, artifacts_root, "feature:051-linked"),
-            wss._process_reconcile_apply(engine, db, artifacts_root, "feature:051-linked", True),
             wss._process_reconcile_frontmatter(db, artifacts_root, "feature:051-linked"),
             wss._process_activate_feature(db, engine, "feature:051-linked", artifacts_root),
         ]
 
-        assert [json.loads(reply)["error_type"] for reply in replies] == ["feature_not_found"] * 4
+        assert [json.loads(reply)["error_type"] for reply in replies] == ["feature_not_found"] * 3

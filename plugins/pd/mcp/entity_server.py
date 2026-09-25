@@ -384,13 +384,28 @@ def _process_update_entity(
     metadata: dict | None,
     project_id: str | None = None,
     new_project_id: str | None = None,
+    archived: bool | None = None,
 ) -> str:
-    """Update mutable fields of an existing entity (retryable)."""
+    """Update mutable fields of an existing entity (retryable).
+
+    ``archived`` (W1.2) then sets (True) or clears (False) the archive flag
+    of the entity the update resolved, by its uuid; None leaves the flag as
+    it is. Both writes are idempotent, so a retry repeats them safely.
+    """
+    # The uuid is resolved in the update's own scope and before it, so it
+    # names the updated entity even after a re-attribution. A type_id that
+    # scope leaves ambiguous is refused by the update before any archive.
+    entity_uuid = (
+        db.resolve_ref(resolved_type_id, project_id=project_id)
+        if archived is not None else None
+    )
     db.update_entity(
         resolved_type_id, name=name, status=status,
         artifact_path=description, metadata=metadata,
         project_id=project_id, new_project_id=new_project_id,
     )
+    if entity_uuid is not None:
+        db.set_archived(entity_uuid, archived)
     return f"Updated: {resolved_type_id}"
 
 
@@ -1098,6 +1113,7 @@ async def update_entity(
     ref: str | None = None,
     project_id: str | None = None,
     new_project_id: str | None = None,
+    archived: bool | None = None,
 ) -> str:
     """Update mutable fields of an existing entity.
 
@@ -1120,6 +1136,11 @@ async def update_entity(
         Project scope for entity resolution. Defaults to current project.
     new_project_id:
         If provided, re-attribute the entity to a different project.
+    archived:
+        True archives the entity, False un-archives it; omitted leaves it.
+        Archiving sets the ``is_archived`` flag and never touches the
+        status (e.g. ``/pd:cleanup-brainstorms`` archives a deleted
+        brainstorm's entity this way).
 
     Returns confirmation message or error.
     """
@@ -1147,6 +1168,7 @@ async def update_entity(
             status=status, metadata=parse_metadata(metadata),
             project_id=resolved_project_id,
             new_project_id=new_project_id,
+            archived=archived,
         )
     except Exception as exc:
         return f"Error updating entity: {exc}"

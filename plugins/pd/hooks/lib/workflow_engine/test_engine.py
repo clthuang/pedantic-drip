@@ -245,175 +245,8 @@ class TestHelpers:
 
 
 # ===========================================================================
-# Phase 3: State Reading + Hydration
+# Phase 3: State Reading (hydration from .meta.json deleted by design W1.5)
 # ===========================================================================
-
-
-class TestHydration:
-    """Tasks 3.1/3.2: _hydrate_from_meta_json tests."""
-
-    def test_hydrate_active_status(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-active")
-        _create_meta_json(
-            tmp_path,
-            "008-active",
-            status="active",
-            last_completed_phase="design",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.source == "meta_json"
-        assert state.current_phase == "create-plan"  # next after design
-        assert state.last_completed_phase == "design"
-        assert state.completed_phases == ("brainstorm", "specify", "design")
-
-    def test_hydrate_completed_status(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-done")
-        _create_meta_json(
-            tmp_path,
-            "008-done",
-            status="completed",
-            last_completed_phase="implement",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.current_phase == "finish"
-        assert state.source == "meta_json"
-
-    def test_hydrate_planned_status(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-planned")
-        _create_meta_json(
-            tmp_path,
-            "008-planned",
-            status="planned",
-            last_completed_phase="specify",  # stale data
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.current_phase is None
-        assert state.last_completed_phase is None
-        assert state.completed_phases == ()
-
-    def test_hydrate_unknown_status(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-abandoned")
-        _create_meta_json(
-            tmp_path,
-            "008-abandoned",
-            status="abandoned",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.current_phase is None
-        assert state.last_completed_phase is None
-
-    def test_hydrate_missing_entity(self, tmp_path) -> None:
-        db = _make_db()
-        _create_meta_json(tmp_path, "008-noentity")
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json("feature:008-noentity")
-        assert state is None
-
-    def test_hydrate_missing_meta_json(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-nometa")
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-        assert state is None
-
-    def test_hydrate_malformed_meta_json(self, tmp_path) -> None:
-        db = _make_db()
-        type_id = _register_feature(db, "008-bad")
-        _create_meta_json(
-            tmp_path,
-            "008-bad",
-            status="active",
-            last_completed_phase="invalid-phase",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-        assert state is None
-
-    def test_hydrate_concurrent_race(self, tmp_path) -> None:
-        """ValueError 'already exists' -> fallback to get_workflow_phase."""
-        db = _make_db()
-        type_id = _register_feature(db, "008-race")
-        _create_meta_json(
-            tmp_path,
-            "008-race",
-            status="active",
-            last_completed_phase="specify",
-        )
-
-        # Pre-create the workflow phase to simulate a race
-        db.create_workflow_phase(
-            type_id,
-            workflow_phase="design",
-            last_completed_phase="specify",
-            mode="standard",
-        )
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.source == "meta_json"
-        # Should fallback to get and get the existing row's data
-        assert state.current_phase == "design"
-
-    def test_hydrate_active_finished_edge(self, tmp_path) -> None:
-        """Active + lastCompletedPhase='finish' -> workflow_phase='finish'."""
-        db = _make_db()
-        type_id = _register_feature(db, "008-edge")
-        _create_meta_json(
-            tmp_path,
-            "008-edge",
-            status="active",
-            last_completed_phase="finish",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.current_phase == "finish"
-
-    def test_hydrate_active_no_completed_phase(self, tmp_path) -> None:
-        """Active + lastCompletedPhase=None -> workflow_phase=PHASE_SEQUENCE[0]."""
-        db = _make_db()
-        type_id = _register_feature(db, "008-new")
-        _create_meta_json(
-            tmp_path,
-            "008-new",
-            status="active",
-            last_completed_phase=None,
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine._hydrate_from_meta_json(type_id)
-
-        assert state is not None
-        assert state.current_phase == PHASE_SEQUENCE[0].value  # "brainstorm"
-        assert state.last_completed_phase is None
-        assert state.completed_phases == ()
 
 
 class TestGetState:
@@ -433,24 +266,6 @@ class TestGetState:
         assert state.current_phase == "design"
         assert state.last_completed_phase == "specify"
         assert state.completed_phases == ("brainstorm", "specify")
-
-    def test_get_state_db_missing_meta_exists(self, tmp_path) -> None:
-        """SC-4 + SC-9: fallback to .meta.json, source='meta_json'."""
-        db = _make_db()
-        type_id = _register_feature(db, "008-fallback")
-        _create_meta_json(
-            tmp_path,
-            "008-fallback",
-            status="active",
-            last_completed_phase="design",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        state = engine.get_state(type_id)
-
-        assert state is not None
-        assert state.source == "meta_json"
-        assert state.current_phase == "create-plan"
 
     def test_get_state_both_missing_returns_none(self, tmp_path) -> None:
         db = _make_db()
@@ -992,7 +807,9 @@ class TestIntegration:
         """SC-1: transition + complete through all 6 command phases.
 
         Setup (7.1a): EntityDatabase(:memory:), tmp_path for artifacts,
-        register entity, create .meta.json, get_state -> source='meta_json'.
+        register entity, seed its workflow row at brainstorm (as activation
+        does; W1.5 removed the .meta.json hydration this once relied on),
+        get_state -> source='db'.
 
         Lifecycle (7.1b): For each command phase: transition_phase() +
         create required artifact + complete_phase().
@@ -1009,32 +826,28 @@ class TestIntegration:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
-        # Create .meta.json (active, no completed phases)
+        # The feature directory holds the artifacts each phase produces
         feature_dir = tmp_path / "features" / slug
         feature_dir.mkdir(parents=True)
-        meta = {
-            "id": "008",
-            "slug": slug,
-            "status": "active",
-            "mode": "standard",
-            "lastCompletedPhase": None,
-            "phases": {},
-        }
-        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+
+        # Seed the workflow row (active, no completed phases)
+        db.create_workflow_phase(
+            type_id, workflow_phase=PHASE_SEQUENCE[0].value,
+            kanban_column="backlog", mode="standard",
+        )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
 
-        # get_state triggers hydration from .meta.json
         state = engine.get_state(type_id)
         assert state is not None
-        assert state.source == "meta_json"
+        assert state.source == "db"
         assert state.current_phase == PHASE_SEQUENCE[0].value  # "brainstorm"
         assert state.last_completed_phase is None
 
         # --- 7.1b: Lifecycle through 6 command phases ---
         # First, complete brainstorm to move to specify
         # (brainstorm is not a command phase but needs to be completed)
-        # The hydrated state has current_phase="brainstorm", so complete it
+        # The seeded state has current_phase="brainstorm", so complete it
         state = engine.complete_phase(type_id, "brainstorm")
         assert state.current_phase == "specify"
         assert state.last_completed_phase == "brainstorm"
@@ -1168,14 +981,14 @@ class TestIntegration:
                 "check_yolo_override not called"
             )
 
-    # -- Task 7.3: Hydration then transition (SC-4 + SC-9) --
+    # -- Task 7.3: Seeded row then transition (SC-4 + SC-9) --
 
-    def test_hydration_then_transition(self, tmp_path) -> None:
-        """SC-4 + SC-9: .meta.json hydration then successful transition.
+    def test_seeded_row_then_transition(self, tmp_path) -> None:
+        """SC-4 + SC-9: a seeded workflow row, then a successful transition.
 
-        Feature has .meta.json with lastCompletedPhase='design' but no DB
-        row. get_state hydrates (source='meta_json'). Then transition to
-        implement succeeds using hydrated state.
+        The feature's row has last_completed_phase='design' (W1.5: rows are
+        seeded, never hydrated from .meta.json). get_state reads it
+        (source='db'). Then the transition to create-plan succeeds.
         """
         db = EntityDatabase(":memory:")
         slug = "008-hydrate-transition"
@@ -1188,33 +1001,28 @@ class TestIntegration:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
-        # Create .meta.json with design completed
-        feature_dir = tmp_path / "features" / slug
-        feature_dir.mkdir(parents=True)
-        meta = {
-            "id": "008",
-            "slug": slug,
-            "status": "active",
-            "mode": "standard",
-            "lastCompletedPhase": "design",
-            "phases": {},
-        }
-        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+        # Seed the workflow row with design completed
+        db.create_workflow_phase(
+            type_id, workflow_phase="create-plan",
+            last_completed_phase="design", kanban_column="prioritised",
+            mode="standard",
+        )
 
         # Create required artifact for create-plan (next phase after design).
         # Feature 134 FR-11: specify+design share one shape.md.
+        feature_dir = tmp_path / "features" / slug
+        feature_dir.mkdir(parents=True)
         (feature_dir / "shape.md").write_text("# Shape")
 
         engine = WorkflowStateEngine(db, str(tmp_path))
 
-        # get_state should hydrate from .meta.json
         state = engine.get_state(type_id)
         assert state is not None
-        assert state.source == "meta_json"
+        assert state.source == "db"
         assert state.current_phase == "create-plan"
         assert state.last_completed_phase == "design"
 
-        # Transition should succeed using the hydrated state
+        # Transition should succeed using the seeded state
         results = engine.transition_phase(type_id, "create-plan").results
         assert all(r.allowed for r in results)
 
@@ -1223,10 +1031,11 @@ class TestIntegration:
         assert row is not None
         assert row["workflow_phase"] == "create-plan"
 
-        # Now get_state should return source="db" (row exists)
+        # get_state still reads the row
         state = engine.get_state(type_id)
         assert state is not None
         assert state.source == "db"
+        assert state.current_phase == "create-plan"
 
 
 # ===========================================================================
@@ -1385,24 +1194,6 @@ class TestDeepenedAdversarial:
         # When completing an unknown phase
         with pytest.raises(ValueError, match="Unknown phase"):
             engine.complete_phase(type_id, "nonexistent-phase")
-
-    def test_hydrate_meta_json_with_corrupt_json(self, tmp_path) -> None:
-        """Adversarial: .meta.json contains invalid JSON.
-
-        Engine catches JSONDecodeError and returns None (graceful fallback).
-        derived_from: dimension:adversarial (starve/corrupt input)
-        """
-        # Given corrupt .meta.json
-        db = _make_db()
-        type_id = _register_feature(db, "008-corrupt")
-        feature_dir = tmp_path / "features" / "008-corrupt"
-        feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text("{not valid json!!!")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When hydrating -- returns None for corrupt JSON
-        state = engine._hydrate_from_meta_json(type_id)
-        assert state is None
 
     def test_validate_prerequisites_unknown_phase_gates_handle(
         self, tmp_path
@@ -1719,33 +1510,6 @@ class TestDeepenedMutationMindset:
         assert state.last_completed_phase == "design"
         assert state.current_phase == "create-plan"
 
-    def test_hydration_completed_status_overrides_last_completed_to_finish(
-        self, tmp_path
-    ) -> None:
-        """Pin: completed status sets last_completed = last_completed or 'finish'.
-
-        Mutation target: Removing the `or "finish"` fallback would leave
-        last_completed as None for completed features without lastCompletedPhase.
-        derived_from: dimension:mutation_mindset (return value mutation)
-        """
-        # Given a completed feature with NO lastCompletedPhase in meta
-        db = _make_db()
-        type_id = _register_feature(db, "008-comp-null")
-        _create_meta_json(
-            tmp_path,
-            "008-comp-null",
-            status="completed",
-            last_completed_phase=None,  # absent
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When hydrating
-        state = engine._hydrate_from_meta_json(type_id)
-        # Then last_completed defaults to "finish" (not None)
-        assert state is not None
-        assert state.last_completed_phase == "finish"
-        assert state.current_phase == "finish"
-        assert len(state.completed_phases) == 6  # all phases
-
     def test_terminal_phase_next_returns_none_triggers_fallback(
         self, tmp_path
     ) -> None:
@@ -1768,33 +1532,6 @@ class TestDeepenedMutationMindset:
         row = db.get_workflow_phase(type_id)
         assert row["workflow_phase"] == "finish"
         assert row["workflow_phase"] is not None
-
-    def test_hydration_planned_status_clears_non_null_last_completed(
-        self, tmp_path
-    ) -> None:
-        """Pin: planned status nullifies lastCompletedPhase even if non-null in meta.
-
-        Mutation target: Removing `last_completed = None` for non-active/completed
-        statuses would preserve stale lastCompletedPhase data.
-        derived_from: dimension:mutation_mindset (line deletion)
-        """
-        # Given a planned feature with stale lastCompletedPhase
-        db = _make_db()
-        type_id = _register_feature(db, "008-stale-planned")
-        _create_meta_json(
-            tmp_path,
-            "008-stale-planned",
-            status="planned",
-            last_completed_phase="design",  # stale data
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When hydrating
-        state = engine._hydrate_from_meta_json(type_id)
-        # Then planned status overrides to null
-        assert state is not None
-        assert state.last_completed_phase is None
-        assert state.current_phase is None
-        assert state.completed_phases == ()
 
 
 class TestDeepenedPerformance:
@@ -2254,8 +1991,8 @@ class TestReadStateFromMetaJson:
     def test_does_not_require_db_entity(self, tmp_path) -> None:
         """_read_state_from_meta_json works without any entity in the DB.
 
-        This is a key difference from _hydrate_from_meta_json which requires
-        self.db.get_entity() to succeed first.
+        The degraded reader never asks the registry for the entity (the
+        deleted hydration path, W1.5, required self.db.get_entity() first).
         """
         db = _make_db()
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -3711,8 +3448,8 @@ class TestSchemaNotModifiedDuringDegradation:
         self, tmp_path
     ) -> None:
         """When get_state falls back to meta_json, it does NOT backfill a DB row.
-        This is the key difference between _hydrate_from_meta_json (which backfills)
-        and _read_state_from_meta_json (which does NOT backfill).
+        _read_state_from_meta_json only reads; since W1.5 no get_state path
+        writes a row from .meta.json.
         """
         # Given engine with probe failure
         db = _make_db()
@@ -3779,118 +3516,6 @@ class TestValidatePrerequisitesDegradedMode:
         guard_ids = {r.guard_id for r in results}
         assert "G-08" in guard_ids
         assert "G-23" in guard_ids
-
-
-# ===========================================================================
-# Feature 036: Kanban Column Lifecycle Fix
-# ===========================================================================
-
-
-class TestDegradedModeBackfillSetsKanbanFromPhase:
-    """Backfill via _hydrate_from_meta_json should derive kanban_column from
-    the current phase using _kanban_column_for, not default to 'backlog'.
-
-    derived_from: feature:036, requirement:R8
-    """
-
-    def test_degraded_mode_backfill_sets_kanban_from_phase(
-        self, tmp_path
-    ) -> None:
-        """When get_state triggers hydration from .meta.json with
-        last_completed_phase='design', current_phase resolves to 'create-plan'
-        and kanban_column should be 'prioritised' (not 'backlog').
-        """
-        # Given: DB with registered entity, no workflow_phases row,
-        # and .meta.json with last_completed_phase="design"
-        db = _make_db()
-        slug = "036-kanban-fix"
-        type_id = _register_feature(db, slug)
-        _create_meta_json(
-            tmp_path, slug, status="active",
-            last_completed_phase="design",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # When: get_state triggers degraded-mode backfill (no DB row exists)
-        state = engine.get_state(type_id)
-
-        # Then: state was hydrated successfully
-        assert state is not None
-        assert state.current_phase == "create-plan"
-
-        # And: the backfilled DB row has kanban_column derived from the phase
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "prioritised"
-
-
-class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
-    """Deepened tests for degraded-mode backfill kanban column derivation.
-
-    Tests additional phases beyond create-plan to ensure _kanban_column_for
-    is consistently applied during hydration from .meta.json.
-
-    derived_from: feature:036, dimension:bdd_scenarios, dimension:boundary_values
-    """
-
-    def test_degraded_backfill_implement_phase_sets_wip(self, tmp_path) -> None:
-        """Backfill with last_completed_phase='create-plan' resolves to
-        current_phase='implement' and kanban_column should be 'wip'.
-
-        Anticipate: If _kanban_column_for is missing 'implement' mapping or
-        the backfill defaults to 'backlog', this test catches it.
-        derived_from: spec:R8 (degraded backfill kanban)
-        """
-        # Given: registered entity, no workflow_phases row,
-        # .meta.json with last_completed_phase="create-plan"
-        db = _make_db()
-        slug = "036-backfill-impl"
-        type_id = _register_feature(db, slug)
-        _create_meta_json(
-            tmp_path, slug, status="active",
-            last_completed_phase="create-plan",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # When: get_state triggers hydration
-        state = engine.get_state(type_id)
-
-        # Then: current_phase is 'implement', kanban is 'wip'
-        assert state is not None
-        assert state.current_phase == "implement"
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "wip"
-
-    def test_degraded_backfill_finish_phase_sets_documenting(self, tmp_path) -> None:
-        """Backfill with last_completed_phase='implement' resolves to
-        current_phase='finish' and kanban_column should be 'documenting'.
-
-        Anticipate: If the code maps finish to 'completed' without checking
-        last_completed_phase, this test catches it. Backfill should use
-        _kanban_column_for which maps finish -> 'documenting'.
-        derived_from: spec:R8 (degraded backfill kanban)
-        """
-        # Given: registered entity, no workflow_phases row,
-        # .meta.json with last_completed_phase="implement"
-        db = _make_db()
-        slug = "036-backfill-finish"
-        type_id = _register_feature(db, slug)
-        _create_meta_json(
-            tmp_path, slug, status="active",
-            last_completed_phase="implement",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # When: get_state triggers hydration
-        state = engine.get_state(type_id)
-
-        # Then: current_phase is 'finish', kanban is 'documenting'
-        assert state is not None
-        assert state.current_phase == "finish"
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "documenting"
 
 
 # ===========================================================================

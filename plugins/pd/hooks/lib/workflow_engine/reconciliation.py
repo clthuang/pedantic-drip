@@ -1,7 +1,15 @@
-"""Reconciliation module -- drift detection and reconciliation between .meta.json and DB.
+"""Workflow drift detection between the DB and its .meta.json projections, and
+missed-cascade recovery.
 
-Pure logic module for workflow state drift detection and reconciliation.
-No MCP awareness -- accepts explicit parameters, returns dataclasses.
+Pure logic module. No MCP awareness -- accepts explicit parameters, returns
+dataclasses.
+
+- **Drift is reported, never applied** (design W1.3): a ``.meta.json`` is a
+  projection of the DB, so nothing here writes a projection's state back
+  into it. ``check_workflow_drift`` only reads.
+- **Cascade recovery** (``_recover_pending_cascades``) re-runs completion
+  cascades that never ran, in one workspace, writing by uuid (W1.7). The
+  session-start orchestrator runs it as its own task.
 """
 from __future__ import annotations
 
@@ -99,39 +107,6 @@ class WorkflowDriftResult:
 
     features: tuple[WorkflowDriftReport, ...]
     summary: dict  # {in_sync, meta_json_ahead, db_ahead, meta_json_only, db_only, error}
-
-
-@dataclass(frozen=True)
-class ReconcileAction:
-    """Outcome of reconciling a single feature.
-
-    Design extends spec R2 action enum with "created" to differentiate
-    update (existing DB row) vs create (new row for meta_json_only).
-
-    AC-8 mapping: "reconcile_apply on meta_json_only creates a new row"
-    -> test assertions should use action="created" for this case.
-    AC-6 mapping: "reconcile_apply on meta_json_ahead updates existing row"
-    -> test assertions should use action="reconciled" for this case.
-    """
-
-    feature_type_id: str
-    action: str  # "reconciled"|"skipped"|"created"|"error"
-    direction: str  # "meta_json_to_db"
-    changes: tuple[WorkflowMismatch, ...]
-    # Serialization note: when serialized via _serialize_reconcile_action,
-    # db_value -> "old_value" and meta_json_value -> "new_value".
-    message: str
-
-
-@dataclass(frozen=True)
-class ReconciliationResult:
-    """Aggregate result from apply_workflow_reconciliation().
-
-    Summary extends spec R2 with "created" count (design enhancement).
-    """
-
-    actions: tuple[ReconcileAction, ...]
-    summary: dict  # {reconciled, created, skipped, error, dry_run}
 
 
 # ---------------------------------------------------------------------------
@@ -395,203 +370,12 @@ def _check_single_feature(
     )
 
 
-def _reconcile_single_feature(
-    db: EntityDatabase,
-    report: WorkflowDriftReport,
-    dry_run: bool,
-    *,
-    workspace_uuid: str | None = None,
-) -> ReconcileAction:
-    """Execute reconciliation for one feature based on its drift report.
-
-    report.meta_json contains all needed .meta.json data -- separate meta
-    parameter unnecessary since drift detection already derived the state.
-
-    Feature 113 FR-11.1: ``workspace_uuid`` is forwarded to
-    ``db.update_workflow_phase`` calls so the FR-4.1 read-side assertion
-    runs (None is a no-op).
-    """
-    direction = "meta_json_to_db"
-    feature_type_id = report.feature_type_id
-
-    if report.status == "meta_json_ahead":
-        # Build changes from mismatches in the report
-        changes = report.mismatches
-
-        if not dry_run:
-            meta = report.meta_json
-            if meta is None:
-                return ReconcileAction(
-                    feature_type_id=feature_type_id,
-                    action="error",
-                    direction=direction,
-                    changes=(),
-                    message="meta_json_ahead status but no meta_json data",
-                )
-            try:
-                expected_kanban = _derive_expected_kanban(
-                    meta["workflow_phase"], meta["last_completed_phase"],
-                    status=meta.get("status"),
-                )
-                kwargs = dict(
-                    workflow_phase=meta["workflow_phase"],
-                    last_completed_phase=meta["last_completed_phase"],
-                    mode=meta["mode"],
-                )
-                if expected_kanban is not None:
-                    kwargs["kanban_column"] = expected_kanban
-                # FR-11.1: forward workspace_uuid (None is a no-op per FR-4.1).
-                kwargs["workspace_uuid"] = workspace_uuid
-                db.update_workflow_phase(feature_type_id, **kwargs)
-            except ValueError as exc:
-                return ReconcileAction(
-                    feature_type_id=feature_type_id,
-                    action="error",
-                    direction=direction,
-                    changes=(),
-                    message=f"Update failed: {exc}",
-                )
-
-        return ReconcileAction(
-            feature_type_id=feature_type_id,
-            action="reconciled",
-            direction=direction,
-            changes=changes,
-            message="Updated DB to match .meta.json",
-        )
-
-    if report.status == "meta_json_only":
-        # Defensive guard: meta_json must be present
-        if report.meta_json is None:
-            return ReconcileAction(
-                feature_type_id=feature_type_id,
-                action="error",
-                direction=direction,
-                changes=(),
-                message="meta_json_only status but no meta_json data available",
-            )
-
-        # Build changes showing what will be created
-        changes = (
-            WorkflowMismatch(
-                field="workflow_phase",
-                meta_json_value=report.meta_json["workflow_phase"],
-                db_value=None,
-            ),
-            WorkflowMismatch(
-                field="last_completed_phase",
-                meta_json_value=report.meta_json["last_completed_phase"],
-                db_value=None,
-            ),
-            WorkflowMismatch(
-                field="mode",
-                meta_json_value=report.meta_json["mode"],
-                db_value=None,
-            ),
-        )
-
-        if not dry_run:
-            try:
-                db.create_workflow_phase(
-                    feature_type_id,
-                    workflow_phase=report.meta_json["workflow_phase"],
-                    last_completed_phase=report.meta_json["last_completed_phase"],
-                    mode=report.meta_json["mode"],
-                )
-            except ValueError as exc:
-                return ReconcileAction(
-                    feature_type_id=feature_type_id,
-                    action="error",
-                    direction=direction,
-                    changes=(),
-                    message=f"Create failed: {exc}",
-                )
-
-        return ReconcileAction(
-            feature_type_id=feature_type_id,
-            action="created",
-            direction=direction,
-            changes=changes,
-            message="Created DB row from .meta.json",
-        )
-
-    if report.status == "in_sync":
-        # Check for kanban-only drift (phases match but kanban column is wrong)
-        kanban_mismatches = tuple(
-            m for m in report.mismatches if m.field == "kanban_column"
-        )
-        if kanban_mismatches:
-            if not dry_run:
-                try:
-                    meta = report.meta_json
-                    if meta is not None:
-                        expected_kanban = _derive_expected_kanban(
-                            meta["workflow_phase"], meta["last_completed_phase"],
-                            status=meta.get("status"),
-                        )
-                        if expected_kanban is not None:
-                            # FR-11.1: forward workspace_uuid.
-                            db.update_workflow_phase(
-                                feature_type_id, kanban_column=expected_kanban,
-                                workspace_uuid=workspace_uuid,
-                            )
-                except ValueError as exc:
-                    return ReconcileAction(
-                        feature_type_id=feature_type_id,
-                        action="error",
-                        direction=direction,
-                        changes=(),
-                        message=f"Kanban fix failed: {exc}",
-                    )
-            return ReconcileAction(
-                feature_type_id=feature_type_id,
-                action="reconciled",
-                direction=direction,
-                changes=kanban_mismatches,
-                message="Fixed kanban column drift",
-            )
-        return ReconcileAction(
-            feature_type_id=feature_type_id,
-            action="skipped",
-            direction=direction,
-            changes=(),
-            message="Already in sync",
-        )
-
-    if report.status == "db_ahead":
-        return ReconcileAction(
-            feature_type_id=feature_type_id,
-            action="skipped",
-            direction=direction,
-            changes=(),
-            message="DB is ahead -- manual resolution required",
-        )
-
-    if report.status == "db_only":
-        return ReconcileAction(
-            feature_type_id=feature_type_id,
-            action="skipped",
-            direction=direction,
-            changes=(),
-            message="No .meta.json to reconcile from",
-        )
-
-    # status == "error" -- propagate original error
-    return ReconcileAction(
-        feature_type_id=feature_type_id,
-        action="error",
-        direction=direction,
-        changes=(),
-        message=report.message,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Cascade recovery (Task 3.3a)
 # ---------------------------------------------------------------------------
 
 
-def _recover_pending_cascades(db: EntityDatabase) -> int:
+def _recover_pending_cascades(db: EntityDatabase, workspace_uuid: str) -> int:
     """Detect and recover missed cascades from two-phase commit failures.
 
     When Phase A (completion) commits but Phase B (cascade) fails (e.g., crash),
@@ -602,20 +386,42 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
     expected parent progress from children.  Compare with stored progress in
     parent metadata.  Mismatch = missed cascade.
 
+    Scoped to one workspace (design W1.7), so a session never rewrites
+    another workspace's rows, even where the two share a type_id:
+
+    - **Scans:** both list only *workspace_uuid*'s entities.
+    - **Rollups:** a parent outside the workspace is not recovered here, and
+      a rollup stops at the first ancestor outside it.
+    - **Writes:** every write names its entity by uuid.
+
     Parameters
     ----------
     db:
         Open EntityDatabase instance.
+    workspace_uuid:
+        The session's workspace. Required: an unscoped recovery would
+        rewrite every workspace's parents.
 
     Returns
     -------
     int
         Number of cascades recovered.
+
+    Raises
+    ------
+    ValueError
+        If *workspace_uuid* is empty.
     """
+    if not workspace_uuid:
+        raise ValueError(
+            "cascade recovery needs the session's workspace_uuid; "
+            "an unscoped recovery would rewrite every workspace's parents"
+        )
+
     from entity_registry.dependencies import DependencyManager
 
-    # Find all completed entities that have a parent
-    completed = db.list_entities()
+    # Find this workspace's completed entities that have a parent
+    completed = db.list_entities(workspace_uuid=workspace_uuid)
     completed_with_parent = [
         e for e in completed
         if e.get("status") == "completed" and e.get("parent_uuid")
@@ -637,6 +443,9 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
         parent = db.get_entity_by_uuid(parent_uuid)
         if parent is None:
             continue
+        # A parent in another workspace is that workspace's to recover.
+        if parent.get("workspace_uuid") != workspace_uuid:
+            continue
 
         # Compute expected progress
         expected_progress = compute_progress(db, parent_uuid)
@@ -655,7 +464,7 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
         # Re-run rollup for all completed children under this parent
         for child in completed_with_parent:
             if child.get("parent_uuid") == parent_uuid:
-                rollup_parent(db, child["uuid"])
+                rollup_parent(db, child["uuid"], workspace_uuid=workspace_uuid)
                 dep_mgr.cascade_unblock(db, child["uuid"])
 
         recovered += 1
@@ -663,7 +472,7 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
     # Phase 2: OKR score reconciliation for objective entities
     # Objectives may have stale scores when KR children change status
     # without triggering parent phase completion.
-    all_entities = db.list_entities()
+    all_entities = db.list_entities(workspace_uuid=workspace_uuid)
     objectives = [
         e for e in all_entities
         if e.get("entity_type") == "objective"
@@ -687,7 +496,7 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
                 pass  # invalid stored score — recompute
 
         # Mismatch or missing score — update via metadata merge
-        db.update_entity(obj["type_id"], metadata={"score": expected_score})
+        db.update_entity(obj_uuid, metadata={"score": expected_score})
         recovered += 1
 
     if recovered > 0:
@@ -844,74 +653,6 @@ def check_workflow_drift(
     return _build_drift_result(reports)
 
 
-def apply_workflow_reconciliation(
-    engine: WorkflowStateEngine,
-    db: EntityDatabase,
-    artifacts_root: str,
-    feature_type_id: str | None = None,
-    dry_run: bool = False,
-    *,
-    workspace_uuid: str | None = None,
-) -> ReconciliationResult:
-    """Sync .meta.json workflow state to DB for drifted features.
-
-    Only reconciles features where .meta.json is ahead (post-degradation).
-    Calls check_workflow_drift() internally to detect drift first.
-
-    Parameters
-    ----------
-    engine : WorkflowStateEngine
-        Engine instance.
-    db : EntityDatabase
-        Database instance (for create/update_workflow_phase).
-    artifacts_root : str
-        Root directory for artifact files.
-    feature_type_id : str | None
-        If provided, reconcile single feature. If None, reconcile all.
-    dry_run : bool
-        If True, compute changes without applying.
-    workspace_uuid : str | None
-        Feature 113 FR-11.1: forwarded to ``db.update_workflow_phase`` so
-        the FR-4.1 read-side assertion runs. ``None`` is a no-op
-        (preserves NFR-3 backward compatibility).
-
-    Returns
-    -------
-    ReconciliationResult
-        Per-feature actions and aggregate summary.
-
-    Never raises -- all per-feature exceptions caught and returned as
-    action="error".
-    """
-    drift_result = check_workflow_drift(engine, db, artifacts_root, feature_type_id)
-
-    actions: list[ReconcileAction] = []
-    for report in drift_result.features:
-        try:
-            action = _reconcile_single_feature(
-                db, report, dry_run, workspace_uuid=workspace_uuid,
-            )
-            actions.append(action)
-        except Exception as exc:
-            actions.append(ReconcileAction(
-                feature_type_id=report.feature_type_id,
-                action="error",
-                direction="meta_json_to_db",
-                changes=(),
-                message=str(exc),
-            ))
-
-    # Task 3.3a: Recover missed cascades from two-phase commit failures
-    cascades_recovered = 0
-    if not dry_run:
-        try:
-            cascades_recovered = _recover_pending_cascades(db)
-        except Exception:
-            pass  # cascade recovery is best-effort
-
-    return _build_reconciliation_result(actions, dry_run, cascades_recovered)
-
-
 # ---------------------------------------------------------------------------
 # Result builders
 # ---------------------------------------------------------------------------
@@ -936,62 +677,3 @@ def _build_drift_result(reports: list[WorkflowDriftReport]) -> WorkflowDriftResu
     summary["artifact_missing_count"] = sum(1 for r in reports if r.artifact_missing)
 
     return WorkflowDriftResult(features=tuple(reports), summary=summary)
-
-
-def _build_reconciliation_result(
-    actions: list[ReconcileAction],
-    dry_run: bool,
-    cascades_recovered: int = 0,
-) -> ReconciliationResult:
-    """Build ReconciliationResult with summary counts from actions."""
-    summary = {
-        "reconciled": 0,
-        "created": 0,
-        "skipped": 0,
-        "error": 0,
-        "dry_run": 0,
-        "kanban_fixed": 0,
-        "cascades_recovered": cascades_recovered,
-    }
-    for action in actions:
-        if action.action in summary:
-            summary[action.action] += 1
-        # Count features that had kanban_column in their changes
-        if action.action in ("reconciled", "created"):
-            for change in action.changes:
-                if change.field == "kanban_column":
-                    summary["kanban_fixed"] += 1
-                    break  # one kanban fix per feature max
-
-    if dry_run:
-        # dry_run count = total non-error, non-skipped actions
-        summary["dry_run"] = summary["reconciled"] + summary["created"]
-
-    return ReconciliationResult(actions=tuple(actions), summary=summary)
-
-
-def format_reconciliation_summary(summary: dict) -> str:
-    """Format reconciliation summary for human display.
-
-    Returns a single-line summary string, or empty string when zero changes
-    (silent-when-zero per AC-6).
-
-    Parameters
-    ----------
-    summary : dict
-        The .summary dict from ReconciliationResult.
-
-    Returns
-    -------
-    str
-        "Reconciled: {n} features synced, {n} kanban fixed, {n} warnings"
-        or "" when no changes.
-    """
-    features_synced = summary.get("reconciled", 0) + summary.get("created", 0)
-    kanban_fixed = summary.get("kanban_fixed", 0)
-    warnings = summary.get("error", 0)
-
-    if features_synced == 0 and kanban_fixed == 0 and warnings == 0:
-        return ""
-
-    return f"Reconciled: {features_synced} features synced, {kanban_fixed} kanban fixed, {warnings} warnings"

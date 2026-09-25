@@ -19,9 +19,9 @@ DB = os.environ.get("ENTITY_DB_PATH", os.path.expanduser("~/.claude/pd/entities/
 OUT = Path(__file__).resolve().parent.parent / "docs" / "entity-archive-manifest.md"
 
 # "live" = someone may still be relying on it. Deliberately NOT the
-# complement of TERMINAL_STATUSES, which is the brainstorm re-archival
-# guard and counts 'dropped'/'completed' as live — 133 rows where 15 are
-# actually at stake.
+# complement of a terminal-status set (such as the retired brainstorm
+# re-archival guard's), which counts 'dropped'/'completed' as live — 133
+# rows where 15 are actually at stake.
 LIVE = {"open", "active", "planned", ""}
 
 QUERY = """

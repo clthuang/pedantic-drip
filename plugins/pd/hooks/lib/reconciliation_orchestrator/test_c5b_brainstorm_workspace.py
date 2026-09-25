@@ -86,8 +86,8 @@ _STALE_WORKSPACE_UUID = "01900000-0000-7000-8000-00000000dead"
 
 def test_brainstorm_sync_with_nothing_to_register_resolves_no_workspace(tmp_path):
     """No new brainstorm file means no registration, so no workspace is
-    resolved for one: an unknown legacy id is reported by the read that
-    follows, as before C5b, not under register_entity()."""
+    resolved for one: an unknown legacy id goes unreported. (Before W1.1 the
+    archive pass's read that followed reported it; that pass is deleted.)"""
     db = EntityDatabase(":memory:")
     (tmp_path / "brainstorms").mkdir()
 
@@ -96,11 +96,7 @@ def test_brainstorm_sync_with_nothing_to_register_resolves_no_workspace(tmp_path
         artifacts_root="docs", project_root=str(tmp_path),
     )
 
-    assert result["warnings"] == [
-        "brainstorms: list_entities(): project_id='no-such-legacy-id' has no matching "
-        "workspaces.project_id_legacy row. Either pass workspace_uuid directly or "
-        "pre-register the workspace."
-    ]
+    assert result == {"registered": 0, "skipped": 0, "warnings": []}
     db.close()
 
 

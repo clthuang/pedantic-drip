@@ -60,14 +60,18 @@ validate_prerequisites(
 ) -> {"valid": bool, "missing": list[str], "warnings": list[str]}
 ```
 
-### reconcile_check / reconcile_apply
+### reconcile_check / reconcile_status
 
-Drift detection and repair between engine state and filesystem artifacts.
+Drift detection between the DB and each feature's `.meta.json` projection. Both only read: a projection is never written back into the DB, so drift is reported, not repaired.
 
 ```
-reconcile_check(feature_type_id: str | None = None) -> {"drifts": list[dict], "status": str}
-reconcile_apply(feature_type_id: str | None = None, dry_run: bool = False) -> {"applied": list[str], "errors": list[str]}
+reconcile_check(feature_type_id: str | None = None) -> {"features": list[dict], "summary": dict, "phase_events_drift": list[dict]}
+reconcile_status(summary_only: bool = False) -> {"workflow_drift": dict, "frontmatter_drift": dict, "healthy": bool, "total_features_checked": int, "total_files_checked": int}
+    # summary_only=True -> {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
 ```
+
+- **Scope:** the server's workspace; a feature only another workspace holds is omitted.
+- **Health:** only `db_ahead` and `meta_json_ahead` (DB state and projection disagree) make `reconcile_status` unhealthy, and only they are counted in `workflow_drift_count`. `db_only` (no projection) and `meta_json_only` (no row) are listed, not counted.
 
 ## MCP: Entity Registry Server
 
@@ -138,8 +142,11 @@ update_entity(
     status: str | None,
     artifact_path: str | None,
     metadata: dict,         # shallow merge — unspecified keys are preserved
+    archived: bool | None,  # true archives, false un-archives; omitted leaves it
 )
 ```
+
+`archived` sets only the `is_archived` flag of the resolved entity (by its uuid); the status is untouched. `/pd:cleanup-brainstorms` archives a deleted brainstorm's entity this way.
 
 **Important:** When updating `phase_summaries`, pass the complete updated list. `update_entity` merges at the top-level key level only; it does not append to lists automatically.
 

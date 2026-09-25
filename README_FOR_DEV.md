@@ -444,7 +444,7 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 - `set_parent` -- Set or change the parent of an entity (with circular reference detection)
 - `get_entity` -- Retrieve a single entity by type_id or ref
 - `get_lineage` -- Traverse the entity hierarchy upward (toward root) or downward (toward leaves) with depth limiting
-- `update_entity` -- Update mutable fields (name, status, artifact_path, metadata) of an existing entity
+- `update_entity` -- Update mutable fields (name, status, artifact_path, metadata) of an existing entity; `archived=true`/`false` sets or clears its archive flag without touching the status
 - `export_lineage_markdown` -- Export entity lineage as a markdown tree, optionally writing to a file
 - `search_entities` -- Full-text search across all entities
 - `export_entities` -- Export all entities (or a filtered subset) as structured JSON
@@ -469,22 +469,23 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 
 ## Workflow Engine
 
-The workflow engine manages feature lifecycle state, phase transitions, and drift reconciliation via a SQLite-backed state machine.
+The workflow engine manages feature lifecycle state, phase transitions, and drift detection via a SQLite-backed state machine.
 
 **MCP Server:** `plugins/pd/mcp/workflow_state_server.py` (bootstrapped via `plugins/pd/mcp/run-workflow-server.sh`)
 
-**MCP Tools (22):**
+**MCP Tools (23):**
 - `get_phase` -- Get current workflow phase for a feature
 - `transition_phase` -- Transition a feature to the next workflow phase (dual-writes to `phase_events`)
 - `complete_phase` -- Mark the current phase as complete (dual-writes to `phase_events`)
+- `record_mini_spec` -- Record the express-lane mini-spec as a `mini_spec` event
+- `get_mini_spec` -- Read the latest recorded mini-spec text for a feature
 - `validate_prerequisites` -- Check if prerequisites are met for a target phase
 - `reproject_meta_json` -- Re-render a feature's `.meta.json` from DB state (direct writes to it are denied)
 - `list_features_by_phase` -- List all features currently in a given phase
 - `list_features_by_status` -- List all features with a given status
-- `reconcile_check` -- Check for drift between state file and artifacts
-- `reconcile_apply` -- Apply reconciliation fixes for detected drift
+- `reconcile_check` -- Report drift between a feature's DB state and its `.meta.json` projection (read-only)
 - `reconcile_frontmatter` -- Sync frontmatter metadata across feature artifacts
-- `reconcile_status` -- Get overall reconciliation status summary
+- `reconcile_status` -- Workflow and frontmatter drift for this workspace; unhealthy only when a feature's DB state and projection disagree
 - `init_feature_state` -- Initialize workflow state for a new feature
 - `init_project_state` -- Initialize workflow state for a new project
 - `activate_feature` -- Activate a planned feature for development

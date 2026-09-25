@@ -117,9 +117,9 @@ The `metadata` field on entities stores structured JSON. Entity-level metadata f
 
 ### Workflow State Server (`mcp/workflow_state_server.py`)
 
-Tools (21): `get_phase`, `transition_phase`, `complete_phase`, `validate_prerequisites`, `list_features_by_phase`, `list_features_by_status`, `reconcile_check`, `reconcile_apply`, `reconcile_frontmatter`, `reconcile_status`, `init_feature_state`, `init_project_state`, `activate_feature`, `init_entity_workflow`, `transition_entity_phase`, `get_notifications`, `promote_task`, `query_ready_tasks`, `get_progress_view`, `record_backward_event`, `query_phase_analytics`
+Tools (23): `get_phase`, `transition_phase`, `complete_phase`, `record_mini_spec`, `get_mini_spec`, `validate_prerequisites`, `reproject_meta_json`, `list_features_by_phase`, `list_features_by_status`, `reconcile_check`, `reconcile_frontmatter`, `reconcile_status`, `init_feature_state`, `init_project_state`, `activate_feature`, `init_entity_workflow`, `transition_entity_phase`, `get_notifications`, `promote_task`, `query_ready_tasks`, `get_progress_view`, `record_backward_event`, `query_phase_analytics`
 
-Manages feature lifecycle state as a SQLite-backed state machine. The state engine is defined in `hooks/lib/workflow_engine/`. Drift between the DB and `.meta.json` is detected and repaired by `reconcile_check` / `reconcile_apply`.
+Manages feature lifecycle state as a SQLite-backed state machine. The state engine is defined in `hooks/lib/workflow_engine/`. The DB is the only source of workflow state: a feature's `workflow_phases` row is seeded by activation or the startup backfill, never read back from `.meta.json`, which is a projection of it. `reconcile_check` and `reconcile_status` report drift between the two and repair nothing; `reproject_meta_json` re-renders a projection from the DB.
 
 ## Shared Python Libraries
 
@@ -128,9 +128,9 @@ Located under `plugins/pd/hooks/lib/`:
 | Module | Purpose |
 |--------|---------|
 | `entity_registry/` | Entity DB, metadata parsing, backfill scanner, frontmatter injection |
-| `workflow_engine/` | State machine, hydration, transitions, reconciliation |
+| `workflow_engine/` | State machine, transitions, drift detection, cascade recovery |
 | `transition_gate/` | Gate functions, constants, and transition models |
-| `reconciliation_orchestrator/` | Entity sync, backlog parsing, brainstorm archive |
+| `reconciliation_orchestrator/` | Session start: brainstorm registration, cascade recovery and dependency cleanup, in the session's workspace |
 | `doctor/` | 10 data consistency checks with auto-fix support |
 
 **Doctor check added in feature 109 — `check_status_write_path` (registered in CHECK_ORDER):** AST-based static audit that enforces AC-2.1 and AC-2.6. At session start it greps `plugins/pd/hooks/lib/` and `plugins/pd/mcp/` for direct `UPDATE entities SET status` and `UPDATE workflow_phases` writes outside the `append_phase_event` helper body. Emits a non-fatal stderr warning listing any violating `file:line` pairs. Identical grep to the CI test `test_no_direct_status_updates`.

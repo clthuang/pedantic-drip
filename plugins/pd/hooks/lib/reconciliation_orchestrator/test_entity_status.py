@@ -1,13 +1,14 @@
-"""Unit tests for reconciliation_orchestrator.entity_status — sync functions."""
+"""Unit tests for reconciliation_orchestrator.entity_status — brainstorm registration.
+
+Design W1.1 deleted the feature/project ``.meta.json`` status and archive
+passes and the brainstorm archive of a missing ``.prd.md``; what remains
+registers the checkout's new brainstorms and reads nothing else back.
+"""
 import json
 import os
-import tempfile
-import warnings
 from unittest.mock import patch
 
-import pytest
-
-from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.database import EntityDatabase
 from entity_registry.test_helpers import bootstrap_test_workspace, workspace_uuid_for
 from reconciliation_orchestrator import entity_status
 from reconciliation_orchestrator.entity_status import sync_entity_statuses
@@ -31,28 +32,6 @@ def make_db() -> EntityDatabase:
     return db
 
 
-def seed_feature(db: EntityDatabase, folder: str, status: str) -> None:
-    """Register a feature entity with the given folder name and status."""
-    db.register_entity(
-        entity_type="feature",
-        **identity_kwargs("feature", folder),
-        name=folder,
-        status=status,
-        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-    )
-
-
-def seed_project(db: EntityDatabase, folder: str, status: str) -> None:
-    """Register a project entity with the given folder name and status."""
-    db.register_entity(
-        entity_type="project",
-        **identity_kwargs("project", folder),
-        name=folder,
-        status=status,
-        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
-    )
-
-
 def write_meta_json(directory: str, status: str) -> None:
     """Write a minimal .meta.json with the given status into directory."""
     os.makedirs(directory, exist_ok=True)
@@ -65,188 +44,17 @@ def write_meta_json(directory: str, status: str) -> None:
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestDriftedStatusUpdated:
-    """test_drifted_status_updated: .meta.json status differs from entity status → updated."""
-
-    def test_drifted_status_updated(self, tmp_path):
-        db = make_db()
-        folder = "042-some-feature"
-        seed_feature(db, folder, status="active")
-
-        features_dir = tmp_path / "features" / folder
-        write_meta_json(str(features_dir), status="completed")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["updated"] == 1
-        assert result["skipped"] == 0
-        assert result["archived"] == 0
-        assert result["warnings"] == []
-
-        # Verify the entity DB was actually updated
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "completed"
-
-
-class TestNoDriftSkipped:
-    """test_no_drift_skipped: matching statuses → no update, counted as skipped."""
-
-    def test_no_drift_skipped(self, tmp_path):
-        db = make_db()
-        folder = "042-some-feature"
-        seed_feature(db, folder, status="active")
-
-        features_dir = tmp_path / "features" / folder
-        write_meta_json(str(features_dir), status="active")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["updated"] == 0
-        assert result["skipped"] == 1
-        assert result["archived"] == 0
-        assert result["warnings"] == []
-
-        # Entity status unchanged
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "active"
-
-
-class TestMissingMetaJsonArchived:
-    """test_missing_meta_json_archived: entity exists, .meta.json missing → archived."""
-
-    def test_missing_meta_json_archived(self, tmp_path):
-        db = make_db()
-        folder = "042-some-feature"
-        seed_feature(db, folder, status="active")
-
-        # Create the folder but NOT .meta.json
-        feature_dir = tmp_path / "features" / folder
-        feature_dir.mkdir(parents=True)
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["archived"] == 1
-        assert result["updated"] == 0
-        assert result["warnings"] == []
-
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["is_archived"] == 1
-
-
-class TestMalformedJsonWarned:
-    """test_malformed_json_warned: corrupt .meta.json → warning, entity skipped."""
-
-    def test_malformed_json_warned(self, tmp_path):
-        db = make_db()
-        folder = "042-some-feature"
-        seed_feature(db, folder, status="active")
-
-        feature_dir = tmp_path / "features" / folder
-        feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text("{ this is not valid json }")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["updated"] == 0
-        assert len(result["warnings"]) == 1
-        assert ".meta.json" in result["warnings"][0]
-
-        # Entity status must not have changed
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "active"
-
-
-class TestUnknownStatusSkipped:
-    """test_unknown_status_skipped: .meta.json status="draft" → warning, entity skipped."""
-
-    def test_unknown_status_skipped(self, tmp_path):
-        db = make_db()
-        folder = "042-some-feature"
-        seed_feature(db, folder, status="active")
-
-        features_dir = tmp_path / "features" / folder
-        write_meta_json(str(features_dir), status="draft")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["updated"] == 0
-        assert len(result["warnings"]) == 1
-        assert "draft" in result["warnings"][0]
-
-        # Entity unchanged
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "active"
-
-
-class TestEntityNotInRegistrySkipped:
-    """test_entity_not_in_registry_skipped: .meta.json exists, no entity in DB → skipped."""
-
-    def test_entity_not_in_registry_skipped(self, tmp_path):
-        db = make_db()
-        # No entity registered
-        folder = "042-some-feature"
-
-        features_dir = tmp_path / "features" / folder
-        write_meta_json(str(features_dir), status="active")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["skipped"] == 1
-        assert result["updated"] == 0
-        assert result["archived"] == 0
-        assert result["warnings"] == []
-
 
 class TestMissingDirectoryHandled:
-    """test_missing_directory_handled: features/ dir doesn't exist → empty results."""
+    """test_missing_directory_handled: brainstorms/ dir doesn't exist → empty results."""
 
     def test_missing_directory_handled(self, tmp_path):
         db = make_db()
-        # tmp_path has no features/ or projects/ subdirs
+        # tmp_path has no brainstorms/ subdir
 
         result = sync_entity_statuses(db, str(tmp_path))
 
-        assert result["updated"] == 0
-        assert result["skipped"] == 0
-        assert result["archived"] == 0
-        assert result["warnings"] == []
-
-
-class TestProjectsScanned:
-    """test_projects_scanned: projects/ dir is scanned with the same sync logic."""
-
-    def test_projects_scanned(self, tmp_path):
-        db = make_db()
-        folder = "001-my-project"
-        seed_project(db, folder, status="active")
-
-        projects_dir = tmp_path / "projects" / folder
-        write_meta_json(str(projects_dir), status="completed")
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["updated"] == 1
-        assert result["warnings"] == []
-
-        entity = db.get_entity(f"project:{folder}")
-        assert entity["status"] == "completed"
-
-    def test_projects_missing_meta_json_archived(self, tmp_path):
-        """Entity in registry, project folder exists but .meta.json deleted → archived."""
-        db = make_db()
-        folder = "001-my-project"
-        seed_project(db, folder, status="active")
-
-        # Folder exists, no .meta.json
-        project_dir = tmp_path / "projects" / folder
-        project_dir.mkdir(parents=True)
-
-        result = sync_entity_statuses(db, str(tmp_path))
-
-        assert result["archived"] == 1
-
-        entity = db.get_entity(f"project:{folder}")
-        assert entity["is_archived"] == 1
+        assert result == {"registered": 0, "skipped": 0, "warnings": []}
 
 
 # ---------------------------------------------------------------------------
@@ -303,72 +111,9 @@ class TestSyncBrainstormEntities:
         entities = db.list_entities(entity_type="brainstorm")
         assert len(entities) == 1
 
-    def test_missing_prd_file_archived(self, tmp_path):
-        """AC-9: brainstorm entity exists but .prd.md file deleted -> status archived."""
-        db = make_db()
-        seed_brainstorm(
-            db, "20260101-000018-foo", status="active",
-            artifact_path="docs/brainstorms/20260101-000018-foo.prd.md",
-            project_id="test-project",
-        )
-        # Do NOT create the file — it should be detected as missing
-        # brainstorms dir must exist for the scan to proceed
-        brainstorms_dir = tmp_path / "brainstorms"
-        brainstorms_dir.mkdir()
-
-        result = entity_status._sync_brainstorm_entities(
-            db, str(tmp_path), "docs", str(tmp_path), "test-project"
-        )
-
-        assert result["archived"] == 1
-        entity = db.get_entity("brainstorm:20260101-000018-foo")
-        assert entity["is_archived"] == 1
-
-    def test_terminal_brainstorm_not_rearchived(self, tmp_path):
-        """Brainstorm with terminal status (promoted) -> not re-archived even if file missing."""
-        db = make_db()
-        seed_brainstorm(
-            db, "20260101-000018-foo", status="promoted",
-            artifact_path="docs/brainstorms/20260101-000018-foo.prd.md",
-            project_id="test-project",
-        )
-        # No file created — but promoted is terminal, should not be touched
-        brainstorms_dir = tmp_path / "brainstorms"
-        brainstorms_dir.mkdir()
-
-        result = entity_status._sync_brainstorm_entities(
-            db, str(tmp_path), "docs", str(tmp_path), "test-project"
-        )
-
-        assert result["archived"] == 0
-        entity = db.get_entity("brainstorm:20260101-000018-foo")
-        assert entity["status"] == "promoted"
-
 
 class TestBrainstormAdversarial:
     """Adversarial tests for brainstorm sync edge cases."""
-
-    def test_brainstorm_with_empty_artifact_path_not_archived(self, tmp_path):
-        """Adversarial: brainstorm entity with empty artifact_path → NOT archived.
-        The archival logic requires artifact_path to be non-empty to proceed.
-        derived_from: dimension:adversarial (empty artifact_path guard)
-        """
-        # Given a brainstorm entity with empty artifact_path (no file to check)
-        db = make_db()
-        seed_brainstorm(db, "20260101-000002-bar", status="active", artifact_path="")
-        brainstorms_dir = tmp_path / "brainstorms"
-        brainstorms_dir.mkdir()
-        # No 20260101-000002-bar.prd.md on disk
-
-        # When brainstorm sync runs
-        result = entity_status._sync_brainstorm_entities(
-            db, str(tmp_path), "docs", str(tmp_path), "test-project"
-        )
-
-        # Then entity is NOT archived (empty artifact_path guard)
-        entity = db.get_entity("brainstorm:20260101-000002-bar")
-        assert entity["status"] == "active"
-        assert result["archived"] == 0
 
     def test_gitkeep_not_registered_as_brainstorm(self, tmp_path):
         """Adversarial: .gitkeep file in brainstorms/ dir is not registered.
@@ -411,7 +156,7 @@ class TestMutationMindset:
         # Then it derives project_root successfully (no assertion error)
         # and returns valid results
         assert isinstance(result, dict)
-        assert "updated" in result
+        assert "registered" in result
 
 
 # ---------------------------------------------------------------------------
@@ -420,13 +165,15 @@ class TestMutationMindset:
 
 
 class TestUnifiedSync:
-    """Integration test: sync_entity_statuses calls all 3 helpers."""
+    """Integration test: sync_entity_statuses reads only brainstorm files."""
 
-    def test_unified_sync_all_three_types(self, tmp_path):
-        """All entity types synced in one call; return dict has all 6 keys."""
+    def test_unified_sync_registers_brainstorms_only(self, tmp_path):
+        """A checkout with a drifted feature projection, a project projection
+        and a new brainstorm file: only the brainstorm is registered (W1.1),
+        and the result carries the brainstorm helper's keys."""
         db = make_db()
 
-        # 1) Feature: seed as active, .meta.json says completed -> drift -> updated
+        # 1) Feature: seed as active, a stale .meta.json says completed
         feature_folder = "042-test"
         db.register_entity(
             entity_type="feature", **identity_kwargs("feature", feature_folder),
@@ -434,7 +181,7 @@ class TestUnifiedSync:
         )
         write_meta_json(str(tmp_path / "features" / feature_folder), status="completed")
 
-        # 2) Project: .meta.json present, no entity in DB -> skipped
+        # 2) Project: .meta.json present, no entity in DB
         project_folder = "test-proj"
         (tmp_path / "projects" / project_folder).mkdir(parents=True)
         write_meta_json(str(tmp_path / "projects" / project_folder), status="active")
@@ -451,192 +198,15 @@ class TestUnifiedSync:
             project_root=str(tmp_path),
         )
 
-        # All 6 keys must be present
-        assert set(result.keys()) == {
-            "updated", "skipped", "archived", "registered", "deleted", "warnings",
-        }
+        assert result == {"registered": 1, "skipped": 0, "warnings": []}
 
-        # Drifted feature should have been updated
-        assert result["updated"] >= 1
+        # The feature projection is not read back: the status stays active
         entity = db.get_entity(f"feature:{feature_folder}")
-        assert entity["status"] == "completed"
+        assert entity["status"] == "active"
+        assert db.get_entity(f"project:{project_folder}") is None
 
         # Brainstorm should have been registered
-        assert result["registered"] >= 1
         assert db.get_entity("brainstorm:20260101-000002-bar") is not None
-
-        # A1: reconciliation deletes nothing, structurally.
-        assert result["deleted"] == 0
-
-
-# ---------------------------------------------------------------------------
-# FR-10: conditional-kwarg pattern at 4 update_entity sites (no DeprecationWarning)
-# ---------------------------------------------------------------------------
-
-
-def _setup_site_47_meta_json_archive(db, ws_uuid, tmp_path):
-    """Site 47: _sync_meta_json_entities archive branch (missing .meta.json file).
-
-    Register a feature entity scoped to ws_uuid; create the feature folder
-    but do NOT write .meta.json. sync_entity_statuses will hit the archive
-    branch (line 47) and call db.update_entity(status="archived", ...).
-
-    Returns a verification callable: (db, result) -> bool asserting the
-    operation actually happened (proves the DeprecationWarning didn't
-    short-circuit the write via the outer try/except).
-    """
-    folder = "042-archive-me"
-    db.register_entity(
-        entity_type="feature",
-        **identity_kwargs("feature", folder),
-        name=folder,
-        status="active",
-        workspace_uuid=ws_uuid,
-    )
-    # Folder exists, .meta.json missing → archive branch
-    (tmp_path / "features" / folder).mkdir(parents=True)
-
-    def verify(db, result):
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["is_archived"] == 1, (
-            f"site 47 archive branch did not fire: entity status={entity['status']!r}, "
-            f"result={result!r}"
-        )
-
-    return verify
-
-
-def _setup_site_72_meta_json_status_change(db, ws_uuid, tmp_path):
-    """Site 72: _sync_meta_json_entities status-change branch (.meta.json status differs from DB).
-
-    Register a feature entity with status=active scoped to ws_uuid; write
-    .meta.json with status=completed. sync_entity_statuses will hit the
-    status-change branch (line 72) and call db.update_entity(status="completed", ...).
-    """
-    folder = "043-drift-me"
-    db.register_entity(
-        entity_type="feature",
-        **identity_kwargs("feature", folder),
-        name=folder,
-        status="active",
-        workspace_uuid=ws_uuid,
-    )
-    features_dir = tmp_path / "features" / folder
-    write_meta_json(str(features_dir), status="completed")
-
-    def verify(db, result):
-        entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "completed", (
-            f"site 72 status-change branch did not fire: entity status="
-            f"{entity['status']!r}, result={result!r}"
-        )
-
-    return verify
-
-
-def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
-    """Site 189: _sync_brainstorm_entities archive branch (missing .prd.md file).
-
-    Register a brainstorm entity scoped to ws_uuid with an artifact_path
-    pointing to a .prd.md that does not exist on disk. brainstorms/ dir
-    exists but the file is missing — archive branch fires (line 189).
-    """
-    db.register_entity(
-        entity_type="brainstorm",
-        display_id="20260101-000001-archived-bs",
-        name="20260101-000001-archived-bs",
-        status="active",
-        artifact_path="docs/brainstorms/archived-bs.prd.md",
-        workspace_uuid=ws_uuid,
-    )
-    # brainstorms dir must exist for scan to proceed; .prd.md absent
-    (tmp_path / "brainstorms").mkdir()
-
-    def verify(db, result):
-        entity = db.get_entity("brainstorm:20260101-000001-archived-bs")
-        assert entity["is_archived"] == 1, (
-            f"site 189 brainstorm archive did not fire: entity status="
-            f"{entity['status']!r}, result={result!r}"
-        )
-
-    return verify
-
-
-# Feature 111 / FR-CL.1b removed _setup_site_320_backlog_status_change
-# (it drove a parser-derived status-change branch via a backlog.md
-# marker). Release A then removed the backlog helper entirely — backlog is
-# DB-only and backlog.md is a projection — so no backlog site remains. The
-# 3 sites here (47, 72, 189) verify the FR-10 conditional-kwarg pattern
-# across distinct update_entity call sites.
-
-
-SITE_SETUPS = {
-    "site_47_meta_json_archive": _setup_site_47_meta_json_archive,
-    "site_72_meta_json_status_change": _setup_site_72_meta_json_status_change,
-    "site_189_brainstorm_archive": _setup_site_189_brainstorm_archive,
-}
-
-
-class TestNoDeprecationWarningOnHappyPath:
-    """FR-10: no DeprecationWarning fires when sync_entity_statuses is called
-    with a real workspace_uuid at any of the 4 update_entity sites that
-    previously passed both project_id and workspace_uuid unconditionally.
-
-    Per design R6: warnings.catch_warnings() + simplefilter('error',
-    DeprecationWarning) is scoped to the call body, NOT module-level, to
-    prevent filter-bleed into sibling tests.
-
-    Each sub-test also asserts the underlying write actually happened — the
-    outer try/except Exception in sync_entity_statuses would otherwise
-    swallow the DeprecationWarning-as-error and the test would pass
-    vacuously. The site-specific entity-state assertion is the load-bearing
-    behavioral pin.
-    """
-
-    @pytest.mark.parametrize("site_key", list(SITE_SETUPS.keys()))
-    def test_sync_entity_statuses_no_deprecation_warning_on_happy_path(
-        self, tmp_path, site_key
-    ):
-        # Bootstrap a real workspace_uuid (not __unknown__). We use a legacy
-        # id (`ws-a-legacy`) so that the brainstorm/backlog helpers'
-        # `list_entities(project_id=...)` calls resolve to the same
-        # workspace_uuid we register the test entity under.
-        legacy_id = "ws-a-legacy"
-        db = EntityDatabase(":memory:")
-        ws_a = bootstrap_test_workspace(db, legacy_id)
-
-        # Trigger the site-specific state; receive a verify callable that
-        # asserts the underlying write actually happened post-call.
-        verify = SITE_SETUPS[site_key](db, ws_a, tmp_path)
-
-        # Wrap the call in a scoped filter so any DeprecationWarning fires
-        # as an exception. Scoped to this block per design R6.
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", DeprecationWarning)
-            result = sync_entity_statuses(
-                db,
-                str(tmp_path),
-                project_id=legacy_id,
-                workspace_uuid=ws_a,
-            )
-
-        # Behavioral assertion: the operation that should have happened did
-        # happen. If the conditional-kwarg pattern is missing, the inner
-        # update_entity raises DeprecationWarning-as-error and the outer
-        # try/except in sync_entity_statuses swallows it into
-        # result["warnings"], leaving the entity in its pre-call state.
-        verify(db, result)
-
-        # Pin: no entry in result["warnings"] should mention the
-        # DeprecationWarning text (extra safety against silent swallow).
-        deprecation_warnings = [
-            w for w in result["warnings"]
-            if "deprecated" in w.lower() or "workspace_uuid wins" in w
-        ]
-        assert deprecation_warnings == [], (
-            f"Unexpected DeprecationWarning-derived entries in result['warnings']: "
-            f"{deprecation_warnings}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -708,61 +278,10 @@ class TestReconciliationIsNonDestructive:
             )
 
         assert spy.deletes == []
-        assert result["deleted"] == 0
+        assert result == {"registered": 0, "skipped": 0, "warnings": []}
         # Both id shapes survive: neither is "junk".
         assert db.get_entity("backlog:042-backlog") is not None
         assert db.get_entity("backlog:077-modern-slug") is not None
-
-    def test_brainstorm_read_is_workspace_scoped(self, tmp_path):
-        """Fixture 2 / A2: the same entity_id in two workspaces.
-
-        Scope note: this asserts the READ, because that is the whole of
-        A2's guarantee. ``update_entity`` re-resolves its target by
-        (workspace_uuid, type_id), so an unscoped read cannot produce a
-        cross-workspace WRITE — verified empirically: archiving a shared
-        type_id scoped to A leaves B untouched, and a B-only type_id
-        written via A raises ValueError (swallowed at entity_status.py's
-        archival branch). The damage is wasted iteration over rows this
-        invocation does not own, not corruption.
-        """
-        db = EntityDatabase(":memory:")
-        ws_a = bootstrap_test_workspace(db, "ws-a-legacy")
-        ws_b = bootstrap_test_workspace(db, "ws-b-legacy")
-
-        own = {}
-        for label, ws in (("a", ws_a), ("b", ws_b)):
-            own[label] = db.register_entity(
-                entity_type="brainstorm", display_id="001-shared",
-                name="shared", status="active", workspace_uuid=ws,
-                artifact_path="docs/brainstorms/001-shared.prd.md",
-            )
-        (tmp_path / "brainstorms").mkdir(parents=True)
-
-        seen = []
-        original = db.list_entities
-
-        def spy_list(*a, **kw):
-            rows = original(*a, **kw)
-            if kw.get("entity_type") == "brainstorm":
-                seen.append([r["uuid"] for r in rows])
-            return rows
-
-        # project_id=None is load-bearing: A2's defect is that an ABSENT
-        # legacy filter makes the read unscoped. A resolvable project_id
-        # would scope the old code by accident.
-        with patch.object(db, "list_entities", side_effect=spy_list):
-            sync_entity_statuses(
-                db, str(tmp_path), project_id=None,
-                project_root=str(tmp_path), workspace_uuid=ws_a,
-            )
-
-        assert seen, "brainstorm archival read never ran"
-        for rows in seen:
-            assert own["b"] not in rows, (
-                "sync scoped to workspace A read workspace B's rows: "
-                f"{rows}"
-            )
-            assert rows == [own["a"]], f"expected only workspace A's row, got {rows}"
 
     def test_missing_display_row_and_missing_source_survive(self, tmp_path):
         """Fixture 3: no entity_display row AND no artifact on disk.
@@ -833,19 +352,16 @@ class TestReconciliationIsNonDestructive:
         assert db.get_entity("backlog:00278") is None
         assert db.get_entity("backlog:00003") is None
 
-    def test_one_failing_row_does_not_abort_the_remaining_helpers(self, tmp_path):
-        """A3: per-helper continuation.
+    def test_a_failing_brainstorm_helper_is_returned_as_a_warning(self, tmp_path):
+        """A3: a helper failure never escapes sync_entity_statuses.
 
-        The junk-cleanup path raised sqlite3.IntegrityError, which the inner
-        handler (catching only ValueError) let escape and abort the whole
-        backlog sync. Each helper must be isolated.
+        Three helpers ran before W1.1, each isolated so that one failing
+        could not abort the others. The brainstorm helper is the one left;
+        its failure is still returned as a warning, never raised, so
+        session start carries on.
         """
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        seed_feature_dir = tmp_path / "features" / "042-test"
-        db.register_entity(entity_type="feature", seq=42, slug="test",
-                           name="042-test", status="active", workspace_uuid=ws)
-        write_meta_json(str(seed_feature_dir), status="completed")
         (tmp_path / "brainstorms").mkdir(parents=True)
 
         original = db.upsert_entity
@@ -862,6 +378,8 @@ class TestReconciliationIsNonDestructive:
                 project_root=str(tmp_path), workspace_uuid=ws,
             )
 
-        # The feature helper still completed despite the brainstorm failure.
-        assert db.get_entity("feature:042-test")["status"] == "completed"
-        assert any("brainstorm" in w for w in result["warnings"])
+        assert result == {
+            "registered": 0, "skipped": 0,
+            "warnings": ["brainstorms: brainstorm helper blew up"],
+        }
+        assert db.get_entity("brainstorm:boom") is None

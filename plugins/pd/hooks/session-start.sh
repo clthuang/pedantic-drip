@@ -491,11 +491,12 @@ else:
     echo "$context"
 }
 
-# Run reconciliation orchestrator: sync entity statuses and brainstorm registry
-# Returns reconciliation summary line via stdout (empty if no changes).
+# Run the reconciliation orchestrator: registers the checkout's new brainstorms,
+# recovers missed completion cascades and flips stale blocked dependents, in
+# this session's workspace only. It surfaces nothing: its one-line JSON summary
+# (elapsed_ms, errors) is discarded, so run it by hand to inspect a run.
 run_reconciliation() {
     local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
-    local result
     local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}"
     local artifacts_root
     artifacts_root=$(resolve_artifacts_root)
@@ -508,36 +509,14 @@ run_reconciliation() {
         timeout_cmd="timeout 5"
     fi
 
-    result=$(PYTHONPATH="$SCRIPT_DIR/lib" \
+    # stdout and stderr are both discarded, so nothing the orchestrator
+    # prints can reach this hook's JSON output.
+    PYTHONPATH="$SCRIPT_DIR/lib" \
         $timeout_cmd "$python_cmd" -m reconciliation_orchestrator \
         --project-root "$PROJECT_ROOT" \
         --artifacts-root "$artifacts_root" \
         --entity-db "$entity_db" \
-        2>/dev/null) || true
-
-    # Timing diagnostics are in the JSON output (elapsed_ms field).
-    # stderr is suppressed to prevent JSON corruption.
-    # For debugging, run the orchestrator manually with --verbose flag
-    # which writes to a log file instead of stderr.
-
-    # Extract workflow_reconcile summary and format for display (AC-6)
-    # Silent when zero changes.
-    # FR-1.1: single-quoted Python source + positional arg (no bash expansion).
-    if [[ -n "$result" ]]; then
-        python3 -c '
-import json, sys
-try:
-    data = json.loads(sys.argv[1])
-    wr = data.get("workflow_reconcile") or {}
-    synced = wr.get("reconciled", 0) + wr.get("created", 0)
-    kanban = wr.get("kanban_fixed", 0)
-    warnings = wr.get("error", 0)
-    if synced or kanban or warnings:
-        print(f"Reconciled: {synced} features synced, {kanban} kanban fixed, {warnings} warnings")
-except Exception:
-    pass
-' "$result" 2>/dev/null
-    fi
+        >/dev/null 2>&1 || true
 }
 
 # Run doctor auto-fix: apply safe fixes for detected issues.
@@ -624,8 +603,7 @@ main() {
     local cron_schedule_context=""
     cron_schedule_context=$(build_cron_schedule_context) || cron_schedule_context=""
 
-    local recon_summary=""
-    recon_summary=$(run_reconciliation)
+    run_reconciliation
 
     local doctor_summary=""
     doctor_summary=$(run_doctor_autofix)
@@ -643,14 +621,6 @@ main() {
             full_context="${full_context}\n\n${first_run_warning}"
         else
             full_context="${first_run_warning}"
-        fi
-    fi
-    # AC-6: Surface reconciliation summary (silent when zero changes)
-    if [[ -n "$recon_summary" ]]; then
-        if [[ -n "$full_context" ]]; then
-            full_context="${full_context}\n\n${recon_summary}"
-        else
-            full_context="${recon_summary}"
         fi
     fi
     # Doctor auto-fix summary (silent when healthy)

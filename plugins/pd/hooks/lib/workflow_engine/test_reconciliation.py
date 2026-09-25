@@ -1,4 +1,8 @@
-"""Tests for workflow_engine.reconciliation -- Tasks 1.1, 1.2, 2.1-2.3, 3.1-3.2, 7.1."""
+"""Tests for workflow_engine.reconciliation -- Tasks 1.1, 1.2, 2.1-2.3, 7.1, 3.3a.
+
+The .meta.json -> DB reconciliation writers (Tasks 3.1-3.2) were deleted by
+design W1.3: drift is reported, never applied.
+"""
 from __future__ import annotations
 
 import json
@@ -10,8 +14,6 @@ import pytest
 from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.reconciliation import (
-    ReconcileAction,
-    ReconciliationResult,
     WorkflowDriftReport,
     WorkflowDriftResult,
     WorkflowMismatch,
@@ -20,8 +22,6 @@ from workflow_engine.reconciliation import (
     _derive_expected_kanban,
     _phase_index,
     _read_single_meta_json,
-    _reconcile_single_feature,
-    apply_workflow_reconciliation,
     check_workflow_drift,
 )
 from entity_registry.test_helpers import identity_kwargs
@@ -204,64 +204,6 @@ class TestWorkflowDriftResult:
     def test_features_tuple(self) -> None:
         result = WorkflowDriftResult(features=(), summary={})
         assert isinstance(result.features, tuple)
-
-
-class TestReconcileAction:
-    """ReconcileAction frozen dataclass tests."""
-
-    def test_construction(self) -> None:
-        a = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="reconciled",
-            direction="meta_json_to_db",
-            changes=(),
-            message="Updated DB",
-        )
-        assert a.feature_type_id == "feature:010-test"
-        assert a.action == "reconciled"
-        assert a.direction == "meta_json_to_db"
-        assert a.changes == ()
-        assert a.message == "Updated DB"
-
-    def test_frozen(self) -> None:
-        a = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="reconciled",
-            direction="meta_json_to_db",
-            changes=(),
-            message="",
-        )
-        with pytest.raises(FrozenInstanceError):
-            a.action = "error"  # type: ignore[misc]
-
-    def test_changes_with_mismatches(self) -> None:
-        m = WorkflowMismatch(field="workflow_phase", meta_json_value="finish", db_value="implement")
-        a = ReconcileAction(
-            feature_type_id="feature:010-test",
-            action="reconciled",
-            direction="meta_json_to_db",
-            changes=(m,),
-            message="",
-        )
-        assert len(a.changes) == 1
-        assert a.changes[0].field == "workflow_phase"
-
-
-class TestReconciliationResult:
-    """ReconciliationResult frozen dataclass tests."""
-
-    def test_construction(self) -> None:
-        r = ReconciliationResult(
-            actions=(),
-            summary={"reconciled": 0, "created": 0, "skipped": 0, "error": 0, "dry_run": 0},
-        )
-        assert r.actions == ()
-        assert r.summary["reconciled"] == 0
-
-    def test_frozen(self) -> None:
-        r = ReconciliationResult(actions=(), summary={})
-        with pytest.raises(FrozenInstanceError):
-            r.actions = ()  # type: ignore[misc]
 
 
 # ===========================================================================
@@ -889,687 +831,12 @@ class TestCheckWorkflowDrift:
 
 
 # ===========================================================================
-# Task 3.1: Single-feature reconcile
-# ===========================================================================
-
-
-class TestReconcileSingleFeature:
-    """_reconcile_single_feature() tests."""
-
-    def test_meta_json_ahead_update(self, tmp_path) -> None:
-        """AC-6: meta_json_ahead -> update DB row, action='reconciled'."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(field="last_completed_phase", meta_json_value="implement", db_value="design"),
-                WorkflowMismatch(field="workflow_phase", meta_json_value="finish", db_value="create-plan"),
-            ),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "reconciled"
-        assert action.direction == "meta_json_to_db"
-        assert len(action.changes) > 0
-
-        # Verify DB was actually updated
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["last_completed_phase"] == "implement"
-        assert row["workflow_phase"] == "finish"
-
-    def test_in_sync_skip(self, tmp_path) -> None:
-        """AC-7: in_sync -> skip."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="in_sync",
-            meta_json={"workflow_phase": "create-plan", "last_completed_phase": "design", "mode": "standard", "status": "active"},
-            db={"workflow_phase": "create-plan", "last_completed_phase": "design", "mode": "standard", "kanban_column": "backlog"},
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "skipped"
-        assert "in sync" in action.message.lower()
-
-    def test_meta_json_only_entity_exists_create(self, tmp_path) -> None:
-        """AC-8: meta_json_only + entity exists -> create row, action='created'."""
-        db = _make_db()
-        _register_feature(db, "010-test")
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-test",
-            status="meta_json_only",
-            meta_json={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "status": "active",
-            },
-            db=None,
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "created"
-        assert action.direction == "meta_json_to_db"
-
-        # Verify row was created
-        row = db.get_workflow_phase("feature:010-test")
-        assert row is not None
-        assert row["workflow_phase"] == "create-plan"
-        assert row["last_completed_phase"] == "design"
-        assert row["mode"] == "standard"
-
-    def test_meta_json_only_no_entity_error(self, tmp_path) -> None:
-        """meta_json_only + entity not found -> action='error'."""
-        db = _make_db()
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-nonexistent",
-            status="meta_json_only",
-            meta_json={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "status": "active",
-            },
-            db=None,
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "error"
-        assert "entity not found" in action.message.lower() or "Entity not found" in action.message
-
-    def test_meta_json_only_meta_json_none_error(self, tmp_path) -> None:
-        """meta_json_only + meta_json is None -> error (defensive guard)."""
-        db = _make_db()
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-test",
-            status="meta_json_only",
-            meta_json=None,
-            db=None,
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "error"
-        assert "no meta_json data" in action.message.lower()
-
-    def test_db_ahead_skip(self, tmp_path) -> None:
-        """db_ahead -> skip."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="finish",
-            last_completed_phase="implement",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="db_ahead",
-            meta_json={"workflow_phase": "create-plan", "last_completed_phase": "design", "mode": "standard", "status": "active"},
-            db={"workflow_phase": "finish", "last_completed_phase": "implement", "mode": "standard", "kanban_column": "backlog"},
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "skipped"
-        assert "db is ahead" in action.message.lower()
-
-    def test_db_only_skip(self, tmp_path) -> None:
-        """db_only -> skip."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="design",
-            last_completed_phase="specify",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="db_only",
-            meta_json=None,
-            db={"workflow_phase": "design", "last_completed_phase": "specify", "mode": "standard", "kanban_column": "backlog"},
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "skipped"
-        assert "no .meta.json" in action.message.lower()
-
-    def test_error_propagate(self, tmp_path) -> None:
-        """error status -> action='error', message propagated."""
-        db = _make_db()
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-test",
-            status="error",
-            meta_json=None,
-            db=None,
-            mismatches=(),
-            message="Original error message",
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "error"
-        assert "Original error message" in action.message
-
-    def test_dry_run_no_db_writes(self, tmp_path) -> None:
-        """AC-9: dry_run=True -> no DB writes."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(field="last_completed_phase", meta_json_value="implement", db_value="design"),
-                WorkflowMismatch(field="workflow_phase", meta_json_value="finish", db_value="create-plan"),
-            ),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=True)
-
-        assert action.action == "reconciled"
-        assert len(action.changes) > 0
-
-        # DB should NOT have been updated
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["last_completed_phase"] == "design"
-        assert row["workflow_phase"] == "create-plan"
-
-    def test_idempotency(self, tmp_path) -> None:
-        """AC-10: second reconcile after first should skip."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(field="last_completed_phase", meta_json_value="implement", db_value="design"),
-            ),
-        )
-
-        # First reconcile
-        action1 = _reconcile_single_feature(db, report, dry_run=False)
-        assert action1.action == "reconciled"
-
-        # Now DB matches meta_json -> build in_sync report
-        report2 = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="in_sync",
-            meta_json=report.meta_json,
-            db={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(),
-        )
-
-        # Second reconcile should skip
-        action2 = _reconcile_single_feature(db, report2, dry_run=False)
-        assert action2.action == "skipped"
-
-    def test_value_error_from_update(self, tmp_path) -> None:
-        """ValueError from update_workflow_phase -> action='error'."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(field="last_completed_phase", meta_json_value="implement", db_value="design"),
-            ),
-        )
-
-        # Delete the workflow phase row to cause ValueError on update
-        db._conn.execute("DELETE FROM workflow_phases WHERE type_id = ?", (type_id,))
-        db._conn.commit()
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "error"
-
-    def test_value_error_from_create(self, tmp_path) -> None:
-        """ValueError from create_workflow_phase -> action='error'."""
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        # Report says meta_json_only, but a row already exists -> create will fail
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_only",
-            meta_json={
-                "workflow_phase": "create-plan",
-                "last_completed_phase": "design",
-                "mode": "standard",
-                "status": "active",
-            },
-            db=None,
-            mismatches=(),
-        )
-
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        assert action.action == "error"
-
-
-# ===========================================================================
-# Task 3.2: Public reconciliation
-# ===========================================================================
-
-
-class TestApplyWorkflowReconciliation:
-    """apply_workflow_reconciliation() tests."""
-
-    def test_bulk_reconcile(self, tmp_path) -> None:
-        """Bulk reconcile multiple features."""
-        db = _make_db()
-        # Feature 1: meta_json_ahead (will be reconciled)
-        type_id1 = _register_feature(db, "001-feat-a")
-        db.create_workflow_phase(
-            type_id1, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "001-feat-a", status="active", last_completed_phase="design")
-
-        # Feature 2: in_sync (will be skipped)
-        type_id2 = _register_feature(db, "002-feat-b")
-        db.create_workflow_phase(
-            type_id2, workflow_phase="create-plan", last_completed_phase="design", mode="standard"
-        )
-        _create_meta_json(tmp_path, "002-feat-b", status="active", last_completed_phase="design")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-
-        assert isinstance(result, ReconciliationResult)
-        action_map = {a.feature_type_id: a.action for a in result.actions}
-        assert action_map["feature:001-feat-a"] == "reconciled"
-        # Feature 2 is phase-in-sync but has kanban drift (DB default "backlog"
-        # vs expected "prioritised" for create-plan phase), so it gets reconciled
-        assert action_map["feature:002-feat-b"] == "reconciled"
-        assert result.summary["reconciled"] == 2
-        assert result.summary["skipped"] == 0
-
-    def test_dry_run_preview(self, tmp_path) -> None:
-        """AC-9: dry_run preview returns changes without modifying DB."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="implement")
-
-        result = apply_workflow_reconciliation(
-            engine, db, str(tmp_path), feature_type_id=type_id, dry_run=True
-        )
-
-        assert result.summary.get("dry_run", 0) >= 1
-        # DB should not be changed
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["last_completed_phase"] == "design"
-
-    def test_idempotency(self, tmp_path) -> None:
-        """AC-10: second run produces all-skipped."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="implement")
-
-        # First run
-        result1 = apply_workflow_reconciliation(engine, db, str(tmp_path), feature_type_id=type_id)
-        assert result1.summary["reconciled"] == 1
-
-        # Second run - should all be skipped now
-        result2 = apply_workflow_reconciliation(engine, db, str(tmp_path), feature_type_id=type_id)
-        assert result2.summary["skipped"] == 1
-        assert result2.summary["reconciled"] == 0
-
-    def test_summary_keys(self, tmp_path) -> None:
-        """Summary dict has all 5 expected keys."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-
-        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed", "cascades_recovered"}
-        assert set(result.summary.keys()) == expected_keys
-
-    def test_never_raises(self, tmp_path) -> None:
-        """apply_workflow_reconciliation never raises for per-feature errors."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Should not raise even with empty data
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert isinstance(result, ReconciliationResult)
-
-    def test_single_feature_reconcile(self, tmp_path) -> None:
-        """Single feature reconciliation via feature_type_id."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="create-plan",
-            last_completed_phase="design",
-            mode="standard",
-        )
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="implement")
-
-        result = apply_workflow_reconciliation(
-            engine, db, str(tmp_path), feature_type_id=type_id
-        )
-
-        assert len(result.actions) == 1
-        assert result.actions[0].action == "reconciled"
-        assert result.summary["reconciled"] == 1
-
-        # Verify DB updated
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["last_completed_phase"] == "implement"
-
-    # -----------------------------------------------------------------
-    # Feature 113 FR-11.1: workspace_uuid forwarding (internal-pin tests)
-    # -----------------------------------------------------------------
-
-    def test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """FR-11.1 mutation pin (reconciliation.py:374 meta_json_ahead branch).
-
-        apply_workflow_reconciliation must forward its workspace_uuid kwarg
-        to db.update_workflow_phase when reconciling a meta_json_ahead row.
-        """
-        # Bootstrap a meta_json_ahead row scoped to a real workspace.
-        db = _make_db()
-        from entity_registry.test_helpers import bootstrap_test_workspace
-        ws_a = bootstrap_test_workspace(db, "ws-fr11-meta-ahead")
-        type_id = type_id = "feature:010-test"
-        db.register_entity(
-            entity_type="feature",
-            seq=10, slug="test",
-            name="Test",
-            status="active",
-            workspace_uuid=ws_a,
-        )
-        db.create_workflow_phase(
-            type_id, workflow_phase="specify",
-            last_completed_phase="brainstorm", mode="standard",
-        )
-        _create_meta_json(
-            tmp_path, "010-test", status="active",
-            last_completed_phase="design",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        captured_kwargs: list[dict] = []
-        original = db.update_workflow_phase
-
-        def capture(type_id_arg, **kwargs):
-            captured_kwargs.append(dict(kwargs))
-            return original(type_id_arg, **kwargs)
-
-        monkeypatch.setattr(db, "update_workflow_phase", capture)
-
-        result = apply_workflow_reconciliation(
-            engine, db, str(tmp_path),
-            feature_type_id=type_id,
-            workspace_uuid=ws_a,
-        )
-
-        # At least one update_workflow_phase call captured, and it received
-        # workspace_uuid=ws_a (pins reconciliation.py:374 forwarding).
-        assert captured_kwargs, "db.update_workflow_phase was never invoked"
-        assert any(
-            kw.get("workspace_uuid") == ws_a for kw in captured_kwargs
-        ), (
-            f"workspace_uuid not forwarded to update_workflow_phase; "
-            f"captured kwargs={captured_kwargs}"
-        )
-        # Sanity: action succeeded (mismatch would error since ws_a matches).
-        assert result.summary.get("reconciled", 0) >= 1
-
-    def test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """FR-11.1 mutation pin (reconciliation.py:462 kanban-only drift).
-
-        For an in_sync row with only kanban_column drift, the single-kwarg
-        db.update_workflow_phase call must receive workspace_uuid.
-        """
-        # Bootstrap a phase-in-sync row whose kanban_column needs fixing.
-        # Feature in phase "create-plan" expects kanban_column="prioritised";
-        # we seed it as "backlog" so the kanban-only drift branch fires.
-        db = _make_db()
-        from entity_registry.test_helpers import bootstrap_test_workspace
-        ws_a = bootstrap_test_workspace(db, "ws-fr11-kanban")
-        type_id = "feature:020-kanban"
-        db.register_entity(
-            entity_type="feature",
-            seq=20, slug="kanban",
-            name="Kanban Test",
-            status="active",
-            workspace_uuid=ws_a,
-        )
-        db.create_workflow_phase(
-            type_id, workflow_phase="create-plan",
-            last_completed_phase="design", mode="standard",
-            kanban_column="backlog",  # wrong; expected "prioritised"
-        )
-        _create_meta_json(
-            tmp_path, "020-kanban", status="active",
-            last_completed_phase="design",
-        )
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        captured_kwargs: list[dict] = []
-        original = db.update_workflow_phase
-
-        def capture(type_id_arg, **kwargs):
-            captured_kwargs.append(dict(kwargs))
-            return original(type_id_arg, **kwargs)
-
-        monkeypatch.setattr(db, "update_workflow_phase", capture)
-
-        result = apply_workflow_reconciliation(
-            engine, db, str(tmp_path),
-            feature_type_id=type_id,
-            workspace_uuid=ws_a,
-        )
-
-        # The kanban-drift branch invokes update_workflow_phase with
-        # kanban_column=... ; assert workspace_uuid was forwarded there too.
-        assert captured_kwargs, "db.update_workflow_phase was never invoked"
-        kanban_calls = [
-            kw for kw in captured_kwargs if "kanban_column" in kw
-        ]
-        assert kanban_calls, (
-            f"Expected at least one kanban_column update; got {captured_kwargs}"
-        )
-        assert all(
-            kw.get("workspace_uuid") == ws_a for kw in kanban_calls
-        ), (
-            f"workspace_uuid not forwarded to kanban-drift update; "
-            f"captured kanban kwargs={kanban_calls}"
-        )
-        # Sanity: action succeeded.
-        assert result.summary.get("reconciled", 0) >= 1
-
-
-# ===========================================================================
 # Task 7.1: Full-cycle integration tests
 # ===========================================================================
 
 
 class TestIntegrationFullCycle:
     """Multi-feature drift -> reconcile -> verify in_sync cycle."""
-
-    def test_bulk_drift_reconcile_verify(self, tmp_path) -> None:
-        """3+ features in different drift states -> reconcile -> all in_sync."""
-        db = _make_db()
-
-        # Feature 1: meta_json_ahead
-        type_id1 = _register_feature(db, "001-ahead")
-        db.create_workflow_phase(
-            type_id1, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "001-ahead", status="active", last_completed_phase="implement")
-
-        # Feature 2: in_sync
-        type_id2 = _register_feature(db, "002-synced")
-        db.create_workflow_phase(
-            type_id2, workflow_phase="create-plan", last_completed_phase="design", mode="standard"
-        )
-        _create_meta_json(tmp_path, "002-synced", status="active", last_completed_phase="design")
-
-        # Feature 3: meta_json_ahead (different phase)
-        type_id3 = _register_feature(db, "003-another-ahead")
-        db.create_workflow_phase(
-            type_id3, workflow_phase="design", last_completed_phase="specify", mode="full"
-        )
-        _create_meta_json(
-            tmp_path, "003-another-ahead", status="active",
-            last_completed_phase="create-plan", mode="full"
-        )
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Step 1: Detect drift
-        drift = check_workflow_drift(engine, db, str(tmp_path))
-        assert drift.summary["meta_json_ahead"] == 2
-        assert drift.summary["in_sync"] == 1
-
-        # Step 2: Reconcile (3 reconciled: 2 phase-ahead + 1 kanban-only fix)
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert result.summary["reconciled"] == 3
-        assert result.summary["skipped"] == 0
-
-        # Step 3: Verify all in_sync
-        drift2 = check_workflow_drift(engine, db, str(tmp_path))
-        assert drift2.summary["in_sync"] == 3
-        assert drift2.summary["meta_json_ahead"] == 0
-
-    def test_idempotency_full_cycle(self, tmp_path) -> None:
-        """Second reconcile after first produces all-skipped."""
-        db = _make_db()
-        type_id = _register_feature(db, "010-test")
-        db.create_workflow_phase(
-            type_id, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="design")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # First reconcile
-        result1 = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert result1.summary["reconciled"] == 1
-
-        # Second reconcile - idempotent
-        result2 = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert result2.summary["reconciled"] == 0
-        assert result2.summary["skipped"] == 1
 
     def test_both_none_phases(self, tmp_path) -> None:
         """Edge case: both-None phases in both sources -> in_sync."""
@@ -1604,97 +871,6 @@ class TestIntegrationFullCycle:
         drift = check_workflow_drift(engine, db, str(tmp_path), feature_type_id=type_id)
 
         assert drift.features[0].status == "in_sync"
-
-    def test_empty_feature_set(self, tmp_path) -> None:
-        """Edge case: no features at all."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        drift = check_workflow_drift(engine, db, str(tmp_path))
-        assert len(drift.features) == 0
-        assert drift.summary["in_sync"] == 0
-
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert len(result.actions) == 0
-
-    def test_meta_json_only_create_then_verify(self, tmp_path) -> None:
-        """AC-8 integration: meta_json_only -> create -> verify in_sync."""
-        db = _make_db()
-        _register_feature(db, "010-test")
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="design")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Step 1: Detect - should be meta_json_only
-        drift1 = check_workflow_drift(
-            engine, db, str(tmp_path), feature_type_id="feature:010-test"
-        )
-        assert drift1.features[0].status == "meta_json_only"
-
-        # Step 2: Reconcile - should create
-        result = apply_workflow_reconciliation(
-            engine, db, str(tmp_path), feature_type_id="feature:010-test"
-        )
-        assert result.summary["created"] == 1
-
-        # Step 3: Verify in_sync
-        drift2 = check_workflow_drift(
-            engine, db, str(tmp_path), feature_type_id="feature:010-test"
-        )
-        assert drift2.features[0].status == "in_sync"
-
-    def test_mixed_statuses_bulk(self, tmp_path) -> None:
-        """Bulk with meta_json_ahead, in_sync, meta_json_only, db_only."""
-        db = _make_db()
-
-        # meta_json_ahead
-        type_id1 = _register_feature(db, "001-ahead")
-        db.create_workflow_phase(
-            type_id1, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "001-ahead", status="active", last_completed_phase="design")
-
-        # in_sync
-        type_id2 = _register_feature(db, "002-synced")
-        db.create_workflow_phase(
-            type_id2, workflow_phase="create-plan", last_completed_phase="design", mode="standard"
-        )
-        _create_meta_json(tmp_path, "002-synced", status="active", last_completed_phase="design")
-
-        # meta_json_only (entity exists, no workflow_phases row)
-        _register_feature(db, "003-meta-only")
-        _create_meta_json(tmp_path, "003-meta-only", status="active", last_completed_phase="specify")
-
-        # db_only (workflow_phases row, no .meta.json)
-        type_id4 = _register_feature(db, "004-db-only")
-        db.create_workflow_phase(
-            type_id4, workflow_phase="implement", last_completed_phase="create-plan", mode="standard"
-        )
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Drift check
-        drift = check_workflow_drift(engine, db, str(tmp_path))
-        status_map = {r.feature_type_id: r.status for r in drift.features}
-        assert status_map["feature:001-ahead"] == "meta_json_ahead"
-        assert status_map["feature:002-synced"] == "in_sync"
-        assert status_map["feature:003-meta-only"] == "meta_json_only"
-        assert status_map["feature:004-db-only"] == "db_only"
-
-        # Reconcile (002-synced has kanban drift: default "backlog" vs expected
-        # "prioritised" for create-plan phase, so it gets reconciled too)
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert result.summary["reconciled"] == 2  # 001-ahead + 002-synced (kanban fix)
-        assert result.summary["created"] == 1    # 003-meta-only
-        assert result.summary["skipped"] == 1    # 004-db-only
-
-        # Verify post-reconcile drift
-        drift2 = check_workflow_drift(engine, db, str(tmp_path))
-        status_map2 = {r.feature_type_id: r.status for r in drift2.features}
-        assert status_map2["feature:001-ahead"] == "in_sync"
-        assert status_map2["feature:002-synced"] == "in_sync"
-        assert status_map2["feature:003-meta-only"] == "in_sync"
-        assert status_map2["feature:004-db-only"] == "db_only"  # Still db_only (no meta.json)
 
 
 # ===========================================================================
@@ -2005,90 +1181,6 @@ class TestAdversarialReconciliation:
         with pytest.raises(FrozenInstanceError):
             report.mismatches = ()  # type: ignore[misc]
 
-    def test_reconcile_single_feature_all_three_fields_changed(self, tmp_path) -> None:
-        """Reconciling with mode+phase+last_completed all different updates all three.
-        derived_from: dimension:adversarial (Follow the Data heuristic)
-
-        Anticipate: If update_workflow_phase only passes some fields,
-        the others would be silently left stale. This test verifies
-        all three fields are updated atomically.
-        """
-        # Given a feature where all three compared fields differ
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-            mode="full",
-        )
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "finish",
-                "last_completed_phase": "implement",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "specify",
-                "last_completed_phase": "brainstorm",
-                "mode": "full",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(field="last_completed_phase", meta_json_value="implement", db_value="brainstorm"),
-                WorkflowMismatch(field="workflow_phase", meta_json_value="finish", db_value="specify"),
-                WorkflowMismatch(field="mode", meta_json_value="standard", db_value="full"),
-            ),
-        )
-
-        # When reconciling
-        action = _reconcile_single_feature(db, report, dry_run=False)
-
-        # Then all three fields are updated
-        assert action.action == "reconciled"
-        row = db.get_workflow_phase(type_id)
-        assert row["workflow_phase"] == "finish"
-        assert row["last_completed_phase"] == "implement"
-        assert row["mode"] == "standard"
-
-    def test_meta_json_only_creates_three_change_entries(self, tmp_path) -> None:
-        """meta_json_only reconciliation creates exactly 3 change entries.
-        derived_from: dimension:adversarial (Zero/One/Many: exact count)
-
-        Anticipate: If a field is omitted from the changes tuple,
-        the dry_run preview would be incomplete, misleading callers.
-        """
-        # Given a meta_json_only report
-        db = _make_db()
-        _register_feature(db, "010-test")
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-test",
-            status="meta_json_only",
-            meta_json={
-                "workflow_phase": "design",
-                "last_completed_phase": "specify",
-                "mode": "standard",
-                "status": "active",
-            },
-            db=None,
-            mismatches=(),
-        )
-
-        # When reconciling (dry_run to inspect changes without side effects)
-        action = _reconcile_single_feature(db, report, dry_run=True)
-
-        # Then exactly 3 changes are reported
-        assert action.action == "created"
-        assert len(action.changes) == 3
-        change_fields = {c.field for c in action.changes}
-        assert change_fields == {"workflow_phase", "last_completed_phase", "mode"}
-        # All old values are None (no DB row existed)
-        for c in action.changes:
-            assert c.db_value is None
-
 
 # ===========================================================================
 # Test-deepener: Phase B -- Error Propagation tests
@@ -2128,47 +1220,6 @@ class TestErrorPropagationReconciliation:
         # And the total count equals the number of features
         total = sum(result.summary.values())
         assert total == 1
-
-    def test_apply_reconciliation_catches_exception_from_reconcile_single(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """Exception in _reconcile_single_feature is caught, not propagated.
-        derived_from: dimension:error_propagation (never-raises contract)
-
-        Anticipate: If the try/except in apply_workflow_reconciliation
-        doesn't catch RuntimeError from _reconcile_single_feature,
-        the entire bulk operation would abort on one bad feature.
-        """
-        # Given a feature with meta_json_ahead
-        db = _make_db()
-        type_id = _register_feature(db, "010-test")
-        db.create_workflow_phase(
-            type_id, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "010-test", status="active", last_completed_phase="design")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # Monkeypatch _reconcile_single_feature to raise
-        import workflow_engine.reconciliation as recon_mod
-        original = recon_mod._reconcile_single_feature
-
-        def exploding_reconcile(*args, **kwargs):
-            raise RuntimeError("unexpected boom")
-
-        monkeypatch.setattr(recon_mod, "_reconcile_single_feature", exploding_reconcile)
-
-        # When applying reconciliation
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-
-        # Then it does NOT raise, and the error is captured
-        assert isinstance(result, ReconciliationResult)
-        assert result.summary["error"] >= 1
-        error_actions = [a for a in result.actions if a.action == "error"]
-        assert len(error_actions) >= 1
-        assert "unexpected boom" in error_actions[0].message
-
-        monkeypatch.setattr(recon_mod, "_reconcile_single_feature", original)
 
     def test_check_workflow_drift_catches_exception_from_check_single(
         self, tmp_path, monkeypatch
@@ -2248,149 +1299,6 @@ class TestMutationMindsetReconciliation:
         # Then: results are opposite
         assert result_meta_ahead == "meta_json_ahead"
         assert result_swapped == "db_ahead"
-
-    def test_dry_run_true_prevents_db_write_for_created(self, tmp_path) -> None:
-        """dry_run=True on meta_json_only prevents create_workflow_phase call.
-        derived_from: dimension:mutation_mindset (line deletion: dry_run guard)
-
-        Anticipate: If the `if not dry_run:` guard is deleted from the
-        meta_json_only branch, dry_run would actually create rows.
-        """
-        # Given a meta_json_only feature with registered entity
-        db = _make_db()
-        _register_feature(db, "010-test")
-
-        report = WorkflowDriftReport(
-            feature_type_id="feature:010-test",
-            status="meta_json_only",
-            meta_json={
-                "workflow_phase": "design",
-                "last_completed_phase": "specify",
-                "mode": "standard",
-                "status": "active",
-            },
-            db=None,
-            mismatches=(),
-        )
-
-        # When reconciling with dry_run=True
-        action = _reconcile_single_feature(db, report, dry_run=True)
-
-        # Then action is "created" but NO row exists in DB
-        assert action.action == "created"
-        row = db.get_workflow_phase("feature:010-test")
-        assert row is None, "dry_run=True should not create DB rows"
-
-    def test_reconciliation_result_dry_run_count_logic(self, tmp_path) -> None:
-        """dry_run count = reconciled + created (not skipped or error).
-        derived_from: dimension:mutation_mindset (return value mutation)
-
-        Anticipate: If dry_run count includes skipped or error actions,
-        the preview would overcount. If it excludes created, it would
-        undercount for meta_json_only features.
-        """
-        from workflow_engine.reconciliation import _build_reconciliation_result
-
-        # Given a mix of actions
-        actions = [
-            ReconcileAction(
-                feature_type_id="feature:001-test",
-                action="reconciled",
-                direction="meta_json_to_db",
-                changes=(),
-                message="Reconciled",
-            ),
-            ReconcileAction(
-                feature_type_id="feature:002-test",
-                action="created",
-                direction="meta_json_to_db",
-                changes=(),
-                message="Created",
-            ),
-            ReconcileAction(
-                feature_type_id="feature:003-test",
-                action="skipped",
-                direction="meta_json_to_db",
-                changes=(),
-                message="Skipped",
-            ),
-            ReconcileAction(
-                feature_type_id="feature:004-test",
-                action="error",
-                direction="meta_json_to_db",
-                changes=(),
-                message="Error",
-            ),
-        ]
-
-        # When building result with dry_run=True
-        result = _build_reconciliation_result(actions, dry_run=True)
-
-        # Then dry_run count = reconciled (1) + created (1) = 2
-        assert result.summary["dry_run"] == 2
-        assert result.summary["reconciled"] == 1
-        assert result.summary["created"] == 1
-        assert result.summary["skipped"] == 1
-        assert result.summary["error"] == 1
-
-    def test_reconciliation_result_dry_run_false_count_zero(self) -> None:
-        """dry_run=False produces dry_run count = 0 in summary.
-        derived_from: dimension:mutation_mindset (return value mutation)
-
-        Anticipate: If the dry_run branch condition is inverted,
-        dry_run count would be non-zero when dry_run is False.
-        """
-        from workflow_engine.reconciliation import _build_reconciliation_result
-
-        actions = [
-            ReconcileAction(
-                feature_type_id="feature:001-test",
-                action="reconciled",
-                direction="meta_json_to_db",
-                changes=(),
-                message="Reconciled",
-            ),
-        ]
-
-        # When building result with dry_run=False
-        result = _build_reconciliation_result(actions, dry_run=False)
-
-        # Then dry_run count is 0
-        assert result.summary["dry_run"] == 0
-
-    def test_reconcile_direction_always_meta_json_to_db(self, tmp_path) -> None:
-        """All ReconcileAction.direction values are 'meta_json_to_db'.
-        derived_from: dimension:mutation_mindset (return value mutation)
-
-        Anticipate: If direction is accidentally set to "db_to_meta_json"
-        or some other string, the MCP serialization would report the
-        wrong direction to callers.
-        """
-        # Given multiple features in different states
-        db = _make_db()
-        type_id1 = _register_feature(db, "001-ahead")
-        db.create_workflow_phase(
-            type_id1, workflow_phase="specify", last_completed_phase="brainstorm", mode="standard"
-        )
-        _create_meta_json(tmp_path, "001-ahead", status="active", last_completed_phase="design")
-
-        type_id2 = _register_feature(db, "002-synced")
-        db.create_workflow_phase(
-            type_id2, workflow_phase="create-plan", last_completed_phase="design", mode="standard"
-        )
-        _create_meta_json(tmp_path, "002-synced", status="active", last_completed_phase="design")
-
-        engine = WorkflowStateEngine(db, str(tmp_path))
-
-        # When reconciling all
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-
-        # Then every action has direction="meta_json_to_db"
-        for action in result.actions:
-            assert action.direction == "meta_json_to_db", (
-                f"Expected direction 'meta_json_to_db' for {action.feature_type_id}, "
-                f"got '{action.direction}'"
-            )
 
     def test_healthy_flag_requires_both_dimensions_clean(self, tmp_path) -> None:
         """Healthy means ALL non-in_sync counts are zero in summary.
@@ -2546,104 +1454,6 @@ class TestKanbanDriftDetection:
         kanban_mismatches = [m for m in report.mismatches if m.field == "kanban_column"]
         assert len(kanban_mismatches) == 0, (
             f"Expected no kanban_column mismatch, got: {kanban_mismatches}"
-        )
-
-
-class TestKanbanReconciliation:
-    """Kanban column reconciliation in _reconcile_single_feature (AC-5)."""
-
-    def test_reconcile_single_feature_corrects_kanban(self, tmp_path) -> None:
-        """AC-5: reconciliation updates kanban_column when drifted.
-
-        Setup: meta_json_ahead report with kanban_column mismatch (backlog->wip).
-        Expect: after reconcile, DB kanban_column == 'wip'.
-        """
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="implement",
-            last_completed_phase="create-plan",
-            mode="standard",
-        )
-        # DB has kanban_column="backlog" (default)
-
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "implement",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "implement",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(
-                    field="kanban_column",
-                    meta_json_value="wip",
-                    db_value="backlog",
-                ),
-            ),
-        )
-
-        _reconcile_single_feature(db, report, dry_run=False)
-
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "wip", (
-            f"Expected kanban_column='wip' after reconcile, got '{row['kanban_column']}'"
-        )
-
-    def test_reconcile_single_feature_skips_kanban_when_none(self, tmp_path) -> None:
-        """Reconciliation leaves kanban_column unchanged when derived kanban is None.
-
-        Setup: meta has workflow_phase='nonexistent' (unknown phase -> kanban=None).
-        Expect: kanban_column remains 'backlog' (unchanged).
-        """
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="010-test",
-            workflow_phase="implement",
-            last_completed_phase="create-plan",
-            mode="standard",
-        )
-        # DB has kanban_column="backlog" (default)
-
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "nonexistent",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "status": "active",
-            },
-            db={
-                "workflow_phase": "implement",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "kanban_column": "backlog",
-            },
-            mismatches=(
-                WorkflowMismatch(
-                    field="kanban_column",
-                    meta_json_value=None,
-                    db_value="backlog",
-                ),
-            ),
-        )
-
-        _reconcile_single_feature(db, report, dry_run=False)
-
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "backlog", (
-            f"Expected kanban_column='backlog' (unchanged), got '{row['kanban_column']}'"
         )
 
 
@@ -2890,53 +1700,6 @@ class TestKanbanDriftTerminalStatus:
         assert kanban_mismatches[0].meta_json_value == "completed"
         assert kanban_mismatches[0].db_value == "wip"
 
-    def test_reconcile_terminal_status_kanban(self, tmp_path):
-        """AC-2.5: reconciliation with status='completed' updates DB kanban to 'completed'.
-
-        Given a meta_json_ahead drift report where meta_json status='completed',
-        reconciliation should derive kanban='completed' and update the DB.
-        """
-        _, db, type_id = _setup_engine(
-            tmp_path,
-            slug="051-terminal-recon",
-            workflow_phase="implement",
-            last_completed_phase="create-plan",
-            mode="standard",
-            kanban_column="wip",
-        )
-
-        report = WorkflowDriftReport(
-            feature_type_id=type_id,
-            status="meta_json_ahead",
-            meta_json={
-                "workflow_phase": "implement",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "status": "completed",
-            },
-            db={
-                "workflow_phase": "implement",
-                "last_completed_phase": "create-plan",
-                "mode": "standard",
-                "kanban_column": "wip",
-            },
-            mismatches=(
-                WorkflowMismatch(
-                    field="kanban_column",
-                    meta_json_value="completed",
-                    db_value="wip",
-                ),
-            ),
-        )
-
-        _reconcile_single_feature(db, report, dry_run=False)
-
-        row = db.get_workflow_phase(type_id)
-        assert row is not None
-        assert row["kanban_column"] == "completed", (
-            f"Expected kanban_column='completed' after reconcile, got '{row['kanban_column']}'"
-        )
-
 
 # ===========================================================================
 # Task 3.1a: Artifact path verification tests (R3)
@@ -3151,125 +1914,6 @@ class TestDepthContextReporting:
         assert report.depth == 2, f"Expected depth=2 for child in 3-level hierarchy, got {report.depth}"
 
 
-# ===========================================================================
-# Task 1a.7: Reconciliation reporting (AC-6)
-# ===========================================================================
-
-
-class TestReconciliationSummaryKanbanFixed:
-    """AC-6: summary dict includes kanban_fixed count."""
-
-    def test_summary_has_kanban_fixed_key(self, tmp_path):
-        """AC-6.1: ReconciliationResult.summary always includes kanban_fixed."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="design",
-            last_completed_phase="specify",
-            mode="standard",
-            kanban_column="wip",
-        )
-        _create_meta_json(tmp_path, status="active", mode="standard", last_completed_phase="specify")
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert "kanban_fixed" in result.summary
-
-    def test_kanban_fixed_zero_when_no_drift(self, tmp_path):
-        """AC-6.2: kanban_fixed is 0 when no kanban column drift exists."""
-        # Use kanban_column="prioritised" which is correct for design phase
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="design",
-            last_completed_phase="specify",
-            mode="standard",
-            kanban_column="prioritised",
-        )
-        _create_meta_json(tmp_path, status="active", mode="standard", last_completed_phase="specify")
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        assert result.summary["kanban_fixed"] == 0
-
-    def test_kanban_fixed_counted_on_kanban_drift(self, tmp_path):
-        """AC-6.3: kanban_fixed counts features with kanban_column in changes."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="design",
-            last_completed_phase="specify",
-            mode="standard",
-            kanban_column="backlog",  # Wrong kanban -- should be 'wip' for design phase
-        )
-        _create_meta_json(tmp_path, status="active", mode="standard", last_completed_phase="specify")
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        # The kanban column was wrong (backlog vs wip), so it should be fixed
-        assert result.summary["kanban_fixed"] >= 1
-
-    def test_kanban_fixed_not_counted_for_non_kanban_drift(self, tmp_path):
-        """AC-6.4: Phase-only drift (no kanban change) -> kanban_fixed stays 0."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase=None,
-            mode="standard",
-            kanban_column="wip",  # kanban correct for design phase
-        )
-        # .meta.json is ahead in phase but kanban matches the new phase
-        _create_meta_json(tmp_path, status="active", mode="standard", last_completed_phase="specify")
-        result = apply_workflow_reconciliation(engine, db, str(tmp_path))
-        # Check that kanban_fixed only counts kanban-specific changes
-        kanban_changes = 0
-        for action in result.actions:
-            for change in action.changes:
-                if change.field == "kanban_column":
-                    kanban_changes += 1
-        assert result.summary["kanban_fixed"] == kanban_changes
-
-
-class TestFormatReconciliationSummary:
-    """AC-6: format_reconciliation_summary() produces human-readable line."""
-
-    def test_format_with_changes(self):
-        """AC-6.5: Non-zero counts produce expected format string."""
-        from workflow_engine.reconciliation import format_reconciliation_summary
-
-        summary = {"reconciled": 2, "created": 1, "skipped": 5, "error": 0, "dry_run": 0, "kanban_fixed": 3}
-        msg = format_reconciliation_summary(summary)
-        assert "3 features synced" in msg
-        assert "3 kanban fixed" in msg
-        assert "0 warnings" in msg
-        assert msg.startswith("Reconciled:")
-
-    def test_format_silent_when_zero(self):
-        """AC-6.6: All zeros returns empty string (silent)."""
-        from workflow_engine.reconciliation import format_reconciliation_summary
-
-        summary = {"reconciled": 0, "created": 0, "skipped": 5, "error": 0, "dry_run": 0, "kanban_fixed": 0}
-        msg = format_reconciliation_summary(summary)
-        assert msg == ""
-
-    def test_format_with_warnings(self):
-        """AC-6.7: Errors are surfaced as warnings count."""
-        from workflow_engine.reconciliation import format_reconciliation_summary
-
-        summary = {"reconciled": 1, "created": 0, "skipped": 0, "error": 2, "dry_run": 0, "kanban_fixed": 0}
-        msg = format_reconciliation_summary(summary)
-        assert "1 features synced" in msg
-        assert "2 warnings" in msg
-
-    def test_format_only_kanban_fixed(self):
-        """AC-6.8: Only kanban fixes, no phase syncs."""
-        from workflow_engine.reconciliation import format_reconciliation_summary
-
-        summary = {"reconciled": 1, "created": 0, "skipped": 0, "error": 0, "dry_run": 0, "kanban_fixed": 1}
-        msg = format_reconciliation_summary(summary)
-        assert "1 features synced" in msg
-        assert "1 kanban fixed" in msg
-
-    def test_format_dry_run_silent(self):
-        """AC-6.9: Dry run mode is silent (no output)."""
-        from workflow_engine.reconciliation import format_reconciliation_summary
-
-        summary = {"reconciled": 0, "created": 0, "skipped": 0, "error": 0, "dry_run": 2, "kanban_fixed": 0}
-        msg = format_reconciliation_summary(summary)
-        assert msg == ""
-
-
 # ---------------------------------------------------------------------------
 # Task 3.3a: Reconciliation cascade recovery tests
 # ---------------------------------------------------------------------------
@@ -3341,7 +1985,7 @@ class TestRecoverPendingCascades:
         assert "progress" not in meta
 
         # Run recovery
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
 
         assert count >= 1
 
@@ -3372,7 +2016,7 @@ class TestRecoverPendingCascades:
         assert "progress" in meta
 
         # Recovery should find zero mismatches
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count == 0
 
     def test_already_correct_state_zero_mismatches(self, tmp_path):
@@ -3388,22 +2032,8 @@ class TestRecoverPendingCascades:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
 
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count == 0
-
-    def test_reconciliation_includes_cascade_recovery(self, tmp_path):
-        """apply_workflow_reconciliation runs cascade recovery and includes count."""
-        db = _make_db()
-        parent_uuid, child_uuid, artifacts_root = self._setup_parent_child(
-            db, tmp_path, child_status="completed",
-        )
-
-        engine = WorkflowStateEngine(db, artifacts_root)
-        result = apply_workflow_reconciliation(engine, db, artifacts_root)
-
-        # Summary should include cascade recovery count
-        assert "cascades_recovered" in result.summary
-        assert result.summary["cascades_recovered"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -3434,7 +2064,7 @@ class TestOKRScoreReconciliation:
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
         # Objective score should be 1.0 but stored as 0.0 → mismatch
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count >= 1
 
         # Verify score was updated
@@ -3468,7 +2098,7 @@ class TestOKRScoreReconciliation:
             "progress": expected_progress,
         })
 
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count == 0
 
     def test_objective_no_children_no_crash(self):
@@ -3481,7 +2111,7 @@ class TestOKRScoreReconciliation:
             name="Empty Objective",
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count == 0
 
     def test_missing_score_gets_set(self):
@@ -3500,7 +2130,7 @@ class TestOKRScoreReconciliation:
             parent_uuid=obj_uuid,
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count >= 1
 
         obj = db.get_entity_by_uuid(obj_uuid)
@@ -3531,7 +2161,7 @@ class TestOKRScoreReconciliation:
             metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0},
             workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
         )
-        count = _recover_pending_cascades(db)
+        count = _recover_pending_cascades(db, _UNKNOWN_WORKSPACE_UUID)
         assert count >= 1
 
         obj = db.get_entity_by_uuid(obj_uuid)
