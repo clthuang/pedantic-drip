@@ -16,15 +16,14 @@ Combines four audit lints:
    enclosing function MUST have a ``# F4-AUDIT:`` comment within 5 source
    lines.
 
-4. **TD-7b entity_id parsing audit lint (Group 15 / design §5 invariant).**
-   Enforces that all ``entity_id``-suffix parsing call sites either live
-   inside a ``_migration_13_*`` function or in a test file. Hits anywhere
-   else indicate a caller that should have been ported to read seq/slug
-   from ``entity_display`` per FR-8.3 but was missed.
-
-Grace mode (design TD-7b): if the entity_id audit finds unported sites,
-the lint test is marked ``xfail`` (not ``fail``) so the contract exists
-for CI without blocking integration.
+4. **Identity-text inference inventory** (it replaced the TD-7b grep lint;
+   see the comment above ``_INFERENCE_SCAN_ROOTS``).
+   ``test_identity_inference_inventory_is_exact`` requires the sites
+   ``doctor.identity_inference.scan_roots`` detects to EQUAL
+   ``_KNOWN_INFERENCE_SITES``: a new parsing site fails it, and so does a
+   fixed site left on the list. ``test_inventory_shrinks_to_zero_eventually``
+   is the high-water tripwire: the list may never grow past
+   ``_INVENTORY_HIGH_WATER``. Every remaining entry is sanctioned.
 """
 from __future__ import annotations
 
