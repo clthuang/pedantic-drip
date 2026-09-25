@@ -21,6 +21,7 @@ from transition_gate import (
 )
 from transition_gate.constants import HARD_PREREQUISITES
 
+from .feature_paths import feature_dir_name
 from .models import FeatureWorkflowState, TransitionResponse, db_unavailable_error
 
 # Precomputed constants from immutable sources
@@ -130,16 +131,24 @@ class WorkflowStateEngine:
         if state is None:
             raise ValueError(f"Feature not found: {feature_type_id}")
 
-        slug = self._extract_slug(feature_type_id)
-        existing_artifacts = self._get_existing_artifacts(slug)
+        # Primary defense: health probe already failed during get_state.
+        # Checked before the directory-name lookup, which reads the registry.
+        if state.source == "meta_json_fallback":
+            raise db_unavailable_error("transition_phase", feature_type_id, None)
+
+        try:
+            dir_name = self._feature_dir_name(feature_type_id)
+        except sqlite3.Error as exc:
+            raise db_unavailable_error(
+                "transition_phase", feature_type_id, exc
+            ) from exc
+        existing_artifacts = (
+            self._get_existing_artifacts(dir_name) if dir_name is not None else []
+        )
         results = self._evaluate_gates(
             state, target_phase, existing_artifacts, yolo_active,
             skipped_phases=skipped_phases,
         )
-
-        # Primary defense: health probe already failed during get_state
-        if state.source == "meta_json_fallback":
-            raise db_unavailable_error("transition_phase", feature_type_id, None)
 
         if all(r.allowed for r in results):
             # Secondary defense: catch DB write failures
@@ -233,8 +242,18 @@ class WorkflowStateEngine:
         if state is None:
             raise ValueError(f"Feature not found: {feature_type_id}")
 
-        slug = self._extract_slug(feature_type_id)
-        existing_artifacts = self._get_existing_artifacts(slug)
+        if state.source == "meta_json_fallback":
+            # DB unusable: the directory the degraded read found (listing).
+            dir_name = self._feature_dir_name(feature_type_id, use_db=False)
+        else:
+            try:
+                dir_name = self._feature_dir_name(feature_type_id)
+            except sqlite3.Error:
+                # The registry read failed: the degraded branch.
+                dir_name = self._feature_dir_name(feature_type_id, use_db=False)
+        existing_artifacts = (
+            self._get_existing_artifacts(dir_name) if dir_name is not None else []
+        )
         return self._evaluate_gates(
             state, target_phase, existing_artifacts, yolo_active=False
         )
@@ -363,32 +382,47 @@ class WorkflowStateEngine:
             source=source,
         )
 
-    def _extract_slug(self, feature_type_id: str) -> str:
-        """Extract slug from type_id. 'feature:008-foo' -> '008-foo'.
+    def _feature_dir_name(
+        self, feature_type_id: str, *, use_db: bool = True
+    ) -> str | None:
+        """Name of the feature's directory under ``{artifacts_root}/features``.
 
-        Validates that the resolved path stays within artifacts_root
-        as defense-in-depth against path traversal.
+        C11: never the type_id text taken apart. ``feature_dir_name`` answers
+        with the row's stored ``entities.entity_id`` column or, with no row,
+        the listed directory whose name composes to *feature_type_id*.
+        ``use_db=False`` (degraded mode) asks the listing only and never
+        touches the registry. Returns None when nothing names a directory.
+
+        Raises:
+            ValueError: the name is not one safe path component, the
+                type_id's rows disagree (both ``feature_not_found: ...``),
+                or the directory resolves outside ``artifacts_root``
+                (``_contained_feature_dir_name``).
+            sqlite3.Error: the registry read failed (``use_db=True`` only).
         """
-        if ":" not in feature_type_id:
-            raise ValueError(
-                f"Invalid feature_type_id (missing ':'): {feature_type_id}"
-            )
-        parts = feature_type_id.split(":", 1)
-        slug = parts[1]
-        if not slug:
-            raise ValueError(
-                f"Invalid feature_type_id (empty slug): {feature_type_id}"
-            )
-        # Defense-in-depth: ensure resolved path stays within artifacts_root
+        name = feature_dir_name(
+            self.db if use_db else None, self.artifacts_root, feature_type_id
+        )
+        if name is None:
+            return None
+        return self._contained_feature_dir_name(feature_type_id, name)
+
+    def _contained_feature_dir_name(self, feature_type_id: str, name: str) -> str:
+        """Return *name* when ``{artifacts_root}/features/<name>`` resolves
+        inside ``artifacts_root``, symlinks included.
+
+        Defense-in-depth against path traversal. Raises
+        ``ValueError("Invalid feature_type_id (path traversal): ...")``.
+        """
         resolved = os.path.realpath(
-            os.path.join(self.artifacts_root, "features", slug)
+            os.path.join(self.artifacts_root, "features", name)
         )
         root = os.path.realpath(self.artifacts_root)
         if not resolved.startswith(root + os.sep):
             raise ValueError(
                 f"Invalid feature_type_id (path traversal): {feature_type_id}"
             )
-        return slug
+        return name
 
     def _derive_completed_phases(
         self, last_completed: str | None
@@ -410,10 +444,11 @@ class WorkflowStateEngine:
             return None
         return _PHASE_VALUES[idx + 1]
 
-    def _get_existing_artifacts(self, feature_slug: str) -> list[str]:
-        """Return list of artifact filenames that exist for this feature."""
+    def _get_existing_artifacts(self, dir_name: str) -> list[str]:
+        """Return list of artifact filenames that exist in the feature
+        directory named *dir_name* (see ``_feature_dir_name``)."""
         feature_dir = os.path.join(
-            self.artifacts_root, "features", feature_slug
+            self.artifacts_root, "features", dir_name
         )
         return sorted(
             name
@@ -479,11 +514,18 @@ class WorkflowStateEngine:
         Unlike _hydrate_from_meta_json, this method:
         - Does NOT check entity existence in the DB
         - Does NOT backfill the DB row
-        - Catches OSError in addition to json.JSONDecodeError (must never raise)
+        - Names the directory from the features/ listing only, never the
+          registry; a type_id no listed name composes to returns None
+        - Catches OSError in addition to json.JSONDecodeError, so a missing
+          or unreadable file is None. A listed name that ``_feature_dir_name``
+          refuses (unsafe, or resolving outside artifacts_root) raises its
+          ValueError.
         """
-        slug = self._extract_slug(feature_type_id)
+        dir_name = self._feature_dir_name(feature_type_id, use_db=False)
+        if dir_name is None:
+            return None
         meta_path = os.path.join(
-            self.artifacts_root, "features", slug, ".meta.json"
+            self.artifacts_root, "features", dir_name, ".meta.json"
         )
         try:
             with open(meta_path) as f:
@@ -495,7 +537,13 @@ class WorkflowStateEngine:
         )
 
     def _iter_meta_jsons(self):
-        """Yield (feature_type_id, meta_dict) for each parseable .meta.json."""
+        """Yield (feature_type_id, dirname, meta_dict) for each parseable
+        .meta.json.
+
+        ``dirname`` is the LISTED directory name; ``feature_type_id`` is
+        composed from it (``feature:{dirname}``). Callers that need the
+        directory use ``dirname`` and never take the type_id apart (C11).
+        """
         pattern = os.path.join(
             self.artifacts_root, "features", "*", ".meta.json"
         )
@@ -505,8 +553,8 @@ class WorkflowStateEngine:
                     meta = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue
-            feature_dir = os.path.basename(os.path.dirname(meta_path))
-            yield f"feature:{feature_dir}", meta
+            dirname = os.path.basename(os.path.dirname(meta_path))
+            yield f"feature:{dirname}", dirname, meta
 
     def _scan_features_filesystem(self) -> list[FeatureWorkflowState]:
         """Scan features directory for .meta.json files.
@@ -514,7 +562,7 @@ class WorkflowStateEngine:
         Used when DB is unavailable for list operations.
         """
         results: list[FeatureWorkflowState] = []
-        for feature_type_id, meta in self._iter_meta_jsons():
+        for feature_type_id, _dirname, meta in self._iter_meta_jsons():
             state = self._derive_state_from_meta(
                 meta, feature_type_id, source="meta_json_fallback"
             )
@@ -531,7 +579,7 @@ class WorkflowStateEngine:
         Used by list_by_status() fallback when DB is unavailable.
         """
         results: list[FeatureWorkflowState] = []
-        for feature_type_id, meta in self._iter_meta_jsons():
+        for feature_type_id, _dirname, meta in self._iter_meta_jsons():
             if meta.get("status") != status:
                 continue
             state = self._derive_state_from_meta(
@@ -545,14 +593,26 @@ class WorkflowStateEngine:
         self, feature_type_id: str
     ) -> FeatureWorkflowState | None:
         """Lazy hydration: parse .meta.json, derive state, backfill DB row."""
-        # Precondition: entity must exist
+        # Precondition: entity must exist. Checked FIRST: an ambiguous,
+        # soft-deleted or unregistered type_id returns None before the
+        # directory lookup and writes nothing.
         entity = self.db.get_entity(feature_type_id)
         if entity is None:
             return None
 
-        slug = self._extract_slug(feature_type_id)
+        # The name lookup's own refusals (an unsafe stored name, rows that
+        # disagree) mean "not found": None, nothing written. The containment
+        # refusal below propagates, exactly as _feature_dir_name's does for
+        # every other reader.
+        try:
+            name = feature_dir_name(self.db, self.artifacts_root, feature_type_id)
+        except ValueError:
+            return None
+        if name is None:
+            return None
+        dir_name = self._contained_feature_dir_name(feature_type_id, name)
         meta_path = os.path.join(
-            self.artifacts_root, "features", slug, ".meta.json"
+            self.artifacts_root, "features", dir_name, ".meta.json"
         )
         if not os.path.exists(meta_path):
             return None

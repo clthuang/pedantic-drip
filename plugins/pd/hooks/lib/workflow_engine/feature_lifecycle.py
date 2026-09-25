@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from entity_registry.database import _UNKNOWN_WORKSPACE_UUID, EntityDatabase, EntityExistsError
 from entity_registry.id_generator import registration_identity
 from workflow_engine.engine import WorkflowStateEngine
+from workflow_engine.feature_paths import check_feature_dir_name, feature_dir_name
 
 
 # ---------------------------------------------------------------------------
@@ -87,30 +88,56 @@ def _atomic_json_write(path: str, data: dict) -> None:
         raise
 
 
-def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
-    """Validate feature_type_id and extract slug with realpath defense.
-
-    Raises ValueError on invalid input.
-    """
-    if ":" not in feature_type_id:
-        raise ValueError("invalid_input: missing colon in feature_type_id")
-
-    slug = feature_type_id.split(":", 1)[1]
-
-    if not slug:
-        raise ValueError("feature_not_found: empty slug")
-
-    if "\0" in slug:
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
-
-    candidate = os.path.join(artifacts_root, "features", slug)
+def _require_feature_dir(artifacts_root: str, dir_name: str, refusal: str) -> None:
+    """Realpath defense: ``{artifacts_root}/features/<dir_name>`` must
+    resolve inside ``artifacts_root`` (symlinks included) and be a
+    directory. Raises ``ValueError(refusal)`` otherwise."""
+    candidate = os.path.join(artifacts_root, "features", dir_name)
     resolved = os.path.realpath(candidate)
     root = os.path.realpath(artifacts_root)
 
     if not resolved.startswith(root + os.sep) or not os.path.isdir(resolved):
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
+        raise ValueError(refusal)
 
-    return slug
+
+def _validate_feature_type_id(
+    db: EntityDatabase, feature_type_id: str, artifacts_root: str
+) -> str:
+    """Validate a registered feature's type_id; return its directory name.
+
+    The name is never the type_id text taken apart (C11). It comes from
+    ``feature_paths.feature_dir_name``: the row's stored
+    ``entities.entity_id`` column or, with no row, the listed directory
+    under ``{artifacts_root}/features`` whose name composes to
+    *feature_type_id*. In order:
+
+    1. **Prechecks:** no colon raises ``invalid_input: missing colon in
+       feature_type_id``; an empty suffix or a NUL byte is refused.
+    2. **The name:** none, or one that is not a single safe path component,
+       is refused.
+    3. **Realpath defense:** the directory must resolve inside
+       ``artifacts_root`` and exist.
+
+    Every refusal after the colon check raises ``ValueError("feature_not_found:
+    {feature_type_id} not found or path traversal blocked")``. A failed
+    registry read raises ``sqlite3.Error``.
+    """
+    if ":" not in feature_type_id:
+        raise ValueError("invalid_input: missing colon in feature_type_id")
+
+    refusal = f"feature_not_found: {feature_type_id} not found or path traversal blocked"
+    if feature_type_id[-1] == ":" or "\0" in feature_type_id:
+        raise ValueError(refusal)
+
+    try:
+        dir_name = feature_dir_name(db, artifacts_root, feature_type_id)
+    except ValueError as exc:
+        raise ValueError(refusal) from exc
+    if dir_name is None:
+        raise ValueError(refusal)
+
+    _require_feature_dir(artifacts_root, dir_name, refusal)
+    return dir_name
 
 
 def _promote_brainstorm(db: EntityDatabase, brainstorm_source: str) -> None:
@@ -181,7 +208,11 @@ def init_feature_state(
     Raises:
         ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only,
             or if feature_id with slug is not an id the allocator issues
-            (``invalid_input: … is not an allocated id``); nothing is written.
+            (``invalid_input: … is not an allocated id``), or if the
+            directory name ``{feature_id}-{slug}`` is not one safe path
+            component, or ``{artifacts_root}/features/{feature_id}-{slug}``
+            does not resolve to a directory inside artifacts_root
+            (``feature_not_found: …``); nothing is written.
     """
     # Field validation — reject None, empty string, whitespace-only
     for field_name, field_value in [
@@ -192,11 +223,18 @@ def init_feature_state(
         if field_value is None or not isinstance(field_value, str) or not field_value.strip():
             raise ValueError(f"invalid_input: {field_name} must be a non-empty string")
 
-    feature_type_id = f"feature:{feature_id}-{slug}"
+    entity_id = f"{feature_id}-{slug}"
+    feature_type_id = f"feature:{entity_id}"
     identity = _allocated_identity("feature", feature_id, slug)
 
-    # Validate feature_type_id for path traversal defense
-    _validate_feature_type_id(feature_type_id, artifacts_root)
+    # Path traversal defense. The row does not exist yet, so the directory
+    # name is this call's own entity_id, composed above: it must be a single
+    # safe path component, then resolve inside artifacts_root and exist.
+    check_feature_dir_name(entity_id)
+    _require_feature_dir(
+        artifacts_root, entity_id,
+        f"feature_not_found: {entity_id} not found or path traversal blocked",
+    )
 
     # Build metadata dict
     metadata: dict = {
@@ -523,7 +561,7 @@ def activate_feature(
     Returns dict with keys: activated, feature_type_id, previous_status, new_status.
     Optionally includes projection_warning (not set here — added by MCP wrapper).
     """
-    _validate_feature_type_id(feature_type_id, artifacts_root)
+    _validate_feature_type_id(db, feature_type_id, artifacts_root)
 
     entity = db.get_entity(feature_type_id)
     if entity is None:

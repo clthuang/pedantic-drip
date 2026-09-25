@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import dataclass
 
 from entity_registry.database import EntityDatabase
@@ -194,6 +195,21 @@ def _compare_phases(
 # ---------------------------------------------------------------------------
 
 
+def _single_feature_dir_name(
+    engine: WorkflowStateEngine, feature_type_id: str
+) -> str | None:
+    """The directory name for one feature: ``engine._feature_dir_name``.
+
+    A failed registry read falls back to the features/ listing
+    (``use_db=False``), so the single-feature check never raises for it.
+    Refusals (ValueError) propagate to the caller.
+    """
+    try:
+        return engine._feature_dir_name(feature_type_id)
+    except sqlite3.Error:
+        return engine._feature_dir_name(feature_type_id, use_db=False)
+
+
 def _read_single_meta_json(
     engine: WorkflowStateEngine,
     artifacts_root: str,
@@ -201,17 +217,22 @@ def _read_single_meta_json(
 ) -> dict | None:
     """Read .meta.json for a single feature without bulk scan.
 
-    Extracts slug via engine._extract_slug(feature_type_id), constructs
-    path as {artifacts_root}/features/{slug}/.meta.json, reads and parses.
+    Names the directory via ``_single_feature_dir_name`` (the row's
+    entity_id column, or with no row the listed directory; never the
+    type_id text), then reads and parses
+    ``{artifacts_root}/features/{dir_name}/.meta.json``.
 
-    Returns parsed dict or None if file missing/unparseable.
+    Returns parsed dict or None if no directory is named, the name is
+    refused, or the file is missing/unparseable.
     """
     try:
-        slug = engine._extract_slug(feature_type_id)
+        dir_name = _single_feature_dir_name(engine, feature_type_id)
     except ValueError:
         return None
+    if dir_name is None:
+        return None
 
-    meta_path = os.path.join(artifacts_root, "features", slug, ".meta.json")
+    meta_path = os.path.join(artifacts_root, "features", dir_name, ".meta.json")
     try:
         with open(meta_path) as f:
             return json.load(f)
@@ -697,7 +718,7 @@ def check_workflow_drift(
     ----------
     engine : WorkflowStateEngine
         Engine instance (for _derive_state_from_meta, _iter_meta_jsons,
-        _extract_slug).
+        _feature_dir_name, _contained_feature_dir_name).
     db : EntityDatabase
         Database instance (for get_workflow_phase).
     artifacts_root : str
@@ -726,8 +747,8 @@ def check_workflow_drift(
         meta = _read_single_meta_json(engine, artifacts_root, feature_type_id)
         if meta is not None:
             try:
-                slug = engine._extract_slug(feature_type_id)
-                artifact_dir = os.path.join(artifacts_root, "features", slug)
+                dir_name = _single_feature_dir_name(engine, feature_type_id)
+                artifact_dir = os.path.join(artifacts_root, "features", dir_name)
                 report = _check_single_feature(engine, db, feature_type_id, meta, artifact_dir=artifact_dir)
                 reports.append(report)
             except Exception as exc:
@@ -766,13 +787,16 @@ def check_workflow_drift(
                     message=f"Feature not found: {feature_type_id}",
                 ))
     else:
-        # Bulk path: scan all .meta.json files
+        # Bulk path: scan all .meta.json files. Each report pairs the LISTED
+        # directory with the type_id its name composes; the directory is
+        # that listed name, containment-checked, never read back out of
+        # the type_id and never looked up in the registry (C11).
         meta_type_ids: set[str] = set()
-        for ftype_id, meta in engine._iter_meta_jsons():
+        for ftype_id, dirname, meta in engine._iter_meta_jsons():
             meta_type_ids.add(ftype_id)
             try:
-                slug = engine._extract_slug(ftype_id)
-                artifact_dir = os.path.join(artifacts_root, "features", slug)
+                dir_name = engine._contained_feature_dir_name(ftype_id, dirname)
+                artifact_dir = os.path.join(artifacts_root, "features", dir_name)
                 report = _check_single_feature(engine, db, ftype_id, meta, artifact_dir=artifact_dir)
                 reports.append(report)
             except Exception as exc:

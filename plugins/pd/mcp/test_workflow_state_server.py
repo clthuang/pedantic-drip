@@ -2099,33 +2099,61 @@ class TestTransitionDegradedResponseShape:
 # ---------------------------------------------------------------------------
 
 
-class TestValidateFeatureTypeId:
-    """Path-traversal validation for feature_type_id."""
+def _insert_raw_feature_row(db, type_id: str, entity_id: str) -> None:
+    """Raw SQL (C11): a feature row with a stored entity_id no write path
+    produces, so the validator names its directory from that column."""
+    import uuid as _uuid
+    from entity_registry.database import _derive_type_and_lifecycle
+    from entity_registry.test_helpers import bootstrap_test_workspace
 
-    def test_valid_feature_type_id_returns_slug(self, tmp_path):
-        """Valid 'feature:010-slug' with existing dir returns slug."""
+    workspace = bootstrap_test_workspace(db, f"c11-raw-{_uuid.uuid4().hex[:8]}")
+    entity_type, lifecycle_class = _derive_type_and_lifecycle("feature")
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, "
+        "name, status, created_at, updated_at, type, kind, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (str(_uuid.uuid4()), workspace, type_id, entity_id, "Raw row", "active",
+         now, now, entity_type, "feature", lifecycle_class),
+    )
+    db._conn.commit()
+
+
+class TestValidateFeatureTypeId:
+    """Path-traversal validation for feature_type_id.
+
+    C11: the directory name comes from the registered row's entity_id
+    column, so each refusal test registers its feature and the refusal
+    comes from the name check or containment, not from "not registered".
+    """
+
+    def test_valid_feature_type_id_returns_slug(self, db, tmp_path):
+        """Valid 'feature:010-slug' with existing dir returns its directory name."""
+        db.register_entity("feature", name="Slug", seq=10, slug="slug", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         feat_dir = os.path.join(str(tmp_path), "features", "010-slug")
         os.makedirs(feat_dir, exist_ok=True)
-        result = _validate_feature_type_id("feature:010-slug", str(tmp_path))
+        result = _validate_feature_type_id(db, "feature:010-slug", str(tmp_path))
         assert result == "010-slug"
 
-    def test_no_colon_raises_value_error(self, tmp_path):
+    def test_no_colon_raises_value_error(self, db, tmp_path):
         """Missing colon raises ValueError with 'invalid_input' prefix."""
         with pytest.raises(ValueError, match="invalid_input: missing colon"):
-            _validate_feature_type_id("feature-no-colon", str(tmp_path))
+            _validate_feature_type_id(db, "feature-no-colon", str(tmp_path))
 
-    def test_double_dot_in_slug_raises_value_error(self, tmp_path):
-        """'..' in slug raises ValueError (path traversal)."""
+    def test_double_dot_in_slug_raises_value_error(self, db, tmp_path):
+        """'..' in the stored name raises ValueError (path traversal)."""
+        _insert_raw_feature_row(db, "feature:../../../etc", "../../../etc")
         with pytest.raises(ValueError, match="feature_not_found"):
-            _validate_feature_type_id("feature:../../../etc", str(tmp_path))
+            _validate_feature_type_id(db, "feature:../../../etc", str(tmp_path))
 
-    def test_null_bytes_in_slug_raises_value_error(self, tmp_path):
+    def test_null_bytes_in_slug_raises_value_error(self, db, tmp_path):
         """Null bytes in slug raises ValueError before realpath."""
         with pytest.raises(ValueError, match="feature_not_found"):
-            _validate_feature_type_id("feature:010-slug\x00evil", str(tmp_path))
+            _validate_feature_type_id(db, "feature:010-slug\x00evil", str(tmp_path))
 
-    def test_symlink_traversal_raises_value_error(self, tmp_path):
+    def test_symlink_traversal_raises_value_error(self, db, tmp_path):
         """Symlink pointing outside artifacts_root raises ValueError."""
+        _insert_raw_feature_row(db, "feature:evil-link", "evil-link")
         # Create artifacts_root with features/ subdir
         arts_root = os.path.join(str(tmp_path), "artifacts")
         features_dir = os.path.join(arts_root, "features")
@@ -2136,17 +2164,18 @@ class TestValidateFeatureTypeId:
             symlink_path = os.path.join(features_dir, "evil-link")
             os.symlink(outside_dir, symlink_path)
             with pytest.raises(ValueError, match="feature_not_found"):
-                _validate_feature_type_id("feature:evil-link", arts_root)
+                _validate_feature_type_id(db, "feature:evil-link", arts_root)
 
-    def test_prefix_collision_raises_value_error(self, tmp_path):
+    def test_prefix_collision_raises_value_error(self, db, tmp_path):
         """Symlink to external dir raises ValueError even with valid prefix."""
+        db.register_entity("feature", name="Slug", seq=10, slug="slug", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         evil_root = os.path.join(str(tmp_path), "evilroot")
         os.makedirs(os.path.join(evil_root, "features"), exist_ok=True)
         real_target = os.path.join(str(tmp_path), "external-data")
         os.makedirs(real_target, exist_ok=True)
         os.symlink(real_target, os.path.join(evil_root, "features", "010-slug"))
         with pytest.raises(ValueError, match="feature_not_found"):
-            _validate_feature_type_id("feature:010-slug", evil_root)
+            _validate_feature_type_id(db, "feature:010-slug", evil_root)
 
 
 # ---------------------------------------------------------------------------
@@ -3675,7 +3704,7 @@ class TestReconciliationErrorPropagation:
 
         monkeypatch.setattr(mod, "scan_all", original)
 
-    def test_validate_feature_type_id_not_found_routes_correctly(self, tmp_path):
+    def test_validate_feature_type_id_not_found_routes_correctly(self, db, tmp_path):
         """ValueError with 'feature_not_found:' prefix routes to feature_not_found.
         derived_from: dimension:error_propagation (ValueError routing)
 
@@ -3683,12 +3712,13 @@ class TestReconciliationErrorPropagation:
         prefix check is removed, "feature_not_found:" messages would fall
         through to "invalid_transition" error_type.
         """
-        # Given a non-existent feature directory
+        # Given a registered feature whose directory does not exist
+        db.register_entity("feature", name="Ghost", seq=999, slug="ghost", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
         # When validating
         with pytest.raises(ValueError, match="feature_not_found"):
-            _validate_feature_type_id("feature:999-ghost", str(tmp_path))
+            _validate_feature_type_id(db, "feature:999-ghost", str(tmp_path))
 
-    def test_validate_feature_type_id_invalid_input_routes_correctly(self, tmp_path):
+    def test_validate_feature_type_id_invalid_input_routes_correctly(self, db, tmp_path):
         """ValueError with 'invalid_input:' prefix routes to invalid_transition.
         derived_from: dimension:error_propagation (ValueError routing)
 
@@ -3698,7 +3728,7 @@ class TestReconciliationErrorPropagation:
         to 'invalid_transition'. This test pins that routing.
         """
         with pytest.raises(ValueError, match="invalid_input"):
-            _validate_feature_type_id("nocolonhere", str(tmp_path))
+            _validate_feature_type_id(db, "nocolonhere", str(tmp_path))
 
 
 # ===========================================================================
@@ -6011,8 +6041,10 @@ class TestAdversarialDeepened:
         assert meta["features"] == ["feat-a", "feat-b"]
 
     def test_init_feature_state_path_traversal_blocked(self, db, tmp_path):
-        """Path traversal via feature_id is blocked by _validate_feature_type_id."""
-        # derived_from: design:C3 — _validate_feature_type_id defense
+        """Path traversal via the slug is blocked: the directory name init
+        composes must be one safe path component (C11 check_feature_dir_name)."""
+        # derived_from: design:C3 — path traversal defense (init stopped
+        # calling _validate_feature_type_id at C11: its row does not exist yet)
 
         feature_dir = os.path.join(str(tmp_path), "features", "../../etc")
         engine = WorkflowStateEngine(db, str(tmp_path))

@@ -141,22 +141,6 @@ class TestModels:
 class TestHelpers:
     """Tasks 2.1-2.8: Private helper tests."""
 
-    # -- _extract_slug (2.1/2.2) --
-
-    def test_extract_slug_valid(self) -> None:
-        engine = WorkflowStateEngine(_make_db(), "/tmp")
-        assert engine._extract_slug("feature:008-foo") == "008-foo"
-
-    def test_extract_slug_missing_colon(self) -> None:
-        engine = WorkflowStateEngine(_make_db(), "/tmp")
-        with pytest.raises(ValueError, match="missing ':'"):
-            engine._extract_slug("feature-008-foo")
-
-    def test_extract_slug_empty(self) -> None:
-        engine = WorkflowStateEngine(_make_db(), "/tmp")
-        with pytest.raises(ValueError, match="empty slug"):
-            engine._extract_slug("feature:")
-
     # -- _derive_completed_phases (2.3/2.4) --
 
     def test_derive_completed_phases_none(self) -> None:
@@ -1271,21 +1255,6 @@ class TestDeepenedBoundaryValues:
         # Then only brainstorm is in the completed tuple
         assert result == ("brainstorm",)
         assert len(result) == 1
-
-    # -- _extract_slug boundary: multiple colons --
-
-    def test_extract_slug_multiple_colons_returns_full_slug(self) -> None:
-        """BVA: slug with embedded colons preserves everything after first colon.
-
-        Anticipate: Using split() without maxsplit=1 would drop parts after second colon.
-        derived_from: dimension:boundary_values (string edge)
-        """
-        # Given a type_id with multiple colons
-        engine = WorkflowStateEngine(_make_db(), "/tmp")
-        # When extracting the slug
-        result = engine._extract_slug("feature:008-foo:bar:baz")
-        # Then everything after first colon is returned
-        assert result == "008-foo:bar:baz"
 
     # -- list_by_status empty results --
 

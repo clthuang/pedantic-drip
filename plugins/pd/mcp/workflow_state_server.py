@@ -1833,7 +1833,7 @@ def _process_reconcile_check(
     ``check_workflow_drift`` so the bulk db_only scan is workspace-scoped.
     """
     if feature_type_id is not None:
-        _validate_feature_type_id(feature_type_id, artifacts_root)
+        _validate_feature_type_id(db, feature_type_id, artifacts_root)
     result = check_workflow_drift(
         engine, db, artifacts_root, feature_type_id,
         workspace_uuid=workspace_uuid,
@@ -1867,7 +1867,7 @@ def _process_reconcile_apply(
     ``apply_workflow_reconciliation`` so the FR-4.1 read-side assertion runs.
     """
     if feature_type_id is not None:
-        _validate_feature_type_id(feature_type_id, artifacts_root)
+        _validate_feature_type_id(db, feature_type_id, artifacts_root)
     result = apply_workflow_reconciliation(
         engine, db, artifacts_root, feature_type_id, dry_run,
         workspace_uuid=workspace_uuid,
@@ -1910,8 +1910,8 @@ def _process_reconcile_frontmatter(
             db, artifacts_root, workspace_uuid=workspace_uuid,
         )
     else:
-        slug = _validate_feature_type_id(feature_type_id, artifacts_root)
-        feat_dir = os.path.join(artifacts_root, "features", slug)
+        dir_name = _validate_feature_type_id(db, feature_type_id, artifacts_root)
+        feat_dir = os.path.join(artifacts_root, "features", dir_name)
         reports = []
         if os.path.isdir(feat_dir):
             for basename in ARTIFACT_BASENAME_MAP:

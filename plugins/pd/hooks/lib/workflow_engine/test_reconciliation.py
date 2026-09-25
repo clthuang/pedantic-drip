@@ -1922,11 +1922,12 @@ class TestReadSingleMetaJsonBoundary:
     """
 
     def test_invalid_type_id_format_returns_none(self, tmp_path) -> None:
-        """feature_type_id without colon causes ValueError in _extract_slug -> returns None.
+        """feature_type_id without colon names no directory -> returns None.
         derived_from: dimension:boundary_values (malformed input)
 
-        Anticipate: If ValueError from _extract_slug is not caught,
-        the function would raise instead of returning None.
+        Anticipate: If the directory-name lookup's refusal (ValueError) or
+        its None were not handled, the function would raise instead of
+        returning None. C11: no row and no listed name compose to "nocolon".
         """
         # Given an engine
         db = _make_db()
