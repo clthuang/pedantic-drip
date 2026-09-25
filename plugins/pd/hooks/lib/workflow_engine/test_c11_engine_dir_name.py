@@ -24,6 +24,8 @@ falls back to the listing when the read fails.
 ``TestDegradedReaderWithAReadableRegistry`` keeps the DB open and fails only
 the health probe, so a degraded reader that asked the registry would read
 the column's directory (design D4).
+``TestDegradedValidateWithAReadableRegistry`` does the same for validate
+(design D3).
 
 **Parity guards.** Some tests pin behaviour develop already has, so they
 are green on develop too:
@@ -300,6 +302,33 @@ class TestDegradedValidate:
         assert engine.get_state(type_id).source == "meta_json_fallback"
 
         results = engine.validate_prerequisites(type_id, "design")
+
+        assert _gate(results, "G-08").allowed is True
+
+
+class TestDegradedValidateWithAReadableRegistry:
+    def test_evaluates_the_gates_on_the_listed_directory(
+        self, db, db_path, artifacts_root, monkeypatch
+    ):
+        # Design D3: once the state came from the fallback, validate never
+        # asks the registry. The DB stays open and only the health probe
+        # fails, so a validate that asked would get the column's name, not
+        # an error. Both directories record the same phase, so the state is
+        # the same whichever one is read; shape.md exists only in the listed
+        # directory, so G-08 passes only if validate read the listing.
+        _insert_feature_row(db, db_path, DISAGREEING_TYPE_ID, COLUMN_NAME)
+        features = os.path.join(artifacts_root, "features")
+        _write_feature_dir(os.path.join(features, COLUMN_NAME), last_completed="specify")
+        _write_feature_dir(
+            os.path.join(features, TEXT_NAME), last_completed="specify", artifacts=("shape.md",)
+        )
+        engine = WorkflowStateEngine(db, artifacts_root)
+        monkeypatch.setattr(engine, "_check_db_health", lambda: False)
+
+        # The degraded branch is the one under test.
+        assert engine.get_state(DISAGREEING_TYPE_ID).source == "meta_json_fallback"
+
+        results = engine.validate_prerequisites(DISAGREEING_TYPE_ID, "design")
 
         assert _gate(results, "G-08").allowed is True
 
