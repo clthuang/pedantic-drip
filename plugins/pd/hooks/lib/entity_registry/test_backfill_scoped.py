@@ -5,7 +5,8 @@ and its "Backfill scope" and "Backfill source" tests.
 
 - **Scope:** the backfill iterates only the server's workspace and passes
   that workspace to every write, so another workspace's rows are never
-  rewritten, and a type_id two workspaces hold is seeded for the caller.
+  rewritten, and a type_id two workspaces hold, with no row yet, is seeded
+  for the caller.
 - **Source:** status comes from the registry. A feature's phase is
   ``finish`` when it is completed, otherwise None; ``last_completed_phase``
   and ``mode`` stay None. No ``.meta.json`` is read.

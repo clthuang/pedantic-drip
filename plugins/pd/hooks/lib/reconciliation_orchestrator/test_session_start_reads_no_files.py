@@ -15,6 +15,10 @@ and a temp git repo.
 is another pd repo registered in the same registry, the way every pd project
 on a machine shares one ``entities.db``. One test adds a third: a second
 clone of A's repository, whose workspace has no legacy project id.
+
+**Called directly.** The tests that pin one workspace guard alone, or count
+writes, call cascade recovery or the Task 3 cleanup in-process: through a
+session start, another guard or task can hide the one under test.
 """
 from __future__ import annotations
 
@@ -29,6 +33,10 @@ from entity_registry.database import EntityDatabase
 from entity_registry.metadata import parse_metadata
 from entity_registry.project_identity import resolve_workspace_uuid
 from entity_registry.test_helpers import seed_legacy_entity
+from reconciliation_orchestrator.dependency_freshness import (
+    cleanup_stale_dependencies,
+)
+from workflow_engine.reconciliation import _recover_pending_cascades
 from workflow_engine.rollup import compute_progress
 
 _HOOKS_LIB = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
@@ -156,6 +164,23 @@ def _workflow_rows(db) -> list[dict]:
 
 def _cascade_ready_events(db, type_id) -> list[dict]:
     return db.query_phase_events(type_id=type_id, event_type="cascade_ready")
+
+
+def _record_update_entity_calls(db, monkeypatch) -> list[str]:
+    """Record the entity every ``db.update_entity`` call names, in order.
+
+    Every rollup and cascade write goes through ``update_entity``, which
+    always stamps ``updated_at``: an entry here is a rewritten row.
+    """
+    written: list[str] = []
+    update_entity = db.update_entity
+
+    def recording_update_entity(*args, **kwargs):
+        written.append(args[0] if args else kwargs["type_id"])
+        return update_entity(*args, **kwargs)
+
+    monkeypatch.setattr(db, "update_entity", recording_update_entity)
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -473,3 +498,198 @@ def test_an_unresolved_workspace_skips_tasks_2_and_3(checkout, tmp_path):
         "cascade_recovery: skipped: workspace unresolved",
         "dependency_freshness: skipped: workspace unresolved",
     ]
+
+
+# ---------------------------------------------------------------------------
+# W1.7 / W1.8: each workspace guard pinned alone: removing only that guard
+# fails its test (through a session start, another guard or task hides it)
+# ---------------------------------------------------------------------------
+
+
+def test_cascade_recovery_never_scans_another_workspaces_completed_child(
+    checkout,
+):
+    """B's completed feature sits under A's project and blocks B's dependent;
+    A has no completed child there. A's recovery recovers A's own missed
+    cascade, but never lists B's child: A's project keeps no progress and
+    B's dependent stays blocked.
+
+    Pins the completed-child scan's workspace scope: the parent skip cannot
+    catch this case, since the parent is A's."""
+    c, db = checkout, checkout["db"]
+    shared_home = _register(db, "project", c["A"], seq=80, slug="shared-home")
+    b_child = _register(db, "feature", c["B"], seq=81, slug="b-finished",
+                        status="completed", parent_uuid=shared_home["uuid"])
+    b_dependent = _register(db, "feature", c["B"], seq=82, slug="b-waiting",
+                            status="blocked")
+    db.add_dependency(b_dependent["uuid"], b_child["uuid"])
+    a_home = _register(db, "project", c["A"], seq=83, slug="a-home")
+    _register(db, "feature", c["A"], seq=84, slug="a-finished",
+              status="completed", parent_uuid=a_home["uuid"])
+    shared_home_before = dict(db.get_entity_by_uuid(shared_home["uuid"]))
+
+    recovered = _recover_pending_cascades(db, c["A"])
+
+    assert recovered == 1
+    a_home_progress = parse_metadata(
+        db.get_entity_by_uuid(a_home["uuid"])["metadata"]
+    ).get("progress")
+    assert a_home_progress == 1.0
+    assert dict(db.get_entity_by_uuid(shared_home["uuid"])) == shared_home_before
+    assert db.get_entity_by_uuid(b_dependent["uuid"])["status"] == "blocked"
+
+
+def test_cascade_recovery_skips_a_first_level_parent_in_another_workspace(
+    checkout,
+):
+    """A's completed feature sits directly under B's project and blocks A's
+    dependent. A's recovery skips that parent, which is B's to recover: B's
+    project is unchanged, and the child's unblock does not run, so A's
+    dependent stays blocked. A's own missed cascade elsewhere is recovered.
+
+    Pins the first-level parent skip. Through a session start, Task 3 would
+    flip A's dependent anyway and hide the skip."""
+    c, db = checkout, checkout["db"]
+    b_home = _register(db, "project", c["B"], seq=85, slug="b-home")
+    a_child = _register(db, "feature", c["A"], seq=86, slug="a-under-b",
+                        status="completed", parent_uuid=b_home["uuid"])
+    a_dependent = _register(db, "feature", c["A"], seq=87, slug="a-waiting",
+                            status="blocked")
+    db.add_dependency(a_dependent["uuid"], a_child["uuid"])
+    a_home = _register(db, "project", c["A"], seq=88, slug="a-home")
+    _register(db, "feature", c["A"], seq=89, slug="a-finished",
+              status="completed", parent_uuid=a_home["uuid"])
+    b_home_before = dict(db.get_entity_by_uuid(b_home["uuid"]))
+
+    recovered = _recover_pending_cascades(db, c["A"])
+
+    assert recovered == 1
+    a_home_progress = parse_metadata(
+        db.get_entity_by_uuid(a_home["uuid"])["metadata"]
+    ).get("progress")
+    assert a_home_progress == 1.0
+    assert db.get_entity_by_uuid(a_dependent["uuid"])["status"] == "blocked"
+    assert dict(db.get_entity_by_uuid(b_home["uuid"])) == b_home_before
+
+
+def test_task3_with_no_workspace_lists_and_flips_nothing(checkout):
+    """``cleanup_stale_dependencies`` given no workspace (None or empty)
+    returns 0 and leaves B's resolvable blocked entity as it was: unscoped,
+    it would list every workspace's blocked entities. Given B's workspace,
+    the same entity flips, so it was resolvable all along.
+
+    Pins the cleanup's own no-workspace return (None is the case it alone
+    catches: an empty workspace lists no entity either way)."""
+    c, db = checkout, checkout["db"]
+    blocker = _register(db, "feature", c["B"], seq=95, slug="b-done",
+                        status="completed")
+    blocked = _register(db, "feature", c["B"], seq=96, slug="b-stuck",
+                        status="blocked")
+    db.add_dependency(blocked["uuid"], blocker["uuid"])
+    blocked_before = dict(db.get_entity_by_uuid(blocked["uuid"]))
+
+    assert cleanup_stale_dependencies(db, None) == 0
+    assert cleanup_stale_dependencies(db, "") == 0
+    assert dict(db.get_entity_by_uuid(blocked["uuid"])) == blocked_before
+
+    assert cleanup_stale_dependencies(db, c["B"]) == 1
+    assert db.get_entity_by_uuid(blocked["uuid"])["status"] == "ready"
+
+
+# ---------------------------------------------------------------------------
+# W1.7: recovery writes only on change, so a session start with nothing to
+# recover rewrites no row (update_entity always stamps updated_at)
+# ---------------------------------------------------------------------------
+
+
+def test_a_rollup_leaves_a_current_ancestor_unwritten_and_walks_past_it(
+    checkout,
+):
+    """The live registry's shape: A's project, with a completed feature and
+    no stored progress, sits under A's programme, whose stored progress
+    (0.0, RED) is already current, under A's portfolio, which has none.
+    A's session start rolls the project up, leaves the programme's row as it
+    was (``updated_at`` included), and still rolls the portfolio up past
+    it."""
+    c, db = checkout, checkout["db"]
+    portfolio = _register(db, "project", c["A"], seq=90, slug="portfolio")
+    programme = _register(
+        db, "project", c["A"], seq=91, slug="programme",
+        parent_uuid=portfolio["uuid"],
+        metadata={"progress": 0.0, "traffic_light": "RED"},
+    )
+    project = _register(db, "project", c["A"], seq=92, slug="project",
+                        parent_uuid=programme["uuid"])
+    _register(db, "feature", c["A"], seq=93, slug="shipped",
+              status="completed", parent_uuid=project["uuid"])
+    assert compute_progress(db, programme["uuid"]) == 0.0
+    programme_before = dict(db.get_entity_by_uuid(programme["uuid"]))
+
+    result = _session_start(c)
+
+    def stored(entity) -> tuple:
+        meta = parse_metadata(db.get_entity_by_uuid(entity["uuid"])["metadata"])
+        return meta.get("progress"), meta.get("traffic_light")
+
+    assert stored(project) == (1.0, "GREEN")
+    assert dict(db.get_entity_by_uuid(programme["uuid"])) == programme_before
+    assert stored(portfolio) == (0.0, "RED")
+    assert result["cascade_recovery"] == 1
+    assert result["errors"] == []
+
+
+def test_cascade_recovery_writes_an_objective_or_key_result_only_on_change(
+    checkout, monkeypatch,
+):
+    """Three objectives of A's:
+
+    - **current:** its stored score and traffic light, and its key results'
+      scores, are already right. No row is rewritten.
+    - **stale:** its stored score is 0.0, but its key result is met. It is
+      rescored in one write; its key result, whose score is right, is not
+      rewritten.
+    - **unscorable:** its only key result is abandoned, so rescoring returns
+      0.0 early and stores nothing. The recovery stores that 0.0, once.
+
+    A second run finds everything current and writes nothing."""
+    c, db = checkout, checkout["db"]
+
+    def objective(seq, slug, **metadata):
+        return _register(db, "objective", c["A"], seq=seq, slug=slug,
+                         metadata=metadata)
+
+    def key_result(seq, slug, parent, score):
+        return _register(
+            db, "key_result", c["A"], seq=seq, slug=slug,
+            parent_uuid=parent["uuid"],
+            metadata={"metric_type": "baseline_target", "score": score},
+        )
+
+    current = objective(70, "current-goal", score=0.5, traffic_light="YELLOW")
+    current_key_results = [key_result(71, "met", current, 1.0),
+                           key_result(72, "unmet", current, 0.0)]
+    stale = objective(73, "stale-goal", score=0.0)
+    stale_key_result = key_result(74, "now-met", stale, 1.0)
+    unscorable = objective(75, "unscorable-goal")
+    _register(db, "key_result", c["A"], seq=76, slug="dropped",
+              status="abandoned", parent_uuid=unscorable["uuid"])
+    unchanged = [current, *current_key_results, stale_key_result]
+    before = {row["uuid"]: dict(db.get_entity_by_uuid(row["uuid"]))
+              for row in unchanged}
+    written = _record_update_entity_calls(db, monkeypatch)
+
+    recovered = _recover_pending_cascades(db, c["A"])
+
+    assert sorted(written) == sorted([stale["uuid"], unscorable["uuid"]])
+    assert {uuid: dict(db.get_entity_by_uuid(uuid)) for uuid in before} == before
+    stale_meta = parse_metadata(db.get_entity_by_uuid(stale["uuid"])["metadata"])
+    assert (stale_meta["score"], stale_meta["traffic_light"]) == (1.0, "GREEN")
+    unscorable_meta = parse_metadata(
+        db.get_entity_by_uuid(unscorable["uuid"])["metadata"]
+    )
+    assert unscorable_meta["score"] == 0.0
+    assert recovered == 2
+
+    written.clear()
+    assert _recover_pending_cascades(db, c["A"]) == 0
+    assert written == []

@@ -7,8 +7,10 @@ completion predicate (D4) via DependencyManager._evaluate_and_flip. Edges
 in entity_relations(kind='blocks') SURVIVE (FR124-4c) -- this is a
 missed-cascade safety net, not an edge-tombstone sweep.
 
-Scoped to the session's workspace (design W1.8): a session start never flips
-another workspace's blocked entities.
+Scoped to the session's workspace (design W1.8): this cleanup lists and
+flips only that workspace's blocked entities. The session start's cascade
+recovery (the orchestrator's Task 2) can still flip another workspace's
+dependent, across a cross-workspace ``blocks`` edge.
 """
 from __future__ import annotations
 

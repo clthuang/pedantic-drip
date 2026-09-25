@@ -2,9 +2,8 @@
 
 A feature's artifacts live in ``{artifacts_root}/features/<name>``. Every
 writer names that directory by the feature's entity_id: the phase commands,
-the session-start sync, the hooks and doctor.sh all use
-``features/{id}-{slug}``. The readers here take the name from the same
-place:
+the hooks and doctor.sh all use ``features/{id}-{slug}``. The readers here
+take the name from the same place:
 
 1. **Registry:** the feature row's stored ``entities.entity_id`` column
    (``EntityDatabase.feature_entity_id``).

@@ -209,9 +209,16 @@ def backfill_workflow_phases(
       ``last_completed_phase`` and ``mode`` stay None. No ``.meta.json`` is
       read: a checkout's projection may be stale, or another checkout's.
     - **Scope:** only *workspace_uuid*'s entities are iterated, and every
-      write passes *workspace_uuid*. A row that belongs to another
-      workspace is refused (recorded in ``errors``), never rewritten, and a
-      type_id two workspaces hold is seeded for this one.
+      write passes *workspace_uuid*, so another workspace's row is never
+      taken or rewritten.
+    - **A type_id two workspaces hold:** the table keeps one row per
+      type_id, so what happens depends on that row:
+      - **no row yet:** it is seeded for this workspace;
+      - **the other workspace's row:** skipped and counted in ``skipped``,
+        like this workspace's own rows, so this workspace's entity stays
+        row-less and nothing reports it apart;
+      - **except** the other workspace's brainstorm or backlog row with a
+        NULL phase: its fill-in is refused and recorded in ``errors``.
     - **No overwrite:** an existing row is skipped, except a brainstorm's
       or backlog item's NULL phase, which is filled in.
 

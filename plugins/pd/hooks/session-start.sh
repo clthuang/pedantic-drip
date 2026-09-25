@@ -492,9 +492,13 @@ else:
 }
 
 # Run the reconciliation orchestrator: registers the checkout's new brainstorms,
-# recovers missed completion cascades and flips stale blocked dependents, in
-# this session's workspace only. It surfaces nothing: its one-line JSON summary
-# (elapsed_ms, errors) is discarded, so run it by hand to inspect a run.
+# recovers missed completion cascades and flips stale blocked dependents. Its
+# scans list only this session's workspace, but writes follow edges: an unblock
+# can flip another workspace's dependent across a cross-workspace blocks edge,
+# and an objective's rescore rewrites a changed key result wherever it is
+# registered. It surfaces nothing: its one-line JSON summary (entity_sync,
+# cascade_recovery, dependency_cleanup, elapsed_ms, errors) is discarded, so
+# run it by hand to inspect a run.
 run_reconciliation() {
     local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
     local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}"

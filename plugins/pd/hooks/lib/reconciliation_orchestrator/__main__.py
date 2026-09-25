@@ -4,7 +4,7 @@ Runs all session-start reconciliation tasks in sequence:
   1. entity_status.sync_entity_statuses   — registers the checkout's new
      brainstorm ``.prd.md`` files
   2. workflow_engine.reconciliation._recover_pending_cascades — re-runs
-     missed completion cascades, in this session's workspace only
+     the missed completion cascades found in this session's workspace
   3. dependency_freshness.cleanup_stale_dependencies — flips this
      workspace's blocked entities whose blockers are all resolved
 
@@ -14,8 +14,12 @@ registry: those files are projections of it (design W1).
 Design principles:
   - Fail-open: any task error is captured in `errors` list; exit code is always 0.
   - Per-task isolation: one task raising does not prevent others from running.
-  - Workspace-scoped: Tasks 2 and 3 write only this session's workspace, so
-    an unresolved workspace skips them and records why under `errors`.
+  - Workspace-scoped scans: Tasks 2 and 3 list only this session's
+    workspace, so an unresolved workspace skips them and records why under
+    `errors`. Task 3 flips only this workspace's entities, but Task 2's
+    writes follow edges: an unblock can flip a dependent in another
+    workspace across a cross-workspace `blocks` edge, and an objective's
+    rescore rewrites a changed key result wherever it is registered.
   - DB connections closed in finally block (even on task errors).
 
 Output (stdout): single JSON line with keys:
@@ -134,9 +138,10 @@ def run(args):
             results["errors"].append(f"entity_status: {exc}")
 
         # Task 2: recover missed completion cascades (a completion whose
-        # rollup or unblock never ran), in this session's workspace only and
-        # written by uuid. Unscoped, it would rewrite every workspace's
-        # parents, so an unresolved workspace skips it.
+        # rollup or unblock never ran). It scans only this session's
+        # workspace and writes by uuid; its unblocks and key-result rescores
+        # follow edges into other workspaces. Unscoped, it would rewrite
+        # every workspace's parents, so an unresolved workspace skips it.
         if workspace_uuid:
             try:
                 from workflow_engine.reconciliation import _recover_pending_cascades

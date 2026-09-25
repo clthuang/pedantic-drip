@@ -8,7 +8,8 @@ dataclasses.
   projection of the DB, so nothing here writes a projection's state back
   into it. ``check_workflow_drift`` only reads.
 - **Cascade recovery** (``_recover_pending_cascades``) re-runs completion
-  cascades that never ran, in one workspace, writing by uuid (W1.7). The
+  cascades that never ran. It scans one workspace, writes by uuid and only
+  on change, and its writes follow edges into other workspaces (W1.7). The
   session-start orchestrator runs it as its own task.
 """
 from __future__ import annotations
@@ -23,7 +24,12 @@ from entity_registry.metadata import parse_metadata
 from transition_gate.constants import PHASE_SEQUENCE
 
 from .engine import WorkflowStateEngine
-from .rollup import compute_objective_score, compute_progress, rollup_parent
+from .rollup import (
+    compute_objective_score,
+    compute_progress,
+    matches_stored_value,
+    rollup_parent,
+)
 
 # Precomputed phase values from immutable PHASE_SEQUENCE (same pattern as engine.py)
 _PHASE_VALUES: tuple[str, ...] = tuple(p.value for p in PHASE_SEQUENCE)
@@ -386,13 +392,22 @@ def _recover_pending_cascades(db: EntityDatabase, workspace_uuid: str) -> int:
     expected parent progress from children.  Compare with stored progress in
     parent metadata.  Mismatch = missed cascade.
 
-    Scoped to one workspace (design W1.7), so a session never rewrites
-    another workspace's rows, even where the two share a type_id:
+    Scoped to one workspace (design W1.7). The scans are scoped, but the
+    writes follow edges:
 
-    - **Scans:** both list only *workspace_uuid*'s entities.
+    - **Scans:** both list only *workspace_uuid*'s entities, so another
+      workspace's completed child or objective never starts a recovery.
     - **Rollups:** a parent outside the workspace is not recovered here, and
       a rollup stops at the first ancestor outside it.
-    - **Writes:** every write names its entity by uuid.
+    - **Writes that cross workspaces:** ``cascade_unblock`` flips a blocked
+      dependent in another workspace across a cross-workspace ``blocks``
+      edge (feature 124, intended), and rescoring an objective rewrites a
+      key result under it whose score changed, wherever it is registered.
+    - **By uuid:** every write names its entity by uuid, so a type_id two
+      workspaces hold is never ambiguous.
+    - **Only on change:** a parent, key result or objective whose stored
+      value is already current is not rewritten, so a run with nothing to
+      recover writes nothing.
 
     Parameters
     ----------
@@ -454,10 +469,8 @@ def _recover_pending_cascades(db: EntityDatabase, workspace_uuid: str) -> int:
         raw_metadata = parent.get("metadata")
         metadata = parse_metadata(raw_metadata)
 
-        stored_progress = metadata.get("progress")
-
-        # Compare: mismatch if no stored progress or different value
-        if stored_progress is not None and abs(stored_progress - expected_progress) < 1e-9:
+        # Compare: mismatch if no stored progress or a different value
+        if matches_stored_value(metadata.get("progress"), expected_progress):
             continue  # already correct
 
         # Mismatch detected — re-run cascade
@@ -483,20 +496,24 @@ def _recover_pending_cascades(db: EntityDatabase, workspace_uuid: str) -> int:
         if not children:
             continue
 
+        # The score stored before rescoring; a missing or non-numeric one is
+        # a mismatch
+        stored_score = parse_metadata(obj.get("metadata")).get("score")
+        # Rescoring stores the objective's (and each key result's) new value
+        # itself, and leaves an unchanged one unwritten
         expected_score = compute_objective_score(db, obj_uuid)
-        raw_meta = obj.get("metadata")
-        meta = parse_metadata(raw_meta)
-        stored_score = meta.get("score")
+        if matches_stored_value(stored_score, expected_score):
+            continue  # already correct
 
-        if stored_score is not None:
-            try:
-                if abs(float(stored_score) - expected_score) < 1e-9:
-                    continue  # already correct
-            except (ValueError, TypeError):
-                pass  # invalid stored score — recompute
-
-        # Mismatch or missing score — update via metadata merge
-        db.update_entity(obj_uuid, metadata={"score": expected_score})
+        # compute_objective_score's early 0.0 returns (no active key result
+        # with a positive weight) store nothing: store that score here, so
+        # the next run finds it current. Any other mismatch is already
+        # stored, and is not written twice.
+        rescored = parse_metadata(
+            db.get_entity_by_uuid(obj_uuid).get("metadata")
+        ).get("score")
+        if not matches_stored_value(rescored, expected_score):
+            db.update_entity(obj_uuid, metadata={"score": expected_score})
         recovered += 1
 
     if recovered > 0:

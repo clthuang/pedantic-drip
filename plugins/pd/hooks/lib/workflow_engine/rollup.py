@@ -43,6 +43,26 @@ PHASE_WEIGHTS_5D: dict[str, float] = {
 # Maximum ancestor depth to prevent infinite loops on malformed data.
 _MAX_DEPTH = 5
 
+# Progress and scores are ratios recomputed from the registry; a stored value
+# this close to the recomputed one is the same value.
+SAME_VALUE_TOLERANCE = 1e-9
+
+
+def matches_stored_value(stored: object, computed: float) -> bool:
+    """Whether a stored metadata number already equals *computed*.
+
+    A missing or non-numeric stored value never matches. Every rollup writer
+    compares before it writes: ``update_entity`` always stamps
+    ``updated_at``, so rewriting an unchanged value would rewrite the row at
+    every session start.
+    """
+    if stored is None:
+        return False
+    try:
+        return abs(float(stored) - computed) < SAME_VALUE_TOLERANCE
+    except (TypeError, ValueError):
+        return False
+
 
 def _get_workflow_phase(db: "EntityDatabase", type_id: str) -> str | None:
     """Look up the current workflow_phase for an entity."""
@@ -137,7 +157,9 @@ def compute_okr_score(db: "EntityDatabase", kr_uuid: str) -> float:
     - ``baseline_target``: manual only, returns metadata ``score`` (default 0.0)
     - No metric_type or unrecognised → 0.0
 
-    Stores the computed score in the KR entity's metadata (shallow merge).
+    Stores the computed score in the KR entity's metadata (shallow merge),
+    only when it differs from the stored score: an unchanged key result is
+    not rewritten.
 
     Parameters
     ----------
@@ -193,8 +215,9 @@ def compute_okr_score(db: "EntityDatabase", kr_uuid: str) -> float:
         return 0.0
 
     # Store score in KR metadata, by uuid: a type_id another workspace also
-    # holds is never ambiguous (W1.7).
-    db.update_entity(entity["uuid"], metadata={"score": score})
+    # holds is never ambiguous (W1.7). An unchanged score is not rewritten.
+    if not matches_stored_value(meta.get("score"), score):
+        db.update_entity(entity["uuid"], metadata={"score": score})
     return score
 
 
@@ -206,7 +229,9 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     objective score is the weighted average of all KR scores.  Non-KR
     children are ignored.
 
-    Stores score + traffic_light in the objective's metadata.
+    Stores score + traffic_light in the objective's metadata, only when
+    either differs from the stored value: an unchanged objective is not
+    rewritten. The early 0.0 returns below store nothing.
 
     Implements AC-34 (OKR Progress Rollup) with weighted scoring support.
 
@@ -265,10 +290,15 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     score = weighted_sum / total_weight
     traffic_light = compute_traffic_light(score)
 
-    db.update_entity(
-        entity["uuid"],
-        metadata={"score": score, "traffic_light": traffic_light},
-    )
+    stored = parse_metadata(entity.get("metadata"))
+    if not (
+        matches_stored_value(stored.get("score"), score)
+        and stored.get("traffic_light") == traffic_light
+    ):
+        db.update_entity(
+            entity["uuid"],
+            metadata={"score": score, "traffic_light": traffic_light},
+        )
     return score
 
 
@@ -347,6 +377,11 @@ def rollup_parent(
     ``update_entity``).  Stops when there is no parent or max depth
     (5 levels) is reached.
 
+    An ancestor whose stored progress and traffic light already match is
+    not rewritten, and the walk goes on past it: an ancestor's progress
+    comes from its children's statuses and phases, not from their stored
+    progress, so one further up may still be stale.
+
     Parameters
     ----------
     db:
@@ -388,10 +423,15 @@ def rollup_parent(
 
         progress = compute_progress(db, parent_uuid)
         traffic_light = compute_traffic_light(progress)
-        db.update_entity(
-            parent["uuid"],
-            metadata={"progress": progress, "traffic_light": traffic_light},
-        )
+        stored = parse_metadata(parent.get("metadata"))
+        if not (
+            matches_stored_value(stored.get("progress"), progress)
+            and stored.get("traffic_light") == traffic_light
+        ):
+            db.update_entity(
+                parent["uuid"],
+                metadata={"progress": progress, "traffic_light": traffic_light},
+            )
 
         parent_uuid = parent.get("parent_uuid")
         depth += 1
