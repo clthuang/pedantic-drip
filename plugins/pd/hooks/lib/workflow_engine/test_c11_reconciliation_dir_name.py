@@ -16,6 +16,11 @@ their ``.meta.json`` files record different phases.
 ``TestSingleReadFailure`` pins design D3c. It passes on develop too, which
 reads no registry here, and fails if the lookup's sqlite3.Error escapes.
 
+``TestBulkNamesTheListedDirectory`` pins D3a. Only the listed directory
+exists there, so ``artifact_missing`` is wrong for a bulk check that names
+the column's directory, and a recorder on ``feature_entity_id`` sees any
+bulk name lookup.
+
 Everything else here is a PARITY test: it pins develop's exact output and
 passes on a develop export too. Unregistered directories and orphan
 workflow rows (no entities row) have no column to read, so the listing must
@@ -160,6 +165,65 @@ class TestDisagreeingRow:
 
         assert reports[DISAGREEING_TYPE_ID].meta_json["last_completed_phase"] == "specify"
         assert reports[f"feature:{COLUMN_NAME}"].status == "meta_json_only"
+
+
+@pytest.fixture
+def disagreeing_row_listed_directory_only(db, db_path, workspace, artifacts_root) -> None:
+    """The disagreeing row with only its LISTED (type_id-text) directory on
+    disk. The column's directory is absent, so ``artifact_missing`` shows
+    which directory a check named."""
+    _insert_feature_row(db_path, workspace, DISAGREEING_TYPE_ID, COLUMN_NAME)
+    db.create_workflow_phase(DISAGREEING_TYPE_ID, workflow_phase="specify")
+    _write_meta(os.path.join(artifacts_root, "features", TEXT_NAME), "specify")
+
+
+def _record_name_lookups(db, monkeypatch) -> list[str]:
+    """Wrap ``db.feature_entity_id`` so that every registry name lookup
+    records its type_id, then answers as before."""
+    lookups: list[str] = []
+    real_lookup = db.feature_entity_id
+
+    def recording_lookup(type_id):
+        lookups.append(type_id)
+        return real_lookup(type_id)
+
+    monkeypatch.setattr(db, "feature_entity_id", recording_lookup)
+    return lookups
+
+
+class TestBulkNamesTheListedDirectory:
+    """Design D3a: the bulk check names each directory by the name it
+    listed, and asks the registry for no name.
+
+    ``TestDisagreeingRow``'s bulk test cannot fail for this: both directories
+    exist there, and the bulk meta comes from the listing whichever name the
+    check picks. Here only the listed directory exists.
+    """
+
+    def test_artifact_missing_checks_the_listed_directory(
+        self, db, artifacts_root, disagreeing_row_listed_directory_only
+    ):
+        engine = WorkflowStateEngine(db, artifacts_root)
+
+        reports = {
+            r.feature_type_id: r for r in check_workflow_drift(engine, db, artifacts_root).features
+        }
+
+        # A check that named the column's directory would find it missing.
+        assert reports[DISAGREEING_TYPE_ID].artifact_missing is False
+
+    def test_asks_the_registry_for_no_name(
+        self, db, artifacts_root, disagreeing_row_listed_directory_only, monkeypatch
+    ):
+        lookups = _record_name_lookups(db, monkeypatch)
+        engine = WorkflowStateEngine(db, artifacts_root)
+
+        check_workflow_drift(engine, db, artifacts_root)
+
+        assert lookups == []
+        # Control: the recorder sees a lookup the engine does make.
+        assert engine._feature_dir_name(DISAGREEING_TYPE_ID) == COLUMN_NAME
+        assert lookups == [DISAGREEING_TYPE_ID]
 
 
 class TestSingleReadFailure:
