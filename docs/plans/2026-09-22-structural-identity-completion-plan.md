@@ -740,11 +740,13 @@ Run per `~/.claude/CLAUDE.md` before executing Wave 2: three rounds, the author 
 
 ## Wave 4 — readers and producers
 
-**Wave 4 SHIPPED 2026-09-25, except C11.** Each task was implemented, independently reviewed, fixed at most once, and independently QA'd. Each phase then had an integration review and QA.
+**Wave 4 SHIPPED 2026-09-25.** Each task was implemented, independently reviewed, fixed at most once, and independently QA'd. Each phase then had an integration review and QA.
 - **Phase 1 → develop `b881f8ff`:** C13/C18, C15/C16, C19/C20b (plus C3 and C22a).
 - **Phase 2 → develop `3d4d125e`:** C14, C9/C10/C12, C8 (plus C22's script).
 - **Phase 3 → develop `b3e0cb5d`:** C5b + C17.
-- **C11:** redesigned after four path-based fix rounds (branch `si-c11`, not merged). The design is `2026-09-25-c11-name-not-path-design.md`, rev 3.1: the directory name comes from the `entities.entity_id` column. It is implemented on `si-c11b`; see its own record.
+- **Final integration → develop (branch `si-final-int`):** C11, with C21's changelog and plan records.
+  - **C11** was redesigned after four path-based fix rounds (branch `si-c11`, not merged). The design is `2026-09-25-c11-name-not-path-design.md`, rev 3.1: the directory name comes from the `entities.entity_id` column. Its steps are in `2026-09-25-c11-implementation-plan.md`, implemented on `si-c11b` (`db2d715b`, fix round `e9d2760c`).
+  - **The integration's fix round** added the tests that kill three mutants the whole suite had missed: the bulk drift check, the degraded reader and degraded validate each asking the registry for a directory name.
 
 Parallel once Wave 2 lands: **C8–C12**, **C13**, **C14**, **C15–C16**, **C17**, **C18**, **C19/C20b**.
 
@@ -778,7 +780,7 @@ Apply **correction 3b** (from B3b): C8 gains the orphan-row fixture; C11 gains `
 
 Apply **correction 3**: re-derive the four pair groups at execution time. Neither this document's literals nor the parent's are complete, and the set drifts every time any workspace creates a project.
 
-**C22's scope is decision 2: the 11 unarchived live rows, collapsing to 10** — 6 backlog + `P001` (absorbing `P001-openclaw-gap-analysis`), `P002`, `P003`, `P004-entity-db-redesign`. Add **C22a — `reparent_entity`** (decision 3) as a prerequisite: `EntityDatabase.reparent_entity(type_id, new_parent_uuid)`, uuid-to-uuid, event-emitting, tested in isolation. C22 calls it for the 25 children of recreated projects. *(Lineage: see decision 2's 2026-09-24 note; `P001-openclaw-gap-analysis` is archived without replacement, not absorbed.)*
+**C22's scope is decision 2: the 11 unarchived live rows, collapsing to 10** — 6 backlog + `P001`, `P001-openclaw-gap-analysis`, `P002`, `P003`, `P004-entity-db-redesign`. Add **C22a — `reparent_entity`** (decision 3) as a prerequisite: `EntityDatabase.reparent_entity(type_id, new_parent_uuid)`, uuid-to-uuid, event-emitting, tested in isolation. C22 calls it for the 25 children of recreated projects. *(Lineage: see decision 2's 2026-09-24 note; `P001-openclaw-gap-analysis` is archived without replacement, not absorbed.)*
 
 **Verify C22a red-first:** re-parent a child, assert the new `parent_uuid`, assert the old parent's child count dropped and the new parent's rose, and assert the self-reference trigger still rejects `parent_uuid = uuid`. Then assert `P004-entity-db-redesign`'s replacement holds 16 children and the archived original holds 0 — the assertion that fails if C22 skips the unpaired project, which its parent Verify cannot see.
 
