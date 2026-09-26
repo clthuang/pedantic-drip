@@ -419,7 +419,9 @@ def _resolve_ref_param(
 
     - **An explicit uuid,** in either parameter, passes through unchanged.
       A uuid names one entity in any workspace (D5), so the server resolves
-      no workspace for it: a call naming its entities only by uuid needs none.
+      no workspace for it: a call naming its entities only by uuid needs
+      none, unless it also registers an entity, which ``create_key_result``
+      does in the server's workspace.
     - **A type_id** (an exact match) **or a ref** (an exact type_id, then a
       unique type_id prefix, as :meth:`EntityDatabase.resolve_ref` matches
       it) resolves only in the server's own workspace,

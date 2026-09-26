@@ -2281,6 +2281,9 @@ async def transition_phase(
     JSON-array string. Backlog #056: the transport JSON-parses string args
     shaped like JSON back into lists, so the native-list form is the only
     shape every caller can rely on; both normalize onto one validated path.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2323,6 +2326,9 @@ async def complete_phase(
     Feature 111 F10 — optional ``closes=[uuid, ...]`` atomically closes the
     referenced entities (bug/task/backlog) in the same transaction and writes
     ``entity_relations(kind='fixes')`` linkage rows. See spec FR-10.x.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2358,6 +2364,9 @@ async def record_mini_spec(
     Feature 134 FR-7: the mini-spec text is the express lane's audit
     minimum (PRD OQ-1) — it rides in the event's metadata; no artifact
     file exists. Read it back with ``get_mini_spec``.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2642,7 +2651,11 @@ async def init_feature_state(
     backlog_source: str | None = None,
     status: str = "active",
 ) -> str:
-    """Create initial feature state in DB and write feature .meta.json."""
+    """Create initial feature state in DB and write feature .meta.json.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
+    """
     err = _check_db_available()
     if err:
         return err
@@ -2683,6 +2696,9 @@ async def init_project_state(
     Re-running the same call after it stopped past registration resumes
     that row (``resumed``: true); any other project holding the id — a
     deleted one, or one with another directory or parent — is an error.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2707,6 +2723,9 @@ async def activate_feature(feature_type_id: str | None = None, ref: str | None =
     already exist: activation creates none, and answers feature_not_found
     without it. In the same transaction as the status change, a feature
     with no workflow row gets one, so the first transition_phase finds it.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2731,7 +2750,11 @@ async def init_entity_workflow(
     kanban_column: str = "",
     ref: str | None = None,
 ) -> str:
-    """Create a workflow_phases row for any entity type."""
+    """Create a workflow_phases row for any entity type.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
+    """
     err = _check_db_available()
     if err:
         return err
@@ -2754,7 +2777,11 @@ async def transition_entity_phase(
     target_phase: str = "",
     ref: str | None = None,
 ) -> str:
-    """Transition a brainstorm or backlog entity to a new lifecycle phase."""
+    """Transition a brainstorm or backlog entity to a new lifecycle phase.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
+    """
     err = _check_db_available()
     if err:
         return err
@@ -2815,6 +2842,9 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     entity with parent=feature, status=planned, and links dependencies.
     If the registry refuses the task's id allocation (C3), returns an
     ``incomplete_bucket`` error envelope and registers nothing.
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:
@@ -2924,6 +2954,9 @@ async def record_backward_event(
     FR-2.3 validation: rejects unknown `type_id`; caps `reason` and
     `target_phase` at 500 chars. FR-2.5: sqlite failures return the
     standard `_make_error` shape (never raw `str(e)`).
+
+    With no workspace resolved, it answers the ``workspace_unresolved`` error
+    envelope and writes nothing (W4.1).
     """
     err = _check_db_available()
     if err:

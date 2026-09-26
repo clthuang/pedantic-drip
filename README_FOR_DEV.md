@@ -463,7 +463,7 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 
 **Entity references in the write tools (W3.4):** `set_parent`, `update_entity`, `delete_entity`, `add_entity_tag`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `create_key_result` (its `parent_ref`) and `update_kr_score` resolve a type_id or ref only in the server's own workspace, then write by the resolved uuid, and their confirmations name type_ids.
 - **A namesake elsewhere:** a type_id only another workspace holds is not found, and one that two workspaces hold names this workspace's entity.
-- **A UUID** names one entity in any workspace, so a cross-workspace link is made by UUID (feature 129's rule); a call naming its entities only by UUID needs no workspace.
+- **A UUID** names one entity in any workspace, so a cross-workspace link is made by UUID (feature 129's rule); a call naming its entities only by UUID needs no workspace, except `create_key_result`, whose new key result registers in the server's workspace.
 - **No workspace:** a type_id, or a ref that is not a UUID, answers `workspace_unresolved` and writes nothing.
 
 **Metadata Module:** `plugins/pd/hooks/lib/entity_registry/metadata.py` — centralized `parse_metadata()` (returns `{}` for None/invalid, never `None`) and `validate_metadata()` (warn-only schema checks per entity type). All entity_registry and workflow_engine modules import from here instead of hand-rolling `json.loads` patterns.

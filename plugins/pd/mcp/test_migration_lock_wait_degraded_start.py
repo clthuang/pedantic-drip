@@ -4,9 +4,9 @@ The migration lock's wait ends after ``database._MIGRATION_LOCK_WAIT_SECONDS``
 with ``sqlite3.OperationalError`` (``test_migration_lock_wait.py`` pins the
 error). Each server's ``_init_db_with_retry`` catches that error and, once
 its retries are spent, returns None; the lifespan then marks the database
-unavailable and starts the recovery thread. With no bound on the wait, a
-stopped holder kept the server's start waiting for as long as it stayed
-stopped.
+unavailable, and the server stays degraded until it is restarted (W4.2).
+With no bound on the wait, a stopped holder kept the server's start
+waiting for as long as it stayed stopped.
 """
 from __future__ import annotations
 

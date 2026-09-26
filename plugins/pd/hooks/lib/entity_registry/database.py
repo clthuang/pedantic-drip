@@ -6003,9 +6003,10 @@ def _migration_lock(db_path):
       mid-run (SIGSTOP, a debugger) or stuck keeps it for as long as it
       stays so, and an unbounded wait held every other opener with a step
       pending that long. Each MCP server's ``_init_db_with_retry`` catches
-      the error, retries, then starts degraded with a recovery thread;
-      other openers get the error. ``_bootstrap_lock`` still waits without
-      a bound: only ``scripts/seed-census-db.py`` reaches it.
+      the error, retries, then starts degraded, and stays degraded until
+      it is restarted (W4.2); other openers get the error.
+      ``_bootstrap_lock`` still waits without a bound: only
+      ``scripts/seed-census-db.py`` reaches it.
     - **No file left behind:** unlike ``_bootstrap_lock``, the holder
       removes the sidecar before releasing it, so nothing stays beside the
       registry or beside a rebuild's staging file. A waiter can therefore

@@ -111,9 +111,8 @@ def main() -> int:
     a("```")
     a("")
     a("The call resolves `type_id` in the calling session's project. Run it "
-      "from a session in the `project_root` the row is listed under, or pass "
-      "that workspace's `project_id` (its `workspaces.project_id_legacy`). "
-      "From another session it finds no row, or acts on a row with the same "
+      "from a session in the `project_root` the row is listed under. From "
+      "another session it finds no row, or acts on a row with the same "
       "`type_id` in the caller's workspace.")
     a("")
     a("Restoration is a forward write through the sanctioned path, not a "
