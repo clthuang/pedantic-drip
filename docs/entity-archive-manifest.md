@@ -8,16 +8,14 @@ Every entity flagged **`entities.is_archived`** or **`entities.is_legacy`**. Leg
 
 ## Recovery
 
-**Archived entities are recoverable.** Archival sets `status` and adds a tag; it never deletes. Deletion is in fact impossible for every entity here — each has an `events` row, and `events` has a `NOT NULL` foreign key to `entities(uuid)` with no `ON DELETE`, so `delete_entity` raises unconditionally.
+**Archived entities are recoverable.** Archival sets the `is_archived` flag and leaves `status` alone; it never deletes. Deletion removes no row either: `delete_entity` is a soft delete (v2 migration 6) that sets `is_deleted`, and `set_deleted(type_id, False)` restores the row.
 
-```python
-db.update_entity(type_id, status="archived")   # archive
-db.add_tag(uuid, "legacy-archived-2026-09")    # mark
-db.update_entity(type_id, status="open")       # restore — row intact
-db.remove_tag(uuid, "legacy-archived-2026-09")
+```
+update_entity(type_id="<type_id>", archived=true)    # archive
+update_entity(type_id="<type_id>", archived=false)   # restore — row and status intact
 ```
 
-Restoration is a forward write through the sanctioned path, not a rollback. Two costs: each archive/restore pair leaves ~2 permanently immutable `events` rows, and the sequence number is never released.
+Restoration is a forward write through the sanctioned path, not a rollback. One cost remains: the sequence number is never released. An archive/restore pair adds no `events` or `phase_events` rows: `set_archived` writes only `is_archived` and `updated_at`. (The retired `status="archived"` recipe added one `phase_events` row and one immutable `events` row per status change.)
 
 **Legacy-ness lives in `entities.is_legacy`, not in a tag.** The earlier `legacy-archived-2026-09` tag was removed once the column existed: two homes for one fact is the defect this effort removes. `workspace-retired-*` remains because it says something different — a dormant workspace was stood down, and those rows were never legacy.
 
@@ -62,15 +60,15 @@ The last column is the one that matters: rows a clean break would archive that s
 
 ### `/Users/terry/projects/cast-below`
 
-| kind | entity_id | status | disp | kids | parent | tags | name |
-|---|---|---|:--:|--:|---|---|---|
+| kind | entity_id | status | archived | legacy | disp | kids | parent | tags | name |
+|---|---|---|:--:|:--:|:--:|--:|---|---|---|
 | brainstorm | `original-ideation-prd` | archived | yes | yes | — |  |  |  | 🎣 Cast Below |
 | project | `P001` | completed | — | yes | — | 29 | 20260223-222936-world-readable |  | P001 |
 
 ### `/Users/terry/projects/pedantic-drip`
 
-| kind | entity_id | status | disp | kids | parent | tags | name |
-|---|---|---|:--:|--:|---|---|---|
+| kind | entity_id | status | archived | legacy | disp | kids | parent | tags | name |
+|---|---|---|:--:|:--:|:--:|--:|---|---|---|
 | backlog | `00008` | dropped | — | yes | — |  |  |  | add product manager, product owner team (agents, |
 | backlog | `00012` | dropped | — | yes | — |  |  |  | fix the secretary AskUserQuestion formatting. Th |
 | backlog | `00014` | dropped | — | yes | — |  |  |  | Security Scanning — static rule-based security s |
@@ -377,14 +375,14 @@ The last column is the one that matters: rows a clean break would archive that s
 
 ### `/Users/terry/projects/project_illium`
 
-| kind | entity_id | status | disp | kids | parent | tags | name |
-|---|---|---|:--:|--:|---|---|---|
+| kind | entity_id | status | archived | legacy | disp | kids | parent | tags | name |
+|---|---|---|:--:|:--:|:--:|--:|---|---|---|
 | brainstorm | `001-illium-target-architecture` | archived | yes | — | yes | 1 |  |  | Illium Target Architecture |
 
 ### `/Users/terry_agent`
 
-| kind | entity_id | status | disp | kids | parent | tags | name |
-|---|---|---|:--:|--:|---|---|---|
+| kind | entity_id | status | archived | legacy | disp | kids | parent | tags | name |
+|---|---|---|:--:|:--:|:--:|--:|---|---|---|
 | brainstorm | `20260318-025248-three-claws-v2-protocol` | active | yes | — | yes |  |  | workspace-retired-2026-09 | 20260318-025248-three-claws-v2-protocol |
 | brainstorm | `20260326-030832-openclaw-gap-analysis` | active | yes | — | yes |  |  | workspace-retired-2026-09 | 20260326-030832-openclaw-gap-analysis |
 | feature | `002-assessed-mode-pipeline-fix` | archived | yes | — | yes |  |  | workspace-retired-2026-09 | Assessed Mode Pipeline Fix |

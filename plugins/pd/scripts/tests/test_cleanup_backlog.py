@@ -64,7 +64,8 @@ def test_ac8b_dry_run_real_backlog_smoke(monkeypatch):
 def test_ac9_apply_routes_through_update_entity(tmp_backlog, tmp_archive, tmp_path):
     """AC-9 (feature 110 FR-4.3 update): --apply no longer writes to the
     standalone archive file. Instead it routes archival through
-    ``update_entity(status='archived')`` and re-projects ``backlog.md``.
+    ``set_archived`` (the ``is_archived`` flag; ``status`` is left alone)
+    and re-projects ``backlog.md``.
 
     This test exercises the apply path against a tmp DB pointer
     (``ENTITY_DB_PATH``) — the path is non-existent so the script's
