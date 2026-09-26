@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-"""Regenerate docs/entity-archive-manifest.md from the live entity registry.
+"""Regenerate docs/entity-archive-manifest.md from a copy of the entity registry.
 
 The manifest is the index that makes a clean break recoverable: once rows
 are archived, the marker alone cannot distinguish "archived by the break"
-from "already terminal". Read-only — opens the database in ro mode.
+from "already terminal".
 
-    python scripts/gen_archive_manifest.py
+It writes no row: it opens the database in ro mode. On SQLite 3.53 that open
+still creates -shm and -wal files beside a WAL-mode database that has none,
+so point ENTITY_DB_PATH at a copy, never the live registry. Copy it through
+an immutable open, which writes nothing beside it:
+
+    python -c "import os,sqlite3,sys; s=sqlite3.connect('file:'+os.path.expanduser('~/.claude/pd/entities/entities.db')+'?immutable=1',uri=True); s.backup(sqlite3.connect(sys.argv[1]))" /tmp/entities-copy.db
+    ENTITY_DB_PATH=/tmp/entities-copy.db python scripts/gen_archive_manifest.py
+
+An immutable open ignores a -wal file, so a copy made that way misses every
+commit still in one. When the registry has a -wal beside it, make the copy
+through ?mode=ro instead of ?immutable=1.
 """
 from __future__ import annotations
 
@@ -70,22 +80,27 @@ def main() -> int:
     a("")
     a("## Recovery")
     a("")
-    a("**Archived entities are recoverable.** Archival sets `status` and adds "
-      "a tag; it never deletes. Deletion is in fact impossible for every "
-      "entity here — each has an `events` row, and `events` has a `NOT NULL` "
-      "foreign key to `entities(uuid)` with no `ON DELETE`, so "
-      "`delete_entity` raises unconditionally.")
+    a("**Archived entities are recoverable.** Archival sets the `is_archived` "
+      "flag and leaves `status` alone; it never deletes. Deletion removes no "
+      "row either: `delete_entity` is a soft delete (v2 migration 6) that "
+      "sets `is_deleted`, and `EntityDatabase.set_deleted(type_id, False, "
+      "workspace_uuid=<uuid>)` restores the row, where `<uuid>` is "
+      "`workspaces.uuid` for the `project_root` the row is listed under. "
+      "Without `workspace_uuid` it restores every workspace's row with that "
+      "`type_id`.")
     a("")
-    a("```python")
-    a('db.update_entity(type_id, status="archived")   # archive')
-    a('db.add_tag(uuid, "legacy-archived-2026-09")    # mark')
-    a('db.update_entity(type_id, status="open")       # restore — row intact')
-    a('db.remove_tag(uuid, "legacy-archived-2026-09")')
+    a("```")
+    a('update_entity(type_id="<type_id>", archived=true)    # archive')
+    a('update_entity(type_id="<type_id>", archived=false)   # restore — row and status intact')
     a("```")
     a("")
     a("Restoration is a forward write through the sanctioned path, not a "
-      "rollback. Two costs: each archive/restore pair leaves ~2 permanently "
-      "immutable `events` rows, and the sequence number is never released.")
+      "rollback. One cost remains: the sequence number is never released. "
+      "An archive/restore pair adds no `events` or `phase_events` rows: "
+      "`set_archived` writes only `is_archived` and `updated_at`. (The "
+      "retired `status=\"archived\"` recipe added one `phase_events` row per "
+      "status change, plus one immutable `events` row on a v2-generation "
+      "file.)")
     a("")
     a("**Legacy-ness lives in `entities.is_legacy`, not in a tag.** The "
       "earlier `legacy-archived-2026-09` tag was removed once the column "
@@ -139,8 +154,8 @@ def main() -> int:
     for ws, rs in sorted(by_ws.items()):
         a(f"### `{ws}`")
         a("")
-        a("| kind | entity_id | status | disp | kids | parent | tags | name |")
-        a("|---|---|---|:--:|--:|---|---|---|")
+        a("| kind | entity_id | status | archived | legacy | disp | kids | parent | tags | name |")
+        a("|---|---|---|:--:|:--:|:--:|--:|---|---|---|")
         for r in rs:
             name = (r["name"] or "")[:48].replace("|", "\\|")
             a(f"| {r['kind']} | `{r['entity_id']}` | {r['status'] or '*(NULL)*'} | "

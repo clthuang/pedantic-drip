@@ -61,10 +61,11 @@ def test_ac8b_dry_run_real_backlog_smoke(monkeypatch):
     assert "Section" in result.stdout or "From" in result.stdout  # table or section header present
 
 
-def test_ac9_apply_routes_through_update_entity(tmp_backlog, tmp_archive, tmp_path):
+def test_ac9_apply_writes_no_standalone_archive_file(tmp_backlog, tmp_archive, tmp_path):
     """AC-9 (feature 110 FR-4.3 update): --apply no longer writes to the
     standalone archive file. Instead it routes archival through
-    ``update_entity(status='archived')`` and re-projects ``backlog.md``.
+    ``set_archived`` (the ``is_archived`` flag; ``status`` is left alone)
+    and re-projects ``backlog.md``.
 
     This test exercises the apply path against a tmp DB pointer
     (``ENTITY_DB_PATH``) — the path is non-existent so the script's
@@ -95,8 +96,8 @@ def test_ac9_apply_routes_through_update_entity(tmp_backlog, tmp_archive, tmp_pa
     # Feature 110 contract: the standalone archive file is NEVER written.
     assert not tmp_archive.exists(), (
         "Feature 110 FR-4.3 — cleanup_backlog.py must NOT write to the "
-        "standalone archive file. Archived rows are identified via DB "
-        "status='archived' flag and excluded from _project_backlog_md output."
+        "standalone archive file. Archived rows are identified via the DB "
+        "is_archived flag and excluded from _project_backlog_md output."
     )
 
 
