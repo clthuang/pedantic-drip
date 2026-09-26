@@ -17,6 +17,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 
 import entity_server  # noqa: E402
 from entity_registry.database import _UNKNOWN_WORKSPACE_UUID  # noqa: E402
+from entity_registry.test_helpers import bootstrap_test_workspace  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -263,13 +264,22 @@ class TestSearchMCPMutationMindset:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def server_workspace(mcp_db, monkeypatch):
+    """The workspace entity_server writes in. delete_entity resolves its
+    type_id there only, and refuses without one (W3.4)."""
+    workspace_uuid = bootstrap_test_workspace(mcp_db, "delete-entity-tests")
+    monkeypatch.setattr(entity_server, "_workspace_uuid", workspace_uuid)
+    return workspace_uuid
+
+
 class TestDeleteEntityMCP:
     """Tests for MCP delete_entity tool."""
 
-    def test_mcp_delete_entity_success(self, mcp_db):
+    def test_mcp_delete_entity_success(self, mcp_db, server_workspace):
         """AC-10: delete_entity returns success JSON."""
         mcp_db.register_entity("feature", name="MCP Delete Test", seq=1, slug="del-mcp",
-                                   workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                                   workspace_uuid=server_workspace,
                                status="active")
         result = _run(entity_server.delete_entity(type_id="feature:001-del-mcp"))
         data = json.loads(result)
@@ -278,18 +288,18 @@ class TestDeleteEntityMCP:
         # Verify entity is gone
         assert mcp_db.get_entity("feature:001-del-mcp") is None
 
-    def test_mcp_delete_entity_not_found(self, mcp_db):
+    def test_mcp_delete_entity_not_found(self, mcp_db, server_workspace):
         """delete_entity returns error JSON when entity not found."""
         result = _run(entity_server.delete_entity(type_id="feature:nonexistent"))
         data = json.loads(result)
         assert "error" in data
         assert "not found" in data["error"].lower()
 
-    def test_mcp_delete_entity_has_children(self, mcp_db):
+    def test_mcp_delete_entity_has_children(self, mcp_db, server_workspace):
         """delete_entity returns error JSON when entity has children."""
-        mcp_db.register_entity("project", name="Parent MCP", seq=1, slug="parent-mcp", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mcp_db.register_entity("project", name="Parent MCP", seq=1, slug="parent-mcp", workspace_uuid=server_workspace)
         mcp_db.register_entity("feature", name="Child MCP", seq=1, slug="child-mcp",
-                                   workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+                                   workspace_uuid=server_workspace,
                                parent_uuid=mcp_db.get_entity("project:001-parent-mcp")["uuid"])
         result = _run(entity_server.delete_entity(type_id="project:001-parent-mcp"))
         data = json.loads(result)

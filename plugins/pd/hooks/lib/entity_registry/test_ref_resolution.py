@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.test_helpers import bootstrap_test_workspace
 
 # Make MCP server modules importable.
 _mcp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp"))
@@ -20,7 +21,8 @@ if _mcp_dir not in sys.path:
     sys.path.insert(0, _mcp_dir)
 
 # Import the ref resolution helpers from both servers.
-from entity_server import _resolve_ref_param
+import entity_server
+from entity_server import _resolve_ref_param, _resolve_type_id_for_read
 from workflow_state_server import _resolve_ref_to_feature_type_id
 
 
@@ -40,63 +42,91 @@ def db():
     database.close()
 
 
+@pytest.fixture
+def server_db(monkeypatch):
+    """The same 3 features in the entity server's workspace, where a write
+    tool resolves a type_id or ref (W3.4)."""
+    database = EntityDatabase(":memory:")
+    workspace_uuid = bootstrap_test_workspace(database, "ref-resolution-tests")
+    for seq, slug, name in (
+        (50, "alpha", "Alpha Feature"),
+        (51, "beta", "Beta Feature"),
+        (52, "reactive-entity", "Reactive Entity"),
+    ):
+        database.register_entity(
+            "feature", name=name, seq=seq, slug=slug, workspace_uuid=workspace_uuid,
+        )
+    monkeypatch.setattr(entity_server, "_workspace_uuid", workspace_uuid)
+    yield database
+    database.close()
+
+
+def _uuid_of(db, type_id):
+    return db.get_entity(type_id)["uuid"]
+
+
 # ---------------------------------------------------------------------------
 # entity_server._resolve_ref_param
 # ---------------------------------------------------------------------------
 
 
 class TestEntityServerResolveRef:
-    """Test _resolve_ref_param from entity_server.py."""
+    """Test _resolve_ref_param from entity_server.py: a write tool's type_id
+    or ref resolves to ``(uuid, type_id)`` in the server's workspace (W3.4).
+    The read tools' resolver, _resolve_type_id_for_read, returns a type_id."""
 
-    def test_type_id_passthrough(self, db):
-        """When type_id is provided and ref is None, return type_id as-is."""
-        result = _resolve_ref_param(db, type_id="feature:050-alpha", ref=None)
-        assert result == "feature:050-alpha"
+    def test_type_id_passthrough(self, server_db):
+        """When type_id is provided and ref is None, the type_id comes back
+        as given, with its entity's uuid."""
+        result = _resolve_ref_param(server_db, type_id="feature:050-alpha", ref=None)
+        assert result == (_uuid_of(server_db, "feature:050-alpha"), "feature:050-alpha")
 
-    def test_ref_exact_type_id(self, db):
-        """ref as exact type_id resolves to that type_id."""
-        result = _resolve_ref_param(db, type_id=None, ref="feature:050-alpha")
-        assert result == "feature:050-alpha"
+    def test_ref_exact_type_id(self, server_db):
+        """ref as exact type_id resolves to that entity."""
+        result = _resolve_ref_param(server_db, type_id=None, ref="feature:050-alpha")
+        assert result == (_uuid_of(server_db, "feature:050-alpha"), "feature:050-alpha")
 
-    def test_ref_uuid(self, db):
-        """ref as UUID resolves to the entity's type_id."""
-        entity = db.get_entity("feature:050-alpha")
-        result = _resolve_ref_param(db, type_id=None, ref=entity["uuid"])
-        assert result == "feature:050-alpha"
+    def test_ref_uuid(self, server_db):
+        """ref as UUID resolves to the entity's uuid and type_id."""
+        entity = server_db.get_entity("feature:050-alpha")
+        result = _resolve_ref_param(server_db, type_id=None, ref=entity["uuid"])
+        assert result == (entity["uuid"], "feature:050-alpha")
 
-    def test_ref_prefix_unique(self, db):
-        """ref as unique prefix resolves to the entity's type_id."""
-        result = _resolve_ref_param(db, type_id=None, ref="feature:052")
-        assert result == "feature:052-reactive-entity"
+    def test_ref_prefix_unique(self, server_db):
+        """ref as unique prefix resolves to the entity's uuid and type_id."""
+        result = _resolve_ref_param(server_db, type_id=None, ref="feature:052")
+        assert result == (
+            _uuid_of(server_db, "feature:052-reactive-entity"),
+            "feature:052-reactive-entity",
+        )
 
-    def test_ref_prefix_ambiguous_on_read(self, db):
-        """ref as ambiguous prefix on read returns the first match's type_id
-        or raises — behavior depends on is_mutation flag."""
+    def test_ref_prefix_ambiguous_on_read(self, server_db):
+        """ref as ambiguous prefix on read raises: the read tools' resolver."""
         # Ambiguous prefix "feature:05" matches all 3
         with pytest.raises(ValueError, match="Multiple"):
-            _resolve_ref_param(db, type_id=None, ref="feature:05", is_mutation=False)
+            _resolve_type_id_for_read(server_db, type_id=None, ref="feature:05")
 
-    def test_ref_prefix_ambiguous_on_mutation_errors(self, db):
+    def test_ref_prefix_ambiguous_on_mutation_errors(self, server_db):
         """Ambiguous ref on mutation always errors."""
         with pytest.raises(ValueError, match="Multiple"):
-            _resolve_ref_param(db, type_id=None, ref="feature:05", is_mutation=True)
+            _resolve_ref_param(server_db, type_id=None, ref="feature:05")
 
-    def test_ref_not_found(self, db):
+    def test_ref_not_found(self, server_db):
         """ref that matches nothing raises ValueError."""
         with pytest.raises(ValueError, match="No entity found"):
-            _resolve_ref_param(db, type_id=None, ref="feature:999")
+            _resolve_ref_param(server_db, type_id=None, ref="feature:999")
 
     def test_neither_provided_errors(self, db):
         """Both type_id and ref are None -> error."""
         with pytest.raises(ValueError, match="type_id.*ref"):
             _resolve_ref_param(db, type_id=None, ref=None)
 
-    def test_both_provided_type_id_wins(self, db):
+    def test_both_provided_type_id_wins(self, server_db):
         """When both type_id and ref provided, type_id takes precedence."""
         result = _resolve_ref_param(
-            db, type_id="feature:050-alpha", ref="feature:051-beta"
+            server_db, type_id="feature:050-alpha", ref="feature:051-beta"
         )
-        assert result == "feature:050-alpha"
+        assert result == (_uuid_of(server_db, "feature:050-alpha"), "feature:050-alpha")
 
 
 # ---------------------------------------------------------------------------

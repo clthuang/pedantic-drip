@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.test_helpers import bootstrap_test_workspace
 
 # Make entity_server importable.
 _mcp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcp"))
@@ -395,26 +396,36 @@ def mcp_db(tmp_path, monkeypatch):
     database.close()
 
 
+@pytest.fixture
+def mcp_workspace(mcp_db, monkeypatch):
+    """The workspace entity_server writes in. add_entity_tag resolves its
+    type_id there only, and refuses without one (W3.4)."""
+    import entity_server
+    workspace_uuid = bootstrap_test_workspace(mcp_db, "entity-tag-tests")
+    monkeypatch.setattr(entity_server, "_workspace_uuid", workspace_uuid)
+    return workspace_uuid
+
+
 class TestMcpAddEntityTag:
     @pytest.mark.asyncio
-    async def test_add_tag_success(self, mcp_db):
+    async def test_add_tag_success(self, mcp_db, mcp_workspace):
         import entity_server
-        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", workspace_uuid=mcp_workspace)
         result = await entity_server.add_entity_tag("feature:001-test", "security")
         parsed = json.loads(result)
         assert "result" in parsed
         assert "security" in parsed["result"]
 
     @pytest.mark.asyncio
-    async def test_add_tag_invalid_format(self, mcp_db):
+    async def test_add_tag_invalid_format(self, mcp_db, mcp_workspace):
         import entity_server
-        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", workspace_uuid=mcp_workspace)
         result = await entity_server.add_entity_tag("feature:001-test", "INVALID")
         parsed = json.loads(result)
         assert "error" in parsed
 
     @pytest.mark.asyncio
-    async def test_add_tag_entity_not_found(self, mcp_db):
+    async def test_add_tag_entity_not_found(self, mcp_db, mcp_workspace):
         import entity_server
         result = await entity_server.add_entity_tag("feature:nonexistent", "security")
         assert "not found" in result.lower()

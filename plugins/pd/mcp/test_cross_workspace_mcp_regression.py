@@ -97,14 +97,16 @@ def cross_workspace_pair(db, tmp_path):
     entity_a lives in the default `__unknown__` workspace (matching the
     `server` fixture's caller context); entity_b lives in a SECOND, real
     workspace. Returns their UUIDs -- MCP calls below use raw UUIDs (not
-    type_id refs) to sidestep resolve_ref's/`_resolve_ref_param`'s
-    project_id-scoped resolution, matching the existing precedent in
+    type_id refs), matching the existing precedent in
     test_issue_spawn.py (`parent_uuid=parent_uuid_ws_b`) and
-    test_complete_phase_closes.py (`closes=[u_bug_ws2]`): a type_id ref
-    would be resolved via `_effective_project_id()` == "__unknown__" and
-    would NOT find an entity registered under a different workspace_uuid,
-    which would fail the setup for the wrong reason (ValueError: ref not
-    found) rather than exercising the cross-workspace success path.
+    test_complete_phase_closes.py (`closes=[u_bug_ws2]`). A UUID names an
+    entity in any workspace, so a call naming both entities by UUID needs
+    no server workspace (W3.4, D5). A type_id ref resolves only in the
+    server's own workspace (`_resolve_ref_param`, W3.4): this server has
+    none, so it would answer `workspace_unresolved`, and from any workspace
+    a type_id another workspace holds is not found. Either would fail the
+    setup for the wrong reason rather than exercising the cross-workspace
+    success path.
     """
     import uuid as _uuid
     ws_b_uuid = str(_uuid.uuid4())

@@ -230,12 +230,15 @@ def test_create_key_result_allocates_and_registers_in_the_servers_workspace(
     registry, monkeypatch,
 ):
     """W4.1: the key result registers where the server writes (B), no
-    longer in the workspace its legacy project id names (A). The parent
-    objective is in A: its reference still resolves by the legacy project
-    id, until W3.4 scopes it to the server's workspace."""
+    longer in the workspace its legacy project id names (A). W3.4: its
+    parent reference resolves in that workspace too, no longer by the
+    legacy project id, so of two namesake objectives, one in each
+    workspace, the key result's parent is B's."""
     db, ws_a, ws_b = registry
     db.register_entity("objective", name="Objective", seq=1, slug="grow",
                        status="active", workspace_uuid=ws_a)
+    objective_b = db.register_entity("objective", name="Objective", seq=1, slug="grow",
+                                     status="active", workspace_uuid=ws_b)
     allocations = _record_calls(monkeypatch, db, "next_sequence_value")
     registrations = _record_calls(monkeypatch, db, "register_entity")
 
@@ -245,5 +248,7 @@ def test_create_key_result_allocates_and_registers_in_the_servers_workspace(
     assert reply["type_id"] == "key_result:001-measured-result", reply
     _assert_one_workspace(allocations, registrations, ws_b)
     assert _counter(db, ws_a, "key_result") is None
-    assert db.get_entity_by_uuid(reply["uuid"])["workspace_uuid"] == ws_b
+    key_result = db.get_entity_by_uuid(reply["uuid"])
+    assert key_result["workspace_uuid"] == ws_b
+    assert key_result["parent_uuid"] == objective_b
     assert _created_label(db, reply["type_id"]) == LEGACY_B

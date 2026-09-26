@@ -148,6 +148,8 @@ update_entity(
 
 `archived` sets only the `is_archived` flag of the resolved entity (by its uuid); the status is untouched. `/pd:cleanup-brainstorms` archives a deleted brainstorm's entity this way.
 
+`type_id` (or `ref`) resolves only in the server's own workspace, so a namesake in another workspace is never updated; a UUID names an entity in any workspace. With no workspace resolved, a type_id, or a ref that is not a UUID, answers `workspace_unresolved` and writes nothing (W3.4; the other entity tools that name an existing entity resolve the same way).
+
 **Important:** When updating `phase_summaries`, pass the complete updated list. `update_entity` merges at the top-level key level only; it does not append to lists automatically.
 
 ### get_entity

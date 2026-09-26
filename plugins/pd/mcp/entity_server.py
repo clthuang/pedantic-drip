@@ -21,6 +21,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 
 from entity_registry.backfill import run_backfill
 from entity_registry.database import (
+    _UUID_RE,
     EntityDatabase,
     EntityExistsError,
     EntityNotFoundError,
@@ -363,7 +364,7 @@ async def lifespan(server):
 
 
 # ---------------------------------------------------------------------------
-# Ref resolution helper (Task 1b.5)
+# Ref resolution: the write tools resolve in the server's workspace (W3.4)
 # ---------------------------------------------------------------------------
 
 
@@ -372,43 +373,85 @@ def _resolve_ref_param(
     type_id: str | None,
     ref: str | None,
     *,
-    is_mutation: bool = False,
+    ref_may_be_deleted: bool = False,
+) -> tuple[str, str]:
+    """Resolve a write tool's entity parameter to ``(uuid, type_id)`` (W3.4).
+
+    The tool writes by the uuid, never re-resolving the type_id, and names
+    the type_id in its answer.
+
+    - **An explicit uuid,** in either parameter, passes through unchanged.
+      A uuid names one entity in any workspace (D5), so the server resolves
+      no workspace for it: a call naming its entities only by uuid needs none.
+    - **A type_id** (an exact match) **or a ref** (an exact type_id, then a
+      unique type_id prefix, as :meth:`EntityDatabase.resolve_ref` matches
+      it) resolves only in the server's own workspace,
+      ``_require_workspace()`` (W4.1). A type_id only another workspace holds
+      is not found, and one that two workspaces hold names this workspace's
+      entity.
+    - **Precedence:** ``type_id`` wins when both are given.
+    - **Soft-deleted entities** match as they did before W3.4, which changed
+      only the workspace a type_id or ref resolves in:
+      - a ``type_id`` matches one, as the registry's own writers match a
+        type_id;
+      - a ``ref`` does not, unless ``ref_may_be_deleted``. The dependency
+        and alignment tools pass it: they resolved a ref with
+        :meth:`EntityDatabase.resolve_ref` alone, whose exact type_id and
+        prefix matches include a soft-deleted entity (its uuid match never
+        does). So ``remove_dependency`` still clears an edge to a deleted
+        blocker by its type_id.
+
+    Raises ``ValueError`` when neither parameter is given or no entity
+    matches, and ``WorkspaceUnresolvedError`` when a type_id or ref needs a
+    workspace and none resolves.
+    """
+    if type_id is not None:
+        if _UUID_RE.match(type_id.lower()):
+            entity = db.get_entity_by_uuid(type_id.lower(), include_deleted=True)
+            if entity is not None:
+                return entity["uuid"], entity["type_id"]
+        else:
+            entity_uuid, _ = db.resolve_entity_uuid(_require_workspace(), type_id)
+            if entity_uuid is not None:
+                return entity_uuid, type_id
+        raise ValueError(f"Entity not found: {type_id!r}")
+    if ref is None:
+        raise ValueError("Either type_id or ref must be provided")
+    # resolve_ref matches a uuid in any workspace, so only a type_id or
+    # prefix needs the server's.
+    workspace_uuid = None if _UUID_RE.match(ref.lower()) else _require_workspace()
+    entity_uuid = db.resolve_ref(ref, workspace_uuid=workspace_uuid)
+    entity = db.get_entity_by_uuid(entity_uuid, include_deleted=ref_may_be_deleted)
+    if entity is None:
+        raise ValueError(f"No entity found matching ref: {ref!r}")
+    return entity_uuid, entity["type_id"]
+
+
+def _resolve_type_id_for_read(
+    db: EntityDatabase,
+    type_id: str | None,
+    ref: str | None,
+    *,
     project_id: str | None = None,
 ) -> str:
-    """Resolve a type_id or ref parameter to a concrete type_id.
+    """Resolve a read tool's type_id or ref parameter to a type_id.
 
-    Parameters
-    ----------
-    db:
-        Open EntityDatabase.
-    type_id:
-        Explicit type_id (takes precedence if provided).
-    ref:
-        Flexible reference: UUID, full type_id, or type_id prefix.
-    is_mutation:
-        If True, ambiguous prefix matches always error (never guess).
-    project_id:
-        Optional project scope for resolution. Passed through to
-        db.resolve_ref().
+    The read tools keep their resolution (W4.1 leaves them as they were;
+    W3.4 scopes only the write tools):
 
-    Returns
-    -------
-    str
-        The resolved type_id.
+    - **A type_id** passes through as given; the read resolves it.
+    - **A ref** resolves through :meth:`EntityDatabase.resolve_ref` in the
+      workspace ``project_id`` names by its legacy id, or in every workspace
+      when ``project_id`` is None.
 
-    Raises
-    ------
-    ValueError
-        If neither param provided, ref not found, or ambiguous.
+    Raises ``ValueError`` when neither parameter is given, or the ref matches
+    no entity or several.
     """
     if type_id is not None:
         return type_id
     if ref is None:
         raise ValueError("Either type_id or ref must be provided")
-
-    # resolve_ref returns a UUID — look up the entity to get type_id
-    entity_uuid = db.resolve_ref(ref, project_id=project_id)
-    entity = db.get_entity_by_uuid(entity_uuid)
+    entity = db.get_entity_by_uuid(db.resolve_ref(ref, project_id=project_id))
     if entity is None:
         raise ValueError(f"No entity found matching ref: {ref!r}")
     return entity["type_id"]
@@ -419,73 +462,72 @@ def _resolve_ref_param(
 # ---------------------------------------------------------------------------
 
 
+# Each helper below writes by the uuids its tool resolved (W3.4), never
+# re-resolving a type_id, and names the entities by type_id in its answer.
+
+
 @with_retry("entity")
 def _process_update_entity(
     db: EntityDatabase,
-    resolved_type_id: str,
+    entity_uuid: str,
+    type_id: str,
     name: str | None,
     description: str | None,
     status: str | None,
     metadata: dict | None,
-    project_id: str | None = None,
     new_project_id: str | None = None,
     archived: bool | None = None,
 ) -> str:
     """Update mutable fields of an existing entity (retryable).
 
-    ``archived`` (W1.2) then sets (True) or clears (False) the archive flag
-    of the entity the update resolved, by its uuid; None leaves the flag as
-    it is. Both writes are idempotent, so a retry repeats them safely.
+    ``archived`` (W1.2) then sets (True) or clears (False) the entity's
+    archive flag by the same uuid, which names the updated entity even
+    after a re-attribution; None leaves the flag as it is. Both writes are
+    idempotent, so a retry repeats them safely.
     """
-    # The uuid is resolved in the update's own scope and before it, so it
-    # names the updated entity even after a re-attribution. A type_id that
-    # scope leaves ambiguous is refused by the update before any archive.
-    entity_uuid = (
-        db.resolve_ref(resolved_type_id, project_id=project_id)
-        if archived is not None else None
-    )
     db.update_entity(
-        resolved_type_id, name=name, status=status,
+        entity_uuid, name=name, status=status,
         artifact_path=description, metadata=metadata,
-        project_id=project_id, new_project_id=new_project_id,
+        new_project_id=new_project_id,
     )
-    if entity_uuid is not None:
+    if archived is not None:
         db.set_archived(entity_uuid, archived)
-    return f"Updated: {resolved_type_id}"
+    return f"Updated: {type_id}"
 
 
 @with_retry("entity")
-def _process_delete_entity(
-    db: EntityDatabase, resolved_type_id: str, project_id: str | None = None,
+def _process_delete_entity(db: EntityDatabase, entity_uuid: str, type_id: str) -> str:
+    """Delete an entity (retryable)."""
+    db.delete_entity(entity_uuid)
+    return json.dumps({"result": f"Deleted: {type_id}"})
+
+
+@with_retry("entity")
+def _process_add_entity_tag(
+    db: EntityDatabase, entity_uuid: str, type_id: str, tag: str,
 ) -> str:
-    """Delete an entity and all associated data (retryable)."""
-    db.delete_entity(resolved_type_id, project_id=project_id)
-    return json.dumps({"result": f"Deleted: {resolved_type_id}"})
-
-
-@with_retry("entity")
-def _process_add_entity_tag(db: EntityDatabase, resolved_type_id: str, tag: str) -> str:
-    """Add a tag to an entity (retryable)."""
-    entity = db.get_entity(resolved_type_id)
-    if entity is None:
-        return f"Error: entity not found: {resolved_type_id}"
-    db.add_tag(entity["uuid"], tag)
-    return json.dumps({"result": f"Tagged {resolved_type_id} with '{tag}'"})
+    """Add a tag to an entity (retryable). A soft-deleted entity is not
+    tagged."""
+    if db.get_entity_by_uuid(entity_uuid) is None:
+        return f"Error: entity not found: {type_id}"
+    db.add_tag(entity_uuid, tag)
+    return json.dumps({"result": f"Tagged {type_id} with '{tag}'"})
 
 
 @with_retry("entity")
 def _process_add_dependency(
     db: EntityDatabase,
     dep_mgr,
-    blocker_uuid: str,
-    blocked_uuid: str,
-    entity_ref: str,
-    blocked_by_ref: str,
+    entity_uuid: str,
+    blocked_by_uuid: str,
+    entity_type_id: str,
+    blocked_by_type_id: str,
 ) -> str:
-    """Add a dependency between two entities (retryable)."""
-    dep_mgr.add_dependency(db, blocker_uuid, blocked_uuid)
+    """Record that ``entity_uuid`` is blocked by ``blocked_by_uuid``
+    (retryable)."""
+    dep_mgr.add_dependency(db, entity_uuid, blocked_by_uuid)
     return json.dumps({
-        "result": f"Dependency added: {entity_ref} blocked by {blocked_by_ref}"
+        "result": f"Dependency added: {entity_type_id} blocked by {blocked_by_type_id}"
     })
 
 
@@ -495,24 +537,27 @@ def _process_remove_dependency(
     dep_mgr,
     entity_uuid: str,
     blocked_by_uuid: str,
-    entity_ref: str,
-    blocked_by_ref: str,
+    entity_type_id: str,
+    blocked_by_type_id: str,
 ) -> str:
     """Remove a dependency between two entities (retryable)."""
     dep_mgr.remove_dependency(db, entity_uuid, blocked_by_uuid)
     return json.dumps({
-        "result": f"Dependency removed: {entity_ref} no longer blocked by {blocked_by_ref}"
+        "result": (
+            f"Dependency removed: {entity_type_id} no longer blocked by "
+            f"{blocked_by_type_id}"
+        )
     })
 
 
 @with_retry("entity")
 def _process_add_okr_alignment(
     db: EntityDatabase, entity_uuid: str, kr_uuid: str,
-    entity_ref: str, kr_ref: str,
+    entity_type_id: str, kr_type_id: str,
 ) -> str:
     """Link an entity to a key result (retryable)."""
     db.add_okr_alignment(entity_uuid, kr_uuid)
-    return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
+    return json.dumps({"result": f"Aligned {entity_type_id} to {kr_type_id}"})
 
 
 # A retry re-runs the allocation, so a locked write can leave a gap in the
@@ -521,7 +566,7 @@ def _process_add_okr_alignment(
 @with_retry("entity")
 def _process_create_key_result(
     db: EntityDatabase,
-    parent_type_id: str,
+    parent_uuid: str,
     name: str,
     status: str | None,
     metadata_json: str,
@@ -531,18 +576,17 @@ def _process_create_key_result(
 ) -> str:
     """Register a key_result entity with parent linkage (retryable).
 
-    Feature 112 / FR-4: parent_type_id is resolved to parent_uuid at this
-    call site; ``db.register_entity`` is invoked with the canonical
-    parent_uuid kwarg. ``workspace_uuid`` (the calling server's, W4.1) is
-    the one workspace that allocates the number and holds the row (C17).
+    Feature 112 / FR-4: ``db.register_entity`` is invoked with the canonical
+    parent_uuid kwarg. ``parent_uuid`` is the uuid the tool resolved (W3.4),
+    never re-resolved from a type_id. ``workspace_uuid`` (the calling
+    server's, W4.1) is the one workspace that allocates the number and holds
+    the row (C17).
     """
-    parent_entity = db.get_entity(parent_type_id)
-    if parent_entity is None:
+    if db.get_entity_by_uuid(parent_uuid) is None:
         # FR-9: explicit missing-parent surfacing (was: silent orphan).
         # Caught by the MCP create_key_result wrapper's except Exception,
         # which returns it to the caller as a JSON error.
-        raise ValueError(f"Parent entity not found: {parent_type_id!r}")
-    parent_uuid = parent_entity["uuid"]
+        raise ValueError(f"Parent entity not found: {parent_uuid!r}")
     # Allocated after the parent check, so a missing parent burns no number.
     seq, slug = generate_entity_id(db, "key_result", name, workspace_uuid=workspace_uuid)
     type_id = f"key_result:{render_display_id('key_result', seq, slug)}"
@@ -575,11 +619,11 @@ def _process_create_key_result(
 
 @with_retry("entity")
 def _process_update_kr_score(
-    db: EntityDatabase, resolved_type_id: str, score: float,
+    db: EntityDatabase, entity_uuid: str, type_id: str, score: float,
 ) -> str:
     """Update score for a key_result entity (retryable)."""
-    db.update_entity(resolved_type_id, metadata={"score": float(score)})
-    return json.dumps({"result": f"Score updated to {score}", "type_id": resolved_type_id})
+    db.update_entity(entity_uuid, metadata={"score": float(score)})
+    return json.dumps({"result": f"Score updated to {score}", "type_id": type_id})
 
 
 def _incomplete_bucket_envelope(refusal: IncompleteBucketError) -> str:
@@ -1051,7 +1095,13 @@ async def set_parent(
     parent_ref:
         Alternative flexible reference for the parent entity.
 
-    Returns confirmation message or error.
+    A type_id, or a ref that is not a uuid, names an entity in this
+    server's workspace only; a uuid, in any of the four parameters, names
+    one in any workspace, so another workspace's parent is named by its
+    uuid (W3.4, D5). With no workspace resolved, a type_id or such a ref
+    answers the ``workspace_unresolved`` error envelope.
+
+    Returns a confirmation naming both type_ids, or an error.
     """
     err = _check_db_available()
     if err:
@@ -1060,14 +1110,19 @@ async def set_parent(
         return "Error: database not initialized (server not started)"
 
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True, project_id=_effective_project_id())
-        resolved_parent = _resolve_ref_param(
-            _db, parent_type_id, parent_ref, is_mutation=True
+        child_uuid, child_type_id = _resolve_ref_param(_db, type_id, ref)
+        parent_uuid, resolved_parent_type_id = _resolve_ref_param(
+            _db, parent_type_id, parent_ref,
         )
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except ValueError as exc:
         return f"Error: {exc}"
 
-    return _process_set_parent(_db, resolved_type_id, resolved_parent)
+    return _process_set_parent(
+        _db, child_uuid, parent_uuid,
+        child_type_id=child_type_id, parent_type_id=resolved_parent_type_id,
+    )
 
 
 @mcp.tool()
@@ -1091,7 +1146,7 @@ async def get_entity(type_id: str | None = None, ref: str | None = None) -> str:
         return "Error: database not initialized (server not started)"
 
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, project_id=_effective_project_id())
+        resolved_type_id = _resolve_type_id_for_read(_db, type_id, ref, project_id=_effective_project_id())
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
 
@@ -1133,7 +1188,7 @@ async def get_lineage(
         return "Error: database not initialized (server not started)"
 
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, project_id=_effective_project_id())
+        resolved_type_id = _resolve_type_id_for_read(_db, type_id, ref, project_id=_effective_project_id())
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -1148,7 +1203,6 @@ async def update_entity(
     artifact_path: str | None = None,
     metadata: str | dict | None = None,
     ref: str | None = None,
-    project_id: str | None = None,
     new_project_id: str | None = None,
     archived: bool | None = None,
 ) -> str:
@@ -1170,8 +1224,6 @@ async def update_entity(
         leaves it.
     ref:
         Alternative flexible reference. Mutations require exact or unique match.
-    project_id:
-        Project scope for entity resolution. Defaults to current project.
     new_project_id:
         If provided, re-attribute the entity to a different project.
     archived:
@@ -1179,6 +1231,11 @@ async def update_entity(
         Archiving sets the ``is_archived`` flag and never touches the
         status (e.g. ``/pd:cleanup-brainstorms`` archives a deleted
         brainstorm's entity this way).
+
+    A type_id, or a ref that is not a uuid, names an entity in this
+    server's workspace only; a uuid, in either parameter, names one in any
+    workspace (W3.4). With no workspace resolved, a type_id or such a ref
+    answers the ``workspace_unresolved`` error envelope.
 
     Returns confirmation message or error.
     """
@@ -1188,12 +1245,10 @@ async def update_entity(
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    resolved_project_id = _effective_project_id(project_id)
-
     try:
-        resolved_type_id = _resolve_ref_param(
-            _db, type_id, ref, is_mutation=True, project_id=resolved_project_id,
-        )
+        entity_uuid, resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -1202,12 +1257,11 @@ async def update_entity(
 
     try:
         return _process_update_entity(
-            _db, resolved_type_id, name=name, description=artifact_path,
-            status=status,
+            _db, entity_uuid, resolved_type_id, name=name,
+            description=artifact_path, status=status,
             # Omitted stays None, "not updating": parse_metadata(None) is {},
             # which EntityDatabase.update_entity reads as "clear".
             metadata=None if metadata is None else parse_metadata(metadata),
-            project_id=resolved_project_id,
             new_project_id=new_project_id,
             archived=archived,
         )
@@ -1306,6 +1360,11 @@ async def delete_entity(type_id: str | None = None, ref: str | None = None) -> s
     ref:
         Alternative flexible reference. Mutations require exact or unique match.
 
+    A type_id, or a ref that is not a uuid, names an entity in this
+    server's workspace only; a uuid, in either parameter, names one in any
+    workspace (W3.4). With no workspace resolved, a type_id or such a ref
+    answers the ``workspace_unresolved`` error envelope.
+
     Returns confirmation JSON or error JSON.
     """
     err = _check_db_available()
@@ -1314,8 +1373,10 @@ async def delete_entity(type_id: str | None = None, ref: str | None = None) -> s
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True, project_id=_effective_project_id())
-        return _process_delete_entity(_db, resolved_type_id, project_id=_effective_project_id())
+        entity_uuid, resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+        return _process_delete_entity(_db, entity_uuid, resolved_type_id)
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -1337,6 +1398,11 @@ async def add_entity_tag(
     ref:
         Alternative flexible reference for the entity.
 
+    A type_id, or a ref that is not a uuid, names an entity in this
+    server's workspace only; a uuid, in either parameter, names one in any
+    workspace (W3.4). With no workspace resolved, a type_id or such a ref
+    answers the ``workspace_unresolved`` error envelope.
+
     Returns confirmation or error.
     """
     err = _check_db_available()
@@ -1345,8 +1411,10 @@ async def add_entity_tag(
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True, project_id=_effective_project_id())
-        return _process_add_entity_tag(_db, resolved_type_id, tag)
+        entity_uuid, resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+        return _process_add_entity_tag(_db, entity_uuid, resolved_type_id, tag)
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -1372,7 +1440,7 @@ async def get_entity_tags(type_id: str | None = None, ref: str | None = None) ->
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        resolved_type_id = _resolve_ref_param(_db, type_id, ref, project_id=_effective_project_id())
+        resolved_type_id = _resolve_type_id_for_read(_db, type_id, ref, project_id=_effective_project_id())
         entity = _db.get_entity(resolved_type_id)
         if entity is None:
             return f"Error: entity not found: {resolved_type_id}"
@@ -1398,6 +1466,10 @@ async def add_dependency(
     blocked_by_ref:
         The entity that blocks it (type_id, UUID, or prefix).
 
+    A type_id or prefix names an entity in this server's workspace only; a
+    uuid names one in any workspace (W3.4, D5). A type_id or prefix with no
+    workspace resolved answers the ``workspace_unresolved`` error envelope.
+
     Returns confirmation JSON or error JSON.
     """
     err = _check_db_available()
@@ -1408,12 +1480,19 @@ async def add_dependency(
     try:
         from entity_registry.dependencies import CycleError, DependencyManager
 
-        entity_uuid = _db.resolve_ref(entity_ref, project_id=_effective_project_id())
-        blocked_by_uuid = _db.resolve_ref(blocked_by_ref, project_id=_effective_project_id())
+        entity_uuid, entity_type_id = _resolve_ref_param(
+            _db, None, entity_ref, ref_may_be_deleted=True,
+        )
+        blocked_by_uuid, blocked_by_type_id = _resolve_ref_param(
+            _db, None, blocked_by_ref, ref_may_be_deleted=True,
+        )
         mgr = DependencyManager()
         return _process_add_dependency(
-            _db, mgr, entity_uuid, blocked_by_uuid, entity_ref, blocked_by_ref,
+            _db, mgr, entity_uuid, blocked_by_uuid,
+            entity_type_id, blocked_by_type_id,
         )
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except CycleError as exc:
         return json.dumps({"error": f"Cycle detected: {exc}"})
     except ValueError as exc:
@@ -1436,6 +1515,10 @@ async def remove_dependency(
     blocked_by_ref:
         The entity that was blocking it (type_id, UUID, or prefix).
 
+    A type_id or prefix names an entity in this server's workspace only; a
+    uuid names one in any workspace (W3.4, D5). A type_id or prefix with no
+    workspace resolved answers the ``workspace_unresolved`` error envelope.
+
     Returns confirmation JSON or error JSON.
     """
     err = _check_db_available()
@@ -1446,12 +1529,19 @@ async def remove_dependency(
     try:
         from entity_registry.dependencies import DependencyManager
 
-        entity_uuid = _db.resolve_ref(entity_ref, project_id=_effective_project_id())
-        blocked_by_uuid = _db.resolve_ref(blocked_by_ref, project_id=_effective_project_id())
+        entity_uuid, entity_type_id = _resolve_ref_param(
+            _db, None, entity_ref, ref_may_be_deleted=True,
+        )
+        blocked_by_uuid, blocked_by_type_id = _resolve_ref_param(
+            _db, None, blocked_by_ref, ref_may_be_deleted=True,
+        )
         mgr = DependencyManager()
         return _process_remove_dependency(
-            _db, mgr, entity_uuid, blocked_by_uuid, entity_ref, blocked_by_ref,
+            _db, mgr, entity_uuid, blocked_by_uuid,
+            entity_type_id, blocked_by_type_id,
         )
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -1526,6 +1616,10 @@ async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
         The entity to align (type_id, UUID, or prefix).
     kr_ref:
         The key_result to align with (type_id, UUID, or prefix).
+
+    A type_id or prefix names an entity in this server's workspace only; a
+    uuid names one in any workspace (W3.4, D5). A type_id or prefix with no
+    workspace resolved answers the ``workspace_unresolved`` error envelope.
     """
     err = _check_db_available()
     if err:
@@ -1533,9 +1627,17 @@ async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        entity_uuid = _db.resolve_ref(entity_ref, project_id=_effective_project_id())
-        kr_uuid = _db.resolve_ref(kr_ref, project_id=_effective_project_id())
-        return _process_add_okr_alignment(_db, entity_uuid, kr_uuid, entity_ref, kr_ref)
+        entity_uuid, entity_type_id = _resolve_ref_param(
+            _db, None, entity_ref, ref_may_be_deleted=True,
+        )
+        kr_uuid, kr_type_id = _resolve_ref_param(
+            _db, None, kr_ref, ref_may_be_deleted=True,
+        )
+        return _process_add_okr_alignment(
+            _db, entity_uuid, kr_uuid, entity_type_id, kr_type_id,
+        )
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
@@ -1593,7 +1695,8 @@ async def create_key_result(
 
     The key result registers in the server's workspace, resolved on demand
     (W4.1); a server with none answers a ``workspace_unresolved`` error
-    envelope and registers nothing.
+    envelope and registers nothing. A type_id or prefix names the parent in
+    that workspace only; a uuid names one in any workspace (W3.4, D5).
     """
     err = _check_db_available()
     if err:
@@ -1608,13 +1711,10 @@ async def create_key_result(
     except WorkspaceUnresolvedError as unresolved:
         return unresolved.envelope
     try:
-        parent_type_id = _resolve_ref_param(
-            _db, None, parent_ref, is_mutation=True,
-            project_id=_effective_project_id(),
-        )
+        parent_uuid, _ = _resolve_ref_param(_db, None, parent_ref)
         metadata_json = json.dumps({"metric_type": metric_type, "weight": weight})
         return _process_create_key_result(
-            _db, parent_type_id, name, status, metadata_json, weight,
+            _db, parent_uuid, name, status, metadata_json, weight,
             workspace_uuid=workspace_uuid,
         )
     except Exception as exc:
@@ -1634,6 +1734,11 @@ async def update_kr_score(
         Reference to the key_result entity.
     score:
         New score value (0.0-1.0).
+
+    A type_id or prefix names the key result in this server's workspace
+    only; a uuid names one in any workspace (W3.4). A type_id or prefix with
+    no workspace resolved answers the ``workspace_unresolved`` error
+    envelope.
     """
     err = _check_db_available()
     if err:
@@ -1643,11 +1748,10 @@ async def update_kr_score(
     if not (0.0 <= score <= 1.0):
         return json.dumps({"error": f"Score must be between 0.0 and 1.0, got {score}"})
     try:
-        resolved = _resolve_ref_param(
-            _db, None, kr_ref, is_mutation=True,
-            project_id=_effective_project_id(),
-        )
-        return _process_update_kr_score(_db, resolved, score)
+        kr_uuid, kr_type_id = _resolve_ref_param(_db, None, kr_ref)
+        return _process_update_kr_score(_db, kr_uuid, kr_type_id, score)
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 

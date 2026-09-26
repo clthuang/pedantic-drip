@@ -43,12 +43,15 @@ def server_workspace(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_set_parent_handler_concise_message(db):
+async def test_set_parent_handler_concise_message(db, server_workspace):
     """set_parent handler returns concise message with only type_ids, no UUIDs.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
+
+    The entities are the server's own: a type_id resolves only in its
+    workspace (W3.4).
     """
-    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", workspace_uuid=server_workspace)
+    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", workspace_uuid=server_workspace)
 
     result = await entity_server.set_parent("feature:001-child", "project:001-parent")
 
@@ -60,11 +63,14 @@ async def test_set_parent_handler_concise_message(db):
 
 
 @pytest.mark.asyncio
-async def test_update_entity_handler_concise_message(db):
+async def test_update_entity_handler_concise_message(db, server_workspace):
     """update_entity handler returns concise message with only type_id, no UUID.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
+
+    The entity is the server's own: a type_id resolves only in its
+    workspace (W3.4).
     """
-    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", workspace_uuid=server_workspace)
 
     result = await entity_server.update_entity("feature:001-f1", status="completed")
 
@@ -96,14 +102,17 @@ async def test_register_entity_handler_concise_message(db, server_workspace):
 
 
 @pytest.mark.asyncio
-async def test_set_parent_handler_uses_uuid_identifiers(db):
+async def test_set_parent_handler_uses_uuid_identifiers(db, server_workspace):
     """set_parent handler can accept UUID identifiers (not just type_id).
     Anticipate: If handler passes raw input to set_parent without
     dual-read resolution, UUID input would fail.
     derived_from: spec:R27, dimension:adversarial
+
+    The parent's type_id resolves only in the server's workspace (W3.4),
+    so the entities are the server's own.
     """
-    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", workspace_uuid=server_workspace)
+    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", workspace_uuid=server_workspace)
     # Use UUID for child and type_id for parent
     result = await entity_server.set_parent(child_uuid, "project:001-parent2")
     assert isinstance(result, str)
@@ -161,7 +170,7 @@ async def test_get_entity_not_found_returns_message(db):
 
 
 @pytest.mark.asyncio
-async def test_set_parent_delegates_to_server_helpers(db):
+async def test_set_parent_delegates_to_server_helpers(db, server_workspace):
     """set_parent MCP handler delegates to _process_set_parent helper.
     derived_from: spec:AC-15 (delegation to helpers), dimension:bdd_scenarios
 
@@ -169,9 +178,10 @@ async def test_set_parent_delegates_to_server_helpers(db):
     _process_set_parent, future changes to the helper would not be picked up
     by the MCP tool. This test verifies the delegation chain works end-to-end.
     """
-    # Given parent and child entities
-    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
-    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    # Given parent and child entities in the server's workspace, where a
+    # type_id resolves (W3.4)
+    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", workspace_uuid=server_workspace)
+    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", workspace_uuid=server_workspace)
     # When setting parent via MCP handler
     result = await entity_server.set_parent("feature:001-c1", "project:002-p1")
     # Then success message is returned
@@ -257,9 +267,11 @@ class TestMetadataDictCoercion:
         )
         assert "Registered:" in result
 
-    def test_update_entity_metadata_dict(self, db: EntityDatabase):
-        """AC-2: Dict metadata accepted by update_entity, stored as JSON string."""
-        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    def test_update_entity_metadata_dict(self, db: EntityDatabase, server_workspace):
+        """AC-2: Dict metadata accepted by update_entity, stored as JSON string.
+        The entity is the server's own: a type_id resolves only in its
+        workspace (W3.4)."""
+        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", workspace_uuid=server_workspace)
         entity_server._db = db
         import asyncio
         result = asyncio.run(
@@ -439,12 +451,13 @@ class TestCreateKeyResultMissingParent:
         from entity_server import _process_create_key_result
 
         # No parent objective registered. Calling _process_create_key_result
-        # with a non-existent parent_type_id must raise ValueError.
+        # with the uuid of no entity must raise ValueError. The helper takes
+        # the uuid its tool resolved (W3.4).
         workspace_uuid = bootstrap_test_workspace(db, "key-result-tests")
         with pytest.raises(ValueError, match="Parent entity not found"):
             _process_create_key_result(
                 db,
-                parent_type_id="objective:nonexistent",
+                parent_uuid="00000000-0000-4000-8000-000000000000",
                 name="KR Without Parent",
                 status="active",
                 metadata_json=json.dumps({"score": 0.0}),
@@ -462,7 +475,7 @@ class TestCreateKeyResultMissingParent:
                                             workspace_uuid=workspace_uuid)
         result = json.loads(_process_create_key_result(
             db,
-            parent_type_id="objective:001-grow",
+            parent_uuid=objective_uuid,
             name="Double revenue",
             status="active",
             metadata_json=json.dumps({"score": 0.0}),

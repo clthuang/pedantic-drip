@@ -496,17 +496,27 @@ def _process_get_lineage(
 
 
 @with_retry("entity")
-def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
+def _process_set_parent(
+    db, child_uuid: str, parent_uuid: str, *, child_type_id: str, parent_type_id: str,
+) -> str:
     """Set or change the parent of an entity.
+
+    Writes by the two uuids the ``set_parent`` tool resolved (W3.4), never
+    re-resolving a type_id, and names the two entities by type_id in its
+    confirmation.
 
     Parameters
     ----------
     db:
         An EntityDatabase instance.
-    type_id:
-        The entity to update (e.g. ``'feature:029-entity-lineage-tracking'``).
+    child_uuid:
+        The entity to update.
+    parent_uuid:
+        The new parent entity.
+    child_type_id:
+        The child's type_id (e.g. ``'feature:029-entity-lineage-tracking'``).
     parent_type_id:
-        The new parent entity (e.g. ``'project:my-project'``).
+        The parent's type_id (e.g. ``'project:my-project'``).
 
     Returns
     -------
@@ -514,8 +524,8 @@ def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
         Confirmation message, or error message.  Never raises exceptions.
     """
     try:
-        db.set_parent(type_id, parent_type_id)
-        return f"Parent set: {type_id} → {parent_type_id}"
+        db.set_parent(child_uuid, parent_uuid)
+        return f"Parent set: {child_type_id} → {parent_type_id}"
     except sqlite3.OperationalError:
         raise
     except Exception as exc:
