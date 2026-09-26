@@ -44,7 +44,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | `/pd:cleanup-brainstorms` | Delete old scratch files |
 | `/pd:test-debt-report` | Aggregate deferred test debt across features and the backlog |
 | `/pd:doctor` | Run 11 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
-| `/pd:sync-cache` | Reload plugin after changes |
+| `/pd:sync-cache` | Reload plugin after changes (from the main checkout; a linked worktree publishes nothing) |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
 | `/pd:create-project <prd>` | Create project from PRD with AI-driven decomposition |

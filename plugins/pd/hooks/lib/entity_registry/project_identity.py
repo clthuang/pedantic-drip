@@ -37,7 +37,9 @@ _WORKSPACE_UUID_RE = re.compile(
 
 class WorkspaceCorruptedError(RuntimeError):
     """Raised when ``.claude/pd/workspace.json`` is malformed or has an
-    incompatible schema_version."""
+    incompatible schema_version, and when :func:`resolve_workspace_uuid`
+    cannot resolve a workspace: the checkout's ``.git`` is a file git cannot
+    answer for, or a fresh write finds no ``.claude/``."""
 
 
 def _validate_workspace_uuid(value: str) -> str:
@@ -558,6 +560,10 @@ def resolve_workspace_uuid(
       1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
          A linked git worktree then resolves as its repository's main
          checkout (:func:`_repository_root`); steps 2-4 key on that path.
+         A checkout whose ``.git`` is a file git cannot answer for (an
+         orphaned worktree, or a git older than 2.31) resolves no
+         workspace: it would key on its own path, and step 4 would mint
+         a workspace for it (:func:`_git_cannot_answer_for_git_file`).
       2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level)
          — self-healing: an orphaned file uuid is reconciled against the
          workspaces table (adopt the project_root row, or insert the missing
@@ -579,7 +585,9 @@ def resolve_workspace_uuid(
     Raises
     ------
     ValueError: env var present but malformed.
-    WorkspaceCorruptedError: workspace.json present but malformed.
+    WorkspaceCorruptedError: workspace.json present but malformed; the
+        directory's ``.git`` is a file git cannot answer for; or, at step 4,
+        ``.claude/`` is missing.
 
     Side effects
     ------------
@@ -594,6 +602,12 @@ def resolve_workspace_uuid(
         return _validate_workspace_uuid(env_uuid)
 
     cwd = _repository_root(cwd)
+    if _git_cannot_answer_for_git_file(cwd):
+        raise WorkspaceCorruptedError(
+            f"Cannot resolve workspace_uuid: the .git at {cwd!r} is a file "
+            f"git cannot answer for (an orphaned worktree, or a git older "
+            f"than 2.31), so no workspace is created for it."
+        )
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
     # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
     # hard-coded to the global store, which diverged under test harnesses.
@@ -816,15 +830,14 @@ def _run_git(args: list[str], working_dir: str) -> subprocess.CompletedProcess:
     )
 
 
-def _repository_root(path: str) -> str:
-    """Map a linked git worktree to its repository's main checkout.
+def _git_dirs(path: str) -> tuple[str, str] | None:
+    """git's absolute ``--git-dir`` and ``--git-common-dir`` for *path*.
 
-    Workspaces are per repository (completion plan decision 6). Every linked
-    worktree shares the repository's root commit, so ``project_id`` already
-    names the repository's workspace; path-keyed resolution must agree or
-    allocation and registration land in different workspaces. Anything
-    else comes back unchanged: the main checkout, a non-git directory, a
-    ``--separate-git-dir`` checkout, and a worktree of a bare repository.
+    None when git cannot answer:
+      - git is missing, or fails: *path* is in no repository, or is an
+        orphaned worktree whose ``<common dir>/worktrees/<name>`` is gone;
+      - git prints other than two lines: a git older than 2.31 prints the
+        ``--path-format`` option it does not know back as a line of its own.
     """
     try:
         result = _run_git(
@@ -833,9 +846,26 @@ def _repository_root(path: str) -> str:
             path,
         )
     except (OSError, subprocess.SubprocessError):
-        return path
+        return None
     dirs = result.stdout.splitlines()
     if result.returncode != 0 or len(dirs) != 2:
+        return None
+    return dirs[0], dirs[1]
+
+
+def _repository_root(path: str) -> str:
+    """Map a linked git worktree to its repository's main checkout.
+
+    Workspaces are per repository (completion plan decision 6). Every linked
+    worktree shares the repository's root commit, so ``project_id`` already
+    names the repository's workspace; path-keyed resolution must agree or
+    allocation and registration land in different workspaces. Anything
+    else comes back unchanged: the main checkout, a non-git directory, a
+    ``--separate-git-dir`` checkout, a worktree of a bare repository, and
+    a checkout git cannot answer for (:func:`_git_dirs`).
+    """
+    dirs = _git_dirs(path)
+    if dirs is None:
         return path
     git_dir, common_dir = dirs
     # ponytail: a bare repository has no main checkout, so each of its
@@ -843,6 +873,25 @@ def _repository_root(path: str) -> str:
     if git_dir == common_dir or os.path.basename(common_dir) != ".git":
         return path
     return os.path.dirname(common_dir)
+
+
+def _git_cannot_answer_for_git_file(path: str) -> bool:
+    """True when *path*'s ``.git`` is a FILE git cannot answer for.
+
+    A linked worktree's ``.git`` is a file naming
+    ``<common dir>/worktrees/<name>``. When that directory is gone (an
+    orphaned worktree), or git is older than 2.31, :func:`_git_dirs` has no
+    answer, so :func:`_repository_root` keeps the checkout's own path. Not
+    this case: a ``.git`` directory, no ``.git``, and a ``.git`` file git
+    answers for (a ``--separate-git-dir`` checkout, a submodule, a bare
+    repository's worktree). ``hooks/lib/common.sh``'s
+    ``may_publish_plugin_cache`` makes the same test: sync-cache publishes
+    nothing from such a checkout.
+    """
+    return (
+        os.path.isfile(os.path.join(path, ".git"))
+        and _git_dirs(path) is None
+    )
 
 
 def _compute_legacy_project_id(working_dir: str | None = None) -> str:

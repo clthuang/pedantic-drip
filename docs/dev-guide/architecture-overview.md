@@ -85,7 +85,7 @@ Hooks fire automatically at Claude Code lifecycle points and are defined in `plu
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `sync-cache` | SessionStart | Syncs plugin source to Claude cache |
+| `sync-cache` | SessionStart | Syncs plugin source to Claude cache from a main checkout; publishes nothing from a linked worktree |
 | `cleanup-locks` | SessionStart | Removes stale lock files |
 | `session-start` | SessionStart | Injects active feature context, runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart | Injects available agent/command context for secretary routing |

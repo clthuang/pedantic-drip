@@ -340,11 +340,12 @@ test_sync_cache_missing_source() {
 }
 
 # Tests 13b and 13c expect sync-cache.sh to publish from the checkout the
-# suite runs in. sync-cache.sh publishes only from a main checkout, so run
-# from a linked worktree they skip, saying so.
-skip_sync_cache_publish_in_linked_worktree() {
+# suite runs in. sync-cache.sh publishes only where common.sh's
+# may_publish_plugin_cache allows (a main checkout, or no .git), so run from
+# anywhere else (a linked worktree) they skip, saying so.
+skip_where_sync_cache_publishes_nothing() {
     source "${HOOKS_DIR}/lib/common.sh"
-    if is_linked_worktree "$PROJECT_ROOT"; then
+    if ! may_publish_plugin_cache "$PROJECT_ROOT"; then
         log_skip "run from a linked worktree, where sync-cache.sh publishes nothing"
         return 0
     fi
@@ -355,7 +356,7 @@ skip_sync_cache_publish_in_linked_worktree() {
 # (regression guard for the my-local-plugins hardcode bug)
 test_sync_cache_detects_arbitrary_marketplace() {
     log_test "sync-cache.sh detects pd install under non-my-local-plugins marketplace"
-    if skip_sync_cache_publish_in_linked_worktree; then return; fi
+    if skip_where_sync_cache_publishes_nothing; then return; fi
 
     local tmpdir cache_dir
     tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
@@ -395,7 +396,7 @@ EOF
 # Test 13c: marketplace.json target derives from installPath, not hardcode
 test_sync_cache_marketplace_json_target_derives() {
     log_test "sync-cache.sh derives marketplace.json target from installPath"
-    if skip_sync_cache_publish_in_linked_worktree; then return; fi
+    if skip_where_sync_cache_publishes_nothing; then return; fi
 
     local tmpdir cache_dir mkt_cache_dir mkt_cache
     tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }

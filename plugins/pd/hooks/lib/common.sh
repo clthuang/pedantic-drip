@@ -9,7 +9,10 @@ detect_project_root() {
     local dir="${PWD}"
 
     # Walk up to find .git (project marker): a directory in a main checkout,
-    # a file in a linked worktree, so a worktree roots at itself.
+    # a file in a linked worktree, so a worktree roots at itself. A git
+    # submodule's .git is a file too, and so is an orphaned worktree's, where
+    # git cannot answer: no workspace resolves there, and sync-cache publishes
+    # nothing (may_publish_plugin_cache).
     while [[ "$dir" != "/" ]]; do
         if [[ -e "${dir}/.git" ]]; then
             echo "$dir"
@@ -22,22 +25,42 @@ detect_project_root() {
     echo "${PWD}"
 }
 
-# Succeed when a directory is inside a linked git worktree, where git's
-# --git-dir (<common dir>/worktrees/<name>) differs from its --git-common-dir.
-# Both are asked for as absolute paths, the call
-# entity_registry.project_identity._repository_root makes: relative ones
-# differ even in a main checkout's subdirectory. A main checkout, a directory
-# outside any repository, and a git without --path-format (older than 2.31)
-# answer "not linked".
-# Usage: is_linked_worktree "$dir"
-is_linked_worktree() {
-    local dirs git_dir common_dir
-    dirs=$(git -C "${1:-$PWD}" rev-parse --path-format=absolute \
-        --git-dir --git-common-dir 2>/dev/null) || return 1
-    git_dir="${dirs%%$'\n'*}"
-    common_dir="${dirs#*$'\n'}"
-    # Exactly two lines, and they differ.
-    [[ "$common_dir" != "$dirs" && "$common_dir" != *$'\n'* && "$git_dir" != "$common_dir" ]]
+# Succeed when sync-cache.sh may publish the plugin from a checkout root, the
+# directory detect_project_root answers (the .git test is made there).
+# Publishes:
+#   - a main checkout, where git's --git-dir and --git-common-dir are one
+#     directory;
+#   - where git cannot answer: a .git directory, or no .git at all (a git
+#     archive export), as before.
+# Publishes nothing, so no worktree overwrites the shared cache with its
+# branch's plugin:
+#   - a linked worktree, where --git-dir (<common dir>/worktrees/<name>)
+#     differs from --git-common-dir;
+#   - a .git FILE git cannot answer for, which may be a worktree: an orphaned
+#     one whose <common dir>/worktrees/<name> is gone, or any worktree under a
+#     failing git or a git older than 2.31 (it prints the --path-format option
+#     it does not know back as a third line).
+# The git call, and what counts as git not answering, are those of
+# entity_registry.project_identity._git_dirs; there,
+# _git_cannot_answer_for_git_file refuses a workspace at the same .git file.
+# The two part ways at a bare repository's worktree: its --git-dir differs
+# from --git-common-dir, so nothing publishes from it (a bare repository has
+# no main checkout), while _repository_root keeps it as its own workspace
+# root.
+# Usage: may_publish_plugin_cache "$root"
+may_publish_plugin_cache() {
+    local root="${1:-$PWD}" dirs git_dir common_dir
+    if dirs=$(git -C "$root" rev-parse --path-format=absolute \
+            --git-dir --git-common-dir 2>/dev/null); then
+        git_dir="${dirs%%$'\n'*}"
+        common_dir="${dirs#*$'\n'}"
+        # Git answered only when it printed exactly two lines.
+        if [[ "$common_dir" != "$dirs" && "$common_dir" != *$'\n'* ]]; then
+            [[ "$git_dir" == "$common_dir" ]]
+            return
+        fi
+    fi
+    [[ ! -f "${root}/.git" ]]
 }
 
 # Extract working directory from a command string

@@ -49,11 +49,13 @@ Inside Claude Code, register and install the local plugin:
 /plugin install pd@pedantic-drip-marketplace
 ```
 
-After making changes to any plugin file (`plugins/pd/`), sync the cache so Claude Code picks up the update:
+After making changes to any plugin file (`plugins/pd/`), sync the cache from the main checkout so Claude Code picks up the update:
 
 ```
 /pd:sync-cache
 ```
+
+Only a main checkout publishes the plugin cache, or a directory with no `.git` (a `git archive` export). From a linked worktree nothing is published, nor from a `.git` file git cannot answer for (an orphaned worktree); a worktree's plugin edits reach the cache once they reach the main checkout.
 
 ## Environment Configuration
 

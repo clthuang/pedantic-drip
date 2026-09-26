@@ -89,11 +89,13 @@ In Claude Code:
 /plugin install pd@pedantic-drip-marketplace
 ```
 
-After making changes to plugin files, sync the cache:
+After making changes to plugin files, sync the cache from the main checkout:
 
 ```
 /pd:sync-cache
 ```
+
+Only a main checkout publishes the plugin cache, or a directory with no `.git` (a `git archive` export). From a linked worktree nothing is published, nor from a `.git` file git cannot answer for (an orphaned worktree); a worktree's plugin edits reach the cache once they reach the main checkout.
 
 ## For Public Users
 
@@ -333,7 +335,7 @@ Hooks execute automatically at lifecycle points.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache |
+| `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache from a main checkout; publishes nothing from a linked worktree |
 | `cleanup-locks` | SessionStart (startup\|resume\|clear) | Removes stale lock files |
 | `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context and runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |

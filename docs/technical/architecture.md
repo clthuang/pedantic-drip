@@ -276,7 +276,7 @@ Total: 17 hook scripts, 15 registered in `hooks.json` (plus the unregistered `cl
 | `yolo-stop` | Stop | Chains to next phase on YOLO stop events |
 | `cleanup-locks` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks and stale cached plugin versions |
 | `inject-secretary-context` | SessionStart | Injects secretary routing context |
-| `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache |
+| `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache (from a main checkout; a linked worktree publishes nothing) |
 
 ## Agent Categories
 
