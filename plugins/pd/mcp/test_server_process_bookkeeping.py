@@ -134,7 +134,12 @@ def test_a_lifespan_run_in_process_writes_no_pid_file_and_starts_no_watchdog(tmp
     """The lifespan runs against a temp HOME, registry and project, with
     nothing in ``server_lifecycle`` patched. While it runs, the process
     HOME's PID file does not name this process, the temp HOME has no
-    ``run/``, and no parent-PID watchdog has started."""
+    ``run/``, and no parent-PID watchdog has started.
+
+    The first and last checks fail on the base. The ``run/`` check holds
+    there too, because ``PID_DIR`` is fixed at import; it guards a later
+    change that reads HOME at call time, where the first check would look
+    in the wrong directory."""
     home = tmp_path / "home"
     home.mkdir()
     project = tmp_path / "project"

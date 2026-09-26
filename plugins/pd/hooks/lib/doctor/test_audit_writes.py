@@ -538,10 +538,10 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
-    ("entity_registry/database.py",           929, "split",       "migration internal - sanctioned"),
-    ("entity_registry/database.py",           2766, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4173, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4236, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           918, "split",       "migration internal - sanctioned"),
+    ("entity_registry/database.py",           2746, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4153, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4216, "sql",         "migration internal - sanctioned"),
     ("entity_registry/id_generator.py",       131, "split",       "SANCTIONED - round-trip gate for ids read as text"),
 ]
 

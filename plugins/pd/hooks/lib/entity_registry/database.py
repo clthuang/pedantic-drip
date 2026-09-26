@@ -10,6 +10,7 @@
 # Infrastructure (skip): _migrate (2 sites)
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -355,10 +356,7 @@ def _migrate_to_uuid_pk(conn):
         )
 
         # Update schema_version inside transaction (atomic with DDL/DML)
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '2') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 2)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -448,10 +446,7 @@ def _create_workflow_phases_table(conn: sqlite3.Connection) -> None:
         )
 
         # Update schema_version inside transaction (atomic with DDL)
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '3') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 3)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -501,10 +496,7 @@ def _create_fts_index(conn: sqlite3.Connection) -> None:
                 (row[0], row[1], row[2], row[3], row[4] or "", metadata_text),
             )
 
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '4') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 4)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -607,10 +599,7 @@ def _expand_workflow_phase_check(conn: sqlite3.Connection) -> None:
         )
 
         # Update schema_version inside transaction (atomic with DDL)
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '5') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 5)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -980,10 +969,7 @@ def _schema_expansion_v6(conn: sqlite3.Connection) -> None:
             )
 
         # Update schema_version inside transaction (atomic with DDL)
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '6') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 6)
 
         # --- Step 13: COMMIT ---
         conn.commit()
@@ -1310,10 +1296,7 @@ def _add_project_scoping(conn: sqlite3.Connection) -> None:
             )
 
         # --- Step 12: Update schema_version ---
-        conn.execute(
-            "INSERT INTO _metadata (key, value) VALUES ('schema_version', '8') "
-            "ON CONFLICT(key) DO UPDATE SET value = '8'"
-        )
+        _stamp_schema_version(conn, 8)
 
         # --- Step 13: COMMIT ---
         conn.commit()
@@ -1437,10 +1420,7 @@ def _migration_9_remove_create_tasks(conn: sqlite3.Connection) -> None:
         )
 
         # Update schema_version inside transaction (atomic with DDL)
-        conn.execute(
-            "INSERT INTO _metadata(key, value) VALUES('schema_version', '9') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        _stamp_schema_version(conn, 9)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -4730,13 +4710,14 @@ def _copy_rename_phase_events_for_v14(conn: sqlite3.Connection) -> None:
 def _v14_schema_already_applied(conn: sqlite3.Connection) -> bool:
     """Return True if all three v14 DDL artifacts are already in place.
 
-    Probes the SCHEMA (sqlite_master), not _metadata.schema_version — under
-    concurrent-runner conditions the racer's schema_version may read as 13
-    even when the peer has fully applied v14 DDL (the outer ``_migrate``
-    loop no longer lowers it (W5.6, ``_stamp_schema_version``), but a
-    replayed step that stamps inside its own transaction, as Migration 15
-    does, still can). The schema artifacts (entity_relations table +
-    widened CHECKs) are the stable racer-tolerant fingerprint.
+    Probes the SCHEMA (sqlite_master), not _metadata.schema_version. The
+    probe dates from runners that overlapped, when a replaying runner's
+    stamps could move schema_version back below 14 after a peer had applied
+    v14 DDL. Since W5.6 the runner is serialized (``_migration_lock``) and
+    no forward stamp lowers the version (``_stamp_schema_version``), so the
+    two agree; the schema artifacts (entity_relations table + widened
+    CHECKs) stay the fingerprint for a caller that runs this step outside
+    the runner, whose version read can precede a peer's commit.
 
     Used by Migration 14's step 0 and step 3 to short-circuit silently when
     a peer process has already applied the migration — preserves the
@@ -4789,9 +4770,10 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
 
     Replay-safe (FR-MR.8): early-return if already at v14 OR if schema
     artifacts indicate a concurrent peer has already applied v14 DDL
-    (concurrent-runner safety; ``_metadata.schema_version`` can read low
-    under a concurrent replay, see :func:`_v14_schema_already_applied`, so
-    the SCHEMA fingerprint is the racer-tolerant idempotency signal).
+    (concurrent-runner safety for a caller outside the serialized runner:
+    its version read can precede a peer's commit, see
+    :func:`_v14_schema_already_applied`, so the SCHEMA fingerprint is the
+    racer-tolerant idempotency signal).
     """
     # ----------------------------------------------------------------------
     # Step 0: Outer-level idempotency early-return (FR-MR.8).
@@ -4818,8 +4800,8 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
             return
 
     # Concurrent-runner short-circuit: peer process has already applied
-    # v14 DDL even though schema_version reads below 14 (a concurrent
-    # replay's in-transaction stamp can lower it).
+    # v14 DDL even though the version read above was below 14 (the peer
+    # committed after that read; see _v14_schema_already_applied).
     if _v14_schema_already_applied(conn):
         return
 
@@ -4858,9 +4840,8 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         # Racer-tolerant re-check at the SCHEMA level: peer process may
         # have applied v14 DDL between our step-0 probe and BEGIN IMMEDIATE
         # acquisition. Short-circuit silently to preserve concurrent-runner
-        # safety (schema_version can read low under a concurrent replay, so
-        # the schema fingerprint is the stable idempotency signal under
-        # this race).
+        # safety (the schema fingerprint is the idempotency signal; see
+        # _v14_schema_already_applied).
         if _v14_schema_already_applied(conn):
             conn.rollback()
             return
@@ -5378,10 +5359,7 @@ def _migration_15_audit_emit_counter(conn: sqlite3.Connection) -> None:
             "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
             ("audit_emit_failed_count", "0"),
         )
-        conn.execute(
-            "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
-            ("schema_version", "15"),
-        )
+        _stamp_schema_version(conn, 15)
         conn.commit()
     except Exception:
         try:
@@ -5465,9 +5443,7 @@ def _migration_17_cross_workspace_allowlist(conn: sqlite3.Connection) -> None:
                 FOREIGN KEY (child_uuid) REFERENCES entities(uuid) ON DELETE CASCADE
             )
         """)
-        conn.execute(
-            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '17')"
-        )
+        _stamp_schema_version(conn, 17)
         conn.commit()
     except Exception:
         try:
@@ -5911,9 +5887,10 @@ def _upsert_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
     version bump against an existing cell. Takes a raw connection (not an
     ``EntityDatabase`` instance) so stamp-write sites outside an instance
     can share it: the v2 rebuild tool's staging-connection generation
-    stamp (``entity_registry.rebuild_tool``, design 132 D1 step 3). The
-    migration loops' per-version stamp is ``_stamp_schema_version`` below,
-    which never lowers the version.
+    stamp (``entity_registry.rebuild_tool``, design 132 D1 step 3), which
+    must be able to move ``schema_version`` down to the v2 lineage's
+    number. Forward migration stamps go through ``_stamp_schema_version``
+    below instead, which never lowers the version.
     """
     conn.execute(
         "INSERT INTO _metadata (key, value) VALUES (?, ?) "
@@ -5925,19 +5902,26 @@ def _upsert_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
 def _stamp_schema_version(conn: sqlite3.Connection, version: int) -> None:
     """Record that the forward chain has reached *version*: never lower it.
 
-    The step stamp of ``EntityDatabase._migrate`` and ``_migrate_v2``. Two
-    processes can migrate one file at once (two MCP servers start
-    together). A runner that read an older version before a peer migrated
-    the file replays the peer's steps. Overwriting the stamp after each
-    replayed step moved the peer's newer version back, and a third runner
-    entering migration 13 then read a version its pre-flight rejects
-    ("Manual reconciliation required"). Stamped only upward here, the loop
-    never lowers it. (Migrations 15 and 17 still stamp their own number
-    inside their transactions, so a replay of either can lower it to 15 or
-    17 until the next step's stamp; every guard of steps 11-14 reads that
-    as done, and steps 18-25 probe the schema or are idempotent DDL.)
-    Downgrades go through
-    ``_migrate_down``, whose steps stamp their own versions.
+    - **Ignored, not refused:** a stored version at or above *version* is
+      kept, and the write does nothing (W5.6).
+    - **Who stamps through it:** the step stamp of
+      ``EntityDatabase._migrate`` and ``_migrate_v2``, and the
+      in-transaction stamps of forward migrations 2-6, 8, 9, 15 and 17.
+      Migrations 10-14 and 18 keep their literal in-transaction stamps
+      (the safety tests of 10, 12 and 13 pin theirs): each re-checks the
+      version or its schema under ``BEGIN IMMEDIATE`` and returns before
+      stamping when the step is done. Migrations 1, 7, 16 and 19-25 leave
+      the stamp to the loop.
+    - **Why:** runners used to overlap. A runner that read an older version
+      before a peer migrated the file replayed the peer's steps, and every
+      replayed stamp moved the version back; a replay of migration 3 once
+      left a file with the newest schema stamped 3, and every later open
+      failed. The runner is now serialized (:func:`_migration_lock`), so it
+      replays nothing; this helper keeps any stamp that does run from
+      lowering the version.
+    - **Not for downgrades:** ``_migrate_down``'s steps stamp their own
+      lower versions, and the rebuild tool's generation stamp uses
+      :func:`_upsert_metadata`.
     """
     conn.execute(
         "INSERT INTO _metadata (key, value) VALUES ('schema_version', ?) "
@@ -5945,6 +5929,77 @@ def _stamp_schema_version(conn: sqlite3.Connection, version: int) -> None:
         "WHERE CAST(_metadata.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
         (str(version),),
     )
+
+
+# The sidecar that serializes EntityDatabase migration runs on one file
+# across processes: ``<database file>.migrate.lock`` (W5.6).
+_MIGRATION_LOCK_SUFFIX = ".migrate.lock"
+
+# ``sqlite3.connect`` names for a database private to its connection: no
+# other process can open it, so its migrations need no lock.
+_PRIVATE_DATABASE_NAMES = frozenset({":memory:", ""})
+
+
+def _path_names_open_file(path: str, fd: int) -> bool:
+    """Whether *path* still names the file open as *fd* (same device, inode)."""
+    try:
+        named = os.stat(path)
+    except FileNotFoundError:
+        return False
+    held = os.fstat(fd)
+    return (named.st_dev, named.st_ino) == (held.st_dev, held.st_ino)
+
+
+@contextmanager
+def _migration_lock(db_path):
+    """Hold the lock that lets one process at a time migrate *db_path*.
+
+    - **Why (W5.6):** two processes opening one file with a step pending
+      (two MCP servers starting together) both ran every pending step. A
+      replayed table rebuild against a later schema could leave the file
+      unopenable, or with triggers on a dropped column that failed every
+      entity insert. ``EntityDatabase._migrate`` holds this lock for its
+      whole pending run and decides again under it what is left to run.
+    - **How:** a blocking exclusive ``fcntl.flock`` on a sidecar,
+      ``<database file>.migrate.lock``, as ``schema_v2._bootstrap_lock``
+      does: a file of its own, so SQLite's byte-range locks on the database
+      never meet it. The kernel releases it when its holder dies, so a
+      killed run cannot block the next one, and it needs no timeout: a live
+      holder keeps it only for its own run.
+    - **No file left behind:** unlike ``_bootstrap_lock``, the holder
+      removes the sidecar before releasing it, so nothing stays beside the
+      registry or beside a rebuild's staging file. A waiter can therefore
+      wake holding a lock on a removed file; it checks that the path still
+      names the file it locked and, if not, locks the file now there.
+    - **Private databases** (``:memory:``, ``""``) take no lock.
+    """
+    path = os.fsdecode(db_path)
+    if path in _PRIVATE_DATABASE_NAMES:
+        yield
+        return
+    lock_path = os.path.realpath(path) + _MIGRATION_LOCK_SUFFIX
+    while True:
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            locked_file_is_current = _path_names_open_file(lock_path, lock_fd)
+        except BaseException:
+            os.close(lock_fd)
+            raise
+        if locked_file_is_current:
+            break
+        os.close(lock_fd)
+    try:
+        yield
+    finally:
+        # Removed while still held, so a waiter that gets this file's lock
+        # next finds the file gone from the path and locks the one now
+        # there instead (the loop above).
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+        os.close(lock_fd)
 
 
 # Ordered mapping of version -> migration function.
@@ -6003,9 +6058,11 @@ MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
 #
 # Forward-only by construction: there is no ``V2_MIGRATIONS_DOWN``. Every
 # entry MUST be replay-safe (probe the live schema, skip when already
-# applied) so an interrupted run converges on the next open, and safe
-# against a peer running it at the same moment: probe again under the
-# write lock before writing (``_write_transaction_unless_applied``; W5.6).
+# applied) so an interrupted run converges on the next open. The runner
+# (``EntityDatabase._migrate_v2``) never runs a step twice at once
+# (``_migration_lock``; W5.6), but the rebuild tool and direct callers run
+# entries outside it, so each entry also probes again under the write lock
+# before writing (``_write_transaction_unless_applied``).
 
 
 def _v2_migration_2_mini_spec(conn: sqlite3.Connection) -> None:
@@ -6254,15 +6311,17 @@ def _write_transaction_unless_applied(
     """Yield whether the step is still to do; if so, inside one
     ``BEGIN IMMEDIATE`` transaction that commits when the block ends.
 
-    For the probe-then-write migrations (v1 22-24, v2 4-6; W5.6). Two
-    processes can migrate one file at once (two MCP servers start
-    together). Probing outside a lock let both see the work undone and both
-    write it: the second ``ALTER TABLE ... ADD COLUMN`` raised ``duplicate
-    column name``. The probe is repeated under the write lock, so a peer
-    that finished in between wins cleanly. One transaction also makes the
-    step all-or-nothing: an interruption leaves no column without its
-    backfill for the next open's probe to take as done. An exception rolls
-    it back and propagates.
+    For the probe-then-write migrations (v1 22-24, v2 4-6; W5.6).
+    ``EntityDatabase._migrate`` runs them one process at a time
+    (:func:`_migration_lock`), but they are also run outside it: the
+    rebuild tool's ``_apply_v2_chain`` and direct calls. When runners still
+    overlapped, probing outside a lock let two of them see the work undone
+    and both write it: the second ``ALTER TABLE ... ADD COLUMN`` raised
+    ``duplicate column name``, the recorded flake. The probe is repeated
+    under the write lock, so a peer that finished in between wins cleanly.
+    One transaction also makes the step all-or-nothing: an interruption
+    leaves no column without its backfill for the next open's probe to
+    take as done. An exception rolls it back and propagates.
 
     The block's statements stay in the migration function itself, so
     ``check_status_write_path`` still attributes them to it.
@@ -11176,7 +11235,25 @@ class EntityDatabase:
         self._conn.execute("PRAGMA cache_size = -8000")
 
     def _migrate(self) -> None:
-        """Apply any pending schema migrations."""
+        """Bring the file to this build's newest schema, one process at a time.
+
+        - **Checked first, without the lock:** the generation marker, the
+          C23 future-file guard, then the version
+          (:meth:`_migration_pending`). A file already at this build's
+          newest version, or newer, returns here: every open but the first
+          after a schema change.
+        - **Serialized (W5.6):** a pending run holds :func:`_migration_lock`
+          and checks again under it. An opener that arrives while a peer
+          migrates the file waits, then finds nothing pending and runs no
+          step. Before, two MCP servers starting together both ran every
+          pending step, and a replayed step could leave the file unusable.
+        - **Step by step:** each pending step runs, then
+          :func:`_stamp_schema_version` and a commit, so a run killed
+          between steps resumes from the last completed one on the next
+          open; the kernel frees a killed run's lock.
+        - **Both chains:** a v2-generation file runs :meth:`_migrate_v2`
+          under the same lock.
+        """
         # Bootstrap: ensure _metadata table exists so we can read schema_version.
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS _metadata "
@@ -11184,13 +11261,43 @@ class EntityDatabase:
         )
         self._commit()
 
+        if not self._migration_pending():
+            return
+        with _migration_lock(self._db_path):
+            # A peer may have run the pending steps while this process
+            # waited for the lock: decide again from the file as it is now.
+            if not self._migration_pending():
+                return
+            if self._is_v2_generation:
+                # Feature 134 NFR-4: a v2 file skips the v1 chain but is NOT
+                # frozen — it runs its own forward-only lineage instead.
+                self._migrate_v2()
+                return
+
+            current = self.get_schema_version()
+            target = max(MIGRATIONS)
+
+            for version in range(current + 1, target + 1):
+                migration_fn = MIGRATIONS[version]
+                migration_fn(self._conn)
+                _stamp_schema_version(self._conn, version)
+                self._commit()
+
+    def _migration_pending(self) -> bool:
+        """Read the file's generation and version: is a step left to run?
+
+        False when the C23 guard fires: a file newer than this build has
+        nothing for it to run. :meth:`_migrate` asks twice when a step is
+        pending, once to decide whether to take the migration lock and
+        again under it.
+        """
         # Feature 132 FR132-1: a v2-generation file's migrations are
         # already fully applied. The rebuild tool's own step-1 chain
-        # replay (this very _migrate() call, against the still-unstamped
+        # replay (a _migrate() call against the still-unstamped
         # fresh staging file) is the sanctioned initial use — it runs
         # BEFORE the tool's step-3 stamp, so `schema_generation` is unset
         # here and this guard is a no-op for it. Every open AFTER the
-        # stamp lands must short-circuit before the loop below: without
+        # stamp lands must stay off the v1 loop in _migrate(): without
         # this guard, a future migration 20+ would silently auto-run
         # against the v2 file (rejected alternative: leaving the file at
         # v1 schema_version=19 with no marker — see spec FR132-1).
@@ -11203,7 +11310,7 @@ class EntityDatabase:
         # cache would risk a stale hit after id() reuse once a connection is
         # GC'd). One EntityDatabase instance wraps exactly one connection for
         # its whole lifetime and the generation is one-way (nothing ever
-        # downgrades a stamped file back to v1), so computing it once here --
+        # downgrades a stamped file back to v1), so computing it here --
         # reusing the `_metadata` read the guard below already performs, no
         # extra query -- is correct for every subsequent `_emit_v2_event`
         # call on this instance.
@@ -11225,22 +11332,10 @@ class EntityDatabase:
         # every MCP start and swallows failures to stderr, which MCP does
         # not surface — so an old writer corrupts quietly.
         if self._refuse_if_file_is_from_the_future():
-            return
+            return False
 
-        if self._is_v2_generation:
-            # Feature 134 NFR-4: a v2 file skips the v1 chain but is NOT
-            # frozen — it runs its own forward-only lineage instead.
-            self._migrate_v2()
-            return
-
-        current = self.get_schema_version()
-        target = max(MIGRATIONS)
-
-        for version in range(current + 1, target + 1):
-            migration_fn = MIGRATIONS[version]
-            migration_fn(self._conn)
-            _stamp_schema_version(self._conn, version)
-            self._commit()
+        chain = V2_MIGRATIONS if self._is_v2_generation else MIGRATIONS
+        return bool(chain) and self.get_schema_version() < max(chain)
 
     def _refuse_if_file_is_from_the_future(self) -> bool:
         """Disable writes when the file's version exceeds this build's max.
@@ -11291,17 +11386,18 @@ class EntityDatabase:
     def _migrate_v2(self) -> None:
         """Apply pending ``V2_MIGRATIONS`` to a v2-generation file.
 
-        Same loop shape as the v1 chain in :meth:`_migrate`: run each
-        pending version's function, then stamp ``schema_version`` to that
-        version via ``_stamp_schema_version`` (which never lowers it) and
-        commit, so an interruption resumes from the last completed step
-        rather than replaying the whole chain. Called ONLY from
-        :meth:`_migrate`'s v2 branch.
-
-        The v2 lineage starts at 1 (the cutover baseline, which has no
-        migration function of its own), so a file already at
-        ``max(V2_MIGRATIONS)`` iterates zero times — re-opening is a no-op,
-        not a re-run.
+        - **Called ONLY from :meth:`_migrate`, under its
+          :func:`_migration_lock`:** ``current`` below is read after any
+          peer's run has finished, so no step runs twice on one file, even
+          when two processes open it at once (W5.6).
+        - **Step by step:** each pending version's function runs, then
+          :func:`_stamp_schema_version` (which never lowers the version)
+          and a commit, so a run killed between steps resumes from the last
+          completed one on the next open.
+        - **Lineage:** the v2 lineage starts at 1 (the cutover baseline,
+          which has no migration function of its own). A file already at
+          ``max(V2_MIGRATIONS)`` never gets here: :meth:`_migrate` finds
+          nothing pending, so re-opening is a no-op, not a re-run.
         """
         if not V2_MIGRATIONS:
             return
