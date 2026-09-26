@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.project_identity import resolve_workspace_uuid
 
 
 # ---------------------------------------------------------------------------
@@ -94,14 +95,26 @@ class TestFullRunOutputsValidJson:
     def test_full_run_with_fixtures(self, tmp_path):
         """Full run with actual feature and brainstorm fixtures produces correct counts.
 
-        Task 1 registers the new brainstorm file and skips the registered
-        one; the feature's projection is not read (W1.1). Tasks 2 and 3 run
-        in the resolved workspace and find nothing to do.
+        Task 1 registers the new brainstorm file and skips the one the
+        session's workspace already holds; the feature's projection is not
+        read (W1.1). Tasks 2 and 3 run in the resolved workspace and find
+        nothing to do.
         """
         entity_db_path = str(tmp_path / "entities.db")
 
-        # Seed entity DB with one feature and one registered brainstorm
+        # Workspace identity foundation: resolve_workspace_uuid requires
+        # .claude/ to exist for the precedence chain to bootstrap a workspace.
+        (tmp_path / ".claude").mkdir()
+
+        # Seed entity DB with one feature and one registered brainstorm.
+        # Task 1C: the brainstorm sits in the session's own workspace,
+        # resolved here as the CLI resolves it. Registration's existence
+        # check reads that workspace alone, so a brainstorm only another
+        # workspace held would now be registered, not skipped.
         db = EntityDatabase(entity_db_path)
+        session_workspace = resolve_workspace_uuid(
+            str(tmp_path), db_path=entity_db_path,
+        )
         db.register_entity(
             entity_type="feature",
             seq=1, slug="test-feature",
@@ -115,7 +128,7 @@ class TestFullRunOutputsValidJson:
             name="known",
             status="active",
             artifact_path="docs/brainstorms/20260101-000001-known.prd.md",
-            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+            workspace_uuid=session_workspace,
         )
         db.close()
 
@@ -128,10 +141,6 @@ class TestFullRunOutputsValidJson:
         brainstorms_dir.mkdir(parents=True)
         (brainstorms_dir / "20260101-000001-known.prd.md").touch()
         (brainstorms_dir / "20260101-000002-new.prd.md").touch()
-
-        # Workspace identity foundation: resolve_workspace_uuid requires
-        # .claude/ to exist for the precedence chain to bootstrap a workspace.
-        (tmp_path / ".claude").mkdir()
 
         result = _run_cli(
             project_root=str(tmp_path),

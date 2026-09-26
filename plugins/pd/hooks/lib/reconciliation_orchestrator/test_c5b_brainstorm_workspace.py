@@ -1,12 +1,15 @@
 """C5b step 1: the reconciler's brainstorm registration takes one workspace uuid.
 
-``_sync_brainstorm_entities`` used to hand ``upsert_entity`` either its
+``_sync_brainstorm_entities`` used to hand its registration call either its
 ``workspace_uuid`` or, when it had none, the ``project_id`` alias. It now
 resolves the workspace once — the given one, else the one the legacy
 ``project_id`` names — and passes only ``workspace_uuid``. The
 ``entity_created`` label is unchanged: the legacy id when that is how the
 workspace was found (it is that workspace's ``project_id_legacy``), the given
 workspace's legacy id otherwise.
+
+Task 1C made that call ``register_entity``, insert-only, where it was
+``upsert_entity``: the tests record the call it makes now.
 """
 from __future__ import annotations
 
@@ -61,7 +64,8 @@ def test_brainstorm_sync_registers_in_one_resolved_workspace(
                   "ws_b": bootstrap_test_workspace(db, LEGACY_B)}
     (tmp_path / "brainstorms").mkdir()
     (tmp_path / "brainstorms" / f"{_STEM}.prd.md").touch()
-    upserts = _record_calls(monkeypatch, db, "upsert_entity")
+    # Task 1C: registration is register_entity (insert-only), not upsert_entity.
+    registrations = _record_calls(monkeypatch, db, "register_entity")
 
     result = entity_status._sync_brainstorm_entities(
         db, str(tmp_path), "docs", str(tmp_path), LEGACY_A,
@@ -69,9 +73,9 @@ def test_brainstorm_sync_registers_in_one_resolved_workspace(
     )
 
     assert result["registered"] == 1
-    assert len(upserts) == 1
-    assert upserts[0].get("project_id") is None, upserts[0]
-    assert upserts[0].get("workspace_uuid") == workspaces[expected_workspace], upserts[0]
+    assert len(registrations) == 1
+    assert registrations[0].get("project_id") is None, registrations[0]
+    assert registrations[0].get("workspace_uuid") == workspaces[expected_workspace], registrations[0]
     assert db.get_entity(_TYPE_ID)["workspace_uuid"] == workspaces[expected_workspace]
     assert _created_label(db, _TYPE_ID) == expected_label
     db.close()
@@ -85,9 +89,11 @@ _STALE_WORKSPACE_UUID = "01900000-0000-7000-8000-00000000dead"
 
 
 def test_brainstorm_sync_with_nothing_to_register_resolves_no_workspace(tmp_path):
-    """No new brainstorm file means no registration, so no workspace is
-    resolved for one: an unknown legacy id goes unreported. (Before W1.1 the
-    archive pass's read that followed reported it; that pass is deleted.)"""
+    """No brainstorm file means no workspace is resolved: an unknown legacy
+    id goes unreported. (Before W1.1 the archive pass's read that followed
+    reported it; that pass is deleted. Since task 1C the workspace is
+    resolved at the first ``.prd.md`` file, registered or not: the existence
+    check reads that workspace.)"""
     db = EntityDatabase(":memory:")
     (tmp_path / "brainstorms").mkdir()
 

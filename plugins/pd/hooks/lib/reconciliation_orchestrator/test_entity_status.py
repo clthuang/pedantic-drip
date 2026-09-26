@@ -358,21 +358,22 @@ class TestReconciliationIsNonDestructive:
         Three helpers ran before W1.1, each isolated so that one failing
         could not abort the others. The brainstorm helper is the one left;
         its failure is still returned as a warning, never raised, so
-        session start carries on.
+        session start carries on. Task 1C: the helper registers through
+        register_entity (insert-only), so that is the call that fails here.
         """
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
         (tmp_path / "brainstorms").mkdir(parents=True)
 
-        original = db.upsert_entity
+        original = db.register_entity
 
-        def exploding_upsert(*a, **kw):
+        def exploding_register(*a, **kw):
             if kw.get("entity_type") == "brainstorm":
                 raise RuntimeError("brainstorm helper blew up")
             return original(*a, **kw)
 
         (tmp_path / "brainstorms" / "boom.prd.md").touch()
-        with patch.object(db, "upsert_entity", side_effect=exploding_upsert):
+        with patch.object(db, "register_entity", side_effect=exploding_register):
             result = sync_entity_statuses(
                 db, str(tmp_path), project_id="ws-a-legacy",
                 project_root=str(tmp_path), workspace_uuid=ws,

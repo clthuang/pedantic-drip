@@ -1,8 +1,9 @@
 """Reconciliation Orchestrator CLI — entrypoint for `python -m reconciliation_orchestrator`.
 
 Runs all session-start reconciliation tasks in sequence:
-  1. entity_status.sync_entity_statuses   — registers the checkout's new
-     brainstorm ``.prd.md`` files
+  1. entity_status.sync_entity_statuses   — registers the checkout's
+     brainstorm ``.prd.md`` files that this session's workspace holds no row
+     for; insert-only, so it never rewrites a registered brainstorm
   2. workflow_engine.reconciliation._recover_pending_cascades — re-runs
      the missed completion cascades found in this session's workspace
   3. dependency_freshness.cleanup_stale_dependencies — flips this
@@ -14,10 +15,12 @@ registry: those files are projections of it (design W1).
 Design principles:
   - Fail-open: any task error is captured in `errors` list; exit code is always 0.
   - Per-task isolation: one task raising does not prevent others from running.
-  - Workspace-scoped scans: Tasks 2 and 3 list only this session's
-    workspace, so an unresolved workspace skips them and records why under
-    `errors`. Task 3 flips only this workspace's entities, but Task 2's
-    writes follow edges: an unblock can flip a dependent in another
+  - Workspace-scoped scans: Task 1 looks up and inserts in one workspace
+    (this session's, else the one the legacy project_id names), and
+    registers nothing when neither resolves. Tasks 2 and 3 list only this
+    session's workspace, so an unresolved workspace skips them and records
+    why under `errors`. Task 3 flips only this workspace's entities, but
+    Task 2's writes follow edges: an unblock can flip a dependent in another
     workspace across a cross-workspace `blocks` edge, and an objective's
     rescore rewrites a changed key result wherever it is registered.
   - DB connections closed in finally block (even on task errors).
@@ -117,17 +120,18 @@ def run(args):
         project_id = _compute_legacy_project_id(args.project_root)
         # Feature 108 FR-12 / AC-30: resolve workspace UUID with the
         # documented precedence chain. Best-effort: if resolution fails,
-        # Task 1 falls back to the legacy project_id (brainstorm
-        # registration still accepts one), Tasks 2 and 3 are skipped, and
-        # the reason is recorded under `errors` — the orchestrator must
-        # never block session-start.
+        # Task 1 falls back to the workspace the legacy project_id names
+        # (brainstorm registration still accepts one; with no such
+        # workspace it registers nothing and returns a warning), Tasks 2
+        # and 3 are skipped, and the reason is recorded under `errors` — the
+        # orchestrator must never block session-start.
         try:
             workspace_uuid = _resolve_workspace_uuid_with_precedence(args)
         except Exception as exc:
             results["errors"].append(f"workspace_uuid: {exc}")
             workspace_uuid = ""
 
-        # Task 1: register the checkout's new brainstorms
+        # Task 1: register the checkout's new brainstorms (insert-only)
         try:
             results["entity_sync"] = entity_status.sync_entity_statuses(
                 entity_db, full_artifacts_path, project_id=project_id,

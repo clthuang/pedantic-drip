@@ -130,7 +130,7 @@ Located under `plugins/pd/hooks/lib/`:
 | `entity_registry/` | Entity DB, metadata parsing, backfill scanner, frontmatter injection |
 | `workflow_engine/` | State machine, transitions, drift detection, cascade recovery |
 | `transition_gate/` | Gate functions, constants, and transition models |
-| `reconciliation_orchestrator/` | Session start: brainstorm registration, cascade recovery and dependency cleanup. Its scans list only the session's workspace; cascade recovery's writes follow edges (an unblock across a cross-workspace `blocks` edge, a changed key result under the session's objective) |
+| `reconciliation_orchestrator/` | Session start: brainstorm registration (insert-only), cascade recovery and dependency cleanup. Its scans list only the session's workspace; cascade recovery's writes follow edges (an unblock across a cross-workspace `blocks` edge, a changed key result under the session's objective) |
 | `doctor/` | 10 data consistency checks with auto-fix support |
 
 **Doctor check added in feature 109 — `check_status_write_path` (registered in CHECK_ORDER):** AST-based static audit that enforces AC-2.1 and AC-2.6. At session start it greps `plugins/pd/hooks/lib/` and `plugins/pd/mcp/` for direct `UPDATE entities SET status` and `UPDATE workflow_phases` writes outside the `append_phase_event` helper body. Emits a non-fatal stderr warning listing any violating `file:line` pairs. Identical grep to the CI test `test_no_direct_status_updates`.
