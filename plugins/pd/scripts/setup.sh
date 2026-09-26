@@ -112,7 +112,7 @@ step_init_project() {
     local project_root
     project_root=$(detect_project_root)
 
-    if [[ ! -d "${project_root}/.git" ]]; then
+    if [[ ! -e "${project_root}/.git" ]]; then
         printf "  Not inside a git project — skipping project-level setup.\n"
         return
     fi

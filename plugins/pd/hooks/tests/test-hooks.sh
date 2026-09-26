@@ -6,8 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HOOKS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# Walk up to find repo root (has .git directory)
-PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -d .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
+# Walk up to find repo root (has .git: a directory in a main checkout, a file
+# in a linked worktree)
+PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -e .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
 
 # Isolate entity-DB writes: hook children inherit this and register temp
 # workspaces in a throwaway DB, not ~/.claude/pd/entities/entities.db
@@ -338,10 +339,23 @@ test_sync_cache_missing_source() {
     rm -rf "$tmpdir"
 }
 
+# Tests 13b and 13c expect sync-cache.sh to publish from the checkout the
+# suite runs in. sync-cache.sh publishes only from a main checkout, so run
+# from a linked worktree they skip, saying so.
+skip_sync_cache_publish_in_linked_worktree() {
+    source "${HOOKS_DIR}/lib/common.sh"
+    if is_linked_worktree "$PROJECT_ROOT"; then
+        log_skip "run from a linked worktree, where sync-cache.sh publishes nothing"
+        return 0
+    fi
+    return 1
+}
+
 # Test 13b: sync-cache.sh detects pd install under any marketplace name
 # (regression guard for the my-local-plugins hardcode bug)
 test_sync_cache_detects_arbitrary_marketplace() {
     log_test "sync-cache.sh detects pd install under non-my-local-plugins marketplace"
+    if skip_sync_cache_publish_in_linked_worktree; then return; fi
 
     local tmpdir cache_dir
     tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
@@ -381,6 +395,7 @@ EOF
 # Test 13c: marketplace.json target derives from installPath, not hardcode
 test_sync_cache_marketplace_json_target_derives() {
     log_test "sync-cache.sh derives marketplace.json target from installPath"
+    if skip_sync_cache_publish_in_linked_worktree; then return; fi
 
     local tmpdir cache_dir mkt_cache_dir mkt_cache
     tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }

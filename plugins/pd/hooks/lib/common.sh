@@ -8,9 +8,10 @@
 detect_project_root() {
     local dir="${PWD}"
 
-    # Walk up to find .git (project marker)
+    # Walk up to find .git (project marker): a directory in a main checkout,
+    # a file in a linked worktree, so a worktree roots at itself.
     while [[ "$dir" != "/" ]]; do
-        if [[ -d "${dir}/.git" ]]; then
+        if [[ -e "${dir}/.git" ]]; then
             echo "$dir"
             return 0
         fi
@@ -19,6 +20,24 @@ detect_project_root() {
 
     # Fallback to PWD if no markers found
     echo "${PWD}"
+}
+
+# Succeed when a directory is inside a linked git worktree, where git's
+# --git-dir (<common dir>/worktrees/<name>) differs from its --git-common-dir.
+# Both are asked for as absolute paths, the call
+# entity_registry.project_identity._repository_root makes: relative ones
+# differ even in a main checkout's subdirectory. A main checkout, a directory
+# outside any repository, and a git without --path-format (older than 2.31)
+# answer "not linked".
+# Usage: is_linked_worktree "$dir"
+is_linked_worktree() {
+    local dirs git_dir common_dir
+    dirs=$(git -C "${1:-$PWD}" rev-parse --path-format=absolute \
+        --git-dir --git-common-dir 2>/dev/null) || return 1
+    git_dir="${dirs%%$'\n'*}"
+    common_dir="${dirs#*$'\n'}"
+    # Exactly two lines, and they differ.
+    [[ "$common_dir" != "$dirs" && "$common_dir" != *$'\n'* && "$git_dir" != "$common_dir" ]]
 }
 
 # Extract working directory from a command string

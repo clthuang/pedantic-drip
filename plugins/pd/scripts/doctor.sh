@@ -33,6 +33,11 @@ HAS_BLOCKER=0
 # ---------------------------------------------------------------------------
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 
+# detect_project_root comes from the hooks' shared library, so doctor and the
+# hooks root a session alike: at the nearest .git, a directory in a main
+# checkout or a file in a linked worktree.
+source "${PLUGIN_ROOT}/hooks/lib/common.sh"
+
 detect_os() {
     if [[ "$OSTYPE" == "darwin"* ]]; then echo "macos"
     elif command -v apt &>/dev/null; then echo "debian"
@@ -40,18 +45,6 @@ detect_os() {
     elif command -v pacman &>/dev/null; then echo "arch"
     else echo "unknown"
     fi
-}
-
-detect_project_root() {
-    local dir="${PWD}"
-    while [[ "$dir" != "/" ]]; do
-        if [[ -d "${dir}/.git" ]]; then
-            echo "$dir"
-            return 0
-        fi
-        dir=$(dirname "$dir")
-    done
-    echo "${PWD}"
 }
 
 # Read a YAML frontmatter field from a .local.md config file.
@@ -267,7 +260,7 @@ check_project_context() {
     local project_root
     project_root=$(detect_project_root)
 
-    if [[ ! -d "${project_root}/.git" ]]; then
+    if [[ ! -e "${project_root}/.git" ]]; then
         info "Not inside a git project (some checks skipped)"
         return 0
     fi
@@ -307,7 +300,7 @@ check_stale_feature_branches() {
     local project_root config_file artifacts_root base_branch
     project_root=$(detect_project_root)
 
-    if [[ ! -d "${project_root}/.git" ]]; then
+    if [[ ! -e "${project_root}/.git" ]]; then
         return 0  # Skip silently if not a git project.
     fi
 
@@ -382,7 +375,7 @@ check_tier_doc_freshness() {
     local project_root config_file
     project_root=$(detect_project_root)
 
-    if [[ ! -d "${project_root}/.git" ]]; then
+    if [[ ! -e "${project_root}/.git" ]]; then
         return 0
     fi
 

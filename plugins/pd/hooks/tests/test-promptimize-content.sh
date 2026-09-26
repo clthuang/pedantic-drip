@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HOOKS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -d .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
+PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -e .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
 
 # Isolate entity-DB writes: hook children inherit this and register temp
 # workspaces in a throwaway DB, not ~/.claude/pd/entities/entities.db

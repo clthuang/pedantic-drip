@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # SessionStart hook: sync plugin source files to cache directory
 # Ensures Claude Code always uses the latest plugin code
+#
+# Publishes only from a main checkout. In a linked worktree it publishes
+# nothing, so no worktree overwrites the shared cache with its branch's
+# plugin; its edits reach the cache once they reach the main checkout. A
+# directory with no .git (a git archive export) publishes as before.
 
 set -euo pipefail
 
@@ -11,6 +16,11 @@ install_err_trap
 # Find the source project root
 SOURCE_ROOT="$(detect_project_root)"
 SOURCE_PLUGIN="${SOURCE_ROOT}/plugins/pd"
+
+if is_linked_worktree "$SOURCE_ROOT"; then
+    echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}'
+    exit 0
+fi
 
 # Detect installed plugin path dynamically from installed_plugins.json
 INSTALLED_PLUGINS="$HOME/.claude/plugins/installed_plugins.json"
