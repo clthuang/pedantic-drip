@@ -141,7 +141,7 @@ update_entity(
     name: str | None,
     status: str | None,
     artifact_path: str | None,
-    metadata: dict,         # shallow merge — unspecified keys are preserved
+    metadata: dict | None,  # shallow merge — unspecified keys are preserved; {} clears; omitted leaves it
     archived: bool | None,  # true archives, false un-archives; omitted leaves it
 )
 ```

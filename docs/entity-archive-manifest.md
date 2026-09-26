@@ -15,7 +15,9 @@ update_entity(type_id="<type_id>", archived=true)    # archive
 update_entity(type_id="<type_id>", archived=false)   # restore — row and status intact
 ```
 
-Restoration is a forward write through the sanctioned path, not a rollback. One cost remains: the sequence number is never released. An archive/restore pair adds no `events` or `phase_events` rows: `set_archived` writes only `is_archived` and `updated_at`. (The retired `status="archived"` recipe added one `phase_events` row per status change, plus one immutable `events` row on a v2-generation file.)
+The call resolves `type_id` in the calling session's project. Run it from a session in the `project_root` the row is listed under, or pass that workspace's `project_id` (its `workspaces.project_id_legacy`). From another session it finds no row, or acts on a row with the same `type_id` in the caller's workspace.
+
+Restoration is a forward write through the sanctioned path, not a rollback. One cost remains: the sequence number is never released. An archive/restore pair changes only the row's `is_archived` and `updated_at` and adds no `events` or `phase_events` rows: with no other field passed, `update_entity` leaves the row's other columns, metadata included, as they are, and `set_archived` writes only `is_archived` and `updated_at`. (The retired `status="archived"` recipe added one `phase_events` row per status change, plus one immutable `events` row on a v2-generation file.)
 
 **Legacy-ness lives in `entities.is_legacy`, not in a tag.** The earlier `legacy-archived-2026-09` tag was removed once the column existed: two homes for one fact is the defect this effort removes. `workspace-retired-*` remains because it says something different — a dormant workspace was stood down, and those rows were never legacy.
 

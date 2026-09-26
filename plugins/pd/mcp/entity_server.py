@@ -1125,7 +1125,8 @@ async def update_entity(
         New artifact_path (if provided).
     metadata:
         Metadata to shallow-merge — pass a dict (preferred) or a JSON
-        string; dicts are auto-coerced. Empty dict '{}' clears.
+        string; dicts are auto-coerced. Empty dict '{}' clears; omitted
+        leaves it.
     ref:
         Alternative flexible reference. Mutations require exact or unique match.
     project_id:
@@ -1161,7 +1162,10 @@ async def update_entity(
     try:
         return _process_update_entity(
             _db, resolved_type_id, name=name, description=artifact_path,
-            status=status, metadata=parse_metadata(metadata),
+            status=status,
+            # Omitted stays None, "not updating": parse_metadata(None) is {},
+            # which EntityDatabase.update_entity reads as "clear".
+            metadata=None if metadata is None else parse_metadata(metadata),
             project_id=resolved_project_id,
             new_project_id=new_project_id,
             archived=archived,

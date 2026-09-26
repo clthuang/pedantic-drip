@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Regenerate docs/entity-archive-manifest.md from a copy of the entity registry.
+"""Regenerate docs/entity-archive-manifest.md from the entity registry.
 
 The manifest is the index that makes a clean break recoverable: once rows
 are archived, the marker alone cannot distinguish "archived by the break"
 from "already terminal".
 
-It writes no row: it opens the database in ro mode. On SQLite 3.53 that open
-still creates -shm and -wal files beside a WAL-mode database that has none,
-so point ENTITY_DB_PATH at a copy, never the live registry. Copy it through
-an immutable open, which writes nothing beside it:
+It writes no row. It reads ENTITY_DB_PATH, by default the live registry
+~/.claude/pd/entities/entities.db, through a read-only open chosen by
+whether a -wal file sits beside it:
+
+- No -wal: ?mode=ro&immutable=1, which writes nothing beside the file.
+  Plain ?mode=ro there fails (SQLite 3.51) or creates -shm and -wal (3.53).
+- A -wal: ?mode=ro, which reads the commits a writer still holds in it;
+  ?immutable=1 would miss them.
+
+To regenerate from a snapshot instead, copy the registry through an
+immutable open and point ENTITY_DB_PATH at the copy:
 
     python -c "import os,sqlite3,sys; s=sqlite3.connect('file:'+os.path.expanduser('~/.claude/pd/entities/entities.db')+'?immutable=1',uri=True); s.backup(sqlite3.connect(sys.argv[1]))" /tmp/entities-copy.db
     ENTITY_DB_PATH=/tmp/entities-copy.db python scripts/gen_archive_manifest.py
@@ -19,10 +26,12 @@ through ?mode=ro instead of ?immutable=1.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import os
 import sqlite3
 import sys
+import urllib.parse
 from pathlib import Path
 
 DB = os.environ.get("ENTITY_DB_PATH", os.path.expanduser("~/.claude/pd/entities/entities.db"))
@@ -50,10 +59,17 @@ ORDER BY w.project_root, e.kind, e.entity_id
 """
 
 
+def _open_read_only(db_path: str) -> sqlite3.Connection:
+    """A connection to *db_path* that cannot write: ``immutable=1`` with no
+    -wal beside the file, ``mode=ro`` with one (see the module docstring)."""
+    query = "mode=ro" if os.path.exists(f"{db_path}-wal") else "mode=ro&immutable=1"
+    return sqlite3.connect(f"file:{urllib.parse.quote(db_path)}?{query}", uri=True)
+
+
 def main() -> int:
-    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(QUERY).fetchall()
+    with contextlib.closing(_open_read_only(DB)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(QUERY).fetchall()
 
     by_ws: dict[str, list] = {}
     for r in rows:
@@ -94,13 +110,21 @@ def main() -> int:
     a('update_entity(type_id="<type_id>", archived=false)   # restore — row and status intact')
     a("```")
     a("")
+    a("The call resolves `type_id` in the calling session's project. Run it "
+      "from a session in the `project_root` the row is listed under, or pass "
+      "that workspace's `project_id` (its `workspaces.project_id_legacy`). "
+      "From another session it finds no row, or acts on a row with the same "
+      "`type_id` in the caller's workspace.")
+    a("")
     a("Restoration is a forward write through the sanctioned path, not a "
       "rollback. One cost remains: the sequence number is never released. "
-      "An archive/restore pair adds no `events` or `phase_events` rows: "
-      "`set_archived` writes only `is_archived` and `updated_at`. (The "
-      "retired `status=\"archived\"` recipe added one `phase_events` row per "
-      "status change, plus one immutable `events` row on a v2-generation "
-      "file.)")
+      "An archive/restore pair changes only the row's `is_archived` and "
+      "`updated_at` and adds no `events` or `phase_events` rows: with no "
+      "other field passed, `update_entity` leaves the row's other columns, "
+      "metadata included, as they are, and `set_archived` writes only "
+      "`is_archived` and `updated_at`. (The retired `status=\"archived\"` "
+      "recipe added one `phase_events` row per status change, plus one "
+      "immutable `events` row on a v2-generation file.)")
     a("")
     a("**Legacy-ness lives in `entities.is_legacy`, not in a tag.** The "
       "earlier `legacy-archived-2026-09` tag was removed once the column "
