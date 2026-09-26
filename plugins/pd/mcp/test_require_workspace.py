@@ -19,8 +19,9 @@ Design: ``docs/plans/2026-09-25-release-c-followups-design.md``, W4 (changes
 lifespans the way their launchers start them: ``PROJECT_ROOT`` unset, so each
 server roots at its working directory. The registry, HOME and the git
 repository are temp paths, and the repository has no ``.claude/``.
-``isolate_lifespans`` is this module's one place that patches the lifespans'
-process-level effects.
+``isolate_lifespans`` sets that state up. The lifespans run unpatched: the
+PID file and the parent watchdog belong to each server's ``__main__`` block
+(W5.6), which no test here runs.
 """
 from __future__ import annotations
 
@@ -42,7 +43,6 @@ for _path in (_HOOKS_LIB, _MCP_DIR):
         sys.path.insert(0, _path)
 
 import entity_server  # noqa: E402
-import server_lifecycle  # noqa: E402
 import workflow_state_server as wss  # noqa: E402
 from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID  # noqa: E402
 from entity_registry.test_helpers import bootstrap_test_workspace  # noqa: E402
@@ -86,22 +86,15 @@ def isolate_lifespans(monkeypatch, *, home, db_path) -> None:
       working directory the test chooses; no workspace env var is set.
     - **State:** HOME and the registry (``ENTITY_DB_PATH``) are temp paths,
       and both modules start from a fresh process's globals.
-    - **Process effects:** the PID files go under the temp HOME, and the
-      parent-PID watchdog is not started (it would outlive the test and
-      ``os._exit`` the whole run if pytest were re-parented).
     """
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ENTITY_DB_PATH", str(db_path))
     for name in ("PROJECT_ROOT", "ENTITY_WORKSPACE_UUID", "WORKSPACE_UUID"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(
-        server_lifecycle, "PID_DIR", home / ".claude" / "pd" / "run"
-    )
     for module, fresh_globals in (
         (entity_server, _ENTITY_SERVER_FRESH_GLOBALS),
         (wss, _WORKFLOW_SERVER_FRESH_GLOBALS),
     ):
-        monkeypatch.setattr(module, "start_parent_watchdog", lambda: None)
         for name, value in fresh_globals.items():
             monkeypatch.setattr(module, name, value)
 
