@@ -1,0 +1,662 @@
+"""W4 changes 1-3: each server resolves its workspace on demand and refuses
+without one; a degraded start stays degraded; the create-project refusal of
+a parent in another workspace has its own error type.
+
+Design: ``docs/plans/2026-09-25-release-c-followups-design.md``, W4 (changes
+1-3, and its Tests). Before W4:
+
+- **First session:** in a repository with no ``.claude/``, the entity server
+  refused every allocation (``workspace_unresolved``) until a restart, and the
+  workflow server registered features into the ``__unknown__`` workspace
+  (problem 3, N12);
+- **Degraded start:** a recovery thread was started that never recovered the
+  server (N3);
+- **create-project** under another workspace's parent answered
+  ``invalid_transition``, and did not say its allocated number is now unused
+  (N11).
+
+**How the lifespan tests run.** Both MCP servers start through their real
+lifespans the way their launchers start them: ``PROJECT_ROOT`` unset, so each
+server roots at its working directory. The registry, HOME and the git
+repository are temp paths, and the repository has no ``.claude/``.
+``isolate_lifespans`` is this module's one place that patches the lifespans'
+process-level effects.
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import threading
+
+import pytest
+
+_MCP_DIR = os.path.dirname(os.path.abspath(__file__))
+_HOOKS_LIB = os.path.normpath(os.path.join(_MCP_DIR, "..", "hooks", "lib"))
+for _path in (_HOOKS_LIB, _MCP_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+import entity_server  # noqa: E402
+import server_lifecycle  # noqa: E402
+import workflow_state_server as wss  # noqa: E402
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID  # noqa: E402
+from entity_registry.test_helpers import bootstrap_test_workspace  # noqa: E402
+from workflow_engine.engine import WorkflowStateEngine  # noqa: E402
+from workflow_engine.entity_engine import EntityWorkflowEngine  # noqa: E402
+from workflow_engine.notifications import NotificationQueue  # noqa: E402
+
+# The workspace_unresolved envelope's hint names the server to restart (W4.1).
+_ENTITY_SERVER_HINT = (
+    "restart the pd entity-registry MCP server from the repository root, "
+    "or create .claude/ there"
+)
+_WORKFLOW_SERVER_HINT = (
+    "restart the pd workflow-engine MCP server from the repository root, "
+    "or create .claude/ there"
+)
+# What a degraded server answers every tool call with (W4.2).
+_DEGRADED_ANSWER = "database unavailable (degraded start); restart the MCP server"
+
+# The module globals each lifespan reads or assigns, at their values in a
+# fresh server process. isolate_lifespans starts every test from these (a
+# lifespan never resets _db_unavailable, and a degraded one assigns no
+# project or workspace), and restores the suite's values afterwards.
+_ENTITY_SERVER_FRESH_GLOBALS = {
+    "_db": None, "_db_unavailable": False, "_config": {}, "_project_root": "",
+    "_artifacts_root": "", "_project_id": "", "_git_info": None,
+    "_workspace_uuid": "",
+}
+_WORKFLOW_SERVER_FRESH_GLOBALS = {
+    "_db": None, "_db_unavailable": False, "_engine": None,
+    "_entity_engine": None, "_artifacts_root": "", "_project_root": "",
+    "_project_id": "", "_workspace_uuid": "", "_notification_queue": None,
+}
+
+
+def isolate_lifespans(monkeypatch, *, home, db_path) -> None:
+    """Let both servers' lifespans run as their launchers start them, inside
+    temp state, and restore the servers' module globals afterwards.
+
+    - **Root:** ``PROJECT_ROOT`` is unset, so each server roots at the
+      working directory the test chooses; no workspace env var is set.
+    - **State:** HOME and the registry (``ENTITY_DB_PATH``) are temp paths,
+      and both modules start from a fresh process's globals.
+    - **Process effects:** the PID files go under the temp HOME, and the
+      parent-PID watchdog is not started (it would outlive the test and
+      ``os._exit`` the whole run if pytest were re-parented).
+    """
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ENTITY_DB_PATH", str(db_path))
+    for name in ("PROJECT_ROOT", "ENTITY_WORKSPACE_UUID", "WORKSPACE_UUID"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        server_lifecycle, "PID_DIR", home / ".claude" / "pd" / "run"
+    )
+    for module, fresh_globals in (
+        (entity_server, _ENTITY_SERVER_FRESH_GLOBALS),
+        (wss, _WORKFLOW_SERVER_FRESH_GLOBALS),
+    ):
+        monkeypatch.setattr(module, "start_parent_watchdog", lambda: None)
+        for name, value in fresh_globals.items():
+            monkeypatch.setattr(module, name, value)
+
+
+def run_git(*args: str) -> str:
+    """git with a fixed identity, so commits need no user config."""
+    completed = subprocess.run(
+        ["git", "-c", "user.name=w4", "-c", "user.email=w4@example.invalid",
+         *args],
+        check=True, capture_output=True, text=True,
+    )
+    return completed.stdout
+
+
+def make_repository(path) -> None:
+    """A git repository with a root commit and no ``.claude/``: a
+    repository pd has never been started in."""
+    run_git("init", "-q", "-b", "main", str(path))
+    run_git("-C", str(path), "commit", "-q", "--allow-empty", "-m", "root")
+
+
+def root_commit_id(repository) -> str:
+    """The repository's legacy project id: its root commit, 12 characters."""
+    return run_git(
+        "-C", str(repository), "rev-list", "--max-parents=0", "HEAD"
+    ).split()[0][:12]
+
+
+def root_commit_workspace(db_path, repository) -> str:
+    """The one workspaces row whose ``project_id_legacy`` is the
+    repository's root commit id."""
+    with contextlib.closing(sqlite3.connect(db_path)) as registry:
+        rows = registry.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (root_commit_id(repository),),
+        ).fetchall()
+    assert len(rows) == 1, f"workspaces rows for the root commit: {rows}"
+    return rows[0][0]
+
+
+def committed_rows(db_path, sql, parameters=()):
+    """Rows another connection sees: committed writes only."""
+    with contextlib.closing(sqlite3.connect(db_path)) as registry:
+        return registry.execute(sql, parameters).fetchall()
+
+
+async def create_a_feature(description):
+    """``/pd:create-feature`` steps 2-5: allocate, mkdir, register, activate.
+
+    Returns the feature's type_id.
+    """
+    allocation = json.loads(await entity_server.allocate_entity_id(
+        entity_type="feature", name=description,
+    ))
+    assert "entity_id" in allocation, allocation
+    os.makedirs(os.path.join(
+        wss._artifacts_root, "features", allocation["entity_id"]
+    ))
+    type_id = "feature:" + allocation["entity_id"]
+    reply = await entity_server.register_entity(
+        entity_type="feature", seq=allocation["seq"], slug=allocation["slug"],
+        name=description, status="planned",
+    )
+    assert reply == f"Registered: {type_id}", reply
+    activation = json.loads(await wss.activate_feature(feature_type_id=type_id))
+    assert activation.get("activated") is True, activation
+    return type_id
+
+
+@pytest.fixture
+def first_session(tmp_path, monkeypatch):
+    """A temp HOME, an empty temp registry and a repository with no
+    ``.claude/``, with both lifespans isolated."""
+    home = tmp_path / "home"
+    home.mkdir()
+    repository = tmp_path / "repository"
+    make_repository(repository)
+    db_path = tmp_path / "registry" / "entities.db"
+    isolate_lifespans(monkeypatch, home=home, db_path=db_path)
+    return {"repository": repository, "db_path": str(db_path)}
+
+
+# ---------------------------------------------------------------------------
+# W4.1: a first session resolves on demand, from wherever it starts
+# ---------------------------------------------------------------------------
+
+_LAUNCH_PLACES = (
+    "repository root", "subdirectory", "second clone", "linked worktree",
+)
+_START_ORDERS = ("entity server first", "workflow server first")
+
+
+def _launch_directory(launch_place, first_session, tmp_path, monkeypatch):
+    """The directory the session's servers start in (their root).
+
+    The second clone's repository was opened once before, from its first
+    clone: that entity server's startup bound the root commit to a workspace
+    keyed by the first clone's path. The second clone has no ``.claude/``
+    and no workspaces row of its own.
+    """
+    repository = first_session["repository"]
+    if launch_place == "repository root":
+        return repository
+    if launch_place == "subdirectory":
+        subdirectory = repository / "docs"
+        subdirectory.mkdir()
+        return subdirectory
+    if launch_place == "linked worktree":
+        worktree = tmp_path / "worktree"
+        run_git("-C", str(repository), "worktree", "add", "-q", "-b",
+                "session", str(worktree))
+        return worktree
+    monkeypatch.chdir(repository)
+
+    async def open_the_first_clone():
+        async with entity_server.lifespan(None):
+            pass
+
+    asyncio.run(open_the_first_clone())
+    second_clone = tmp_path / "second-clone"
+    run_git("clone", "-q", str(repository), str(second_clone))
+    return second_clone
+
+
+@pytest.mark.parametrize("start_order", _START_ORDERS)
+@pytest.mark.parametrize("launch_place", _LAUNCH_PLACES)
+def test_a_first_session_registers_through_both_servers(
+    launch_place, start_order, first_session, tmp_path, monkeypatch,
+):
+    """Neither server needs a restart: the first write resolves the
+    workspace whose legacy id is the repository's root commit, both servers
+    cache it, and nothing lands in the ``__unknown__`` workspace."""
+    launch_directory = _launch_directory(
+        launch_place, first_session, tmp_path, monkeypatch,
+    )
+    monkeypatch.chdir(launch_directory)
+    order = (
+        (entity_server, wss) if start_order == "entity server first"
+        else (wss, entity_server)
+    )
+
+    async def session():
+        async with contextlib.AsyncExitStack() as servers:
+            for module in order:
+                await servers.enter_async_context(module.lifespan(None))
+            assert entity_server._workspace_uuid == "", (
+                "the entity server resolved a workspace at startup: "
+                "not a first session"
+            )
+            return await create_a_feature("First idea")
+
+    type_id = asyncio.run(session())
+
+    db_path = first_session["db_path"]
+    workspace = root_commit_workspace(db_path, first_session["repository"])
+    assert (entity_server._workspace_uuid, wss._workspace_uuid) == (
+        workspace, workspace,
+    )
+    assert committed_rows(
+        db_path, "SELECT workspace_uuid FROM entities WHERE type_id = ?",
+        (type_id,),
+    ) == [(workspace,)]
+    assert committed_rows(
+        db_path, "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+        (type_id,),
+    ) == [(workspace,)]
+    assert committed_rows(
+        db_path, "SELECT type_id FROM entities WHERE workspace_uuid = ?",
+        (_UNKNOWN_WORKSPACE_UUID,),
+    ) == []
+
+
+def test_add_to_backlog_in_a_first_session_initializes_the_items_workflow(
+    first_session, monkeypatch,
+):
+    """``/pd:add-to-backlog`` steps 3-4, first session, started from a
+    subdirectory (neither server resolves a workspace at startup there).
+
+    ``init_entity_workflow`` succeeds, and it succeeds through the workflow
+    server's own workspace, resolved on demand and cached: the item's
+    workflow row is in the repository's workspace, and so is the server.
+    """
+    subdirectory = first_session["repository"] / "docs"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+
+    async def session():
+        async with entity_server.lifespan(None), wss.lifespan(None):
+            assert (entity_server._workspace_uuid, wss._workspace_uuid) == ("", "")
+            reply = await entity_server.register_entity(
+                entity_type="backlog", auto_id=True, name="first idea",
+                status="open", metadata={"description": "first idea"},
+            )
+            assert reply == "Registered: backlog:001-first-idea", reply
+            return json.loads(await wss.init_entity_workflow(
+                type_id="backlog:001-first-idea", workflow_phase="open",
+                kanban_column="backlog",
+            ))
+
+    initialized = asyncio.run(session())
+
+    assert initialized.get("created") is True, initialized
+    db_path = first_session["db_path"]
+    workspace = root_commit_workspace(db_path, first_session["repository"])
+    assert committed_rows(
+        db_path, "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+        ("backlog:001-first-idea",),
+    ) == [(workspace,)]
+    assert wss._workspace_uuid == workspace
+
+
+def test_a_workflow_server_with_no_workspace_refuses_until_one_resolves(
+    first_session, monkeypatch,
+):
+    """Only the workflow server has started, from the repository root: no
+    ``.claude/`` exists and no workspaces row carries the root commit.
+
+    ``init_feature_state`` answers ``workspace_unresolved``, naming the
+    workflow-engine server, and writes nothing: no row, no ``.meta.json``,
+    no ``.claude/``. The refusal is not cached: once the entity server's
+    startup binds the root commit to a workspace, the same call succeeds
+    there, with no restart. That retry writes the repository's
+    ``.claude/pd/workspace.json``, the normal file of a pd project.
+    """
+    repository = first_session["repository"]
+    monkeypatch.chdir(repository)
+    db_path = first_session["db_path"]
+    call = dict(feature_id="001", slug="demo", mode="standard",
+                branch="feature/001-demo")
+
+    async def session():
+        async with wss.lifespan(None):
+            feature_directory = os.path.join(
+                wss._artifacts_root, "features", "001-demo"
+            )
+            os.makedirs(feature_directory)
+            refused = json.loads(await wss.init_feature_state(
+                feature_dir=feature_directory, **call,
+            ))
+            after_refusal = {
+                "rows": {
+                    table: committed_rows(db_path, f"SELECT COUNT(*) FROM {table}")[0][0]
+                    for table in ("entities", "workflow_phases", "workspaces")
+                },
+                "cached workspace": wss._workspace_uuid,
+                "feature directory": sorted(os.listdir(feature_directory)),
+                ".claude exists": (repository / ".claude").exists(),
+            }
+            async with entity_server.lifespan(None):
+                accepted = json.loads(await wss.init_feature_state(
+                    feature_dir=feature_directory, **call,
+                ))
+            return refused, after_refusal, accepted
+
+    refused, after_refusal, accepted = asyncio.run(session())
+
+    assert refused.get("error_type") == "workspace_unresolved", refused
+    assert refused["recovery_hint"] == _WORKFLOW_SERVER_HINT
+    assert after_refusal == {
+        "rows": {"entities": 0, "workflow_phases": 0, "workspaces": 0},
+        "cached workspace": "",
+        "feature directory": [],
+        ".claude exists": False,
+    }
+    assert accepted.get("created") is True, accepted
+    assert (repository / ".claude" / "pd" / "workspace.json").is_file()
+    workspace = root_commit_workspace(db_path, repository)
+    assert committed_rows(
+        db_path, "SELECT workspace_uuid FROM entities WHERE type_id = ?",
+        ("feature:001-demo",),
+    ) == [(workspace,)]
+
+
+# ---------------------------------------------------------------------------
+# W4.1: every write tool it lists refuses without a workspace
+# ---------------------------------------------------------------------------
+
+_FEATURE = "feature:001-alpha"
+_BACKLOG_ITEM = "backlog:001-idea"
+_BACKLOG_ITEM_WITHOUT_WORKFLOW = "backlog:002-other-idea"
+_OBJECTIVE = "objective:001-grow"
+
+# W4.1's write tools, each called with arguments a session would pass. Each
+# value is (server, call); a call takes the setup dict and returns the
+# tool's coroutine.
+_WRITE_CALLS = {
+    "allocate_entity_id": ("entity", lambda setup: entity_server.allocate_entity_id(
+        entity_type="feature", name="gamma")),
+    "register_entity": ("entity", lambda setup: entity_server.register_entity(
+        entity_type="backlog", auto_id=True, name="another idea", status="open")),
+    "issue_spawn": ("entity", lambda setup: entity_server.issue_spawn(
+        parent_uuid=setup["feature_uuid"], kind="bug", summary="a bug")),
+    "create_key_result": ("entity", lambda setup: entity_server.create_key_result(
+        parent_ref=_OBJECTIVE, name="double revenue", metric_type="binary")),
+    "activate_feature": ("workflow", lambda setup: wss.activate_feature(
+        feature_type_id=_FEATURE)),
+    "transition_phase": ("workflow", lambda setup: wss.transition_phase(
+        feature_type_id=_FEATURE, target_phase="specify")),
+    "complete_phase": ("workflow", lambda setup: wss.complete_phase(
+        feature_type_id=_FEATURE, phase="brainstorm")),
+    "init_feature_state": ("workflow", lambda setup: wss.init_feature_state(
+        feature_dir=setup["new_feature_directory"], feature_id="002",
+        slug="beta", mode="standard", branch="feature/002-beta")),
+    "init_project_state": ("workflow", lambda setup: wss.init_project_state(
+        project_dir=setup["new_project_directory"], project_id="001",
+        slug="plan", features="[]", milestones="[]")),
+    "init_entity_workflow": ("workflow", lambda setup: wss.init_entity_workflow(
+        type_id=_BACKLOG_ITEM_WITHOUT_WORKFLOW, workflow_phase="open",
+        kanban_column="backlog")),
+    "transition_entity_phase": ("workflow", lambda setup: wss.transition_entity_phase(
+        type_id=_BACKLOG_ITEM, target_phase="triaged")),
+    "record_backward_event": ("workflow", lambda setup: wss.record_backward_event(
+        type_id=_FEATURE, source_phase="design", target_phase="specify",
+        reason="rework")),
+    "record_mini_spec": ("workflow", lambda setup: wss.record_mini_spec(
+        feature_type_id=_FEATURE, text="the mini-spec")),
+    "promote_task": ("workflow", lambda setup: wss.promote_task(
+        feature_ref=_FEATURE, task_heading="Task 1: build it")),
+}
+
+
+def _registry_snapshot(db_path):
+    """Every table's row count: any write changes one."""
+    with contextlib.closing(sqlite3.connect(db_path)) as registry:
+        tables = [row[0] for row in registry.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        )]
+        return {
+            table: registry.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            for table in tables
+        }
+
+
+def _artifact_files(artifacts_root):
+    return sorted(
+        os.path.relpath(os.path.join(directory, name), artifacts_root)
+        for directory, subdirectories, files in os.walk(artifacts_root)
+        for name in files + subdirectories
+    )
+
+
+@pytest.fixture
+def unresolved_servers(tmp_path, monkeypatch, request):
+    """Both servers running with a registry but no workspace, and nothing to
+    resolve one from: no project root to retry the startup resolution with,
+    and a legacy project id (``request.param``) the lookup must skip.
+
+    The registry holds a workspace with the entities the calls name, so a
+    call that went ahead would write.
+    """
+    server_project_id = request.param
+    db_path = str(tmp_path / "entities.db")
+    db = EntityDatabase(db_path)
+    workspace = bootstrap_test_workspace(db, "w4-refusal")
+    artifacts_root = tmp_path / "docs"
+    feature_directory = artifacts_root / "features" / "001-alpha"
+    feature_directory.mkdir(parents=True)
+    (feature_directory / "plan.md").write_text(
+        "# Plan\n\n#### Task 1: build it\n\nBuild it.\n", encoding="utf-8",
+    )
+    new_feature_directory = artifacts_root / "features" / "002-beta"
+    new_feature_directory.mkdir()
+    feature_uuid = db.register_entity(
+        "feature", name="Alpha", seq=1, slug="alpha", status="planned",
+        artifact_path=str(feature_directory), workspace_uuid=workspace,
+    )
+    db.create_workflow_phase(
+        _FEATURE, workspace_uuid=workspace, workflow_phase="brainstorm",
+    )
+    db.register_entity(
+        "backlog", name="Idea", seq=1, slug="idea", status="open",
+        workspace_uuid=workspace,
+    )
+    db.create_workflow_phase(
+        _BACKLOG_ITEM, workspace_uuid=workspace, workflow_phase="open",
+    )
+    db.register_entity(
+        "backlog", name="Other idea", seq=2, slug="other-idea", status="open",
+        workspace_uuid=workspace,
+    )
+    db.register_entity(
+        "objective", name="Grow", seq=1, slug="grow", status="active",
+        workspace_uuid=workspace,
+    )
+    queue = NotificationQueue(str(tmp_path / "notifications.jsonl"))
+    for module, values in (
+        (entity_server, {}),
+        (wss, {
+            "_engine": WorkflowStateEngine(db, str(artifacts_root)),
+            "_entity_engine": EntityWorkflowEngine(db, str(artifacts_root), queue),
+            "_notification_queue": queue,
+            "_artifacts_root": str(artifacts_root),
+        }),
+    ):
+        values.update({
+            "_db": db, "_db_unavailable": False, "_project_root": "",
+            "_project_id": server_project_id, "_workspace_uuid": "",
+        })
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    yield {
+        "db_path": db_path,
+        "artifacts_root": str(artifacts_root),
+        "feature_uuid": feature_uuid,
+        "new_feature_directory": str(new_feature_directory),
+        "new_project_directory": str(artifacts_root / "projects" / "001-plan"),
+    }
+    db.close()
+
+
+@pytest.mark.parametrize(
+    "unresolved_servers", ["", "__unknown__"],
+    ids=["no legacy project id", "the __unknown__ legacy project id"],
+    indirect=True,
+)
+@pytest.mark.parametrize("tool", sorted(_WRITE_CALLS))
+def test_every_write_tool_refuses_without_a_workspace_and_writes_nothing(
+    tool, unresolved_servers,
+):
+    """The ``__unknown__`` legacy id maps to the unknown workspace, so the
+    lookup skips it rather than write there. Read tools still answer."""
+    server, call = _WRITE_CALLS[tool]
+    setup = unresolved_servers
+    registry_before = _registry_snapshot(setup["db_path"])
+    artifacts_before = _artifact_files(setup["artifacts_root"])
+
+    raw_reply = asyncio.run(call(setup))
+
+    assert raw_reply.startswith("{"), f"not an error envelope: {raw_reply}"
+    reply = json.loads(raw_reply)
+    assert reply.get("error_type") == "workspace_unresolved", reply
+    assert reply["recovery_hint"] == (
+        _ENTITY_SERVER_HINT if server == "entity" else _WORKFLOW_SERVER_HINT
+    )
+    assert _registry_snapshot(setup["db_path"]) == registry_before
+    assert _artifact_files(setup["artifacts_root"]) == artifacts_before
+    assert (entity_server._workspace_uuid, wss._workspace_uuid) == ("", "")
+    if server == "entity":
+        read = asyncio.run(entity_server.get_entity(type_id=_FEATURE))
+        assert _FEATURE in read, read
+    else:
+        read = json.loads(asyncio.run(wss.get_phase(feature_type_id=_FEATURE)))
+        assert read.get("current_phase") == "brainstorm", read
+
+
+# ---------------------------------------------------------------------------
+# W4.2: a degraded start stays degraded, with no recovery thread
+# ---------------------------------------------------------------------------
+
+async def _allocate_while_degraded():
+    return json.loads(await entity_server.allocate_entity_id(
+        entity_type="feature", name="gamma",
+    ))
+
+
+async def _init_feature_state_while_degraded():
+    return json.loads(await wss.init_feature_state(
+        feature_dir="docs/features/001-demo", feature_id="001", slug="demo",
+        mode="standard", branch="feature/001-demo",
+    ))
+
+
+@pytest.mark.parametrize("server", ["entity server", "workflow server"])
+def test_a_degraded_start_stays_degraded_with_no_recovery_thread(
+    server, first_session, monkeypatch,
+):
+    """The registry cannot be opened at startup. The server starts no
+    recovery thread (none ever recovered one, N3), and it answers every call
+    with the degraded message, which asks for a restart."""
+    module, write = {
+        "entity server": (entity_server, _allocate_while_degraded),
+        "workflow server": (wss, _init_feature_state_while_degraded),
+    }[server]
+    monkeypatch.chdir(first_session["repository"])
+    monkeypatch.setattr(module, "_init_db_with_retry", lambda db_path: None)
+
+    async def degraded_session():
+        async with module.lifespan(None):
+            return (
+                module._db_unavailable,
+                [thread.name for thread in threading.enumerate()],
+                module._check_db_available(),
+                await write(),
+            )
+
+    unavailable, threads, availability, reply = asyncio.run(degraded_session())
+
+    assert unavailable is True
+    assert "db-recovery" not in threads
+    assert not hasattr(module, "_start_recovery_thread")
+    if module is wss:
+        availability = json.loads(availability)
+    assert availability == {"error": _DEGRADED_ANSWER}
+    assert reply == {"error": _DEGRADED_ANSWER}
+
+
+# ---------------------------------------------------------------------------
+# W4.3: create-project under another workspace's parent
+# ---------------------------------------------------------------------------
+
+def test_a_parent_in_another_workspace_answers_cross_workspace_parent(
+    tmp_path, monkeypatch,
+):
+    """``/pd:create-project`` steps 3 and 6 with a brainstorm parent from
+    another workspace: the refusal has its own error type, it names the
+    allocated number that is now unused, and the next allocation does not
+    reuse that number. Nothing is registered and no directory is made."""
+    db = EntityDatabase(str(tmp_path / "entities.db"))
+    home_workspace = bootstrap_test_workspace(db, "w4-home")
+    other_workspace = bootstrap_test_workspace(db, "w4-other")
+    foreign_brainstorm = db.register_entity(
+        "brainstorm", name="alpha brainstorm", display_id="20260926-alpha",
+        workspace_uuid=other_workspace,
+    )
+    artifacts_root = tmp_path / "docs"
+    artifacts_root.mkdir()
+    for module, values in (
+        (entity_server, {}),
+        (wss, {"_artifacts_root": str(artifacts_root)}),
+    ):
+        values.update({
+            "_db": db, "_db_unavailable": False,
+            "_workspace_uuid": home_workspace,
+        })
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+
+    async def create_project():
+        allocation = json.loads(await entity_server.allocate_entity_id(
+            entity_type="project", name="alpha",
+        ))
+        project_directory = os.path.join(
+            str(artifacts_root), "projects", allocation["entity_id"]
+        )
+        reply = json.loads(await wss.init_project_state(
+            project_dir=project_directory,
+            project_id=f"{allocation['seq']:03d}", slug=allocation["slug"],
+            features="[]", milestones="[]", parent_uuid=foreign_brainstorm,
+        ))
+        next_allocation = json.loads(await entity_server.allocate_entity_id(
+            entity_type="project", name="alpha",
+        ))
+        return allocation, project_directory, reply, next_allocation
+
+    try:
+        allocation, project_directory, reply, next_allocation = asyncio.run(
+            create_project()
+        )
+
+        assert reply.get("error_type") == "cross_workspace_parent", reply
+        unused_number = f"{allocation['seq']:03d}"
+        assert f"project number {unused_number} is now unused" in reply["message"]
+        assert "numbers are never reused" in reply["message"]
+        assert db.list_entities(entity_type="project", include_deleted=True) == []
+        assert not os.path.exists(project_directory)
+        assert next_allocation["seq"] == allocation["seq"] + 1
+    finally:
+        db.close()
