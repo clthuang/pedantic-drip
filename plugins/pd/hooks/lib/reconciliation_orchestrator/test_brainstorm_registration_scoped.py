@@ -477,9 +477,73 @@ def test_no_row_this_workspace_holds_is_rewritten(checkouts, status, flag):
     assert result == {"registered": 0, "skipped": 1, "warnings": []}
 
 
+def test_a_row_registered_after_the_check_is_counted_skipped_and_left_alone(
+    checkouts, monkeypatch,
+):
+    """1C contract 2's backstop: a row another writer inserts between the
+    existence check and the insert (a concurrent session start) makes
+    ``register_entity`` refuse with ``EntityExistsError``. The file counts
+    as skipped, and the row stays byte-identical.
+
+    The race is simulated by an existence lookup that finds nothing. Before
+    task 1C the upsert's conflict branch rewrote that row's status.
+    """
+    c, db = checkouts, checkouts["db"]
+    _brainstorm(db, c["A"], _SHARED_STEM, "promoted")
+    _write_prd(c["repo"], _SHARED_STEM)
+    before = _snapshot(c["db_path"])
+
+    def lookup_that_finds_nothing(identifier, *args, **kwargs):
+        raise ValueError(f"Entity not found: {identifier!r}")
+
+    monkeypatch.setattr(db, "_resolve_identifier", lookup_that_finds_nothing)
+    result = _sync_as_orchestrator(c)
+
+    assert _snapshot(c["db_path"]) == before
+    assert result == {"registered": 0, "skipped": 1, "warnings": []}
+
+
 # ---------------------------------------------------------------------------
 # 1C contract 4: with no workspace resolved, nothing is registered anywhere
 # ---------------------------------------------------------------------------
+
+
+def _workspace_rows(db_path: str) -> list[dict]:
+    """Every ``workspaces`` row."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM workspaces ORDER BY rowid"
+        )]
+    finally:
+        conn.close()
+
+
+def test_the_unknown_project_id_registers_nothing_in_the_unknown_workspace(
+    checkouts,
+):
+    """``sync_entity_statuses`` called with its defaults, no workspace uuid
+    and the ``"__unknown__"`` project id placeholder, resolves no
+    workspace: it registers nothing, creates no unknown-workspace row, and
+    returns ``register_entity``'s refusal as the warning.
+
+    Before task 1C the placeholder resolved to the unknown workspace, which
+    registration bootstrapped and registered the file into.
+    """
+    c = checkouts
+    _write_prd(c["repo"], "20260904-000000-orphan")
+    before = _snapshot(c["db_path"])
+    workspaces_before = _workspace_rows(c["db_path"])
+
+    result = sync_entity_statuses(c["db"], os.path.join(c["repo"], "docs"))
+
+    assert _workspace_rows(c["db_path"]) == workspaces_before
+    assert _snapshot(c["db_path"]) == before
+    assert result == {
+        "registered": 0, "skipped": 0,
+        "warnings": ["brainstorms: register_entity() requires workspace_uuid"],
+    }
 
 
 @pytest.mark.parametrize("stems", [
