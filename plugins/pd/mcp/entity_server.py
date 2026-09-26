@@ -497,8 +497,13 @@ def _process_update_entity(
 
 @with_retry("entity")
 def _process_delete_entity(db: EntityDatabase, entity_uuid: str, type_id: str) -> str:
-    """Delete an entity (retryable)."""
-    db.delete_entity(entity_uuid)
+    """Delete an entity (retryable). ``db.delete_entity``'s has-children
+    refusal names the entity by the uuid it was handed; the refusal raised
+    here names it by type_id, as the confirmation does."""
+    try:
+        db.delete_entity(entity_uuid)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace(entity_uuid, type_id)) from exc
     return json.dumps({"result": f"Deleted: {type_id}"})
 
 

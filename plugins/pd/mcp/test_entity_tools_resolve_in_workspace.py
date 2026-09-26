@@ -630,3 +630,50 @@ def test_a_type_id_without_a_workspace_is_refused_and_writes_nothing(
     assert reply["recovery_hint"] == _ENTITY_SERVER_HINT
     assert _snapshot(registry.path) == registry_before
     assert entity_server._workspace_uuid == ""
+
+
+# ---------------------------------------------------------------------------
+# A refusal from the registry
+# ---------------------------------------------------------------------------
+
+# Each W3.4 tool whose registry refusal names the entity it was handed. The
+# tool hands the registry the uuids it resolved, so each answer relabels them.
+# Each value is (call, expected answer): call takes a function naming one of
+# A's entities, by type_id or by uuid, and returns the tool's coroutine. A's
+# project is already the parent of A's feature.
+_CALLS_THE_REGISTRY_REFUSES = {
+    "set_parent making a cycle": (
+        lambda name: entity_server.set_parent(
+            type_id=name(_OWN_PROJECT), parent_type_id=name(_OWN_FEATURE)),
+        f"Error setting parent: Circular reference detected: setting "
+        f"'{_OWN_FEATURE}' as parent of '{_OWN_PROJECT}' would create a cycle",
+    ),
+    "delete_entity of a parent": (
+        lambda name: entity_server.delete_entity(type_id=name(_OWN_PROJECT)),
+        {"error": f"Cannot delete entity with children: {_OWN_PROJECT}"},
+    ),
+}
+
+
+@pytest.mark.parametrize("named_by", ["type_id", "uuid"])
+@pytest.mark.parametrize("case", sorted(_CALLS_THE_REGISTRY_REFUSES))
+def test_a_refusal_names_the_entities_by_type_id(server_in_a, case, named_by):
+    """The registry names a refused entity as the tool handed it over, and
+    since W3.4 the tool hands over the uuid it resolved. The answer still
+    names the entities by type_id, as a confirmation does, whether the call
+    named them by type_id or by uuid, and nothing is written. Without the
+    relabelling, a call that named type_ids got back uuids it never gave."""
+    call, expected_answer = _CALLS_THE_REGISTRY_REFUSES[case]
+    registry = server_in_a
+    registry.db.set_parent(
+        registry.uuid("A", _OWN_FEATURE), registry.uuid("A", _OWN_PROJECT),
+    )
+    registry_before = _snapshot(registry.path)
+
+    def name(type_id: str) -> str:
+        return type_id if named_by == "type_id" else registry.uuid("A", type_id)
+
+    answer = _run(call(name))
+
+    assert _as_json(answer) == expected_answer, answer
+    assert _snapshot(registry.path) == registry_before

@@ -503,7 +503,8 @@ def _process_set_parent(
 
     Writes by the two uuids the ``set_parent`` tool resolved (W3.4), never
     re-resolving a type_id, and names the two entities by type_id in its
-    confirmation.
+    confirmation and in a refusal (``db.set_parent``'s cycle refusal names
+    them by the uuids it was handed).
 
     Parameters
     ----------
@@ -529,4 +530,7 @@ def _process_set_parent(
     except sqlite3.OperationalError:
         raise
     except Exception as exc:
-        return f"Error setting parent: {exc}"
+        refusal = str(exc).replace(child_uuid, child_type_id).replace(
+            parent_uuid, parent_type_id,
+        )
+        return f"Error setting parent: {refusal}"
