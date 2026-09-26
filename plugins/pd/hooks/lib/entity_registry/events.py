@@ -31,11 +31,11 @@ validating consumer ``entity_registry.meta_projection`` was retired by the
   - ``brainstorm_source`` snake_case — matches live .meta.json
   - ``backlog_source``    snake_case — matches live .meta.json
   - ``nameFrom``          camelCase — feature 121 D6 rename event payload
-                          (entity_registry.display.rename_entity; NOT an
-                          FR-11/.meta.json key)
+                          (NOT an FR-11/.meta.json key; no live writer —
+                          its only emitter was deleted 2026-09-26)
   - ``nameTo``            camelCase — feature 121 D6 rename event payload
-                          (entity_registry.display.rename_entity; NOT an
-                          FR-11/.meta.json key)
+                          (NOT an FR-11/.meta.json key; no live writer —
+                          its only emitter was deleted 2026-09-26)
   - ``phaseSummaryEntry`` camelCase (payload side) — PRD FR-11 /
                           .meta.json projection contract (feature 126,
                           feature 075 origin); ONE dict per

@@ -4,8 +4,7 @@ Completion plan decision 3 (docs/plans/2026-09-22-structural-identity-completion
 
 - **The new parent is named by uuid only** — no type_id lookup, no text.
 - **The write emits an ``events`` row** like the other event-emitting
-  mutations (``delete_entity``'s ``entity_deleted``, ``rename_entity``'s
-  ``renamed``).
+  mutations (for example ``delete_entity``'s ``entity_deleted``).
 - **The self-reference triggers still apply.**
 
 C22 calls it to move the children of legacy projects onto their recreations.

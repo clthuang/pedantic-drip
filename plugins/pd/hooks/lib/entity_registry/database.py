@@ -8122,9 +8122,9 @@ class EntityDatabase:
         - **It emits an event.** One ``reparented`` row on the ``lifecycle``
           axis — ``from_value`` the old parent uuid (NULL when there was
           none), ``to_value`` the new one — in the same transaction as the
-          UPDATE, like ``delete_entity``'s ``entity_deleted`` and
-          ``rename_entity``'s ``renamed``. v1-generation files have no
-          ``events`` table, so there the move is recorded nowhere.
+          UPDATE, like ``delete_entity``'s ``entity_deleted``. v1-generation
+          files have no ``events`` table, so there the move is recorded
+          nowhere.
 
         The parent half of the workspace and soft-delete rules is
         :meth:`refuse_deleted_or_cross_workspace_parent`, which

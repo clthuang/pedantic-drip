@@ -7,8 +7,8 @@ view immutability + the entities column-set pin against feature 118's
 DDL), and #3 (SC3, a stdlib-seeded replay property test over 200 cases —
 design D4).
 
-Imports `views` at module top like its siblings (test_events.py,
-test_display.py) — views.py's own module-top `import entity_registry.events`
+Imports `views` at module top like its sibling test_events.py
+— views.py's own module-top `import entity_registry.events`
 (load-bearing: DDL_REGISTRY replay order, design D2) transitively imports
 `entity_registry.events`, whose own module-top side effect
 (`schema_v2.register_ddl("events", ...)`) is how the events DDL gets
