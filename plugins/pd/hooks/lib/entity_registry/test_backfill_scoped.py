@@ -180,7 +180,7 @@ def test_an_unresolved_workspace_backfills_nothing(db):
 
 # Module globals the entity server's lifespan assigns; restored after the test.
 _ENTITY_SERVER_GLOBALS = (
-    "_db", "_db_unavailable", "_recovery_thread", "_config", "_project_root",
+    "_db", "_db_unavailable", "_config", "_project_root",
     "_artifacts_root", "_project_id", "_git_info", "_workspace_uuid",
 )
 

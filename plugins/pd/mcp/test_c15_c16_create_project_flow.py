@@ -30,9 +30,10 @@ _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hoo
 if _hooks_lib not in sys.path:
     sys.path.insert(0, _hooks_lib)
 
-from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
+from entity_registry.database import EntityDatabase
 from entity_registry.id_generator import generate_entity_id, render_display_id
 from entity_registry.server_helpers import _process_register_entity
+from entity_registry.test_helpers import bootstrap_test_workspace
 
 import workflow_state_server as wss
 
@@ -114,15 +115,21 @@ def db():
 
 
 @pytest.fixture()
-def artifacts_root(tmp_path, db):
-    """The server as a real session leaves it: a registry, no resolved
-    workspace (so registration lands in ``__unknown__``), and an artifacts
-    root."""
+def workspace(db):
+    """The session's workspace: the project and its parents register there."""
+    return bootstrap_test_workspace(db, "create-project-flow")
+
+
+@pytest.fixture()
+def artifacts_root(tmp_path, db, workspace):
+    """The server as a real session leaves it: a registry, the session's
+    resolved workspace (without one, the tool refuses, W4.1), and an
+    artifacts root."""
     root = tmp_path / "docs"
     root.mkdir()
     wss._db = db
     wss._db_unavailable = False
-    wss._workspace_uuid = ""
+    wss._workspace_uuid = workspace
     wss._artifacts_root = str(root)
     return str(root)
 
@@ -147,16 +154,18 @@ def _record_registration_attempts(db, monkeypatch, watched_dir: str) -> list[tup
     return attempts
 
 
-def test_the_create_project_flow_registers_the_project_exactly_once(db, artifacts_root, monkeypatch):
+def test_the_create_project_flow_registers_the_project_exactly_once(
+    db, workspace, artifacts_root, monkeypatch,
+):
     """Steps 3, 5 and 6 of create-project.md, through the code they call."""
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
     attempts = _record_registration_attempts(db, monkeypatch, project_dir)
 
-    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=workspace)
     assert render_display_id("project", seq, slug) == "001-alpha"
     registered = _process_register_entity(
         db, "brainstorm", {"display_id": BRAINSTORM_STEM}, BRAINSTORM_STEM,
-        None, "active", None, None,
+        None, "active", None, None, workspace_uuid=workspace,
     )
     assert registered == f"Registered: brainstorm:{BRAINSTORM_STEM}"
     brainstorm_uuid = db.get_entity(f"brainstorm:{BRAINSTORM_STEM}")["uuid"]
@@ -175,15 +184,18 @@ def test_the_create_project_flow_registers_the_project_exactly_once(db, artifact
     assert os.path.isfile(os.path.join(project_dir, ".meta.json"))
 
 
-def test_a_reintroduced_command_side_registration_is_refused_by_the_tool(db, artifacts_root):
+def test_a_reintroduced_command_side_registration_is_refused_by_the_tool(
+    db, workspace, artifacts_root,
+):
     """The duplicate C15 removed, put back: the old step 5 registering the
     project through the MCP ``register_entity`` tool before step 6. The
     tool's conflict must not resume that row as its own, which would hide
     the duplicate; it refuses before the directory exists."""
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
-    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+    seq, slug = generate_entity_id(db, "project", "alpha", workspace_uuid=workspace)
     registered = _process_register_entity(
         db, "project", {"seq": seq, "slug": slug}, "alpha", None, "active", None, None,
+        workspace_uuid=workspace,
     )
     assert registered == f"Registered: {PROJECT_TYPE_ID}"
 
@@ -226,12 +238,12 @@ def test_a_missing_parent_fails_registration_through_the_tool_and_leaves_no_dire
 
 
 def test_a_soft_deleted_parent_is_refused_by_the_tool_before_any_registry_write(
-    db, artifacts_root, monkeypatch,
+    db, workspace, artifacts_root, monkeypatch,
 ):
     project_dir = os.path.join(artifacts_root, "projects", "001-alpha")
     brainstorm_uuid = db.register_entity(
         "brainstorm", name=BRAINSTORM_STEM, display_id=BRAINSTORM_STEM,
-        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+        workspace_uuid=workspace,
     )
     db.delete_entity(brainstorm_uuid)
     attempts = _record_registration_attempts(db, monkeypatch, project_dir)

@@ -49,11 +49,11 @@ _EXPRESS_SKIPPED_PHASES = ["brainstorm", "specify", "design", "create-plan"]
 # Each lifespan assigns these module globals; the fixture restores them so
 # a lane leaves no server state behind for the rest of the suite.
 _ENTITY_SERVER_GLOBALS = (
-    "_db", "_db_unavailable", "_recovery_thread", "_config", "_project_root",
+    "_db", "_db_unavailable", "_config", "_project_root",
     "_artifacts_root", "_project_id", "_git_info", "_workspace_uuid",
 )
 _WORKFLOW_SERVER_GLOBALS = (
-    "_db", "_db_unavailable", "_recovery_thread", "_engine", "_entity_engine",
+    "_db", "_db_unavailable", "_engine", "_entity_engine",
     "_artifacts_root", "_project_root", "_project_id", "_workspace_uuid",
     "_notification_queue",
 )

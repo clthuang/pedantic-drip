@@ -33,6 +33,15 @@ def db(tmp_path, monkeypatch):
     database.close()
 
 
+@pytest.fixture
+def server_workspace(db, monkeypatch):
+    """The workspace the server writes in. register_entity with no
+    workspace_uuid registers there, and refuses without one (W4.1)."""
+    workspace_uuid = bootstrap_test_workspace(db, "entity-server-tests")
+    monkeypatch.setattr(entity_server, "_workspace_uuid", workspace_uuid)
+    return workspace_uuid
+
+
 @pytest.mark.asyncio
 async def test_set_parent_handler_concise_message(db):
     """set_parent handler returns concise message with only type_ids, no UUIDs.
@@ -71,7 +80,7 @@ async def test_update_entity_handler_concise_message(db):
 
 
 @pytest.mark.asyncio
-async def test_register_entity_handler_concise_message(db):
+async def test_register_entity_handler_concise_message(db, server_workspace):
     """register_entity handler returns concise message with only type_id, no UUID.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
@@ -206,7 +215,7 @@ async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
 class TestMetadataDictCoercion:
     """Tests for dict-to-JSON-string coercion in register_entity and update_entity."""
 
-    def test_register_entity_metadata_dict(self, db: EntityDatabase):
+    def test_register_entity_metadata_dict(self, db: EntityDatabase, server_workspace):
         """AC-1: Dict metadata is accepted and stored as JSON string."""
         entity_server._db = db
         import asyncio
@@ -221,7 +230,7 @@ class TestMetadataDictCoercion:
         meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
         assert meta["description"] == "test value"
 
-    def test_register_entity_metadata_string(self, db: EntityDatabase):
+    def test_register_entity_metadata_string(self, db: EntityDatabase, server_workspace):
         """AC-3: String metadata passthrough unchanged."""
         entity_server._db = db
         import asyncio
@@ -236,7 +245,7 @@ class TestMetadataDictCoercion:
         meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
         assert meta["key"] == "val"
 
-    def test_register_entity_metadata_none(self, db: EntityDatabase):
+    def test_register_entity_metadata_none(self, db: EntityDatabase, server_workspace):
         """AC-4: None metadata stores no metadata."""
         entity_server._db = db
         import asyncio
@@ -264,7 +273,7 @@ class TestMetadataDictCoercion:
         meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
         assert meta["updated"] is True
 
-    def test_register_entity_metadata_invalid_json_string(self, db: EntityDatabase):
+    def test_register_entity_metadata_invalid_json_string(self, db: EntityDatabase, server_workspace):
         """AC-7: Invalid JSON string handled gracefully by parse_metadata.
         derived_from: server_helpers:parse_metadata, dimension:delegation
         """
@@ -431,6 +440,7 @@ class TestCreateKeyResultMissingParent:
 
         # No parent objective registered. Calling _process_create_key_result
         # with a non-existent parent_type_id must raise ValueError.
+        workspace_uuid = bootstrap_test_workspace(db, "key-result-tests")
         with pytest.raises(ValueError, match="Parent entity not found"):
             _process_create_key_result(
                 db,
@@ -439,14 +449,17 @@ class TestCreateKeyResultMissingParent:
                 status="active",
                 metadata_json=json.dumps({"score": 0.0}),
                 weight=1.0,
+                workspace_uuid=workspace_uuid,
             )
 
     def test_create_key_result_registers_under_its_parent(self, db):
         """The registration itself: C7 moves this call, so it is covered first."""
         from entity_server import _process_create_key_result
 
+        # The calling server's workspace (W4.1) allocates and holds the row.
+        workspace_uuid = bootstrap_test_workspace(db, "key-result-tests")
         objective_uuid = db.register_entity("objective", name="Grow", seq=1, slug="grow",
-                                            workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+                                            workspace_uuid=workspace_uuid)
         result = json.loads(_process_create_key_result(
             db,
             parent_type_id="objective:001-grow",
@@ -454,6 +467,7 @@ class TestCreateKeyResultMissingParent:
             status="active",
             metadata_json=json.dumps({"score": 0.0}),
             weight=0.5,
+            workspace_uuid=workspace_uuid,
         ))
         # A real allocation: the first key result takes seq 1.
         assert result["type_id"] == "key_result:001-double-revenue"
@@ -840,9 +854,12 @@ class TestAllocateEntityId:
 
     @pytest.mark.asyncio
     async def test_workspace_unresolved(self, ws_db, monkeypatch):
-        """_workspace_uuid == "" (degraded startup) -> workspace_unresolved
-        envelope, refused before any kind/name checks."""
+        """_workspace_uuid == "" and nothing to resolve one from (no project
+        root, no legacy project id) -> workspace_unresolved envelope naming
+        the server to restart (W4.1), refused before any kind/name checks."""
         monkeypatch.setattr(entity_server, "_workspace_uuid", "")
+        monkeypatch.setattr(entity_server, "_project_root", "")
+        monkeypatch.setattr(entity_server, "_project_id", "")
         result = await entity_server.allocate_entity_id(
             entity_type="feature", name="Something"
         )
@@ -850,11 +867,11 @@ class TestAllocateEntityId:
         assert parsed == {
             "error": True,
             "error_type": "workspace_unresolved",
-            "message": (
-                "workspace identity not resolved (degraded startup) — "
-                "allocation refused"
+            "message": "workspace identity not resolved — write refused",
+            "recovery_hint": (
+                "restart the pd entity-registry MCP server from the "
+                "repository root, or create .claude/ there"
             ),
-            "recovery_hint": "restart the MCP server from the project root / run doctor",
         }
 
     # -----------------------------------------------------------------

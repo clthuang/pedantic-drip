@@ -142,7 +142,7 @@ The entity registry server (`mcp/entity_server.py`) exposes 20 tools for entity 
 | `update_kr_score` | Update the score for a key result |
 | `list_projects` | List all registered projects |
 
-The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`. If the entity DB is locked at startup, the server starts in degraded mode and recovers automatically once the lock is released.
+The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`. If the entity DB is locked at startup, the server starts in degraded mode and stays there: every tool answers "database unavailable (degraded start); restart the MCP server" until it is restarted. Its write tools need the session's workspace. When startup cannot resolve one (a first session in a repository with no `.claude/`), the first write resolves it on demand; if that fails too, the tool answers `workspace_unresolved`, writes nothing, and names the server to restart.
 
 ### Workflow Engine Server
 
@@ -174,7 +174,7 @@ The workflow engine server (`mcp/workflow_state_server.py`) exposes 23 tools for
 | `record_backward_event` | Record a backward phase transition event for analytics |
 | `query_phase_analytics` | Query structured phase execution data for analytics |
 
-The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`. Like the entity server, it starts in degraded mode if the workflow state DB is locked and recovers automatically.
+The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`. Like the entity server, it starts in degraded mode if the workflow state DB is locked, and stays there until it is restarted; its write tools resolve the session's workspace on demand the same way, or answer `workspace_unresolved` and write nothing.
 
 ## Setup
 

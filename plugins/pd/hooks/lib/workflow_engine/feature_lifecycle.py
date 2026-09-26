@@ -454,7 +454,9 @@ def init_project_state(
         ValueError: if project_id with slug is not an id the allocator issues
             (``invalid_input: … is not an allocated id``), project_dir is
             invalid, or parent_uuid names a soft-deleted entity or one in
-            another workspace; nothing is written.
+            another workspace; nothing is written. A parent in another
+            workspace raises ``cross_workspace_parent: …``, naming the
+            project number, which is now unused: numbers are never reused.
         RuntimeError: ``Project registration conflict …`` when a row that is
             not this call's earlier attempt holds the id; nothing is written.
         A registration error propagates before the directory exists. An
@@ -496,12 +498,25 @@ def init_project_state(
     try:
         with db.transaction():
             if parent_uuid is not None:
-                db.refuse_deleted_or_cross_workspace_parent(
-                    parent_uuid,
-                    workspace_uuid=project_workspace_uuid,
-                    child_ref=project_type_id,
-                    caller="init_project_state",
-                )
+                try:
+                    db.refuse_deleted_or_cross_workspace_parent(
+                        parent_uuid,
+                        workspace_uuid=project_workspace_uuid,
+                        child_ref=project_type_id,
+                        caller="init_project_state",
+                    )
+                except ValueError as refusal:
+                    # W4.3 (N11): the cross-workspace refusal is its own
+                    # error type, and it names this project's allocated
+                    # number, now unused. The soft-deleted refusal is
+                    # unchanged. The registry's message is the only mark
+                    # telling the two apart.
+                    if "cross-workspace parent" not in str(refusal):
+                        raise
+                    raise ValueError(
+                        f"cross_workspace_parent: {refusal}; project number "
+                        f"{project_id} is now unused (numbers are never reused)"
+                    ) from refusal
             # F12 audit: conflict-is-error → register_entity, EntityExistsError
             # handled below: resumed only when the row is this call's own
             # earlier attempt.

@@ -38,7 +38,11 @@ if _mcp_dir not in sys.path:
 
 import entity_server  # noqa: E402
 
-from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID  # noqa: E402
+from entity_registry.database import EntityDatabase  # noqa: E402
+from entity_registry.test_helpers import bootstrap_test_workspace  # noqa: E402
+
+# The server's legacy project id: the one its workspace carries.
+_SERVER_LEGACY_PROJECT_ID = "issue-spawn-tests"
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +78,14 @@ def db():
 
 
 @pytest.fixture
-def parent_feature(db):
+def workspace(db):
+    """The server's workspace: parents register there, and a spawn with no
+    workspace argument lands there (W4.1: a write needs one)."""
+    return bootstrap_test_workspace(db, _SERVER_LEGACY_PROJECT_ID)
+
+
+@pytest.fixture
+def parent_feature(db, workspace):
     """Register a feature parent with a workflow_phases row.
 
     Returns the parent's resolved (uuid, type_id) tuple. The workflow_phases
@@ -86,7 +97,7 @@ def parent_feature(db):
         name="Issue Lifecycle Closure",
         seq=111, slug="issue-lifecycle-closure",
         status="active",
-        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+        workspace_uuid=workspace,
     )
     db.create_workflow_phase(
         "feature:111-issue-lifecycle-closure",
@@ -97,12 +108,13 @@ def parent_feature(db):
 
 
 @pytest.fixture
-def server(db):
-    """Install ``db`` as ``entity_server._db`` so MCP tools resolve it."""
+def server(db, workspace):
+    """Install ``db`` as ``entity_server._db`` so MCP tools resolve it, with
+    the server running in ``workspace``."""
     entity_server._db = db
     entity_server._db_unavailable = False
-    entity_server._project_id = "__unknown__"
-    entity_server._workspace_uuid = ""
+    entity_server._project_id = _SERVER_LEGACY_PROJECT_ID
+    entity_server._workspace_uuid = workspace
     return entity_server
 
 
@@ -320,14 +332,14 @@ class TestAC95ParentValidation:
             f"expected 'parent_not_found' in message, got {data!r}"
         )
 
-    def test_disallowed_parent_kind_returns_error_envelope(self, server, db):
+    def test_disallowed_parent_kind_returns_error_envelope(self, server, db, workspace):
         # Register a brainstorm entity as the "parent" — disallowed kind.
         db.register_entity(
             "brainstorm",
             name="Brainstorm Fixture",
             display_id="001-bs-fixture",
             status="active",
-            workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+            workspace_uuid=workspace,
         )
         bs = db.get_entity("brainstorm:001-bs-fixture")
         result_raw = _run(server.issue_spawn(
@@ -346,8 +358,8 @@ class TestAC95ParentValidation:
         """Feature 129 Task 2: the FR-9.6 cross-workspace gate is deleted —
         cross-workspace parent spawn is now an ordinary permitted operation.
 
-        Create the parent feature in workspace_B; the caller is in
-        __unknown__ (default fixture). The call must (a) succeed (no error
+        Create the parent feature in workspace_B; the caller is in the
+        server fixture's workspace. The call must (a) succeed (no error
         envelope; a uuid is returned) and (b) the parent link reads back —
         the new entity's parent_uuid points at the workspace_B parent.
         """
@@ -372,8 +384,7 @@ class TestAC95ParentValidation:
             workspace_uuid=ws_b_uuid,
         )
 
-        # Caller is in __unknown__ workspace (server fixture set
-        # _workspace_uuid=""), so resolved caller workspace differs from
+        # Caller is in the server fixture's workspace, which differs from
         # ws_b_uuid — but that mismatch no longer blocks the spawn.
         result_raw = _run(server.issue_spawn(
             parent_uuid=parent_uuid_ws_b,

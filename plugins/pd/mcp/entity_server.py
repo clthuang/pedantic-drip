@@ -11,7 +11,6 @@ import logging
 import os
 import sqlite3
 import sys
-import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -58,15 +57,15 @@ from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 
 _db: EntityDatabase | None = None
 _db_unavailable: bool = False
-_recovery_thread: threading.Thread | None = None
 _config: dict = {}
 _project_root: str = ""
 _artifacts_root: str = ""
 _project_id: str = ""
 _git_info: GitProjectInfo | None = None
-# Phase D Task 4.8: lazy workspace_uuid global. Populated during lifespan
-# from resolve_workspace_uuid(_project_root). Phase E will swap callers
-# (e.g., _upsert_project) over to using this. Empty string until set.
+# The workspace this server writes in. The lifespan resolves it from
+# _project_root; when that fails (a first session in a repository with no
+# .claude/), _require_workspace() resolves it on demand and caches it here
+# (W4.1). Empty string until resolved.
 _workspace_uuid: str = ""
 
 _logger = logging.getLogger("entity_server")
@@ -95,42 +94,91 @@ def _init_db_with_retry(
     return None
 
 
-def _start_recovery_thread(
-    db_path: str,
-    poll_interval: float = 30.0,
-) -> threading.Thread:
-    """Start daemon thread that retries DB initialization.
-
-    On success: sets global _db, clears _db_unavailable.
-    Thread exits after successful recovery.
-    """
-    global _db, _db_unavailable
-
-    def _recover():
-        global _db, _db_unavailable
-        while True:
-            time.sleep(poll_interval)
-            try:
-                new_db = EntityDatabase(db_path)
-                _db = new_db
-                _db_unavailable = False
-                _logger.info(
-                    "DB recovered — backfill skipped, will run on next restart"
-                )
-                return
-            except sqlite3.OperationalError:
-                continue
-
-    thread = threading.Thread(target=_recover, name="db-recovery", daemon=True)
-    thread.start()
-    return thread
-
-
 def _check_db_available():
-    """Return error dict if DB is unavailable, else None."""
+    """Return error dict if DB is unavailable, else None.
+
+    A server that could not open the registry at startup stays degraded
+    until it is restarted (W4.2): nothing retries the open in the background.
+    """
     if _db_unavailable:
-        return {"error": "database temporarily unavailable"}
+        return {"error": "database unavailable (degraded start); restart the MCP server"}
     return None
+
+
+# ---------------------------------------------------------------------------
+# Workspace resolution on demand (W4.1)
+# ---------------------------------------------------------------------------
+
+# Which server to restart, and how a repository pd has never been started in
+# gets a workspace.
+_WORKSPACE_UNRESOLVED_HINT = (
+    "restart the pd entity-registry MCP server from the repository root, "
+    "or create .claude/ there"
+)
+
+
+class WorkspaceUnresolvedError(Exception):
+    """No workspace resolves for this server. ``envelope`` is the
+    ``workspace_unresolved`` error a write tool answers with."""
+
+    def __init__(self) -> None:
+        self.envelope = json.dumps({
+            "error": True,
+            "error_type": "workspace_unresolved",
+            "message": "workspace identity not resolved — write refused",
+            "recovery_hint": _WORKSPACE_UNRESOLVED_HINT,
+        })
+        super().__init__(self.envelope)
+
+
+def _require_workspace() -> str:
+    """The workspace this server writes in, resolved on demand (W4.1).
+
+    The first of these that answers:
+
+    1. ``_workspace_uuid``, set by the lifespan or by an earlier call;
+    2. ``resolve_startup_workspace_uuid(_project_root)``: the startup's own
+       resolution, retried once per call. Skipped when ``_project_root`` is
+       empty, where it would key on the process's working directory;
+    3. the workspaces row whose ``project_id_legacy`` is ``_project_id``
+       (``_resolve_optional_workspace_filter``; its ``ValueError`` means
+       there is no such row). The legacy id comes from the root commit, so
+       it is the same from a subdirectory, a linked worktree or a second
+       clone. Skipped when ``_project_id`` is empty or ``"__unknown__"``,
+       which that method maps to the unknown workspace.
+
+    A success is cached in ``_workspace_uuid``. A failure is not, so the
+    next call tries again. A successful step 2 may write
+    ``.claude/pd/workspace.json``, the normal file of a pd project.
+
+    Raises ``WorkspaceUnresolvedError`` when none answers.
+    """
+    global _workspace_uuid
+    if _workspace_uuid:
+        return _workspace_uuid
+    resolved = ""
+    retry_error: Exception | None = None
+    if _project_root:
+        try:
+            resolved = resolve_startup_workspace_uuid(_project_root)
+        except Exception as exc:  # best-effort, as at startup
+            retry_error = exc
+    if not resolved and _db is not None and _project_id not in ("", "__unknown__"):
+        try:
+            resolved = _db._resolve_optional_workspace_filter(
+                None, _project_id, _caller="_require_workspace"
+            ) or ""
+        except ValueError:
+            resolved = ""
+    if not resolved:
+        print(
+            f"entity-server: workspace unresolved (project_root={_project_root!r}, "
+            f"project_id={_project_id!r}; retry: {retry_error})",
+            file=sys.stderr,
+        )
+        raise WorkspaceUnresolvedError()
+    _workspace_uuid = resolved
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +252,7 @@ def _backfill_project_ids(
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and backfill lifecycle."""
-    global _db, _db_unavailable, _recovery_thread, _config, _project_root, _artifacts_root, _project_id, _git_info, _workspace_uuid
+    global _db, _db_unavailable, _config, _project_root, _artifacts_root, _project_id, _git_info, _workspace_uuid
 
     # Determine DB path (env override for testing, else global store).
     db_path = os.environ.get(
@@ -215,10 +263,11 @@ async def lifespan(server):
 
     _db = _init_db_with_retry(db_path)
     if _db is None:
+        # Degraded until restarted (W4.2): every tool answers the
+        # _check_db_available error.
         _db_unavailable = True
-        _recovery_thread = _start_recovery_thread(db_path)
         print(
-            "entity-server: started in DEGRADED mode (DB locked)",
+            "entity-server: started in DEGRADED mode (DB locked); restart the MCP server",
             file=sys.stderr,
         )
     else:
@@ -477,26 +526,23 @@ def _process_create_key_result(
     status: str | None,
     metadata_json: str,
     weight: float,
-    project_id: str = "__unknown__",
+    *,
+    workspace_uuid: str,
 ) -> str:
     """Register a key_result entity with parent linkage (retryable).
 
     Feature 112 / FR-4: parent_type_id is resolved to parent_uuid at this
     call site; ``db.register_entity`` is invoked with the canonical
-    parent_uuid kwarg. ``project_id`` (the server's legacy project id) names
+    parent_uuid kwarg. ``workspace_uuid`` (the calling server's, W4.1) is
     the one workspace that allocates the number and holds the row (C17).
     """
     parent_entity = db.get_entity(parent_type_id)
     if parent_entity is None:
         # FR-9: explicit missing-parent surfacing (was: silent orphan).
-        # Caught by the MCP create_key_result wrapper's except Exception
-        # at entity_server.py:1136-1137 → returns JSON error to caller.
+        # Caught by the MCP create_key_result wrapper's except Exception,
+        # which returns it to the caller as a JSON error.
         raise ValueError(f"Parent entity not found: {parent_type_id!r}")
     parent_uuid = parent_entity["uuid"]
-    # Resolved once and handed to both the allocator and register_entity.
-    workspace_uuid = db._resolve_optional_workspace_filter(
-        None, project_id, _caller="create_key_result"
-    )
     # Allocated after the parent check, so a missing parent burns no number.
     seq, slug = generate_entity_id(db, "key_result", name, workspace_uuid=workspace_uuid)
     type_id = f"key_result:{render_display_id('key_result', seq, slug)}"
@@ -602,9 +648,9 @@ async def register_entity(
         Optional metadata — pass a dict (preferred) or a JSON string;
         dicts are auto-coerced to JSON.
     workspace_uuid:
-        Workspace identity (feature 108). When ``None``, the MCP server
-        resolves it via the lazy ``_workspace_uuid`` global populated at
-        server startup from ``.claude/pd/workspace.json``.
+        Workspace identity (feature 108). When ``None``, the server's own
+        workspace, resolved on demand (W4.1); a server with none answers a
+        ``workspace_unresolved`` error envelope and registers nothing.
     auto_id:
         If True, allocate seq and derive slug from name. Cannot be used
         together with seq, slug or display_id. An allocation the registry
@@ -636,34 +682,22 @@ async def register_entity(
             "recovery_hint": "pass a non-blank name",
         })
 
-    # Feature 108 FR-13: resolve workspace_uuid via lazy global if caller
-    # did not supply it. Default to the empty string when no workspace
-    # context is set (legacy fixture path).
-    # NOTE: Feature 114 FR-D.2 originally proposed defaulting to
-    # _UNKNOWN_WORKSPACE_UUID here, but that broke test fixtures that pass
-    # project_id="__unknown__" without seeding the workspaces table.
-    # database.py's shared workspace-identity resolution (feature 132
-    # D6.4) maps "__unknown__" project_id to _UNKNOWN_WORKSPACE_UUID
-    # correctly when workspace_uuid is "".
-    resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
-    # Feature 132 D6.4: the caller-facing project_id kwarg (Migration 11
-    # transition alias) is retired from this tool's surface -- with no
-    # workspace, the server's own legacy-project-id global names one (C5b:
-    # resolved to its uuid before registration, never passed as the alias).
-    resolved_project_id = _project_id or "__unknown__"
-
     identity = {key: value for key, value in
                 (("seq", seq), ("slug", slug), ("display_id", display_id))
                 if value is not None}
     if auto_id and identity:
         return "Error: cannot specify both auto_id=True and seq/slug/display_id"
+    if not auto_id and not identity:
+        return "Error: seq and slug (display_id for a brainstorm) are required, or use auto_id=True"
+
+    # C17 + W4.1: one workspace allocates the number and holds the row: the
+    # one given, else this server's, resolved on demand. A server with none
+    # refuses here, before a number is taken.
+    try:
+        resolved_workspace_uuid = workspace_uuid or _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     if auto_id:
-        # C17: one workspace allocates the number and holds the row. Resolved
-        # here, before allocating, and the same value is registered below.
-        if not resolved_workspace_uuid:
-            resolved_workspace_uuid = _db._resolve_optional_workspace_filter(
-                None, resolved_project_id, _caller="register_entity"
-            )
         # A workspace with no workspaces row (the split-brain) is refused
         # before a number is taken, with the string _process_register_entity
         # returns when register_entity refuses it.
@@ -680,15 +714,12 @@ async def register_entity(
         except IncompleteBucketError as refusal:
             return _incomplete_bucket_envelope(refusal)
         identity = {"seq": seq, "slug": slug}
-    elif not identity:
-        return "Error: seq and slug (display_id for a brainstorm) are required, or use auto_id=True"
 
     if isinstance(metadata, dict):
         metadata = json.dumps(metadata)
 
-    # _process_register_entity registers in resolved_workspace_uuid; when
-    # that is empty (explicit id, no workspace) it resolves the workspace
-    # resolved_project_id names.
+    # _process_register_entity registers in resolved_workspace_uuid, never
+    # empty here, so it never falls back to a legacy project id.
     # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
     # (translation happens inside _process_register_entity which returns the
     # legacy "Already existed: ..." concise format on EntityExistsError per
@@ -698,7 +729,6 @@ async def register_entity(
         _db, entity_type, identity, name,
         artifact_path, status, None,  # parent_type_id removed (FR-13 AC).
         parse_metadata(metadata),
-        project_id=resolved_project_id,
         parent_uuid=parent_uuid,
         workspace_uuid=resolved_workspace_uuid,
     )
@@ -743,7 +773,8 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
         JSON ``{"seq": <int>, "slug": "<slug>", "entity_id": "<seq:03d>-<slug>"}``
         on success: register with ``seq`` and ``slug``; ``entity_id`` names the
         directory and branch. On failure, a structured error envelope
-        (``workspace_unresolved``, ``invalid_input``, or ``incomplete_bucket``
+        (``workspace_unresolved`` when the server has no workspace and none
+        resolves on demand (W4.1), ``invalid_input``, or ``incomplete_bucket``
         when the registry refuses the allocation (C3): the bucket holds an
         entity with no display row that the display-row invariant does not
         exempt; the envelope lists them in ``type_ids``).
@@ -754,16 +785,10 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    if not _workspace_uuid:
-        return json.dumps({
-            "error": True,
-            "error_type": "workspace_unresolved",
-            "message": (
-                "workspace identity not resolved (degraded startup) — "
-                "allocation refused"
-            ),
-            "recovery_hint": "restart the MCP server from the project root / run doctor",
-        })
+    try:
+        workspace_uuid = _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     if not entity_type:
         return json.dumps({
             "error": True,
@@ -782,7 +807,7 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     # Only C3's refusal becomes an envelope; any other DB-layer error still
     # propagates to the server's own exception translation.
     try:
-        seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
+        seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=workspace_uuid)
     except IncompleteBucketError as refusal:
         return _incomplete_bucket_envelope(refusal)
     return json.dumps(
@@ -857,11 +882,14 @@ async def issue_spawn(
         Human-readable summary; becomes ``entities.name`` AND seeds the
         slug portion of the auto-generated ``entity_id``.
     workspace_uuid:
-        Workspace identity. Resolves via the lazy ``_workspace_uuid`` global
-        when not supplied.
+        Workspace identity. When neither it nor ``project_id`` is supplied,
+        the server's own workspace, resolved on demand (W4.1); a server with
+        none answers a ``workspace_unresolved`` error envelope and writes
+        nothing.
     project_id:
-        Legacy project scope alias (deprecated). Falls back to the
-        ``_project_id`` global, then ``"__unknown__"``.
+        Legacy project scope alias (deprecated). With no ``workspace_uuid``,
+        names the workspace whose ``project_id_legacy`` it is. The parent's
+        ``spawned_child`` event records it, else the server's own legacy id.
     metadata:
         Optional dict (or JSON string) merged into ``entities.metadata``.
         System-supplied keys win — caller-supplied ``parent_uuid`` (and
@@ -875,7 +903,8 @@ async def issue_spawn(
         failure, returns a JSON error envelope
         ``{"error": true, "error_type": "<exc_cls_lower>",
            "message": "<exc_str>"}`` produced by the
-        ``_catch_issue_spawn_errors`` decorator (FR-EX.3).
+        ``_catch_issue_spawn_errors`` decorator (FR-EX.3), or the
+        ``workspace_unresolved`` envelope (W4.1).
 
     Raises
     ------
@@ -901,11 +930,20 @@ async def issue_spawn(
             f"invalid_kind: {kind!r}; expected bug|task"
         )
 
-    # Two-layer fallback per design IF-1 step 3-4 (mirrors register_entity MCP
-    # at entity_server.py:560-561). See FR-D.2 note above re: empty-string vs
-    # _UNKNOWN_WORKSPACE_UUID default.
-    resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
-    resolved_project_id = project_id or _project_id or "__unknown__"
+    # C17 + W4.1: one workspace allocates the number and holds the row: the
+    # workspace_uuid given, else the one a given project_id names, else this
+    # server's, resolved on demand. A server with none refuses here, before
+    # anything is written.
+    if workspace_uuid or project_id:
+        spawn_workspace_uuid = workspace_uuid or _db._resolve_optional_workspace_filter(
+            None, project_id, _caller="issue_spawn"
+        )
+    else:
+        try:
+            spawn_workspace_uuid = _require_workspace()
+        except WorkspaceUnresolvedError as unresolved:
+            return unresolved.envelope
+    event_project_id = project_id or _project_id
 
     # FR-9.6: resolve parent. Existing helper reused per design C11 /
     # plan-reviewer iter 2 B2 (database.py:5839 — get_entity_by_uuid).
@@ -936,13 +974,6 @@ async def issue_spawn(
     # (per AC-9.9 synthetic test). Strip the key defensively so caller-supplied
     # values cannot leak into entities.metadata.
     caller_meta.pop("parent_uuid", None)
-
-    # C17: one workspace allocates the number and holds the row -- the
-    # resolved workspace, else the one resolved_project_id names. Resolved
-    # once, here, and handed to both calls below.
-    spawn_workspace_uuid = resolved_workspace_uuid or _db._resolve_optional_workspace_filter(
-        None, resolved_project_id, _caller="issue_spawn"
-    )
 
     # FR-9.2: generate_entity_id allocates the seq and derives the slug.
     seq, slug = generate_entity_id(_db, kind, summary, workspace_uuid=spawn_workspace_uuid)
@@ -976,8 +1007,8 @@ async def issue_spawn(
     # event we're appending on the parent's type_id).
     _db.append_phase_event(
         type_id=parent_row["type_id"],
-        project_id=resolved_project_id,
-        workspace_uuid=parent_row.get("workspace_uuid") or resolved_workspace_uuid or None,
+        project_id=event_project_id,
+        workspace_uuid=parent_row.get("workspace_uuid") or spawn_workspace_uuid,
         event_type="spawned_child",
         phase=None,
         metadata={
@@ -1549,6 +1580,10 @@ async def create_key_result(
         Relative weight for weighted scoring (default 1.0).
     status:
         Optional initial status.
+
+    The key result registers in the server's workspace, resolved on demand
+    (W4.1); a server with none answers a ``workspace_unresolved`` error
+    envelope and registers nothing.
     """
     err = _check_db_available()
     if err:
@@ -1559,6 +1594,10 @@ async def create_key_result(
     if metric_type not in _VALID_METRIC_TYPES:
         return json.dumps({"error": f"Invalid metric_type: {metric_type}. Must be one of: {', '.join(_VALID_METRIC_TYPES)}"})
     try:
+        workspace_uuid = _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
+    try:
         parent_type_id = _resolve_ref_param(
             _db, None, parent_ref, is_mutation=True,
             project_id=_effective_project_id(),
@@ -1566,7 +1605,7 @@ async def create_key_result(
         metadata_json = json.dumps({"metric_type": metric_type, "weight": weight})
         return _process_create_key_result(
             _db, parent_type_id, name, status, metadata_json, weight,
-            project_id=_project_id or "__unknown__",
+            workspace_uuid=workspace_uuid,
         )
     except Exception as exc:
         return json.dumps({"error": str(exc)})

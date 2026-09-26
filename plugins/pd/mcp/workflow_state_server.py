@@ -10,7 +10,6 @@ import json
 import os
 import sqlite3
 import sys
-import threading
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -129,17 +128,17 @@ def _kanban_column_for(status: str, workflow_phase: str | None) -> str:
 
 _db: EntityDatabase | None = None
 _db_unavailable: bool = False
-_recovery_thread: threading.Thread | None = None
 _engine: WorkflowStateEngine | None = None
 _entity_engine: EntityWorkflowEngine | None = None
 _artifacts_root: str = ""
 _project_root: str = ""
 _project_id: str = ""
-# Feature 108 Phase E + feature 112 FR-2: lazy workspace_uuid global.
-# Populated during lifespan from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID env or
-# resolve_workspace_uuid(). Mirrors ``mcp/entity_server.py``'s pattern.
-# Empty string until set; forwarded to engine functions as
-# ``workspace_uuid=_workspace_uuid or None`` per the post-FR-2 wiring.
+# The workspace this server writes in (feature 108 Phase E + feature 112
+# FR-2). The lifespan resolves it from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID
+# or resolve_workspace_uuid(); when that fails (a first session in a
+# repository with no .claude/), _require_workspace() resolves it on demand
+# and caches it here (W4.1), before any write tool writes. Mirrors
+# ``mcp/entity_server.py``'s pattern. Empty string until resolved.
 _workspace_uuid: str = ""
 _notification_queue: NotificationQueue | None = None
 
@@ -166,56 +165,98 @@ def _init_db_with_retry(
     return None
 
 
-def _start_recovery_thread(
-    db_path: str,
-    poll_interval: float = 30.0,
-) -> threading.Thread:
-    """Start daemon thread that retries DB initialization.
-
-    On success: sets _db to new instance, clears _db_unavailable.
-    Thread exits after successful recovery.
-    """
-    global _db, _db_unavailable, _engine, _entity_engine, _notification_queue, _project_root, _artifacts_root
-
-    def _recover():
-        global _db, _db_unavailable, _engine, _entity_engine, _notification_queue, _project_root, _artifacts_root
-        while True:
-            time.sleep(poll_interval)
-            try:
-                new_db = EntityDatabase(db_path)
-                # Initialize engine and related objects
-                project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
-                _project_root = project_root
-                config = read_config(project_root)
-                _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
-                _engine = WorkflowStateEngine(new_db, _artifacts_root)
-                _notification_queue = NotificationQueue()
-                _entity_engine = EntityWorkflowEngine(
-                    new_db, _artifacts_root, _notification_queue, project_root=_project_root
-                )
-                _db = new_db
-                _db_unavailable = False
-                print("workflow-engine: DB recovered", file=sys.stderr)
-                return
-            except sqlite3.OperationalError:
-                continue
-
-    thread = threading.Thread(target=_recover, name="db-recovery", daemon=True)
-    thread.start()
-    return thread
-
-
 def _check_db_available() -> str | None:
-    """Return error JSON if DB is unavailable, else None."""
+    """Return error JSON if DB is unavailable, else None.
+
+    A server that could not open the registry at startup stays degraded
+    until it is restarted (W4.2): nothing retries the open in the background.
+    """
     if _db_unavailable:
-        return json.dumps({"error": "database temporarily unavailable"})
+        return json.dumps({"error": "database unavailable (degraded start); restart the MCP server"})
     return None
+
+
+# ---------------------------------------------------------------------------
+# Workspace resolution on demand (W4.1)
+# ---------------------------------------------------------------------------
+
+# Which server to restart, and how a repository pd has never been started in
+# gets a workspace.
+_WORKSPACE_UNRESOLVED_HINT = (
+    "restart the pd workflow-engine MCP server from the repository root, "
+    "or create .claude/ there"
+)
+
+
+class WorkspaceUnresolvedError(Exception):
+    """No workspace resolves for this server. ``envelope`` is the
+    ``workspace_unresolved`` error a write tool answers with."""
+
+    def __init__(self) -> None:
+        self.envelope = _make_error(
+            "workspace_unresolved",
+            "workspace identity not resolved — write refused",
+            _WORKSPACE_UNRESOLVED_HINT,
+        )
+        super().__init__(self.envelope)
+
+
+def _require_workspace() -> str:
+    """The workspace this server writes in, resolved on demand (W4.1).
+
+    The first of these that answers:
+
+    1. ``_workspace_uuid``, set by the lifespan or by an earlier call;
+    2. ``resolve_startup_workspace_uuid(_project_root)``: the startup's own
+       resolution, retried once per call. Skipped when ``_project_root`` is
+       empty, where it would key on the process's working directory;
+    3. the workspaces row whose ``project_id_legacy`` is ``_project_id``
+       (``_resolve_optional_workspace_filter``; its ``ValueError`` means
+       there is no such row). The legacy id comes from the root commit, so
+       it is the same from a subdirectory, a linked worktree or a second
+       clone. Skipped when ``_project_id`` is empty or ``"__unknown__"``,
+       which that method maps to the unknown workspace.
+
+    A success is cached in ``_workspace_uuid``, which every write path
+    reads. A failure is not, so the next call tries again: a first session
+    resolves once the entity server's startup has bound the root commit to a
+    workspace. A successful step 2 may write ``.claude/pd/workspace.json``,
+    the normal file of a pd project.
+
+    Raises ``WorkspaceUnresolvedError`` when none answers.
+    """
+    global _workspace_uuid
+    if _workspace_uuid:
+        return _workspace_uuid
+    resolved = ""
+    retry_error: Exception | None = None
+    if _project_root:
+        try:
+            resolved = resolve_startup_workspace_uuid(_project_root)
+        except Exception as exc:  # best-effort, as at startup
+            retry_error = exc
+    if not resolved and _db is not None and _project_id not in ("", "__unknown__"):
+        try:
+            resolved = _db._resolve_optional_workspace_filter(
+                None, _project_id, _caller="_require_workspace"
+            ) or ""
+        except ValueError:
+            resolved = ""
+    if not resolved:
+        print(
+            f"workflow-engine: workspace unresolved (project_root={_project_root!r}, "
+            f"project_id={_project_id!r}; retry: {retry_error})",
+            file=sys.stderr,
+        )
+        raise WorkspaceUnresolvedError()
+    _workspace_uuid = resolved
+    return resolved
 
 
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
-    global _db, _db_unavailable, _recovery_thread
+    global _db, _db_unavailable
     global _engine, _entity_engine, _artifacts_root, _project_root, _project_id, _workspace_uuid, _notification_queue
 
     db_path = os.environ.get(
@@ -226,9 +267,13 @@ async def lifespan(server):
 
     _db = _init_db_with_retry(db_path)
     if _db is None:
+        # Degraded until restarted (W4.2): every tool answers the
+        # _check_db_available error.
         _db_unavailable = True
-        _recovery_thread = _start_recovery_thread(db_path)
-        print("workflow-engine: started in degraded mode (DB unavailable)", file=sys.stderr)
+        print(
+            "workflow-engine: started in degraded mode (DB unavailable); restart the MCP server",
+            file=sys.stderr,
+        )
     else:
         project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
         _project_root = project_root
@@ -918,10 +963,12 @@ def _with_error_handling(func):
 def _catch_value_error(func):
     """Wrap functions that raise ValueError for invalid user input.
 
-    Prefix-based routing: checks for "feature_not_found:" prefix first
-    (new convention from _validate_feature_type_id), then falls back to
-    substring match for "not found" (existing engine.py convention).
-    All other ValueErrors map to 'invalid_transition'.
+    Prefix-based routing: "cross_workspace_parent:" (init_project_state's
+    refusal of a parent in another workspace, W4.3) maps to
+    'cross_workspace_parent'; then the "feature_not_found:" prefix (new
+    convention from _validate_feature_type_id), then a substring match for
+    "not found" (existing engine.py convention). Payload errors map to
+    'invalid_event_payload'; all other ValueErrors to 'invalid_transition'.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -929,6 +976,13 @@ def _catch_value_error(func):
             return func(*args, **kwargs)
         except ValueError as exc:
             msg = str(exc)
+            if msg.startswith("cross_workspace_parent:"):
+                return _make_error(
+                    "cross_workspace_parent",
+                    msg,
+                    "Register the project under a parent in this workspace, "
+                    "or none, with a newly allocated number",
+                )
             if msg.startswith("feature_not_found:") or "not found" in msg.lower():
                 return _make_error(
                     "feature_not_found",
@@ -1157,8 +1211,9 @@ def _process_transition_phase(
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
                     try:
-                        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
-                        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
+                        # The transition_phase tool resolved the workspace
+                        # first (W4.1); ``or None`` (FR-6.2: empty == unset)
+                        # covers direct calls of this function.
                         response = entity_engine.transition_phase(
                             entity["uuid"], target_phase,
                             workspace_uuid=_workspace_uuid or None,
@@ -1962,8 +2017,9 @@ def _process_init_feature_state(
         brainstorm_source=brainstorm_source,
         backlog_source=backlog_source,
         status=status,
-        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
-        # downstream, None registers the feature in the _UNKNOWN_WORKSPACE_UUID workspace.
+        # The init_feature_state tool resolved the workspace first (W4.1), so
+        # the feature registers there; ``or None`` (FR-6.2: empty == unset)
+        # covers direct calls of this function.
         workspace_uuid=_workspace_uuid or None,
     )
     try:
@@ -2228,6 +2284,10 @@ async def transition_phase(
         return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
+    try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     if isinstance(skipped_phases, list):
         skipped_phases = json.dumps(skipped_phases)
     try:
@@ -2266,6 +2326,10 @@ async def complete_phase(
         return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
+    try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     if isinstance(reviewer_notes, list):
         reviewer_notes = json.dumps(reviewer_notes)
     try:
@@ -2304,6 +2368,10 @@ async def record_mini_spec(
             "Pass the inline mini-spec text",
         )
     try:
+        workspace_uuid = _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
+    try:
         resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
     except ValueError as exc:
         return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
@@ -2315,7 +2383,7 @@ async def record_mini_spec(
         event_type="mini_spec",
         timestamp=_iso_now(),
         metadata={"text": text},
-        workspace_uuid=_workspace_uuid or None,
+        workspace_uuid=workspace_uuid,
     )
     return json.dumps({"recorded": True, "feature_type_id": resolved})
 
@@ -2577,6 +2645,10 @@ async def init_feature_state(
         return err
     if _db is None:
         return _NOT_INITIALIZED
+    try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     return _process_init_feature_state(
         _db, _engine, feature_dir, feature_id, slug, mode, branch,
         brainstorm_source, backlog_source, status,
@@ -2601,8 +2673,10 @@ async def init_project_state(
     project. ``project_dir`` is ``{artifacts_root}/projects/{id}-{slug}`` and
     need not exist — it is created only after registration succeeds, so a
     registration error leaves no directory. ``parent_uuid`` registers the
-    project under its brainstorm; a soft-deleted parent, or one in another
-    workspace, is an error. The result carries ``project_uuid``.
+    project under its brainstorm; a soft-deleted parent is an error, and a
+    parent in another workspace answers ``cross_workspace_parent``, naming
+    the allocated number that is now unused (numbers are never reused).
+    The result carries ``project_uuid``.
     Re-running the same call after it stopped past registration resumes
     that row (``resumed``: true); any other project holding the id — a
     deleted one, or one with another directory or parent — is an error.
@@ -2612,6 +2686,10 @@ async def init_project_state(
         return err
     if _db is None:
         return _NOT_INITIALIZED
+    try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     return _process_init_project_state(
         _db, project_dir, project_id, slug, features, milestones, brainstorm_source,
         parent_uuid,
@@ -2633,6 +2711,10 @@ async def activate_feature(feature_type_id: str | None = None, ref: str | None =
     if _db is None or _engine is None:
         return _NOT_INITIALIZED
     try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
+    try:
         resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
     except ValueError as exc:
         return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
@@ -2653,6 +2735,10 @@ async def init_entity_workflow(
     if _db is None:
         return _NOT_INITIALIZED
     try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
+    try:
         resolved = _resolve_ref_to_feature_type_id(_db, type_id, ref)
     except ValueError as exc:
         return _make_error("invalid_ref", str(exc), "Provide a valid type_id or ref")
@@ -2671,6 +2757,10 @@ async def transition_entity_phase(
         return err
     if _db is None:
         return _NOT_INITIALIZED
+    try:
+        _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
     try:
         resolved = _resolve_ref_to_feature_type_id(_db, type_id, ref)
     except ValueError as exc:
@@ -2729,10 +2819,14 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     if _db is None:
         return _NOT_INITIALIZED
     try:
+        workspace_uuid = _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
+    try:
         result = _lib_promote_task(
             _db, feature_ref, task_heading,
             artifacts_root=_artifacts_root,
-            workspace_uuid=_workspace_uuid or None,
+            workspace_uuid=workspace_uuid,
         )
         return json.dumps(result)
     except (TaskNotFoundError, TaskAlreadyPromotedError) as exc:
@@ -2833,6 +2927,10 @@ async def record_backward_event(
         return err
     if _db is None:
         return _NOT_INITIALIZED
+    try:
+        workspace_uuid = _require_workspace()
+    except WorkspaceUnresolvedError as unresolved:
+        return unresolved.envelope
 
     # FR-2.3 (a): reject unknown type_id.
     entity = _db.get_entity(type_id)
@@ -2863,7 +2961,7 @@ async def record_backward_event(
             timestamp=ts,
             backward_reason=reason_capped,
             backward_target=target_capped,
-            workspace_uuid=_workspace_uuid or None,
+            workspace_uuid=workspace_uuid,
         )
     except sqlite3.Error as e:
         print(

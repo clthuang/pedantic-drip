@@ -13,8 +13,8 @@ while its legacy project id names workspace A. Before C5b the ``auto_id`` and
 Every expected ``entity_created`` label is what the pre-C5b build wrote for
 the same input: the workspace's ``project_id_legacy`` when the tool had a
 workspace, the legacy project id when it resolved the workspace from that id.
-``create_key_result`` never read the server's workspace; it still resolves
-from the legacy project id, so its workspace and label are the base's.
+``create_key_result`` used to resolve from the legacy project id alone; it now
+writes in the server's workspace, like the other two (W4.1).
 """
 from __future__ import annotations
 
@@ -226,9 +226,13 @@ def test_issue_spawn_project_id_argument_resolves_the_workspace_once(registry, m
 # ---------------------------------------------------------------------------
 
 
-def test_create_key_result_allocates_and_registers_in_the_legacy_ids_workspace(
+def test_create_key_result_allocates_and_registers_in_the_servers_workspace(
     registry, monkeypatch,
 ):
+    """W4.1: the key result registers where the server writes (B), no
+    longer in the workspace its legacy project id names (A). The parent
+    objective is in A: its reference still resolves by the legacy project
+    id, until W3.4 scopes it to the server's workspace."""
     db, ws_a, ws_b = registry
     db.register_entity("objective", name="Objective", seq=1, slug="grow",
                        status="active", workspace_uuid=ws_a)
@@ -239,7 +243,7 @@ def test_create_key_result_allocates_and_registers_in_the_legacy_ids_workspace(
         parent_ref="objective:001-grow", name="Measured Result", metric_type="binary")))
 
     assert reply["type_id"] == "key_result:001-measured-result", reply
-    _assert_one_workspace(allocations, registrations, ws_a)
-    assert _counter(db, ws_b, "key_result") is None
-    assert db.get_entity_by_uuid(reply["uuid"])["workspace_uuid"] == ws_a
-    assert _created_label(db, reply["type_id"]) == LEGACY_A
+    _assert_one_workspace(allocations, registrations, ws_b)
+    assert _counter(db, ws_a, "key_result") is None
+    assert db.get_entity_by_uuid(reply["uuid"])["workspace_uuid"] == ws_b
+    assert _created_label(db, reply["type_id"]) == LEGACY_B

@@ -7242,7 +7242,8 @@ class TestListFeaturesByDefaultSingleWorkspace:
 
         With ``_db = None`` and ``_db_unavailable = True``, the handler is
         short-circuited via ``_check_db_available`` and returns the canonical
-        db-unavailable envelope (``{"error": "database temporarily unavailable"}``).
+        db-unavailable envelope (``{"error": "database unavailable (degraded
+        start); restart the MCP server"}``).
         The contract guarded here: the helper must NOT crash, and must NOT
         silently return cross-workspace data when the DB is unavailable.
         """
@@ -7529,6 +7530,10 @@ class TestWorkspaceUuidEmptyStringNormalization:
     ``or None`` suffix. Mutation-pin verification (see PI-3.MUT in tasks.md)
     confirms both sites produce observable failures when the suffix is
     removed.
+
+    The MCP tools resolve a workspace or refuse before either site (W4.1),
+    so only a direct call of a ``_process_*`` function reaches one with an
+    empty value; both cases call them directly.
     """
 
     @pytest.mark.parametrize("entry_point", ["init_feature_state", "transition_phase"])
@@ -7575,9 +7580,9 @@ class TestWorkspaceUuidEmptyStringNormalization:
                 f"workspace_uuid={entity['workspace_uuid']!r}"
             )
         else:
-            # Exercises workflow_state_server.py line 657:
-            # _process_transition_phase forwards _workspace_uuid via
-            # `workspace_uuid=_workspace_uuid or None` to entity_engine.transition_phase.
+            # Exercises workflow_state_server.py's _process_transition_phase,
+            # which forwards _workspace_uuid via
+            # `workspace_uuid=_workspace_uuid or None` to the transition.
             # We must seed a feature first (via init_feature_state under the same
             # `or None` contract) so transition_phase has a target row.
             feature_dir = os.path.join(str(tmp_path), "features", "201-empty-ws-tx")
@@ -7596,12 +7601,11 @@ class TestWorkspaceUuidEmptyStringNormalization:
                 f"setup: init_feature_state must succeed first, got {init_data!r}"
             )
 
-            # Now transition; this is the actual line-657 exercise.
-            tx_result = asyncio.run(
-                wss.transition_phase(
-                    feature_type_id="feature:201-empty-ws-tx",
-                    target_phase="design",
-                )
+            # Now transition; this is the actual _process_transition_phase
+            # exercise, with the engines the transition_phase tool passes.
+            tx_result = wss._process_transition_phase(
+                wss._engine, "feature:201-empty-ws-tx", "design", False,
+                db=db, entity_engine=wss._entity_engine,
             )
             tx_data = json.loads(tx_result)
             assert tx_data.get("transitioned") is True, (
@@ -8664,7 +8668,8 @@ class TestPidFile:
 
 
 class TestDegradedMode:
-    """Degraded mode: DB unavailable on startup, tools return error, recovery thread."""
+    """Degraded mode: DB unavailable on startup, tools return error until the
+    server is restarted (W4.2 deleted the recovery thread)."""
 
     def test_degraded_mode_on_db_lock(self):
         """_init_db_with_retry returns None when DB is locked."""
@@ -8688,44 +8693,11 @@ class TestDegradedMode:
             result = wss._check_db_available()
             assert result is not None, "_check_db_available should return error string"
             parsed = json.loads(result)
-            assert parsed["error"] == "database temporarily unavailable"
+            assert parsed["error"] == (
+                "database unavailable (degraded start); restart the MCP server"
+            )
         finally:
             wss._db_unavailable = original
-
-    def test_recovery_thread_recovers(self, tmp_path):
-        """Recovery thread sets _db_unavailable=False after successful DB init."""
-        import workflow_state_server as wss
-        from unittest.mock import patch, MagicMock
-
-        db_path = str(tmp_path / "test.db")
-
-        # Save originals
-        orig_db = wss._db
-        orig_unavailable = wss._db_unavailable
-
-        call_count = 0
-        mock_db = MagicMock()
-
-        def fake_db_init(path):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise sqlite3.OperationalError("database is locked")
-            return mock_db
-
-        wss._db = None
-        wss._db_unavailable = True
-
-        try:
-            with patch.object(wss, "EntityDatabase", side_effect=fake_db_init):
-                thread = wss._start_recovery_thread(db_path, poll_interval=0.05)
-                thread.join(timeout=2.0)
-                assert not thread.is_alive(), "Recovery thread should exit after success"
-                assert wss._db_unavailable is False, "Should recover"
-                assert wss._db is mock_db, "_db should be set to new instance"
-        finally:
-            wss._db = orig_db
-            wss._db_unavailable = orig_unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -8904,9 +8876,11 @@ class TestRecordBackwardEvent:
             "feature", name="Test", seq=3, slug="test",
             status="active", workspace_uuid=ws_uuid,
         )
-        # Feature 088 AC-21: module-level autouse fixture restores _db on
-        # teardown — no try/finally needed.
+        # Feature 088 AC-21: module-level autouse fixture restores _db and
+        # _workspace_uuid on teardown — no try/finally needed. The server
+        # writes in the entity's workspace (W4.1: a write needs one).
         workflow_state_server._db = db
+        workflow_state_server._workspace_uuid = ws_uuid
 
         result_str = asyncio.run(
             workflow_state_server.record_backward_event(
@@ -9231,6 +9205,8 @@ class TestFeature088BundleD:
 
         db = EntityDatabase(":memory:")
         wss._db = db
+        # The server's workspace (W4.1: a write tool needs one).
+        wss._workspace_uuid = _bootstrap_test_workspace(db, "P001")
         result_str = asyncio.run(
             wss.record_backward_event(
                 type_id="feature:nonexistent-xyz",
@@ -9280,6 +9256,7 @@ class TestFeature088BundleD:
             status="active", workspace_uuid=ws_uuid,
         )
         wss._db = db
+        wss._workspace_uuid = ws_uuid  # W4.1: a write tool needs a workspace
         long_reason = "x" * 3000
         long_target = "y" * 3000
         result_str = asyncio.run(
@@ -9815,6 +9792,7 @@ class TestFeature088BundleH4:
 
         monkeypatch.setattr(db, "append_phase_event", _raise_locked)
         wss._db = db
+        wss._workspace_uuid = ws_uuid  # W4.1: a write tool needs a workspace
 
         result_str = asyncio.run(
             wss.record_backward_event(
@@ -9989,6 +9967,7 @@ class TestFeature089BundleE:
             status="active", workspace_uuid=ws_uuid,
         )
         wss._db = db
+        wss._workspace_uuid = ws_uuid  # W4.1: a write tool needs a workspace
         wss._project_id = "SomeOtherProject"  # intentionally different
 
         result_str = asyncio.run(

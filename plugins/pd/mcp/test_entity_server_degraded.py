@@ -2,16 +2,16 @@
 
 Task 3.1: RED tests for degraded mode behavior.
 Task 3.2: GREEN — these should pass after implementation.
+
+A degraded server stays degraded until it is restarted: the recovery thread
+and its tests were deleted (W4.2); test_require_workspace.py pins that no
+thread starts.
 """
 from __future__ import annotations
 
-import json
-import logging
 import os
 import sqlite3
 import sys
-import threading
-import time
 from unittest import mock
 
 import pytest
@@ -49,51 +49,17 @@ class TestDegradedToolReturnsError:
     """Test that tool handlers return structured error in degraded mode."""
 
     def test_degraded_tool_returns_error(self):
-        """Set _db_unavailable = True, verify _check_db_available returns error dict."""
+        """Set _db_unavailable = True, verify _check_db_available returns error
+        dict. A degraded server stays degraded until restarted (W4.2)."""
         old_val = entity_server._db_unavailable
         try:
             entity_server._db_unavailable = True
             err = entity_server._check_db_available()
-            assert err == {"error": "database temporarily unavailable"}
+            assert err == {
+                "error": "database unavailable (degraded start); restart the MCP server"
+            }
         finally:
             entity_server._db_unavailable = old_val
-
-
-class TestRecoveryThreadRecovers:
-    """Test that recovery thread restores DB after transient failure."""
-
-    def test_recovery_thread_recovers(self, tmp_path):
-        """Mock EntityDatabase to fail once then succeed, verify recovery."""
-        db_path = str(tmp_path / "test.db")
-
-        call_count = 0
-        mock_db = mock.MagicMock()
-
-        def fake_entity_db(path):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 1:
-                raise sqlite3.OperationalError("database is locked")
-            return mock_db
-
-        old_db = entity_server._db
-        old_unavailable = entity_server._db_unavailable
-        entity_server._db_unavailable = True
-        try:
-            with mock.patch("entity_server.EntityDatabase", side_effect=fake_entity_db):
-                thread = entity_server._start_recovery_thread(
-                    db_path, poll_interval=0.05
-                )
-                # Wait for recovery (should happen within ~0.2s)
-                deadline = time.time() + 2.0
-                while entity_server._db_unavailable and time.time() < deadline:
-                    time.sleep(0.05)
-
-                assert entity_server._db_unavailable is False
-                assert entity_server._db is mock_db
-        finally:
-            entity_server._db = old_db
-            entity_server._db_unavailable = old_unavailable
 
 
 class TestRetryBackoffIsFlat:
@@ -115,51 +81,3 @@ class TestRetryBackoffIsFlat:
         assert mock_sleep.call_count == 2
         for call in mock_sleep.call_args_list:
             assert call == mock.call(2.0)
-
-
-class TestRecoveryLogsBackfillSkipped:
-    """Test that recovery thread logs backfill skipped message."""
-
-    def test_recovery_logs_backfill_skipped(self, tmp_path, caplog):
-        """Verify recovery thread logs 'backfill skipped' message."""
-        db_path = str(tmp_path / "test.db")
-        mock_db = mock.MagicMock()
-
-        old_db = entity_server._db
-        old_unavailable = entity_server._db_unavailable
-        entity_server._db_unavailable = True
-        try:
-            with mock.patch(
-                "entity_server.EntityDatabase", return_value=mock_db
-            ), caplog.at_level(logging.INFO, logger="entity_server"):
-                thread = entity_server._start_recovery_thread(
-                    db_path, poll_interval=0.05
-                )
-                # Wait for recovery. The recovery thread sets
-                # ``_db_unavailable=False`` *before* emitting the
-                # "backfill skipped" log line; polling solely on the
-                # availability flag introduces a race where the assertion
-                # runs before the log emit completes. We additionally
-                # wait until the expected log line appears in
-                # ``caplog.records`` (bounded by the same 2.0s deadline).
-                deadline = time.time() + 2.0
-
-                def _log_recorded() -> bool:
-                    return any(
-                        "backfill skipped" in r.message
-                        for r in caplog.records
-                    )
-
-                while (
-                    (entity_server._db_unavailable or not _log_recorded())
-                    and time.time() < deadline
-                ):
-                    time.sleep(0.05)
-
-                assert _log_recorded(), (
-                    f"Expected 'backfill skipped' in logs, got: "
-                    f"{[r.message for r in caplog.records]}"
-                )
-        finally:
-            entity_server._db = old_db
-            entity_server._db_unavailable = old_unavailable
