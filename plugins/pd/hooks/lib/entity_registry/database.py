@@ -377,8 +377,8 @@ def _create_workflow_phases_table(conn: sqlite3.Connection) -> None:
     """Migration 3: Create workflow_phases table with dual-dimension status model.
 
     Self-managed transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK).
-    The outer _migrate() performs a second schema_version upsert + commit
-    after this function returns. Both writes set version=3, so the second
+    The outer _migrate() stamps again (_stamp_schema_version) and commits
+    after this function returns. Both stamps set version=3, so the second
     write is a no-op at the data level but does execute a SQL statement
     and commit.
     """
@@ -511,8 +511,8 @@ def _expand_workflow_phase_check(conn: sqlite3.Connection) -> None:
     dropped) alongside the existing 7 feature phases.
 
     Self-managed transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK).
-    The outer _migrate() performs a second schema_version upsert + commit
-    after this function returns. Both writes set version=5, so the second
+    The outer _migrate() stamps again (_stamp_schema_version) and commits
+    after this function returns. Both stamps set version=5, so the second
     write is a no-op at the data level.
     """
     # OUTSIDE try — PRAGMA cannot run inside transaction
@@ -1317,7 +1317,7 @@ def _migration_9_remove_create_tasks(conn: sqlite3.Connection) -> None:
     2. Migrates existing rows: create-tasks -> create-plan.
 
     Self-managed transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK).
-    The outer _migrate() performs a second schema_version upsert + commit
+    The outer _migrate() stamps again (_stamp_schema_version) and commits
     after this function returns.
     """
     # OUTSIDE try — PRAGMA cannot run inside transaction
@@ -1686,16 +1686,16 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
         # ``schema_version=10`` stamp so the DDL/DML body AND the stamp
         # commit atomically in a single transaction.  Feature 089 Bundle
         # C.4 removed this in favour of letting the outer ``_migrate()``
-        # loop (``database.py`` around line 3919) perform the upsert, but
+        # loop (now its ``_stamp_schema_version`` stamp) perform it, but
         # that left a crash window: a process killed (SIGKILL, OOM) between
         # the migration's ``conn.commit()`` and the outer loop's stamp
         # commit leaves the DB with phase_events populated at
         # schema_version=9, which would re-run migration 10 on the next
         # open.  With the stamp inside the same transaction as the DDL,
         # that window is eliminated — schema + stamp are either both
-        # present or both absent.  The outer loop's subsequent upsert is
-        # a no-op idempotent write (same key, same value) on ``ON CONFLICT
-        # DO UPDATE``.
+        # present or both absent.  The outer loop's subsequent stamp
+        # (``_stamp_schema_version``) writes nothing: the stored version
+        # is already 10, not lower.
         conn.execute("INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '10')")
         conn.commit()
     except Exception:
@@ -5939,6 +5939,36 @@ _MIGRATION_LOCK_SUFFIX = ".migrate.lock"
 # other process can open it, so its migrations need no lock.
 _PRIVATE_DATABASE_NAMES = frozenset({":memory:", ""})
 
+# How long an opener waits for a peer's migration run before its open
+# fails: the bound ``busy_timeout`` (15000 ms, ``_set_pragmas``) puts on
+# the database's own lock waits. A peer holds the lock only for its run,
+# so a wait reaches the bound only behind a holder that stopped or stuck
+# mid-run, or behind a run longer than the bound.
+_MIGRATION_LOCK_WAIT_SECONDS = 15.0
+
+# How often a waiting opener asks for the migration lock again.
+_MIGRATION_LOCK_POLL_SECONDS = 0.05
+
+
+def _flock_before_deadline(
+    lock_fd: int, lock_path: str, deadline: float, wait_seconds: float,
+) -> None:
+    """Take an exclusive ``flock`` on *lock_fd*, asking again until
+    *deadline* (a ``time.monotonic()`` value), then raise
+    ``sqlite3.OperationalError`` naming *lock_path*."""
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise sqlite3.OperationalError(
+                    f"waited {wait_seconds:g}s for the migration lock "
+                    f"{lock_path}: another process is migrating this "
+                    f"database, or stopped while it did"
+                ) from None
+            time.sleep(_MIGRATION_LOCK_POLL_SECONDS)
+
 
 def _path_names_open_file(path: str, fd: int) -> bool:
     """Whether *path* still names the file open as *fd* (same device, inode)."""
@@ -5960,16 +5990,26 @@ def _migration_lock(db_path):
       unopenable, or with triggers on a dropped column that failed every
       entity insert. ``EntityDatabase._migrate`` holds this lock for its
       whole pending run and decides again under it what is left to run.
-    - **How:** a blocking exclusive ``fcntl.flock`` on a sidecar,
+    - **How:** an exclusive ``fcntl.flock`` on a sidecar,
       ``<database file>.migrate.lock``, as ``schema_v2._bootstrap_lock``
-      does: a file of its own, so SQLite's byte-range locks on the database
+      uses: a file of its own, so SQLite's byte-range locks on the database
       never meet it. The kernel releases it when its holder dies, so a
-      killed run cannot block the next one, and it needs no timeout: a live
-      holder keeps it only for its own run.
+      killed run cannot block the next one.
+    - **Bounded wait:** an opener asks for the lock every
+      ``_MIGRATION_LOCK_POLL_SECONDS`` until ``_MIGRATION_LOCK_WAIT_SECONDS``
+      pass, then its open fails with ``sqlite3.OperationalError`` naming
+      the lock file, as a database lock wait past ``busy_timeout`` fails.
+      A live holder keeps the lock only for its own run, but one stopped
+      mid-run (SIGSTOP, a debugger) or stuck keeps it for as long as it
+      stays so, and an unbounded wait held every other opener with a step
+      pending that long. Each MCP server's ``_init_db_with_retry`` catches
+      the error, retries, then starts degraded with a recovery thread;
+      other openers get the error. ``_bootstrap_lock`` still waits without
+      a bound: only ``scripts/seed-census-db.py`` reaches it.
     - **No file left behind:** unlike ``_bootstrap_lock``, the holder
       removes the sidecar before releasing it, so nothing stays beside the
       registry or beside a rebuild's staging file. A waiter can therefore
-      wake holding a lock on a removed file; it checks that the path still
+      get the lock of a file already removed; it checks that the path still
       names the file it locked and, if not, locks the file now there.
     - **Private databases** (``:memory:``, ``""``) take no lock.
     """
@@ -5978,10 +6018,12 @@ def _migration_lock(db_path):
         yield
         return
     lock_path = os.path.realpath(path) + _MIGRATION_LOCK_SUFFIX
+    wait_seconds = _MIGRATION_LOCK_WAIT_SECONDS
+    deadline = time.monotonic() + wait_seconds
     while True:
         lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            _flock_before_deadline(lock_fd, lock_path, deadline, wait_seconds)
             locked_file_is_current = _path_names_open_file(lock_path, lock_fd)
         except BaseException:
             os.close(lock_fd)
@@ -11245,8 +11287,10 @@ class EntityDatabase:
         - **Serialized (W5.6):** a pending run holds :func:`_migration_lock`
           and checks again under it. An opener that arrives while a peer
           migrates the file waits, then finds nothing pending and runs no
-          step. Before, two MCP servers starting together both ran every
-          pending step, and a replayed step could leave the file unusable.
+          step; a wait past ``_MIGRATION_LOCK_WAIT_SECONDS`` fails the open
+          with ``sqlite3.OperationalError`` instead. Before, two MCP
+          servers starting together both ran every pending step, and a
+          replayed step could leave the file unusable.
         - **Step by step:** each pending step runs, then
           :func:`_stamp_schema_version` and a commit, so a run killed
           between steps resumes from the last completed one on the next

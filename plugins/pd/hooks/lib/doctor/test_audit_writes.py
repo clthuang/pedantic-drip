@@ -511,10 +511,10 @@ _INFERENCE_SCAN_ROOTS = [
 #
 # Owner assignment for the three formerly-UNOWNED sites (B3b, 2026-09-22):
 #
-#   database.py:929        sits inside _schema_expansion_v6 (v1 migration 6),
+#   database.py:918        sits inside _schema_expansion_v6 (v1 migration 6),
 #                          seeding next_seq_{type} from historical entity_id
-#                          text at migration time. Same class as :2756, :4163
-#                          and :4226. Sanctioned; relabelled, not fixed.
+#                          text at migration time. Same class as :2746, :4153
+#                          and :4216. Sanctioned; relabelled, not fixed.
 #
 #   feature_lifecycle.py:98  RESOLVED by C11, with engine.py's _extract_slug:
 #                          both split type_id on ":" to name the feature's
