@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -369,6 +370,162 @@ def test_a_workflow_server_with_no_workspace_refuses_until_one_resolves(
 
 
 # ---------------------------------------------------------------------------
+# W4.1 with Phase 3: the servers agree with the session-start hook. A checkout
+# git cannot answer for gets no workspace; a linked worktree's first session
+# gets the repository's.
+# ---------------------------------------------------------------------------
+
+_HOOKS_DIR = os.path.dirname(_HOOKS_LIB)
+
+
+def ensure_workspace_uuid(directory, tmp_path) -> str:
+    """The session-start hook's ``ensure_workspace_uuid "$PROJECT_ROOT"``
+    (``hooks/lib/session-start-helpers.sh``) for a session rooted at
+    *directory*. It runs ``$PLUGIN_ROOT/.venv/bin/python`` on
+    ``$PLUGIN_ROOT/hooks/lib``, so the plugin root here pairs this test's
+    interpreter with this checkout's hooks."""
+    plugin_root = tmp_path / "plugin-root"
+    if not plugin_root.exists():
+        plugin_root.mkdir()
+        os.symlink(sys.prefix, plugin_root / ".venv")
+        os.symlink(_HOOKS_DIR, plugin_root / "hooks")
+    completed = subprocess.run(
+        ["bash", "-c",
+         'source "$1/hooks/lib/common.sh" && '
+         'source "$1/hooks/lib/session-start-helpers.sh" && '
+         'PLUGIN_ROOT="$1" && '
+         'PD_WORKSPACE_PROJECT_ROOT="$2" ensure_workspace_uuid "$2"',
+         "ensure_workspace_uuid", str(plugin_root), str(directory)],
+        cwd=str(directory), capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout.strip()
+
+
+def _error_type(reply: str):
+    """A tool reply's ``error_type``; the reply itself when it is not an
+    error envelope (a success)."""
+    try:
+        return json.loads(reply).get("error_type", reply)
+    except (ValueError, AttributeError):
+        return reply
+
+
+def test_a_server_in_an_orphaned_worktree_mints_no_workspace_and_refuses(
+    first_session, monkeypatch, capsys,
+):
+    """Both servers start in a linked worktree whose directory under
+    ``<main>/.git/worktrees`` is gone, so git cannot answer there. Phase 3
+    decided such a checkout resolves no workspace, and the hook refuses it.
+    The worktree holds pd's ``.claude/`` and a brainstorm, which the entity
+    server's startup backfill would register.
+
+    That startup registers no project and backfills nothing, so no
+    workspace keyed on the orphan's path appears for step 3 of
+    ``_require_workspace()`` to find by the path-hash legacy id. Each
+    server's write tools answer ``workspace_unresolved``, and no registry
+    table gains a row.
+    """
+    repository = first_session["repository"]
+    (repository / ".claude").mkdir()
+    (repository / ".claude" / "settings.json").write_text("{}\n")
+    run_git("-C", str(repository), "add", ".claude")
+    run_git("-C", str(repository), "commit", "-q", "-m", "enable pd")
+    orphan = repository / ".pd-worktrees" / "task"
+    run_git("-C", str(repository), "worktree", "add", "-q", "-b", "task",
+            str(orphan))
+    shutil.rmtree(
+        (orphan / ".git").read_text().strip().removeprefix("gitdir: ")
+    )
+    brainstorms = orphan / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    (brainstorms / "20260927-orphan-idea.prd.md").write_text("# Orphan idea\n")
+    feature_directory = orphan / "docs" / "features" / "001-demo"
+    feature_directory.mkdir(parents=True)
+    db_path = first_session["db_path"]
+    os.makedirs(os.path.dirname(db_path))
+    EntityDatabase(db_path).close()
+    registry_before = _registry_snapshot(db_path)
+    monkeypatch.chdir(orphan)
+
+    async def session():
+        async with entity_server.lifespan(None), wss.lifespan(None):
+            after_startup = _registry_snapshot(db_path)
+            replies = {
+                "allocate_entity_id": await entity_server.allocate_entity_id(
+                    entity_type="feature", name="orphan idea",
+                ),
+                "register_entity": await entity_server.register_entity(
+                    entity_type="feature", auto_id=True, name="orphan idea",
+                    status="planned",
+                ),
+                "init_feature_state": await wss.init_feature_state(
+                    feature_dir=str(feature_directory), feature_id="001",
+                    slug="demo", mode="standard", branch="feature/001-demo",
+                ),
+            }
+            return after_startup, replies
+
+    after_startup, replies = asyncio.run(session())
+
+    assert after_startup == registry_before
+    assert {tool: _error_type(reply) for tool, reply in replies.items()} == (
+        dict.fromkeys(replies, "workspace_unresolved")
+    )
+    assert _registry_snapshot(db_path) == registry_before
+    assert os.listdir(feature_directory) == []
+    assert "project registration and backfill skipped" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("start_order", _START_ORDERS)
+def test_a_linked_worktrees_first_session_keeps_its_workspace_once_pd_is_enabled(
+    start_order, first_session, tmp_path, monkeypatch,
+):
+    """A first session started from a linked worktree of a repository with
+    no ``.claude/`` registers a feature, in the workspace the entity
+    server's startup minted. That workspace is keyed at the main checkout,
+    so once ``<main>/.claude`` exists (the refusal's hint asks for it), the
+    session-start hook resolves the same workspace from the worktree and
+    from the main checkout. Keyed at the worktree, the hook would mint a
+    second workspace for the repository and strand the feature in the
+    first."""
+    repository = first_session["repository"]
+    worktree = tmp_path / "worktree"
+    run_git("-C", str(repository), "worktree", "add", "-q", "-b", "session",
+            str(worktree))
+    monkeypatch.chdir(worktree)
+    order = (
+        (entity_server, wss) if start_order == "entity server first"
+        else (wss, entity_server)
+    )
+
+    async def session():
+        async with contextlib.AsyncExitStack() as servers:
+            for module in order:
+                await servers.enter_async_context(module.lifespan(None))
+            return await create_a_feature("First idea")
+
+    type_id = asyncio.run(session())
+    db_path = first_session["db_path"]
+    [(first_sessions_workspace,)] = committed_rows(
+        db_path, "SELECT workspace_uuid FROM entities WHERE type_id = ?",
+        (type_id,),
+    )
+    (repository / ".claude").mkdir(exist_ok=True)
+
+    assert {
+        "from the worktree": ensure_workspace_uuid(worktree, tmp_path),
+        "from the main checkout": ensure_workspace_uuid(repository, tmp_path),
+    } == dict.fromkeys(
+        ("from the worktree", "from the main checkout"), first_sessions_workspace,
+    )
+    assert committed_rows(
+        db_path, "SELECT uuid, project_root FROM workspaces WHERE uuid != ?",
+        (_UNKNOWN_WORKSPACE_UUID,),
+    ) == [(first_sessions_workspace, os.path.realpath(repository))]
+
+
+# ---------------------------------------------------------------------------
 # W4.1: every write tool it lists refuses without a workspace
 # ---------------------------------------------------------------------------
 
@@ -621,6 +778,27 @@ def test_issue_spawn_refuses_the_unknown_legacy_id_on_a_server_with_no_workspace
     assert reply["recovery_hint"] == _ENTITY_SERVER_HINT
     assert _registry_snapshot(spawning_server["db_path"]) == registry_before
     assert entity_server._workspace_uuid == ""
+
+
+def test_issue_spawn_labels_the_parents_event_unknown_when_no_project_id_is_known(
+    spawning_server, monkeypatch,
+):
+    """A direct call with no project_id, to a server with a workspace but
+    no legacy id (a lifespan always sets one): the parent's
+    ``spawned_child`` event is labelled ``"__unknown__"``, as the workflow
+    server labels its events, never ``""``, which ``query_phase_events``
+    cannot filter by."""
+    monkeypatch.setattr(
+        entity_server, "_workspace_uuid", spawning_server["server_workspace"],
+    )
+
+    reply = _spawn_a_bug(spawning_server, None)
+
+    assert "uuid" in reply, reply
+    assert committed_rows(
+        spawning_server["db_path"],
+        "SELECT project_id FROM phase_events WHERE event_type = 'spawned_child'",
+    ) == [("__unknown__",)]
 
 
 # ---------------------------------------------------------------------------

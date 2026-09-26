@@ -35,6 +35,8 @@ from entity_registry.id_generator import (
 from entity_registry.project_identity import (
     GitProjectInfo,
     _compute_legacy_project_id,
+    _git_cannot_answer_for_git_file,
+    _repository_root,
     collect_git_info,
     resolve_startup_workspace_uuid,
 )
@@ -146,7 +148,9 @@ def _require_workspace() -> str:
        there is no such row). The legacy id comes from the root commit, so
        it is the same from a subdirectory, a linked worktree or a second
        clone. Skipped when ``_project_id`` is empty or ``"__unknown__"``,
-       which that method maps to the unknown workspace.
+       which that method maps to the unknown workspace. In an orphaned
+       worktree (a ``.git`` file git cannot answer for) the legacy id is a
+       hash of the path, and the lifespan mints no row for it.
 
     A success is cached in ``_workspace_uuid``. A failure is not, so the
     next call tries again. A successful step 2 may write
@@ -194,6 +198,14 @@ def _upsert_project(db: EntityDatabase, info: GitProjectInfo) -> None:
     eventual ``projects.workspace_uuid`` write path has the value
     pre-resolved. ``_workspace_uuid`` is set by lifespan() before this
     helper is called.
+
+    The row is keyed at the repository's main checkout
+    (``_repository_root``), as path-keyed workspace resolution is. A
+    workspace this mints in a first session started from a linked worktree
+    is then the one ``resolve_workspace_uuid`` finds from the worktree and
+    from the main checkout, rather than one keyed at the worktree's path,
+    which a later ``.claude/`` in the main checkout would leave behind for
+    a second workspace.
     """
     db.upsert_project(
         project_id=info.project_id,
@@ -205,7 +217,7 @@ def _upsert_project(db: EntityDatabase, info: GitProjectInfo) -> None:
         remote_owner=info.remote_owner,
         remote_repo=info.remote_repo,
         default_branch=info.default_branch,
-        project_root=info.project_root,
+        project_root=_repository_root(info.project_root),
         is_git_repo=info.is_git_repo,
         workspace_uuid=_workspace_uuid or None,
     )
@@ -297,33 +309,58 @@ async def lifespan(server):
                 file=sys.stderr,
             )
             _workspace_uuid = ""
-        try:
-            _git_info = collect_git_info(_project_root)
-            _upsert_project(_db, _git_info)
-        except Exception as exc:
-            print(f"entity-server: project upsert failed: {exc}", file=sys.stderr)
-
-        # Claim __unknown__ entities matching this project root. Pass the
-        # resolved workspace identity so entities are claimed into it directly
-        # (never cross-attributed into a stale legacy-keyed row).
-        try:
-            claimed = _backfill_project_ids(
-                _db, _project_root, _project_id,
-                workspace_uuid=_workspace_uuid or None,
+        # The next three steps register the project and backfill its
+        # entities. With no workspace resolved, upsert_project finds the
+        # workspaces row by the legacy id or the root, or else mints one,
+        # keyed at the repository's main checkout. That mint is how a first
+        # session in a repository with no .claude/ gets the workspace
+        # _require_workspace() then finds (W4.1).
+        #
+        # All three are skipped when the root's .git is a FILE git cannot
+        # answer for (an orphaned worktree, or a git older than 2.31). Such
+        # a checkout resolves no workspace (resolve_workspace_uuid), and
+        # these steps would mint one keyed on its own path, which step 3 of
+        # _require_workspace() then finds by the legacy id (in an orphan, a
+        # hash of that path). So the server mints nothing, and its write
+        # tools answer workspace_unresolved. One case still resolves: a
+        # healthy linked worktree under a git older than 2.31 keeps the root
+        # commit's legacy id, so step 3 finds the repository's own
+        # workspace when one exists, the one place a server resolves where
+        # the session-start hook refuses.
+        if _git_cannot_answer_for_git_file(_project_root):
+            print(
+                "entity-server: project registration and backfill skipped: "
+                f"the .git at {_project_root!r} is a file git cannot answer for",
+                file=sys.stderr,
             )
-            if claimed > 0:
-                print(
-                    f"entity-server: claimed {claimed} entities for project {_project_id}",
-                    file=sys.stderr,
-                )
-        except Exception as exc:
-            print(f"entity-server: project backfill failed: {exc}", file=sys.stderr)
+        else:
+            try:
+                _git_info = collect_git_info(_project_root)
+                _upsert_project(_db, _git_info)
+            except Exception as exc:
+                print(f"entity-server: project upsert failed: {exc}", file=sys.stderr)
 
-        # Backfill existing artifacts (idempotency guard inside run_backfill).
-        try:
-            run_backfill(_db, _artifacts_root, project_id=_project_id)
-        except Exception as exc:
-            print(f"entity-server: backfill failed: {exc}", file=sys.stderr)
+            # Claim __unknown__ entities matching this project root. Pass the
+            # resolved workspace identity so entities are claimed into it
+            # directly (never cross-attributed into a stale legacy-keyed row).
+            try:
+                claimed = _backfill_project_ids(
+                    _db, _project_root, _project_id,
+                    workspace_uuid=_workspace_uuid or None,
+                )
+                if claimed > 0:
+                    print(
+                        f"entity-server: claimed {claimed} entities for project {_project_id}",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                print(f"entity-server: project backfill failed: {exc}", file=sys.stderr)
+
+            # Backfill existing artifacts (idempotency guard inside run_backfill).
+            try:
+                run_backfill(_db, _artifacts_root, project_id=_project_id)
+            except Exception as exc:
+                print(f"entity-server: backfill failed: {exc}", file=sys.stderr)
 
         # Seed missing workflow_phases rows on every startup, OUTSIDE the
         # backfill_complete guard, so newly registered entities get rows (an
@@ -941,7 +978,7 @@ async def issue_spawn(
         ``project_id_legacy`` it is only when neither ``workspace_uuid`` nor
         the server's own workspace is set; ``"__unknown__"`` names none. The
         parent's ``spawned_child`` event records it, else the server's own
-        legacy id.
+        legacy id, else ``"__unknown__"``: the label is never empty.
     metadata:
         Optional dict (or JSON string) merged into ``entities.metadata``.
         System-supplied keys win — caller-supplied ``parent_uuid`` (and
@@ -1002,7 +1039,10 @@ async def issue_spawn(
             spawn_workspace_uuid = _require_workspace()
         except WorkspaceUnresolvedError as unresolved:
             return unresolved.envelope
-    event_project_id = project_id or _project_id
+    # A label only (the event's workspace is the parent's). Never empty: the
+    # workflow server labels its events "__unknown__" when it has no id, and
+    # query_phase_events cannot filter by an empty label.
+    event_project_id = project_id or _project_id or "__unknown__"
 
     # FR-9.6: resolve parent. Existing helper reused per design C11 /
     # plan-reviewer iter 2 B2 (database.py:5839 — get_entity_by_uuid).
