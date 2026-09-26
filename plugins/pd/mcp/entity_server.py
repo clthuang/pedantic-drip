@@ -213,9 +213,6 @@ async def lifespan(server):
     )
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-    write_pid("entity_server")
-    start_parent_watchdog()
-
     _db = _init_db_with_retry(db_path)
     if _db is None:
         _db_unavailable = True
@@ -310,7 +307,6 @@ async def lifespan(server):
     try:
         yield {}
     finally:
-        remove_pid("entity_server")
         if _db is not None:
             _db.close()
             _db = None
@@ -1629,4 +1625,13 @@ async def list_projects() -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # The server process's own bookkeeping lives here, not in the lifespan:
+    # tests run the lifespan in-process, where the PID file would land in
+    # the test process's HOME and the watchdog could end the test run. The
+    # watchdog is armed first, so a PID file names a process it guards.
+    start_parent_watchdog()
+    write_pid("entity_server")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        remove_pid("entity_server")

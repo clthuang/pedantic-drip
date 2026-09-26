@@ -1,15 +1,17 @@
-"""Tests for server_lifecycle module — PID management and watchdog threads."""
+"""Tests for server_lifecycle module — PID management and watchdog threads.
+
+The PID tests pass their directory explicitly (``pid_dir``); none patches
+``PID_DIR``.
+"""
 
 import os
 import threading
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from server_lifecycle import (
-    PID_DIR,
     read_pid,
     remove_pid,
     start_lifetime_watchdog,
@@ -20,28 +22,26 @@ from server_lifecycle import (
 
 @pytest.fixture
 def pid_dir(tmp_path):
-    """Override PID_DIR to use a temp directory."""
-    with patch("server_lifecycle.PID_DIR", tmp_path):
-        yield tmp_path
+    """A temp directory for the PID files."""
+    return tmp_path
 
 
 class TestWritePid:
     def test_write_pid_creates_file(self, pid_dir):
-        path = write_pid("entity_server")
+        path = write_pid("entity_server", pid_dir=pid_dir)
         assert path.exists()
         assert path.read_text().strip() == str(os.getpid())
 
     def test_write_pid_creates_directory(self, tmp_path):
         nested = tmp_path / "sub" / "dir"
-        with patch("server_lifecycle.PID_DIR", nested):
-            write_pid("workflow_state_server")
+        write_pid("workflow_state_server", pid_dir=nested)
         assert nested.exists()
         assert (nested / "workflow_state_server.pid").exists()
 
     def test_write_pid_overwrites_stale(self, pid_dir):
         pid_file = pid_dir / "entity_server.pid"
         pid_file.write_text("99999")
-        write_pid("entity_server")
+        write_pid("entity_server", pid_dir=pid_dir)
         assert pid_file.read_text().strip() == str(os.getpid())
 
 
@@ -49,29 +49,29 @@ class TestRemovePid:
     def test_remove_pid_deletes_file(self, pid_dir):
         pid_file = pid_dir / "entity_server.pid"
         pid_file.write_text(str(os.getpid()))
-        remove_pid("entity_server")
+        remove_pid("entity_server", pid_dir=pid_dir)
         assert not pid_file.exists()
 
     def test_remove_pid_noop_missing(self, pid_dir):
         # Should not raise any exception
-        remove_pid("nonexistent_server")
+        remove_pid("nonexistent_server", pid_dir=pid_dir)
 
 
 class TestReadPid:
     def test_read_pid_returns_value(self, pid_dir):
         pid_file = pid_dir / "entity_server.pid"
         pid_file.write_text("12345")
-        result = read_pid("entity_server")
+        result = read_pid("entity_server", pid_dir=pid_dir)
         assert result == 12345
 
     def test_read_pid_returns_none_missing(self, pid_dir):
-        result = read_pid("nonexistent_server")
+        result = read_pid("nonexistent_server", pid_dir=pid_dir)
         assert result is None
 
     def test_read_pid_returns_none_invalid(self, pid_dir):
         pid_file = pid_dir / "entity_server.pid"
         pid_file.write_text("abc")
-        result = read_pid("entity_server")
+        result = read_pid("entity_server", pid_dir=pid_dir)
         assert result is None
 
 

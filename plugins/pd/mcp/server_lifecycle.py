@@ -1,6 +1,14 @@
 """Shared MCP server lifecycle utilities.
 
 Provides PID file management and watchdog threads for all pd MCP servers.
+
+Only a server process's entry point uses them for its own process: the
+``if __name__ == "__main__":`` block of ``entity_server.py`` and
+``workflow_state_server.py``, and ``ui/__main__.py``'s
+``main(server_process=True)``. Lifespans and a plain ``main()`` also run
+inside test processes, where a PID file would land in the test process's
+HOME (``PID_DIR`` is computed from HOME at import) and a watchdog could
+``os._exit(0)`` the test run.
 """
 
 import os
@@ -11,34 +19,43 @@ from pathlib import Path
 PID_DIR = Path(os.path.expanduser("~/.claude/pd/run"))
 
 
-def write_pid(server_name: str) -> Path:
-    """Write current process PID to PID_DIR/{server_name}.pid.
+def write_pid(server_name: str, pid_dir: Path | None = None) -> Path:
+    """Write current process PID to {pid_dir}/{server_name}.pid.
 
-    Creates PID_DIR if needed. Overwrites any existing PID file
+    Creates the directory if needed. Overwrites any existing PID file
     (previous instance may be stale).
 
     Args:
         server_name: One of "entity_server",
                      "workflow_state_server", "ui_server"
+        pid_dir: Directory for the PID file (default PID_DIR, read at
+                 call time)
 
     Returns:
         Path to the written PID file
     """
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    pid_file = PID_DIR / f"{server_name}.pid"
+    directory = PID_DIR if pid_dir is None else pid_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    pid_file = directory / f"{server_name}.pid"
     pid_file.write_text(str(os.getpid()))
     return pid_file
 
 
-def remove_pid(server_name: str) -> None:
-    """Remove PID file for the given server. No-op if file missing."""
-    pid_file = PID_DIR / f"{server_name}.pid"
+def remove_pid(server_name: str, pid_dir: Path | None = None) -> None:
+    """Remove PID file for the given server. No-op if file missing.
+
+    pid_dir defaults to PID_DIR, read at call time.
+    """
+    pid_file = (PID_DIR if pid_dir is None else pid_dir) / f"{server_name}.pid"
     pid_file.unlink(missing_ok=True)
 
 
-def read_pid(server_name: str) -> int | None:
-    """Read PID from file. Returns None if file missing or content invalid."""
-    pid_file = PID_DIR / f"{server_name}.pid"
+def read_pid(server_name: str, pid_dir: Path | None = None) -> int | None:
+    """Read PID from file. Returns None if file missing or content invalid.
+
+    pid_dir defaults to PID_DIR, read at call time.
+    """
+    pid_file = (PID_DIR if pid_dir is None else pid_dir) / f"{server_name}.pid"
     try:
         content = pid_file.read_text().strip()
         return int(content)

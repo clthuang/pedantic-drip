@@ -28,7 +28,6 @@ if _MCP_DIR not in sys.path:
     sys.path.insert(0, _MCP_DIR)
 
 import entity_server  # noqa: E402
-import server_lifecycle  # noqa: E402
 from entity_registry.backfill import backfill_workflow_phases  # noqa: E402
 from entity_registry.database import EntityDatabase  # noqa: E402
 
@@ -188,8 +187,9 @@ _ENTITY_SERVER_GLOBALS = (
 
 def test_the_entity_servers_startup_seeds_only_its_own_workspace(db, tmp_path, monkeypatch):
     """The lifespan passes its resolved workspace (A) to the backfill: A's
-    brainstorm is seeded; B's brainstorm and feature get no row. The PID
-    files go under a temp HOME and the parent-PID watchdog is not started."""
+    brainstorm is seeded; B's brainstorm and feature get no row. The
+    lifespan writes no PID file and starts no watchdog: the server's entry
+    point owns both (W5.6)."""
     brainstorm_a = _brainstorm(db, WORKSPACE_A, "20260925-000004-a-startup")
     brainstorm_b = _brainstorm(db, WORKSPACE_B, "20260925-000005-b-startup")
     db.register_entity(
@@ -204,8 +204,6 @@ def test_the_entity_servers_startup_seeds_only_its_own_workspace(db, tmp_path, m
     monkeypatch.setenv("PROJECT_ROOT", str(project_root))
     monkeypatch.setenv("ENTITY_WORKSPACE_UUID", WORKSPACE_A)
     monkeypatch.delenv("WORKSPACE_UUID", raising=False)
-    monkeypatch.setattr(server_lifecycle, "PID_DIR", home / ".claude" / "pd" / "run")
-    monkeypatch.setattr(entity_server, "start_parent_watchdog", lambda: None)
     for name in _ENTITY_SERVER_GLOBALS:
         monkeypatch.setattr(entity_server, name, getattr(entity_server, name))
 

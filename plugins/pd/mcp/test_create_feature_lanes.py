@@ -38,7 +38,6 @@ for _path in (_HOOKS_LIB, _MCP_DIR):
         sys.path.insert(0, _path)
 
 import entity_server  # noqa: E402
-import server_lifecycle  # noqa: E402
 import workflow_state_server as wss  # noqa: E402
 
 _SKILL_PATH = os.path.normpath(
@@ -81,24 +80,18 @@ def isolate_servers(monkeypatch, *, home, db_path, project_root) -> None:
     """Point both servers' lifespans at a temp HOME, a temp registry and
     *project_root*, and restore their module globals afterwards.
 
-    Process-level side effects of the lifespans stay inside the temp HOME:
-    the PID files go there, and the parent-PID watchdog is not started (it
-    would outlive the test and ``os._exit`` the whole run if pytest were
-    re-parented).
+    Nothing here patches the PID file or the parent-PID watchdog: each
+    server's entry point owns those, and a lifespan touches neither (W5.6).
     """
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ENTITY_DB_PATH", str(db_path))
     monkeypatch.setenv("PROJECT_ROOT", str(project_root))
     monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
     monkeypatch.delenv("WORKSPACE_UUID", raising=False)
-    monkeypatch.setattr(
-        server_lifecycle, "PID_DIR", home / ".claude" / "pd" / "run"
-    )
     for module, names in (
         (entity_server, _ENTITY_SERVER_GLOBALS),
         (wss, _WORKFLOW_SERVER_GLOBALS),
     ):
-        monkeypatch.setattr(module, "start_parent_watchdog", lambda: None)
         for name in names:
             monkeypatch.setattr(module, name, getattr(module, name))
 

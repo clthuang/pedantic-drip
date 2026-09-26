@@ -21,8 +21,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mcp'))
 from server_lifecycle import write_pid, remove_pid, start_lifetime_watchdog
 
 
-def main(args=None):
-    """Parse arguments, check port, start server."""
+def main(args=None, *, server_process=False):
+    """Parse arguments, check port, start server.
+
+    server_process: True only from this module's entry point. It writes the
+    PID file, starts the lifetime watchdog and removes the PID file at exit.
+    Tests call main() in-process, where all three would act on the test
+    process: its HOME's ``run/`` and its lifetime.
+    """
     parser = argparse.ArgumentParser(description="pd UI server")
     parser.add_argument(
         "--port", type=int, default=8718, help="Server port (default: 8718)"
@@ -47,9 +53,10 @@ def main(args=None):
 
     app = create_app()
 
-    write_pid("ui_server")
-    start_lifetime_watchdog(86400)
-    atexit.register(remove_pid, "ui_server")
+    if server_process:
+        write_pid("ui_server")
+        start_lifetime_watchdog(86400)
+        atexit.register(remove_pid, "ui_server")
 
     print(f"pd UI server running at http://127.0.0.1:{port}/")
 
@@ -57,4 +64,4 @@ def main(args=None):
 
 
 if __name__ == "__main__":
-    main()
+    main(server_process=True)

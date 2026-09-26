@@ -67,10 +67,13 @@ def engine(db, tmp_path):
 
 @pytest.fixture
 def entity_engine(db, tmp_path):
-    """Entity workflow engine for cascade routing."""
+    """Entity workflow engine for cascade routing. Its notifications go to
+    a queue under the test's tmp dir, never ``NotificationQueue``'s
+    default ``~/.claude/pd/notifications.jsonl`` in the process HOME."""
     from workflow_engine.notifications import NotificationQueue
     return EntityWorkflowEngine(
-        db, str(tmp_path), NotificationQueue(), project_root=str(tmp_path)
+        db, str(tmp_path), NotificationQueue(str(tmp_path / "notifications.jsonl")),
+        project_root=str(tmp_path),
     )
 
 

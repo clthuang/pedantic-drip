@@ -8617,61 +8617,45 @@ class TestIsTransient:
 class TestPidFile:
     """PID file lifecycle: write at startup, remove at shutdown, overwrite stale.
 
-    Tests use server_lifecycle module (shared infrastructure).
+    Tests use server_lifecycle module (shared infrastructure), with the PID
+    directory passed explicitly (``pid_dir``), never ``PID_DIR`` patched.
     """
 
     def test_pid_file_written_at_startup(self, tmp_path):
         """write_pid creates PID file with current process PID."""
         import server_lifecycle as sl
 
-        original_pid_dir = sl.PID_DIR
-        sl.PID_DIR = tmp_path
-        try:
-            pid_path = sl.write_pid("test_server")
-            assert pid_path.is_file(), "PID file should exist after write_pid"
-            content = pid_path.read_text().strip()
-            assert content == str(os.getpid()), (
-                f"PID file should contain current PID {os.getpid()}, got {content!r}"
-            )
-        finally:
-            sl.remove_pid("test_server")
-            sl.PID_DIR = original_pid_dir
+        pid_path = sl.write_pid("test_server", pid_dir=tmp_path)
+        assert pid_path.is_file(), "PID file should exist after write_pid"
+        content = pid_path.read_text().strip()
+        assert content == str(os.getpid()), (
+            f"PID file should contain current PID {os.getpid()}, got {content!r}"
+        )
 
     def test_pid_file_removed_at_shutdown(self, tmp_path):
         """remove_pid deletes the PID file."""
         import server_lifecycle as sl
 
-        original_pid_dir = sl.PID_DIR
-        sl.PID_DIR = tmp_path
-        try:
-            pid_path = sl.write_pid("test_server")
-            assert pid_path.is_file(), "PID file should exist before removal"
-            sl.remove_pid("test_server")
-            assert not pid_path.is_file(), "PID file should not exist after remove_pid"
-        finally:
-            sl.PID_DIR = original_pid_dir
+        pid_path = sl.write_pid("test_server", pid_dir=tmp_path)
+        assert pid_path.is_file(), "PID file should exist before removal"
+        sl.remove_pid("test_server", pid_dir=tmp_path)
+        assert not pid_path.is_file(), "PID file should not exist after remove_pid"
 
     def test_stale_pid_file_overwritten(self, tmp_path):
         """Stale PID file (non-existent process) is overwritten with current PID."""
         import server_lifecycle as sl
 
-        original_pid_dir = sl.PID_DIR
-        sl.PID_DIR = tmp_path
-        try:
-            # Write a stale PID (use a very high PID unlikely to exist)
-            pid_path = tmp_path / "test_server.pid"
-            pid_path.write_text("999999999")
+        # Write a stale PID (use a very high PID unlikely to exist)
+        pid_path = tmp_path / "test_server.pid"
+        pid_path.write_text("999999999")
 
-            # write_pid should overwrite the stale PID
-            result_path = sl.write_pid("test_server")
-            assert result_path == pid_path
-            content = pid_path.read_text().strip()
-            assert content == str(os.getpid()), (
-                f"Stale PID should be overwritten with current PID {os.getpid()}, got {content!r}"
-            )
-        finally:
-            sl.remove_pid("test_server")
-            sl.PID_DIR = original_pid_dir
+        # write_pid should overwrite the stale PID
+        result_path = sl.write_pid("test_server", pid_dir=tmp_path)
+        assert result_path == pid_path
+        content = pid_path.read_text().strip()
+        assert content == str(os.getpid()), (
+            f"Stale PID should be overwritten with current PID {os.getpid()}, got {content!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
