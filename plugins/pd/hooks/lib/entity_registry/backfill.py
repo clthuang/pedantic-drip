@@ -36,22 +36,15 @@ BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*([0-9][^\s*]*)"
 # marks only these finished.
 _DONE_STATUSES = frozenset({"completed", "abandoned"})
 
-PHASE_SEQUENCE: tuple[str, ...] = (
-    "brainstorm", "specify", "design", "create-plan",
-    "implement", "finish",
-)
-
 # Valid statuses for kanban derivation (used for validation only)
 _VALID_STATUSES: frozenset[str] = frozenset({"planned", "active", "completed", "abandoned"})
-
-VALID_MODES: frozenset[str] = frozenset({"standard", "full", "light"})
 
 BACKFILL_BATCH_SIZE = 20
 
 # Local replica of the former workflow_engine.kanban module (deleted at
 # feature 132, Scope model D6.1-.3 — post-cutover call sites carry their
 # own copy instead of importing the shared kanban.py helper). Byte-identical to
-# its siblings in engine.py / feature_lifecycle.py / reconciliation.py /
+# its siblings in feature_lifecycle.py / reconciliation.py /
 # workflow_state_server.py — kept in sync via test_constants.py's parity
 # pin.
 _PHASE_TO_KANBAN: dict[str, str] = {
@@ -96,32 +89,6 @@ def _chunked(iterable, size: int):
             batch = []
     if batch:
         yield batch
-
-
-# ---------------------------------------------------------------------------
-# Workflow phase helpers (private)
-# ---------------------------------------------------------------------------
-
-
-def _derive_next_phase(last_completed: str | None) -> str | None:
-    """Return the phase after last_completed, or None if finish/unrecognized.
-
-    - None input -> None
-    - "finish" -> "finish" (terminal state per D-5)
-    - Recognized phase -> next phase in PHASE_SEQUENCE
-    - Unrecognized -> None
-    """
-    if last_completed is None:
-        return None
-    if last_completed == "finish":
-        return "finish"
-    try:
-        idx = PHASE_SEQUENCE.index(last_completed)
-    except ValueError:
-        return None
-    if idx + 1 < len(PHASE_SEQUENCE):
-        return PHASE_SEQUENCE[idx + 1]
-    return None
 
 
 # ---------------------------------------------------------------------------

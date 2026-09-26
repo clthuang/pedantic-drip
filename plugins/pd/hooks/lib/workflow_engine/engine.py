@@ -30,45 +30,6 @@ _ALL_HARD_ARTIFACTS: frozenset[str] = frozenset(
     name for names in HARD_PREREQUISITES.values() for name in names
 )
 
-# Local replica of the former workflow_engine.kanban module (deleted at
-# feature 132, Scope model D6.1-.3 — post-cutover call sites carry their
-# own copy instead of importing the shared kanban.py helper). Byte-identical to
-# its siblings in backfill.py / feature_lifecycle.py / reconciliation.py /
-# workflow_state_server.py — kept in sync via test_constants.py's parity
-# pin. Its only caller here was the lazy .meta.json hydration, deleted by
-# design W1.5; the copy remains the parity pins' representative producer
-# (test_constants.py ``_REPRESENTATIVE``).
-_PHASE_TO_KANBAN: dict[str, str] = {
-    "brainstorm": "backlog",
-    "specify": "backlog",
-    "design": "prioritised",
-    "create-plan": "prioritised",
-    "implement": "wip",
-    "finish": "documenting",
-    "discover": "backlog",
-    "define": "backlog",
-    "deliver": "wip",
-    "debrief": "documenting",
-}
-
-
-def _kanban_column_for(status: str, workflow_phase: str | None) -> str:
-    """Kanban column for (status, workflow_phase).
-
-    Priority order (unchanged from the retired kanban.py logic):
-    1. Terminal statuses (completed, abandoned) -> "completed"
-    2. Blocked status -> "blocked"
-    3. Planned status -> "backlog"
-    4. Phase-based lookup with "backlog" fallback
-    """
-    if status in ("completed", "abandoned"):
-        return "completed"
-    if status == "blocked":
-        return "blocked"
-    if status == "planned":
-        return "backlog"
-    return _PHASE_TO_KANBAN.get(workflow_phase, "backlog")
-
 
 def _iso_now() -> str:
     """Return current time as ISO 8601 string with local timezone offset.

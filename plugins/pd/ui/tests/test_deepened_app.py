@@ -1011,14 +1011,13 @@ def test_producer_union_lands_in_execution_statuses_after_remap():
     producer drift would still be caught here)."""
     from entity_registry import backfill as _backfill_producer
     from entity_registry.axes import EXECUTION_STATUSES_SET
-    from workflow_engine import engine as _engine_producer
     from workflow_engine import feature_lifecycle as _feature_lifecycle_producer
     from workflow_engine import reconciliation as _reconciliation_producer
     from workflow_engine.router import ENTITY_MACHINES
     from ui.routes.helpers import resolve_execution_status
 
     producers = (
-        _engine_producer, _feature_lifecycle_producer,
+        _feature_lifecycle_producer,
         _reconciliation_producer, _backfill_producer,
     )
 

@@ -4,11 +4,11 @@ to valid kanban columns, and (critically) stays byte-identical to its
 siblings.
 
 Feature 132 (D6.1-.3) retired the shared workflow_engine.kanban module:
-backfill.py, engine.py, feature_lifecycle.py, reconciliation.py, and
+backfill.py, feature_lifecycle.py, reconciliation.py, and
 mcp/workflow_state_server.py each now carry a private
 (_PHASE_TO_KANBAN, _kanban_column_for) replica instead of importing a
 shared derive() function. This file is the parity backstop: it directly
-compares the four same-tree replicas (the fifth, in mcp/, lives in a
+compares the three same-tree replicas (the fourth, in mcp/, lives in a
 separate import root and is exercised by mcp/test_workflow_state_server.py
 instead) so a copy/paste divergence in any one of them fails LOUDLY here
 rather than surfacing as a silent behavioral drift downstream. The
@@ -20,18 +20,17 @@ from __future__ import annotations
 
 from entity_registry import backfill as _backfill_producer
 from transition_gate import PHASE_SEQUENCE
-from workflow_engine import engine as _engine_producer
 from workflow_engine import feature_lifecycle as _feature_lifecycle_producer
 from workflow_engine import reconciliation as _reconciliation_producer
 
 # Representative producer for the completeness/validity/behavior pins
-# below — TestKanbanProducerParity proves the other three match it
+# below — TestKanbanProducerParity proves the other two match it
 # value-for-value and branch-for-branch, so pinning against just one
-# is not vacuous.
-_REPRESENTATIVE = _engine_producer
+# is not vacuous. feature_lifecycle's copy seeds a feature's kanban
+# column at init_feature_state and activate_feature.
+_REPRESENTATIVE = _feature_lifecycle_producer
 
 PRODUCERS: dict[str, object] = {
-    "engine": _engine_producer,
     "feature_lifecycle": _feature_lifecycle_producer,
     "reconciliation": _reconciliation_producer,
     "backfill": _backfill_producer,
@@ -163,7 +162,7 @@ class TestKanbanProducerCompleteness:
 # `_kanban_column_for`'s type hint (`status: str`) doesn't stop a caller
 # from passing it (reconciliation.py's OWN call site guards with
 # `status or "active"`, implying this was a real concern at some call
-# site). Pins the actual, currently-safe behavior across all four
+# site). Pins the actual, currently-safe behavior across all three
 # same-tree producers. dimension:boundary
 # ---------------------------------------------------------------------------
 class TestKanbanProducerNoneStatusBoundary:

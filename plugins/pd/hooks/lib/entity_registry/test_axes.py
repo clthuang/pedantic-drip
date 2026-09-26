@@ -528,9 +528,9 @@ class TestVocabTriggerLeakDetection:
 # kanban producers can reach. The former shared workflow_engine.kanban
 # module (its derive() function / PHASE_TO_KANBAN) is retired — each live
 # call site now carries its own private, byte-identical replica
-# (_kanban_column_for / _PHASE_TO_KANBAN). This pin unions the four
-# replicas that live in this same hooks/lib tree (engine.py,
-# feature_lifecycle.py, reconciliation.py, entity_registry.backfill);
+# (_kanban_column_for / _PHASE_TO_KANBAN). This pin unions the three
+# replicas that live in this same hooks/lib tree (feature_lifecycle.py,
+# reconciliation.py, entity_registry.backfill);
 # workflow_state_server.py's replica lives in the separate mcp/ import
 # root and is covered by mcp/test_workflow_state_server.py instead.
 # Importing this live code from a test is unrestricted (the dark guard
@@ -539,12 +539,10 @@ class TestVocabTriggerLeakDetection:
 class TestStoredKanbanProducersCompatibility:
     def test_reachable_kanban_column_outputs_are_strict_subset_of_execution_statuses(self):
         from entity_registry import backfill as _backfill_producer
-        from workflow_engine import engine as _engine_producer
         from workflow_engine import feature_lifecycle as _feature_lifecycle_producer
         from workflow_engine import reconciliation as _reconciliation_producer
 
         producers = (
-            _engine_producer,
             _feature_lifecycle_producer,
             _reconciliation_producer,
             _backfill_producer,

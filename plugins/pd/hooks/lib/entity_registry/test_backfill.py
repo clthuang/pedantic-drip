@@ -973,16 +973,13 @@ class TestBrainstormTitleExtraction:
 # ---------------------------------------------------------------------------
 
 from entity_registry.backfill import (
-    PHASE_SEQUENCE,
-    VALID_MODES,
-    _derive_next_phase,
     _kanban_column_for,
     backfill_workflow_phases,
 )
 
 
 class TestWorkflowPhaseBackfill:
-    """Tests for workflow phase backfill constants, helpers, and main function."""
+    """Tests for the workflow phase backfill's kanban helper and main function."""
 
     @pytest.fixture
     def db(self, tmp_path):
@@ -1012,29 +1009,6 @@ class TestWorkflowPhaseBackfill:
     def test_unmapped_status_falls_back_to_backlog(self):
         """Unmapped statuses like 'draft' fall back to backlog via _kanban_column_for."""
         assert _kanban_column_for("draft", None) == "backlog"
-
-    # -------------------------------------------------------------------
-    # Task 3.2: _derive_next_phase
-    # -------------------------------------------------------------------
-
-    def test_derive_next_phase_specify_returns_design(self):
-        assert _derive_next_phase("specify") == "design"
-
-    def test_derive_next_phase_design_returns_create_plan(self):
-        assert _derive_next_phase("design") == "create-plan"
-
-    def test_derive_next_phase_implement_returns_finish(self):
-        assert _derive_next_phase("implement") == "finish"
-
-    def test_derive_next_phase_finish_returns_finish(self):
-        """Terminal state: finish -> finish per spec D-5."""
-        assert _derive_next_phase("finish") == "finish"
-
-    def test_derive_next_phase_none_returns_none(self):
-        assert _derive_next_phase(None) is None
-
-    def test_derive_next_phase_unrecognized_returns_none(self):
-        assert _derive_next_phase("unknown-phase") is None
 
     # -------------------------------------------------------------------
     # Task 3.3b: status resolution (W2.6: the registry's status, 'planned'
@@ -1478,49 +1452,8 @@ class TestWorkflowPhaseBackfill:
         assert db.get_workflow_phase("feature:001-post-error") is not None
 
     # -------------------------------------------------------------------
-    # Deepened: _derive_next_phase boundary — brainstorm (first) phase
+    # Deepened: _kanban_column_for's four core statuses
     # -------------------------------------------------------------------
-
-    def test_derive_next_phase_brainstorm_returns_specify(self):
-        """brainstorm is the first phase; next should be specify.
-
-        Anticipate: If PHASE_SEQUENCE[0] is not correctly handled,
-        the index calculation might underflow or return wrong phase.
-        derived_from: dimension:boundary_values, spec:D-5
-        """
-        assert _derive_next_phase("brainstorm") == "specify"
-
-    def test_derive_next_phase_create_plan_returns_implement(self):
-        """create-plan -> implement (create-tasks removed in feature 073).
-
-        Anticipate: If phase sequence matching uses partial string match
-        instead of exact, "create-plan" might match incorrectly.
-        derived_from: dimension:boundary_values
-        """
-        assert _derive_next_phase("create-plan") == "implement"
-
-    # -------------------------------------------------------------------
-    # Deepened: PHASE_SEQUENCE and VALID_MODES constants
-    # -------------------------------------------------------------------
-
-    def test_phase_sequence_has_exactly_six_elements(self):
-        """PHASE_SEQUENCE must have exactly 6 elements (create-tasks removed in 073).
-
-        Anticipate: If a phase is accidentally added or removed, the
-        derive_next_phase logic and CHECK constraints would silently diverge.
-        derived_from: dimension:mutation_mindset, spec:D-5
-        """
-        assert len(PHASE_SEQUENCE) == 6
-        assert PHASE_SEQUENCE == (
-            "brainstorm", "specify", "design",
-            "create-plan", "implement", "finish",
-        )
-
-    def test_valid_modes_includes_light(self):
-        """VALID_MODES must include 'light' (feature:052 AC-4).
-        derived_from: dimension:mutation_mindset, spec:AC-4
-        """
-        assert VALID_MODES == frozenset({"standard", "full", "light"})
 
     def test_kanban_column_for_covers_four_statuses(self):
         """_kanban_column_for handles the 4 core statuses correctly.
