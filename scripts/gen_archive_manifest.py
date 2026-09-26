@@ -12,6 +12,10 @@ an immutable open, which writes nothing beside it:
 
     python -c "import os,sqlite3,sys; s=sqlite3.connect('file:'+os.path.expanduser('~/.claude/pd/entities/entities.db')+'?immutable=1',uri=True); s.backup(sqlite3.connect(sys.argv[1]))" /tmp/entities-copy.db
     ENTITY_DB_PATH=/tmp/entities-copy.db python scripts/gen_archive_manifest.py
+
+An immutable open ignores a -wal file, so a copy made that way misses every
+commit still in one. When the registry has a -wal beside it, make the copy
+through ?mode=ro instead of ?immutable=1.
 """
 from __future__ import annotations
 
@@ -79,7 +83,11 @@ def main() -> int:
     a("**Archived entities are recoverable.** Archival sets the `is_archived` "
       "flag and leaves `status` alone; it never deletes. Deletion removes no "
       "row either: `delete_entity` is a soft delete (v2 migration 6) that "
-      "sets `is_deleted`, and `set_deleted(type_id, False)` restores the row.")
+      "sets `is_deleted`, and `EntityDatabase.set_deleted(type_id, False, "
+      "workspace_uuid=<uuid>)` restores the row, where `<uuid>` is "
+      "`workspaces.uuid` for the `project_root` the row is listed under. "
+      "Without `workspace_uuid` it restores every workspace's row with that "
+      "`type_id`.")
     a("")
     a("```")
     a('update_entity(type_id="<type_id>", archived=true)    # archive')
@@ -90,8 +98,9 @@ def main() -> int:
       "rollback. One cost remains: the sequence number is never released. "
       "An archive/restore pair adds no `events` or `phase_events` rows: "
       "`set_archived` writes only `is_archived` and `updated_at`. (The "
-      "retired `status=\"archived\"` recipe added one `phase_events` row and "
-      "one immutable `events` row per status change.)")
+      "retired `status=\"archived\"` recipe added one `phase_events` row per "
+      "status change, plus one immutable `events` row on a v2-generation "
+      "file.)")
     a("")
     a("**Legacy-ness lives in `entities.is_legacy`, not in a tag.** The "
       "earlier `legacy-archived-2026-09` tag was removed once the column "

@@ -1,6 +1,6 @@
 # Entity Archive Manifest
 
-**Generated:** 2026-09-22 by `scripts/gen_archive_manifest.py` (read-only).
+**Generated:** 2026-09-22 by `scripts/gen_archive_manifest.py` (read-only). The Recovery prose and the detail-table headers were edited by hand on 2026-09-26 to match the generator; the rows are the 2026-09-22 snapshot.
 
 Every entity flagged **`entities.is_archived`** or **`entities.is_legacy`**. Legacy means the identity predates the structural model, so its sequence number and slug exist only inside its `entity_id` text.
 
@@ -8,14 +8,14 @@ Every entity flagged **`entities.is_archived`** or **`entities.is_legacy`**. Leg
 
 ## Recovery
 
-**Archived entities are recoverable.** Archival sets the `is_archived` flag and leaves `status` alone; it never deletes. Deletion removes no row either: `delete_entity` is a soft delete (v2 migration 6) that sets `is_deleted`, and `set_deleted(type_id, False)` restores the row.
+**Archived entities are recoverable.** Archival sets the `is_archived` flag and leaves `status` alone; it never deletes. Deletion removes no row either: `delete_entity` is a soft delete (v2 migration 6) that sets `is_deleted`, and `EntityDatabase.set_deleted(type_id, False, workspace_uuid=<uuid>)` restores the row, where `<uuid>` is `workspaces.uuid` for the `project_root` the row is listed under. Without `workspace_uuid` it restores every workspace's row with that `type_id`.
 
 ```
 update_entity(type_id="<type_id>", archived=true)    # archive
 update_entity(type_id="<type_id>", archived=false)   # restore — row and status intact
 ```
 
-Restoration is a forward write through the sanctioned path, not a rollback. One cost remains: the sequence number is never released. An archive/restore pair adds no `events` or `phase_events` rows: `set_archived` writes only `is_archived` and `updated_at`. (The retired `status="archived"` recipe added one `phase_events` row and one immutable `events` row per status change.)
+Restoration is a forward write through the sanctioned path, not a rollback. One cost remains: the sequence number is never released. An archive/restore pair adds no `events` or `phase_events` rows: `set_archived` writes only `is_archived` and `updated_at`. (The retired `status="archived"` recipe added one `phase_events` row per status change, plus one immutable `events` row on a v2-generation file.)
 
 **Legacy-ness lives in `entities.is_legacy`, not in a tag.** The earlier `legacy-archived-2026-09` tag was removed once the column existed: two homes for one fact is the defect this effort removes. `workspace-retired-*` remains because it says something different — a dormant workspace was stood down, and those rows were never legacy.
 

@@ -64,22 +64,40 @@ SUBCOMMAND_ARGS = [
     ids=[t[0] for t in SUBCOMMAND_ARGS],
 )
 def test_subcommand_stubs(subcommand: str, args: list[str], tmp_path: Path) -> None:
-    """Each subcommand with minimal args outputs valid JSON and exits 0."""
-    # The args are relative paths, and some subcommands create the files they
-    # name: run in tmp_path so none lands in the directory pytest runs from.
-    result = subprocess.run(
+    """Each subcommand with minimal args leaves no file where pytest runs.
+
+    The args are relative paths to files that do not exist, so every
+    subcommand exits non-zero here; the exit code is not what this pins.
+    backup and merge-entities create src.db and dst.db, and verify creates
+    db.db. The run happens in tmp_path, so none of the named files may
+    appear, or change, in the directory pytest runs from.
+    """
+    invoking_dir = Path.cwd()
+    # Every non-flag arg is checked as a relative path; flag values such as
+    # "entries" or "5" name no file and stay absent.
+    non_flag_args = [arg for arg in args if not arg.startswith("-")]
+
+    def invoking_dir_state() -> dict[str, tuple[int, int] | None]:
+        state: dict[str, tuple[int, int] | None] = {}
+        for arg in non_flag_args:
+            path = invoking_dir / arg
+            if path.exists():
+                state[arg] = (path.stat().st_mtime_ns, path.stat().st_size)
+            else:
+                state[arg] = None
+        return state
+
+    before = invoking_dir_state()
+    subprocess.run(
         [sys.executable, SCRIPT, subcommand, *args],
         capture_output=True,
         text=True,
         timeout=10,
         cwd=tmp_path,
     )
-    # Allow stubs that still return {} and real implementations that may fail
-    # on missing files — but skip validation for stubs that are not yet implemented
-    if subcommand in ("info", "validate"):
-        # These are now fully implemented and require real files;
-        # skip the stub test (covered by dedicated test classes)
-        pass
+    assert invoking_dir_state() == before, (
+        f"{subcommand} created or changed files named by {args} in {invoking_dir}"
+    )
 
 
 # ============================================================
