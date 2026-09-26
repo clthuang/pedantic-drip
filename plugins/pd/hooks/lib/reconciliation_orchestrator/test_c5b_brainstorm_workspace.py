@@ -93,7 +93,8 @@ def test_brainstorm_sync_with_nothing_to_register_resolves_no_workspace(tmp_path
     id goes unreported. (Before W1.1 the archive pass's read that followed
     reported it; that pass is deleted. Since task 1C the workspace is
     resolved at the first ``.prd.md`` file, registered or not: the existence
-    check reads that workspace.)"""
+    check reads that workspace. One that does not resolve is still reported
+    only once a file needs registering.)"""
     db = EntityDatabase(":memory:")
     (tmp_path / "brainstorms").mkdir()
 

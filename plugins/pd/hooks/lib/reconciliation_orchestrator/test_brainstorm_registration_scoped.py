@@ -1,18 +1,26 @@
-"""Task 1C: brainstorm registration looks up, and inserts, in one workspace only.
+"""Task 1C: brainstorm registration checks existence in the session's workspace
+and only inserts, and only a type_id no workspace holds.
 
 Design: ``docs/plans/2026-09-25-release-c-followups-design.md``, W1 change 1,
 which keeps Part 1 of the brainstorm helper: the registration of new
-``.prd.md`` files. Task 1C's execution note makes it exact:
+``.prd.md`` files. Task 1C's execution note, as amended after the Phase R
+premortem, makes it exact:
 
 1. **Existence is scoped:** a ``.prd.md`` file is skipped when the
    registration workspace holds a row for its type_id, whatever that row's
-   status, archived or soft-deleted too. Rows other workspaces hold for the
-   type_id are neither read nor written.
+   status, archived or soft-deleted too.
 2. **Registration only inserts** (``register_entity``): no existing row's
    status, name, artifact_path or flags change.
-3. **The counts are exact:** ``registered`` is rows inserted; ``skipped`` is
-   files whose type_id the registration workspace already holds.
-4. **No workspace, no row:** when no workspace resolves, nothing is
+3. **Another workspace's type_id is skipped too** (the amendment): a file
+   whose type_id only another workspace holds, in any row, is not
+   registered, and the warnings name it. A row here would be that
+   workspace's namesake, and the unscoped ``get_entity`` answers None for a
+   type_id two workspaces hold, so the other workspace's brainstorm would
+   stop resolving by type_id. A row is inserted only when no workspace
+   holds the type_id, until workflow rows are keyed per entity (Phase R).
+4. **The counts are exact:** ``registered`` is rows inserted; ``skipped`` is
+   files whose type_id a workspace already holds, this one or another.
+5. **No workspace, no row:** when no workspace resolves, nothing is
    registered anywhere.
 
 **The defect** (Phase 1 live-copy check F1, run 2): existence was read with
@@ -20,7 +28,7 @@ the unscoped ``db.get_entity(type_id)``, which answers None for a type_id two
 workspaces hold. The session's own ``promoted`` row was then upserted back to
 ``active``, with an ``entity_status_changed`` event, at every session start,
 and reported as registered. A type_id only another workspace held was found
-and skipped, so this workspace never registered its own file.
+and skipped silently; the amendment keeps that skip and names it.
 
 **How a session starts here:** as in ``test_session_start_reads_no_files``,
 the orchestrator runs the way ``session-start.sh`` runs it, against a temp
@@ -43,7 +51,7 @@ import sys
 import pytest
 
 from entity_registry import schema_v2
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from entity_registry.project_identity import (
     _compute_legacy_project_id,
     _insert_workspace_row_if_absent,
@@ -257,6 +265,30 @@ def _brainstorm_rows(c, workspace: str) -> list[dict]:
     )
 
 
+def _held_elsewhere(stem: str) -> str:
+    """Task 1's warning for a skipped file whose type_id only another
+    workspace holds (the task 1C amendment)."""
+    return (
+        f"brainstorms: brainstorm:{stem} is held by another workspace, so it "
+        f"is not registered here until workflow rows are keyed per entity "
+        f"(Phase R)"
+    )
+
+
+def _record_registrations(monkeypatch, db) -> list[dict]:
+    """Record the keyword arguments of every ``db.register_entity`` call,
+    each still made."""
+    calls: list[dict] = []
+    original = db.register_entity
+
+    def recording_register_entity(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "register_entity", recording_register_entity)
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # 1C contract 1-3: a session start in A, with the type_id held by A, B or both
 # ---------------------------------------------------------------------------
@@ -291,20 +323,60 @@ def test_a_type_id_both_workspaces_hold_is_skipped_and_left_byte_identical(
     assert result["errors"] == []
 
 
-def test_a_type_id_only_another_workspace_holds_is_registered_in_this_one(
-    checkouts,
+@pytest.mark.parametrize("b_flag", ["none", "archived", "soft_deleted"])
+def test_a_type_id_only_another_workspace_holds_is_skipped_and_named(
+    checkouts, b_flag,
 ):
-    """B alone holds the type_id, and A's checkout tracks its file. A
-    session start in A inserts A's own row, as a new ``.prd.md`` is
-    registered (kind brainstorm, status 'active', the artifact path under
-    the artifacts root), with the insert path's creation events, and leaves
-    B's row and events alone.
+    """B alone holds the type_id, in a plain, archived or soft-deleted row,
+    and A's checkout tracks its file. A session start in A registers
+    nothing: every row and event stays byte-identical, the file counts as
+    skipped, and the warnings name it. The unscoped ``get_entity`` still
+    answers B's row afterwards, which it could not had A registered a
+    namesake (an ambiguous type_id resolves to None).
 
-    Before task 1C, B's row hid A's file: skipped, nothing registered in A.
+    Task 1C before its amendment registered A's namesake here. The base
+    skipped the plain and archived rows silently, and registered a namesake
+    beside the soft-deleted one, which ``get_entity`` hides.
     """
     c, db = checkouts, checkouts["db"]
+    type_id = f"brainstorm:{_SHARED_STEM}"
     b_uuid = _brainstorm(db, c["B"], _SHARED_STEM, "active")
+    if b_flag == "archived":
+        db.set_archived(b_uuid)
+    elif b_flag == "soft_deleted":
+        db.set_deleted(type_id, workspace_uuid=c["B"])
     _track_prd(c["repo"], _SHARED_STEM)
+    b_before = _row(c, b_uuid)
+    before = _snapshot(c["db_path"])
+
+    result = _session_start(c)
+
+    assert _snapshot(c["db_path"]) == before
+    assert _row(c, b_uuid) == b_before
+    assert _brainstorm_rows(c, c["A"]) == []
+    assert result["entity_sync"] == {
+        "registered": 0, "skipped": 1,
+        "warnings": [_held_elsewhere(_SHARED_STEM)],
+    }
+    assert db.get_entity(type_id, include_deleted=True)["uuid"] == b_uuid
+    assert result["errors"] == []
+
+
+def test_a_type_id_no_workspace_holds_is_registered_in_this_one(checkouts):
+    """No workspace holds the type_id, and A's checkout tracks its file. A
+    session start in A inserts A's row, as a new ``.prd.md`` is registered
+    (kind brainstorm, status 'active', the artifact path under the
+    artifacts root), with the insert path's creation events, and changes
+    no existing row. B holds a brainstorm whose type_id extends this one's,
+    which the other-workspace check's prefix search finds: only an exact
+    type_id counts as held elsewhere.
+
+    Keep-green: the base registers it too.
+    """
+    c, db = checkouts, checkouts["db"]
+    stem = "20260905-000000-fresh-idea"
+    b_uuid = _brainstorm(db, c["B"], f"{stem}-v2", "active")
+    _track_prd(c["repo"], stem)
     b_before = _row(c, b_uuid)
     before = _snapshot(c["db_path"])
 
@@ -320,9 +392,9 @@ def test_a_type_id_only_another_workspace_holds_is_registered_in_this_one(
             "is_archived", "is_deleted",
         )
     } == {
-        "type_id": f"brainstorm:{_SHARED_STEM}", "kind": "brainstorm",
-        "name": _SHARED_STEM, "status": "active",
-        "artifact_path": f"docs/brainstorms/{_SHARED_STEM}.prd.md",
+        "type_id": f"brainstorm:{stem}", "kind": "brainstorm",
+        "name": stem, "status": "active",
+        "artifact_path": f"docs/brainstorms/{stem}.prd.md",
         "is_archived": 0, "is_deleted": 0,
     }
     assert _row(c, b_uuid) == b_before
@@ -335,7 +407,7 @@ def test_a_type_id_only_another_workspace_holds_is_registered_in_this_one(
     assert [
         (event["type_id"], event["event_type"], event["project_id"])
         for event in new_phase_events
-    ] == [(f"brainstorm:{_SHARED_STEM}", "entity_created",
+    ] == [(f"brainstorm:{stem}", "entity_created",
            _compute_legacy_project_id(c["repo"]))]
     new_events = after["events"][len(before["events"]):]
     assert [
@@ -367,28 +439,40 @@ def test_a_second_session_start_after_the_skip_changes_nothing(checkouts):
     assert _row(c, a_uuid)["status"] == "promoted"
 
 
-def test_a_second_session_start_after_the_registration_changes_nothing(
-    checkouts,
+@pytest.mark.parametrize("first_run", ["skipped-held-by-B", "registered-new"])
+def test_a_second_session_start_after_the_first_changes_nothing(
+    checkouts, first_run,
 ):
-    """A session start right after A registered its own row (B holds the
-    type_id too) writes nothing and counts the file skipped: A holds exactly
-    the one row the first run inserted.
+    """A session start right after the first one writes nothing:
+    - **skipped-held-by-B:** the file B alone holds is skipped and named
+      again, and A still holds no row;
+    - **registered-new:** the file the first run registered is skipped, A
+      holding exactly that one row.
 
-    Before task 1C, neither run registered A's row.
+    Task 1C before its amendment registered A's namesake of B's row in the
+    first run. The base skipped the file B holds silently (red here through
+    the warnings only); a file it registered it skipped next time too
+    (keep-green).
     """
     c, db = checkouts, checkouts["db"]
-    _brainstorm(db, c["B"], _SHARED_STEM, "active")
-    _track_prd(c["repo"], _SHARED_STEM)
+    if first_run == "skipped-held-by-B":
+        stem = _SHARED_STEM
+        _brainstorm(db, c["B"], stem, "active")
+        expected_rows_in_a, expected_warnings = 0, [_held_elsewhere(stem)]
+    else:
+        stem = "20260905-000000-fresh-idea"
+        expected_rows_in_a, expected_warnings = 1, []
+    _track_prd(c["repo"], stem)
     _session_start(c)
     after_first = _snapshot(c["db_path"])
 
     result = _session_start(c)
 
     assert _snapshot(c["db_path"]) == after_first
+    assert len(_brainstorm_rows(c, c["A"])) == expected_rows_in_a
     assert result["entity_sync"] == {
-        "registered": 0, "skipped": 1, "warnings": [],
+        "registered": 0, "skipped": 1, "warnings": expected_warnings,
     }
-    assert len(_brainstorm_rows(c, c["A"])) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -450,16 +534,26 @@ def test_a_soft_deleted_brainstorm_this_workspace_holds_is_not_resurrected(
     }
 
 
+@pytest.mark.parametrize("holders", ["A-and-B", "A-alone"])
 @pytest.mark.parametrize("flag", ["none", "archived", "soft_deleted"])
 @pytest.mark.parametrize("status", _ROW_STATUSES)
-def test_no_row_this_workspace_holds_is_rewritten(checkouts, status, flag):
+def test_no_row_this_workspace_holds_is_rewritten(
+    checkouts, monkeypatch, status, flag, holders,
+):
     """Whatever A's row holds (any status, archived or soft-deleted), with
-    B holding the type_id too and A's checkout tracking its file,
-    registration leaves every row byte-identical, writes no event, and
-    counts the file skipped.
+    B holding the type_id too or A alone, and A's checkout tracking its
+    file: the scoped existence check skips the file. No ``register_entity``
+    call is made, every row stays byte-identical, no event is written, and
+    the file counts as skipped with no warning, since A holds the type_id.
 
-    Before task 1C, each case wrote: A's row re-statused to 'active', or,
-    already 'active', a no-op upsert reported as registered.
+    These pin the scoped check itself. Without it, an A-alone file reaches
+    ``register_entity`` (its ``EntityExistsError`` would hide that in the
+    counts), and an A-and-B file is reported as held elsewhere.
+
+    Before task 1C, each A-and-B case wrote: A's row re-statused to
+    'active', or, already 'active', a no-op upsert reported as registered.
+    The A-alone soft-deleted cases, which ``get_entity`` hides, did the
+    same; the other A-alone cases are keep-green.
     """
     c, db = checkouts, checkouts["db"]
     a_uuid = _brainstorm(db, c["A"], _SHARED_STEM, status)
@@ -467,14 +561,17 @@ def test_no_row_this_workspace_holds_is_rewritten(checkouts, status, flag):
         db.set_archived(a_uuid)
     elif flag == "soft_deleted":
         db.set_deleted(f"brainstorm:{_SHARED_STEM}", workspace_uuid=c["A"])
-    _brainstorm(db, c["B"], _SHARED_STEM, "active")
+    if holders == "A-and-B":
+        _brainstorm(db, c["B"], _SHARED_STEM, "active")
     _write_prd(c["repo"], _SHARED_STEM)
     before = _snapshot(c["db_path"])
+    registrations = _record_registrations(monkeypatch, db)
 
     result = _sync_as_orchestrator(c)
 
     assert _snapshot(c["db_path"]) == before
     assert result == {"registered": 0, "skipped": 1, "warnings": []}
+    assert registrations == []
 
 
 def test_a_row_registered_after_the_check_is_counted_skipped_and_left_alone(
@@ -483,7 +580,9 @@ def test_a_row_registered_after_the_check_is_counted_skipped_and_left_alone(
     """1C contract 2's backstop: a row another writer inserts between the
     existence check and the insert (a concurrent session start) makes
     ``register_entity`` refuse with ``EntityExistsError``. The file counts
-    as skipped, and the row stays byte-identical.
+    as skipped, and the row stays byte-identical. The other-workspace check
+    between the two sees that row as this workspace's own, so no warning
+    names it.
 
     The race is simulated by an existence lookup that finds nothing. Before
     task 1C the upsert's conflict branch rewrote that row's status.
@@ -546,6 +645,40 @@ def test_the_unknown_project_id_registers_nothing_in_the_unknown_workspace(
     }
 
 
+def test_the_unknown_workspace_given_by_its_uuid_registers_nothing(checkouts):
+    """A session workspace that is the unknown workspace itself (an
+    ``ENTITY_WORKSPACE_UUID``, ``--workspace-uuid`` or ``workspace.json``
+    naming its uuid) is refused like the ``"__unknown__"`` placeholder: it
+    registers nothing, creates no unknown-workspace row, and returns the
+    refusal as the warning.
+
+    Before this fix, registration bootstrapped the unknown workspace and
+    registered the file into it.
+    """
+    c = checkouts
+    _write_prd(c["repo"], "20260904-000000-orphan")
+    before = _snapshot(c["db_path"])
+    workspaces_before = _workspace_rows(c["db_path"])
+
+    result = sync_entity_statuses(
+        c["db"], os.path.join(c["repo"], "docs"),
+        project_id=_compute_legacy_project_id(c["repo"]),
+        artifacts_root="docs", project_root=c["repo"],
+        workspace_uuid=_UNKNOWN_WORKSPACE_UUID,
+    )
+
+    assert _workspace_rows(c["db_path"]) == workspaces_before
+    assert _snapshot(c["db_path"]) == before
+    assert result == {
+        "registered": 0, "skipped": 0,
+        "warnings": [
+            f"brainstorms: register_entity(): "
+            f"workspace_uuid={_UNKNOWN_WORKSPACE_UUID!r} is the unknown "
+            f"workspace; brainstorms are never registered there"
+        ],
+    }
+
+
 @pytest.mark.parametrize("stems", [
     [_SHARED_STEM],
     [_SHARED_STEM, "20260903-000000-fresh"],
@@ -555,13 +688,16 @@ def test_a_checkout_whose_workspace_does_not_resolve_registers_nothing(
 ):
     """A directory where pd is not enabled (no ``.claude/``, no git) resolves
     no workspace, and its legacy project id, a hash of its path, names none.
-    Its brainstorm files register nothing anywhere, and the orchestrator
-    records what it recorded before task 1C when a registration was due:
-    the workspace error, the Task 2 and 3 skips, and Task 1's warning.
-
-    With the new file (held-by-B-and-new) that record is unchanged. With
-    only a file B holds, B's row is no longer read: before task 1C it made
-    the file count as skipped, with no warning.
+    Its brainstorm files register nothing anywhere. The orchestrator records
+    the workspace error and the Task 2 and 3 skips, as before task 1C, and
+    Task 1's result keeps the base's counts:
+    - **held-by-B:** the file B holds is skipped, as the base skipped it,
+      and the warnings now name it (the task 1C amendment). No file needs
+      registering, so the unresolved workspace goes unreported there, as
+      the base left it.
+    - **held-by-B-and-new:** the new file needs a registration workspace,
+      so Task 1 fails with the resolution error as its one warning and both
+      counts 0: the base's record, unchanged (keep-green).
     """
     c, db = checkouts, checkouts["db"]
     _brainstorm(db, c["B"], _SHARED_STEM, "active")
@@ -576,14 +712,21 @@ def test_a_checkout_whose_workspace_does_not_resolve_registers_nothing(
 
     assert _snapshot(c["db_path"]) == before
     legacy_id = _compute_legacy_project_id(project_root)
-    assert result["entity_sync"] == {
-        "registered": 0, "skipped": 0,
-        "warnings": [
-            f"brainstorms: register_entity(): project_id={legacy_id!r} has no "
-            f"matching workspaces.project_id_legacy row. Either pass "
-            f"workspace_uuid directly or pre-register the workspace."
-        ],
-    }
+    if len(stems) == 1:
+        expected_entity_sync = {
+            "registered": 0, "skipped": 1,
+            "warnings": [_held_elsewhere(_SHARED_STEM)],
+        }
+    else:
+        expected_entity_sync = {
+            "registered": 0, "skipped": 0,
+            "warnings": [
+                f"brainstorms: register_entity(): project_id={legacy_id!r} "
+                f"has no matching workspaces.project_id_legacy row. Either "
+                f"pass workspace_uuid directly or pre-register the workspace."
+            ],
+        }
+    assert result["entity_sync"] == expected_entity_sync
     assert result["errors"][0].startswith("workspace_uuid: ")
     assert result["errors"][1:] == _NO_WORKSPACE_ERRORS_AFTER_THE_FIRST
 
@@ -595,9 +738,9 @@ def test_a_checkout_resolved_by_its_legacy_id_looks_up_that_workspace_only(
     workspace of its own (the orchestrator records why, and skips Tasks 2
     and 3), so Task 1 takes the workspace its legacy project id names: A's,
     since a clone shares the root commit (C5b; design W4.1 resolves a
-    writer's workspace the same way). Existence is checked in A alone: A's
-    'promoted' row and B's namesake stay byte-identical, and the file counts
-    as skipped.
+    writer's workspace the same way). Existence is checked in A first, and A
+    holds the type_id: A's 'promoted' row and B's namesake stay
+    byte-identical, and the file counts as skipped, with no warning.
 
     Before task 1C the unscoped check answered None for the shared type_id,
     and the run re-statused A's row from the clone.

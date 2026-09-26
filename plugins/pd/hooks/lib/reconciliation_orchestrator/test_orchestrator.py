@@ -109,8 +109,8 @@ class TestFullRunOutputsValidJson:
         # Seed entity DB with one feature and one registered brainstorm.
         # Task 1C: the brainstorm sits in the session's own workspace,
         # resolved here as the CLI resolves it. Registration's existence
-        # check reads that workspace alone, so a brainstorm only another
-        # workspace held would now be registered, not skipped.
+        # check reads that workspace first; a brainstorm only another
+        # workspace held would be skipped too, but named in the warnings.
         db = EntityDatabase(entity_db_path)
         session_workspace = resolve_workspace_uuid(
             str(tmp_path), db_path=entity_db_path,

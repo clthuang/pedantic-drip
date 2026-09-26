@@ -4,15 +4,22 @@ Session start runs this as the reconciliation orchestrator's Task 1. It is
 the only path by which brainstorms reach the registry: ``/pd:brainstorm``
 registers nothing.
 
-Registration only inserts, into one workspace (W1.1, made exact by task 1C):
+Registration only inserts, into one workspace, and only a type_id no
+workspace holds (W1.1, made exact by task 1C and its amendment):
 
 - **One workspace:** the session's, else the one the legacy ``project_id``
-  names. A type_id is looked up there alone, so a row another workspace
-  holds for it is neither read nor written.
-- **Existing rows are left as they are:** a file whose type_id that
+  names. Rows are inserted there and nowhere else.
+- **Its own rows are left as they are:** a file whose type_id that
   workspace already holds is skipped, whatever the row's status, archived or
   soft-deleted too. Registration never re-registers, un-archives or
   resurrects.
+- **Another workspace's type_id is skipped too, and named:** a file whose
+  type_id only another workspace holds counts as skipped, and the warnings
+  name it. A row here would be that workspace's namesake, and the unscoped
+  ``get_entity`` answers None for a type_id two workspaces hold, so the
+  other workspace's brainstorm would stop resolving by type_id in both.
+  The skip stays until workflow rows are keyed per entity (Phase R). Other
+  workspaces' rows are read for this, never written.
 - **No workspace, no row:** when neither resolves one, nothing is
   registered anywhere, not even in the unknown workspace.
 
@@ -36,7 +43,7 @@ holds (design W1: pd's own writers write the registry):
 """
 import os
 
-from entity_registry.database import EntityExistsError
+from entity_registry.database import EntityExistsError, _UNKNOWN_WORKSPACE_UUID
 
 # The legacy project id's placeholder for "no project": it names the unknown
 # workspace, which registration never falls back to.
@@ -46,8 +53,8 @@ _UNKNOWN_PROJECT_ID = "__unknown__"
 def sync_entity_statuses(db, full_artifacts_path, project_id=_UNKNOWN_PROJECT_ID,
                          artifacts_root="docs", project_root="",
                          workspace_uuid=""):
-    """Register the checkout's brainstorms that the registration workspace
-    lacks (the orchestrator's Task 1).
+    """Register the checkout's brainstorms whose type_id no workspace holds
+    (the orchestrator's Task 1).
 
     Args:
         db: EntityDatabase instance
@@ -59,16 +66,18 @@ def sync_entity_statuses(db, full_artifacts_path, project_id=_UNKNOWN_PROJECT_ID
         project_root: absolute path to project root. If empty, derived from
                       full_artifacts_path by stripping artifacts_root suffix.
         workspace_uuid: the session's workspace (feature 108 / FR-12): the
-            one workspace registration looks up and inserts in. Empty: the
-            workspace ``project_id`` names; with neither, nothing is
-            registered.
+            one workspace registration inserts in, and whose rows count as
+            this workspace's. Empty: the workspace ``project_id`` names; with
+            neither, nothing is registered.
 
     Returns:
         {"registered": int, "skipped": int, "warnings": list[str]}:
         ``registered`` counts the rows inserted, ``skipped`` the files whose
-        type_id the registration workspace already holds. A helper failure,
-        a workspace that does not resolve included, is returned as a warning
-        with both counts 0, never raised, so session start carries on.
+        type_id a workspace already holds, this one or another. The
+        warnings name each skipped type_id that only another workspace
+        holds. A helper failure is returned as a warning with both counts 0,
+        never raised, so session start carries on. A workspace that does not
+        resolve is such a failure once a file needs registering.
     """
     if not project_root:
         project_root = full_artifacts_path.removesuffix(artifacts_root).rstrip(os.sep)
@@ -89,52 +98,81 @@ def sync_entity_statuses(db, full_artifacts_path, project_id=_UNKNOWN_PROJECT_ID
         return results
     results["registered"] = brainstorms["registered"]
     results["skipped"] = brainstorms["skipped"]
+    results["warnings"].extend(
+        f"brainstorms: {warning}" for warning in brainstorms["warnings"]
+    )
     return results
 
 
 def _sync_brainstorm_entities(
     db, full_artifacts_path, artifacts_root, project_root, project_id, workspace_uuid=None
 ):
-    """Register the ``.prd.md`` files in ``brainstorms/`` that the registration
-    workspace holds no row for.
+    """Register the ``.prd.md`` files in ``brainstorms/`` whose type_id no
+    workspace holds.
 
     Insert only (task 1C): a registered brainstorm is never updated, and one
     whose file is missing stays as it is (W1.1): ``/pd:cleanup-brainstorms``
-    archives explicitly. The workspace is resolved at the first ``.prd.md``
-    file, so a checkout that holds none resolves no workspace.
+    archives explicitly. Each file's type_id is looked up in the
+    registration workspace first, then in every other workspace; a row in
+    either skips the file, and a row only elsewhere is named in the
+    warnings (the task 1C amendment).
+
+    The workspace is resolved at the first ``.prd.md`` file, so a checkout
+    that holds none resolves none. One that does not resolve raises only
+    when a file needs registering, as it did before task 1C; until then,
+    files other workspaces hold are skipped and named.
 
     Returns:
-        {"registered": int, "skipped": int}: the rows inserted, and the files
-        whose type_id the registration workspace already holds.
+        {"registered": int, "skipped": int, "warnings": list[str]}: the rows
+        inserted, the files whose type_id a workspace already holds, and one
+        warning per skipped type_id that only another workspace holds.
     """
-    results = {"registered": 0, "skipped": 0}
+    results = {"registered": 0, "skipped": 0, "warnings": []}
     brainstorms_dir = os.path.join(full_artifacts_path, "brainstorms")
 
     if not os.path.isdir(brainstorms_dir):
         return results
 
     registration_workspace_uuid = None
+    unresolved_workspace_error = None
 
-    for filename in os.listdir(brainstorms_dir):
+    for filename in sorted(os.listdir(brainstorms_dir)):
         if filename == ".gitkeep" or not filename.endswith(".prd.md"):
             continue
 
         stem = filename[: -len(".prd.md")]
         type_id = f"brainstorm:{stem}"
 
-        if registration_workspace_uuid is None:
-            registration_workspace_uuid = _registration_workspace_uuid(
-                db, workspace_uuid, project_id,
-            )
+        if registration_workspace_uuid is None and unresolved_workspace_error is None:
+            try:
+                registration_workspace_uuid = _registration_workspace_uuid(
+                    db, workspace_uuid, project_id,
+                )
+            except ValueError as exc:
+                unresolved_workspace_error = exc
 
-        if _workspace_holds(db, type_id, registration_workspace_uuid):
+        if registration_workspace_uuid is not None and _workspace_holds(
+            db, type_id, registration_workspace_uuid,
+        ):
             results["skipped"] += 1
             continue
+
+        if _another_workspace_holds(db, type_id, registration_workspace_uuid):
+            results["skipped"] += 1
+            results["warnings"].append(
+                f"{type_id} is held by another workspace, so it is not "
+                f"registered here until workflow rows are keyed per entity "
+                f"(Phase R)"
+            )
+            continue
+
+        if unresolved_workspace_error is not None:
+            raise unresolved_workspace_error
 
         # F12 audit: insert-only registration -> register_entity, its
         # EntityExistsError counted as skipped. It refuses an existing
         # (workspace_uuid, type_id) and writes nothing, where an upsert would
-        # rewrite that row's status. The check above already skipped a held
+        # rewrite that row's status. The checks above already skipped a held
         # type_id, so the refusal meets only a row another writer inserted
         # since (a concurrent session start): held all the same.
         try:
@@ -155,7 +193,7 @@ def _sync_brainstorm_entities(
 
 
 def _registration_workspace_uuid(db, workspace_uuid, project_id):
-    """The one workspace brainstorm registration looks up and inserts in (C5b).
+    """The one workspace brainstorm registration inserts in (C5b).
 
     - **Given:** ``workspace_uuid``, as given. ``project_id`` is then not
       passed on, which avoids the resolver's DeprecationWarning for both
@@ -167,14 +205,24 @@ def _registration_workspace_uuid(db, workspace_uuid, project_id):
     - **Neither:** raises ``ValueError``, and nothing is registered. An empty
       ``project_id`` and the ``"__unknown__"`` placeholder name no
       workspace, so registration never falls back to the unknown one.
+    - **The unknown workspace itself:** raises ``ValueError`` too, however
+      it was named (an ``ENTITY_WORKSPACE_UUID``, ``--workspace-uuid`` or
+      ``workspace.json`` holding its uuid).
     """
     if workspace_uuid:
-        return workspace_uuid
-    if not project_id or project_id == _UNKNOWN_PROJECT_ID:
+        resolved = workspace_uuid
+    elif not project_id or project_id == _UNKNOWN_PROJECT_ID:
         raise ValueError("register_entity() requires workspace_uuid")
-    return db._resolve_optional_workspace_filter(
-        None, project_id, _caller="register_entity",
-    )
+    else:
+        resolved = db._resolve_optional_workspace_filter(
+            None, project_id, _caller="register_entity",
+        )
+    if resolved == _UNKNOWN_WORKSPACE_UUID:
+        raise ValueError(
+            f"register_entity(): workspace_uuid={resolved!r} is the unknown "
+            f"workspace; brainstorms are never registered there"
+        )
+    return resolved
 
 
 def _workspace_holds(db, type_id, workspace_uuid):
@@ -191,3 +239,19 @@ def _workspace_holds(db, type_id, workspace_uuid):
     except ValueError:  # "Entity not found": this workspace holds no row
         return False
     return True
+
+
+def _another_workspace_holds(db, type_id, workspace_uuid):
+    """Whether a workspace other than *workspace_uuid* holds a row for
+    *type_id*; with *workspace_uuid* None (none resolved), whether any does.
+
+    Every row counts, archived or soft-deleted too: the unscoped lookup
+    (``_resolve_identifier`` with no workspace) matches them all, so any
+    one of them would make a row registered here an ambiguous namesake.
+    The prefix search is that lookup's query widened to a prefix, so only
+    an exact type_id match counts.
+    """
+    return any(
+        row["type_id"] == type_id and row["workspace_uuid"] != workspace_uuid
+        for row in db.search_by_type_id_prefix(type_id)
+    )

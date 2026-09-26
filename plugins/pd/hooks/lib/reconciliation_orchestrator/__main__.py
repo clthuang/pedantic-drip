@@ -2,8 +2,10 @@
 
 Runs all session-start reconciliation tasks in sequence:
   1. entity_status.sync_entity_statuses   — registers the checkout's
-     brainstorm ``.prd.md`` files that this session's workspace holds no row
-     for; insert-only, so it never rewrites a registered brainstorm
+     brainstorm ``.prd.md`` files whose type_id no workspace holds;
+     insert-only, so it never rewrites a registered brainstorm, and a
+     type_id only another workspace holds is skipped and named in its
+     warnings rather than registered as that workspace's namesake
   2. workflow_engine.reconciliation._recover_pending_cascades — re-runs
      the missed completion cascades found in this session's workspace
   3. dependency_freshness.cleanup_stale_dependencies — flips this
@@ -15,9 +17,10 @@ registry: those files are projections of it (design W1).
 Design principles:
   - Fail-open: any task error is captured in `errors` list; exit code is always 0.
   - Per-task isolation: one task raising does not prevent others from running.
-  - Workspace-scoped scans: Task 1 looks up and inserts in one workspace
-    (this session's, else the one the legacy project_id names), and
-    registers nothing when neither resolves. Tasks 2 and 3 list only this
+  - Workspace-scoped scans: Task 1 inserts in one workspace (this
+    session's, else the one the legacy project_id names), and registers
+    nothing when neither resolves; it reads other workspaces' rows for a
+    type_id only to skip one they hold. Tasks 2 and 3 list only this
     session's workspace, so an unresolved workspace skips them and records
     why under `errors`. Task 3 flips only this workspace's entities, but
     Task 2's writes follow edges: an unblock can flip a dependent in another
@@ -122,16 +125,18 @@ def run(args):
         # documented precedence chain. Best-effort: if resolution fails,
         # Task 1 falls back to the workspace the legacy project_id names
         # (brainstorm registration still accepts one; with no such
-        # workspace it registers nothing and returns a warning), Tasks 2
-        # and 3 are skipped, and the reason is recorded under `errors` — the
-        # orchestrator must never block session-start.
+        # workspace it registers nothing, and warns once a file needs
+        # registering), Tasks 2 and 3 are skipped, and the reason is
+        # recorded under `errors` — the orchestrator must never block
+        # session-start.
         try:
             workspace_uuid = _resolve_workspace_uuid_with_precedence(args)
         except Exception as exc:
             results["errors"].append(f"workspace_uuid: {exc}")
             workspace_uuid = ""
 
-        # Task 1: register the checkout's new brainstorms (insert-only)
+        # Task 1: register the checkout's brainstorms that no workspace
+        # holds (insert-only)
         try:
             results["entity_sync"] = entity_status.sync_entity_statuses(
                 entity_db, full_artifacts_path, project_id=project_id,
