@@ -326,6 +326,13 @@ def _check_update_entity(registry: Registry, answer: str) -> None:
     assert registry.entity("A", _SHARED_FEATURE)["name"] == _NEW_NAME
 
 
+def _check_archived(registry: Registry, answer: str) -> None:
+    """``/pd:cleanup-brainstorms`` archives a deleted brainstorm's entity
+    this way (W1.2): the caller's namesake only."""
+    assert answer == f"Updated: {_SHARED_FEATURE}", answer
+    assert registry.entity("A", _SHARED_FEATURE)["is_archived"] == 1
+
+
 def _check_delete_entity(registry: Registry, answer: str) -> None:
     assert _as_json(answer) == {"result": f"Deleted: {_SHARED_FEATURE}"}, answer
     assert registry.entity("A", _SHARED_FEATURE)["is_deleted"] == 1
@@ -393,6 +400,8 @@ _CALLS_NAMING_SHARED_TYPE_IDS = {
         type_id=_SHARED_FEATURE, parent_type_id=_SHARED_PROJECT), _check_set_parent),
     "update_entity": (_nothing, lambda r: entity_server.update_entity(
         type_id=_SHARED_FEATURE, name=_NEW_NAME), _check_update_entity),
+    "update_entity archived": (_nothing, lambda r: entity_server.update_entity(
+        type_id=_SHARED_FEATURE, archived=True), _check_archived),
     "delete_entity": (_nothing, lambda r: entity_server.delete_entity(
         type_id=_SHARED_FEATURE), _check_delete_entity),
     "add_entity_tag": (_nothing, lambda r: entity_server.add_entity_tag(
@@ -424,6 +433,26 @@ def test_a_type_id_both_workspaces_hold_names_the_servers_entity(server_in_a, ca
     answer = _run(call(registry))
 
     check(registry, answer)
+    assert _rows_naming(_snapshot(registry.path), registry.b_identifiers()) == b_rows_before
+
+
+def test_remove_dependency_clears_an_edge_to_a_deleted_blocker_by_its_type_id(server_in_a):
+    """W3.4 changes only the workspace a ref resolves in. The dependency
+    tools still match a ref the way ``resolve_ref`` does, so an exact type_id
+    names a soft-deleted blocker, whose edge survives the soft delete. From
+    A, with the blocker's type_id held by both workspaces and A's blocker
+    deleted, the call clears A's edge only. Before W3.4 it resolved B's live
+    blocker and cleared B's edge."""
+    registry = server_in_a
+    _arrange_shared_dependencies(registry)
+    registry.db.delete_entity(registry.uuid("A", _SHARED_BLOCKER))
+    b_rows_before = _rows_naming(_snapshot(registry.path), registry.b_identifiers())
+
+    answer = _run(entity_server.remove_dependency(
+        entity_ref=_SHARED_FEATURE, blocked_by_ref=_SHARED_BLOCKER,
+    ))
+
+    _check_remove_dependency(registry, answer)
     assert _rows_naming(_snapshot(registry.path), registry.b_identifiers()) == b_rows_before
 
 
