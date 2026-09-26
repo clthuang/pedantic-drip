@@ -882,14 +882,17 @@ async def issue_spawn(
         Human-readable summary; becomes ``entities.name`` AND seeds the
         slug portion of the auto-generated ``entity_id``.
     workspace_uuid:
-        Workspace identity. When neither it nor ``project_id`` is supplied,
-        the server's own workspace, resolved on demand (W4.1); a server with
-        none answers a ``workspace_unresolved`` error envelope and writes
-        nothing.
+        Workspace identity. When it is not supplied, the first of these:
+        the server's own workspace, if already resolved; the workspace
+        ``project_id`` names; the server's workspace, resolved on demand
+        (W4.1). A server with none answers a ``workspace_unresolved`` error
+        envelope and writes nothing.
     project_id:
-        Legacy project scope alias (deprecated). With no ``workspace_uuid``,
-        names the workspace whose ``project_id_legacy`` it is. The parent's
-        ``spawned_child`` event records it, else the server's own legacy id.
+        Legacy project scope alias (deprecated). Names the workspace whose
+        ``project_id_legacy`` it is only when neither ``workspace_uuid`` nor
+        the server's own workspace is set; ``"__unknown__"`` names none. The
+        parent's ``spawned_child`` event records it, else the server's own
+        legacy id.
     metadata:
         Optional dict (or JSON string) merged into ``entities.metadata``.
         System-supplied keys win — caller-supplied ``parent_uuid`` (and
@@ -930,15 +933,22 @@ async def issue_spawn(
             f"invalid_kind: {kind!r}; expected bug|task"
         )
 
-    # C17 + W4.1: one workspace allocates the number and holds the row: the
-    # workspace_uuid given, else the one a given project_id names, else this
-    # server's, resolved on demand. A server with none refuses here, before
-    # anything is written.
-    if workspace_uuid or project_id:
-        spawn_workspace_uuid = workspace_uuid or _db._resolve_optional_workspace_filter(
+    # C17 + W4.1: one workspace allocates the number and holds the row, the
+    # first of these that answers:
+    # 1. the workspace_uuid given;
+    # 2. this server's own workspace, if already resolved (_workspace_uuid);
+    # 3. the workspace a given project_id names. "__unknown__" names none, so
+    #    the unknown workspace is never written;
+    # 4. this server's workspace, resolved on demand. A server with none
+    #    refuses here, before anything is written.
+    # 1-3 keep the order this tool had before W4.1; 4 replaces its fallback
+    # to the server's legacy id and then to "__unknown__".
+    spawn_workspace_uuid = workspace_uuid or _workspace_uuid
+    if not spawn_workspace_uuid and project_id and project_id != "__unknown__":
+        spawn_workspace_uuid = _db._resolve_optional_workspace_filter(
             None, project_id, _caller="issue_spawn"
         )
-    else:
+    if not spawn_workspace_uuid:
         try:
             spawn_workspace_uuid = _require_workspace()
         except WorkspaceUnresolvedError as unresolved:

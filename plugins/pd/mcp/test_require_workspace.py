@@ -548,6 +548,89 @@ def test_every_write_tool_refuses_without_a_workspace_and_writes_nothing(
 
 
 # ---------------------------------------------------------------------------
+# W4.1: issue_spawn's deprecated project_id never outranks the server's own
+# workspace, and "__unknown__" names no workspace
+# ---------------------------------------------------------------------------
+
+_SPAWN_SERVER_LEGACY_ID = "w4-spawn-server"
+_SPAWN_OTHER_LEGACY_ID = "w4-spawn-other"
+
+
+@pytest.fixture
+def spawning_server(tmp_path, monkeypatch):
+    """The entity server over a registry with two workspaces, the server's
+    and another, and a parent feature in the server's.
+
+    Nothing resolves a workspace on demand (no project root, no legacy
+    project id): a test that gives the server one sets ``_workspace_uuid``.
+    """
+    db_path = str(tmp_path / "entities.db")
+    db = EntityDatabase(db_path)
+    server_workspace = bootstrap_test_workspace(db, _SPAWN_SERVER_LEGACY_ID)
+    bootstrap_test_workspace(db, _SPAWN_OTHER_LEGACY_ID)
+    parent_uuid = db.register_entity(
+        "feature", name="Alpha", seq=1, slug="alpha", status="active",
+        workspace_uuid=server_workspace,
+    )
+    for name, value in {
+        "_db": db, "_db_unavailable": False, "_project_root": "",
+        "_project_id": "", "_workspace_uuid": "",
+    }.items():
+        monkeypatch.setattr(entity_server, name, value)
+    yield {
+        "db_path": db_path,
+        "server_workspace": server_workspace,
+        "parent_uuid": parent_uuid,
+    }
+    db.close()
+
+
+def _spawn_a_bug(spawning_server, project_id):
+    return json.loads(asyncio.run(entity_server.issue_spawn(
+        parent_uuid=spawning_server["parent_uuid"], kind="bug",
+        summary="a bug", project_id=project_id,
+    )))
+
+
+@pytest.mark.parametrize(
+    "project_id", [_SPAWN_OTHER_LEGACY_ID, "__unknown__"],
+    ids=["another workspace's legacy id", "the __unknown__ legacy id"],
+)
+def test_issue_spawn_spawns_in_the_servers_workspace_whatever_project_id_names(
+    project_id, spawning_server, monkeypatch,
+):
+    """A server with a workspace spawns there, as before W4.1: the deprecated
+    project_id names a workspace only for a server with none of its own."""
+    monkeypatch.setattr(
+        entity_server, "_workspace_uuid", spawning_server["server_workspace"],
+    )
+
+    reply = _spawn_a_bug(spawning_server, project_id)
+
+    assert "uuid" in reply, reply
+    assert committed_rows(
+        spawning_server["db_path"],
+        "SELECT workspace_uuid FROM entities WHERE uuid = ?", (reply["uuid"],),
+    ) == [(spawning_server["server_workspace"],)]
+
+
+def test_issue_spawn_refuses_the_unknown_legacy_id_on_a_server_with_no_workspace(
+    spawning_server,
+):
+    """``"__unknown__"`` names no workspace, just as no project_id does: a
+    server with none of its own refuses (workspace_unresolved) and writes
+    nothing, rather than spawn into the unknown workspace."""
+    registry_before = _registry_snapshot(spawning_server["db_path"])
+
+    reply = _spawn_a_bug(spawning_server, "__unknown__")
+
+    assert reply.get("error_type") == "workspace_unresolved", reply
+    assert reply["recovery_hint"] == _ENTITY_SERVER_HINT
+    assert _registry_snapshot(spawning_server["db_path"]) == registry_before
+    assert entity_server._workspace_uuid == ""
+
+
+# ---------------------------------------------------------------------------
 # W4.2: a degraded start stays degraded, with no recovery thread
 # ---------------------------------------------------------------------------
 

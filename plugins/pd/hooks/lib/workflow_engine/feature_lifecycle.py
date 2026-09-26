@@ -253,8 +253,8 @@ def init_feature_state(
     # Register or update entity. Without a workspace_uuid the feature
     # registers in the canonical __unknown__ workspace, named by its uuid;
     # register_entity bootstraps that workspaces row on fresh in-memory DBs.
-    # Production callers running against the persistent entities.db will
-    # be migrated via the existing __unknown__-bucket backfill paths.
+    # The init_feature_state MCP tool always passes the workspace it resolved
+    # (W4.1), so only direct callers of this function reach that default.
     existing = db.get_entity(feature_type_id)
     if existing is None:
         entity_workspace_uuid = (
