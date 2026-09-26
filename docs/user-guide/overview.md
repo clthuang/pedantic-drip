@@ -17,7 +17,7 @@ pd imposes a proven workflow on top of Claude Code:
 - Every phase boundary runs a mechanical gate that checks the artifacts before progression
 - Two AI review moments — design review, then adversarial code review — catch issues early, before they compound into later phases
 - Small changes take an express lane that skips straight to implement
-- A local Kanban board gives a live view of all active work
+- A local Kanban board shows a card for each workflow item, by default for the workspace the server was started in
 
 ## Key Features
 
