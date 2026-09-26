@@ -471,7 +471,11 @@ class TestSequencesBusinessKeyNonUniqueness:
         both insert without error — `kind` carries no UNIQUE constraint
         (spec In Scope: "not in the forbidden set: type_id/slug/name/
         display fields"; 121 owns allocation atomicity via BEGIN IMMEDIATE,
-        not a UNIQUE index here).
+        not a UNIQUE index here). Update 2026-09-26: 121's allocator was
+        deleted, so nothing allocates from this table's
+        ``kind``/``current_value`` shape now; the live allocator,
+        ``EntityDatabase.next_sequence_value``, issues from
+        ``sequences.next_val``.
 
         Anticipate: the generic UNIQUE-index sweep in
         TestBootstrapShape only checks the named FORBIDDEN columns

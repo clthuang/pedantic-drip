@@ -36,9 +36,11 @@ O(total-events) correlated-subquery cost (see views.py's own docstring
 and backlog #067); a consumer with a frequently-polled per-entity read
 should query ``entity_axis_state`` directly (per-axis, indexed) instead.
 
-The lifecycle axis stays vocabulary-FREE at 122 by design:
+The lifecycle axis stays vocabulary-FREE by design. At 122 the reason
+was feature 121's rename events, which carried type_ids in ``to_value``
+(their only emitter was deleted 2026-09-26); today
 ``EntityDatabase.reparent_entity``'s ``reparented`` events carry parent
-uuids in ``to_value``, not a fixed enum, so no
+uuids there. Neither is a fixed enum, so no
 lifecycle CHECK trigger exists here and ``entity_phase_status`` does not
 expose a lifecycle column (FR-6 names exactly two axes) — any future
 lifecycle vocabulary belongs to feature 123's per-kind transition
