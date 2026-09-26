@@ -111,8 +111,6 @@ bash plugins/pd/mcp/test_run_workflow_server.sh
 ### Feature 078 integration tests
 
 ```bash
-bash plugins/pd/hooks/tests/test-sqlite-concurrency.sh    # parallel entity-write spike
-bash plugins/pd/hooks/tests/test-workflow-regression.sh   # workflow behavioral baseline
 bash plugins/pd/hooks/tests/test-worktree-dispatch.sh     # git worktree mechanics
 bash plugins/pd/hooks/tests/test-cc-native-integration.sh # SKILL.md prose contracts + config parsing
 ```
