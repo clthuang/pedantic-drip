@@ -7,7 +7,7 @@
   - **What binds:** the design's contracts (W1–W5, each change numbered) and this plan's steps. When the two disagree, the design binds. The implementer stops and records the conflict in the task report, and the orchestrator amends one of them before the task merges.
   - **How steps cite it:** by change, for example "W2.1" for W2 change 1. This plan does not restate a contract; where it adds something, it says why.
 - **Names:**
-  - tasks are 1A–4B, and phases are Phase 1–4;
+  - tasks are 1A–4C (1C and 4C added 2026-09-26), plus Phase R's R0–R4, and phases are Phase 1–4 and Phase R;
   - P0, P1 and P2 are only the design's priorities.
 
 ## Problem, and how to tell it is solved
@@ -16,7 +16,8 @@ Each problem in the design's two triage tables is closed when the check named fo
 1. **No session start writes the registry from files**, except brainstorm registration from a tracked `.prd.md`, which W1.1 keeps. Checks:
    - fresh worktree or clone, or any checkout with no `.meta.json`: W1's "No archive" test, and F1 step 2;
    - an old checkout with stale `.meta.json`: W1's "No regression" test;
-   - another workspace's namesake checkout: W1's "No namesake row" test, and F1 step 3.
+   - another workspace's namesake checkout: W1's "No namesake row" test, and F1 step 3;
+   - a checkout tracking a brainstorm file whose type_id two workspaces hold: task 1C's tests, and F1 run 3's status-flip probe (added 2026-09-26).
 2. **A new feature works from allocation through its first phase transition** (`specify` for deep, `implement` for express), on the deep, express and decomposed paths. That transition is where N1 broke. Checks: W2's lane tests, and F1 step 5.
 3. **No `workflow_phases` insert guesses a workspace.** Every insert stores the resolved entity's `workspace_uuid` and `uuid`. Checks: W2.1's "Explicit workspace" and "Upsert refuses" tests, and F1 step 4.
    - **Deferred by design (D3):** the type_id-only *updates*.
@@ -124,7 +125,7 @@ Each problem in the design's two triage tables is closed when the check named fo
 - The plugin has been disabled since 2026-09-24, so nothing breaks while it stays off.
 - Re-enabled without Phase 1, session starts archive and regress features, and `/pd:create-feature` fails at its first phase step.
 
-**Order:** 1A, then 1B cut from the phase branch after 1A merges.
+**Order:** 1A, then 1B cut from the phase branch after 1A merges; then 1C (added 2026-09-26), cut after the integration fix round.
 - **Shared files:** both edit `workflow_state_server.py` and the engine. `backfill.py` is 1A's only.
 - **What 1A's tests must not rely on:** anything 1B deletes: hydration, Task 2 or the reconcile tools.
   - **The lane tests** assert the seeded row right after `activate_feature`, before any engine read (design W2 tests).
@@ -190,11 +191,32 @@ Each problem in the design's two triage tables is closed when the check named fo
      - the validator-caller lists in `test_c11_mcp_dir_name.py`;
      - two engine integration tests seed the row.
 
+**1C: brainstorm registration scoped and insert-only** (added 2026-09-26; the user's ruling "Fix in Phase 1" after the integration round). F1 run 2 found the defect.
+- **The defect:** `_sync_brainstorm_entities` checked existence with an unscoped `get_entity(type_id)`. For a type_id two workspaces hold, the lookup's ambiguity reads as "missing", and `upsert_entity(status="active")` then rewrote the session workspace's existing row, for example `promoted` to `active`, at every session start. That is a status write from a checkout file, outside problem item 1's exception.
+- **The contract** (design W1.1's execution note):
+  - existence is checked in the registration workspace, and registration only inserts, through `register_entity`;
+  - any row the workspace holds counts as existing, archived or soft-deleted included, and nothing is ever updated;
+  - a type_id another workspace holds is skipped and named in the warnings until Phase R, since a namesake would make the other workspace's entity unreachable by type_id. The orchestrator amended this mid-task after the Phase R premortem.
+- **Tests:** in the task's test file, red on `5cc2ab75`.
+- **After it merges:** F1 steps 1–3 re-run against the amended expectations, with the status-flip probe.
+
 **Phase 1 integration:**
 - integration review and QA, as in the review protocol;
 - F1 on the phase branch;
 - landing;
 - F3's first hand-off.
+- **Record (2026-09-26):**
+  - **Review:** approved with warnings.
+  - **One fix round,** `5cc2ab75`: the C1 comments, the C2 guard tests, the C3 compare-before-write and the docstrings.
+  - **QA:** passed at `59182b01` and at `5cc2ab75`.
+  - **F1 runs 1 and 2:** failed steps 1–3, which escalated to the user. F1 was amended for steps 1–3, and task 1C was added.
+  - **1C** (`ddc299a0`): its review graded the pre-amendment code a blocker, as briefed. One fix round followed, and QA passed with 0 blockers: G1 4348 passed, 2 skipped, and the rest at base.
+  - **F1 run 3 at `ddc299a0`: passed.**
+    - Steps 1–3 meet the amended expectations. Their only writes are cascade recovery's first-time rollups: 4 pedantic-drip rows and 2 terry_agent rows. Each settles (a second run leaves the file byte-identical) and is reproduced exactly by a project with no `docs/`.
+    - The status-flip probe leaves the row byte-identical, while its `5cc2ab75` control reproduces the flip.
+    - No namesake is created; the fence is clean; the live fingerprint matches.
+  - **Landed:** develop was fast-forwarded to `ddc299a0`.
+  - **Evidence:** `agent_sandbox/2026-09-26/release-c-followups-execution/phase-1/`.
 
 ## Phase 2 (P1): workspace resolution and identity
 
@@ -279,6 +301,10 @@ It starts when Phase 1 has landed.
 - **The operator manual:** how the live registry is migrated. That covers backup (the safety section's immutable copy), apply, verify and roll back, with a fingerprint at each step. The live apply needs the user's yes, as F3 says.
 - **W3.1–W3.3:** restated for the new key.
 
+**R3 depth, ruled by the user on 2026-09-26: "Prototype the core".**
+- **Built:** the migration on both chains, the library naming rule and the operator tool, in a scratch export; G1–G5 with every failure mapped to its owning task; the live-copy rehearsal with the rollback drill.
+- **Left to Phase R's integration and the sitting:** the test codemod and the servers on a migrated copy, since both repeat them anyway.
+
 **R3: independent verification.** Agents that wrote none of R0–R2:
 - a premortem;
 - a code verification that builds the playbook's changes in a scratch export of develop after Phase 1 and runs G1–G5;
@@ -321,13 +347,14 @@ It starts when Phase 1 has landed, and runs beside Phases 2 and 3.
 - **Deletions:**
   - `display.py` and its tests, with the guard entries and stale comments (W5.1);
   - the two shell tests and their references (W5.2).
-- **The C11 design's D7 note** (W5.4).
+- **The C11 design's D7 note** (W5.4): moved to the orchestrator (2026-09-26). The note is in `docs/plans/2026-09-25-c11-name-not-path-design.md`, which task agents don't edit, and it says `rename_entity` is deleted, which is true only once 4A deletes `display.py`. So the orchestrator adds it when Phase 4 lands.
 - **`docs/user-guide/overview.md:42`** (W5.3).
 - **The README patch** (W5.3, D4), which is not committed:
   - written against the main checkout's `HEAD:README.md` at line 80;
   - saved to `/Users/terry/projects/pedantic-drip/agent_sandbox/2026-09-25/release-c-followups/readme-board.patch`;
   - checked with `git -C /Users/terry/projects/pedantic-drip apply --check`.
-- **Measured:** G1 collects exactly 25 fewer tests than 4A's base, re-measured on the rebased base if 4A rebases.
+- **Dead code Phase 1 left** (W5.7, added 2026-09-26): `backfill._derive_next_phase`, `PHASE_SEQUENCE`, `VALID_MODES`, `engine._kanban_column_for` and `_PHASE_TO_KANBAN`, with the parity-pin ripples W5.7 lists.
+- **Measured:** G1 collects exactly 25 fewer tests than 4A's base for W5.1, plus W5.7's deleted tests, each listed with its reason. Re-measured on the rebased base if 4A rebases.
 
 **4B: the repo-root script tests** (W5.5, N13). Runs beside 4A; the files are disjoint.
 - **`scripts/test_migrate_e2e.py`:**
@@ -335,7 +362,17 @@ It starts when Phase 1 has landed, and runs beside Phases 2 and 3.
   - the sentinel test sets the variable itself (W5.5), so it runs under G5, which unsets it;
   - red on 4B's base.
 - **`TestMigration6`:** rewrite against the current chain, or delete what only pins a retired schema. The task report names which.
-- **Measured:** G5 has 0 failures.
+- **Leftovers** (W5.5, added 2026-09-26): the tests that leave `db.db`, `src.db` and `dst.db` at the repo root write under their tmp dirs.
+- **Stale archive and sync docs** (W5.8, added 2026-09-26): `scripts/gen_archive_manifest.py` and `docs/entity-archive-manifest.md`, and `docs/entity-schema.html:447`. The generator runs only against a registry copy made as the safety section says.
+- **Measured:** G5 has 0 failures, and leaves `git status --short` unchanged.
+
+**4C: test isolation** (W5.6, added 2026-09-26). Runs beside 4A and 4B.
+- **Files:** `NotificationQueue`'s default path and `test_complete_phase_closes.py`; `server_lifecycle.py` (`PID_DIR`, `start_parent_watchdog`) and the fixtures that patch them by hand (for example `plugins/pd/mcp/test_create_feature_lanes.py`); migration 11 or its concurrency test.
+- **Shared files:** 4A deletes tests in `test_workflow_state_server.py`, and 4C may edit its fixtures. Separate hunks; a rebase conflict goes back to the implementer, as the landing rules say.
+- **Measured:**
+  - a G1 run with HOME set to a fresh empty directory leaves no file under its `.claude/`;
+  - the race test passes 50 consecutive runs;
+  - G1's count is unchanged, apart from new isolation tests.
 
 ## Gates
 
@@ -368,7 +405,7 @@ A new failure that is explained but not fixed does not pass. It goes through the
 ## Final checks
 
 **F1: live-copy check.** It runs at Phase 1's integration, on the phase branch, and again at F2, on develop.
-- **Why it exists:** it replays the changed session start, backfill and create-feature against the real registry's shapes. Synthetic fixtures don't carry those shapes: 21 workspaces, 7 shared type_ids, mixed `artifact_path`s, 128 archived rows and legacy ids. It is Release C's live rehearsal, repeated.
+- **Why it exists:** it replays the changed session start, backfill and create-feature against the real registry's shapes. Synthetic fixtures don't carry those shapes: 21 workspaces, 7 shared type_ids, mixed `artifact_path`s, 181 archived rows (135 of them features) and legacy ids. It is Release C's live rehearsal, repeated. (The archived figure was corrected 2026-09-26 from a stale 128, re-measured read-only on the live file.)
 - **Setup:**
   1. **The code:** a scratch clone of the branch under test, whose own orchestrator and entity server run every step.
   2. **The snapshot:** one copy, S, of the live registry, made as the safety section says. Each step starts from its own copy of S.
@@ -386,15 +423,22 @@ A new failure that is explained but not fixed does not pass. It goes through the
   1. **Main checkout:**
      - **Setup:** `rsync -a` the main checkout's `docs/`, including its `.meta.json` projections, into scratch.
      - **Run:** the orchestrator, as `session-start.sh` runs it, with `--project-root <scratch>`.
-     - **Expected:** unchanged fingerprints, except inserted brainstorm entities, and their creation events, for tracked `.prd.md` files the copy lacks.
+     - **Expected:** unchanged fingerprints, except two kinds of change:
+       - **Registration:** inserted brainstorm entities, and their creation events, for tracked `.prd.md` files whose type_id this workspace doesn't hold (W1.1, task 1C). No existing row changes.
+       - **Cascade recovery's registry-derived values** (W1.7): a parent's rollup `progress` and `traffic_light`, an objective's or key result's score, and a blocked dependent flipped to `ready`, each with its `updated_at` and events.
+     - **Conditions on the second kind:**
+       - **It settles:** a second run on the step's result changes nothing;
+       - **No rewrite:** no row is written with the values it already holds, so an `updated_at`-only change fails;
+       - **From the registry, not files:** a run in a project with no `docs/` makes the identical writes.
+     - **Amended 2026-09-26** (the user's ruling after the Phase 1 integration). F1 runs 1 and 2 failed steps 1–3 on cascade recovery's first-time rollup values alone: pedantic-drip gained 4 and terry_agent 2, values the registry had never stored. The alternative, stopping first-time writes, contradicts design W1.7 and the kept test `test_missed_cascade_recovered`.
   2. **Fresh checkout:**
      - **Setup:** a second scratch clone, with no `.meta.json`.
      - **Expected:** the same as step 1.
   3. **terry_agent:**
      - **Setup:** `rsync -a /Users/terry_agent/docs/` into scratch. `/Users/terry_agent` is read, never written.
      - **Expected:**
-       - no row outside terry_agent's workspace changes;
-       - terry_agent's rows change only by brainstorm registration;
+       - no row outside terry_agent's workspace changes, except the two cross-workspace writes W1.7's execution note names: a dependent flipped across a cross-workspace `blocks` edge (feature 124), and a key result linked under one of terry_agent's objectives. Both are still subject to step 1's conditions;
+       - terry_agent's rows change only by brainstorm registration and by cascade recovery's registry-derived values, under step 1's conditions (amended 2026-09-26);
        - no row for `feature:035-slim-watchdog-self-mgmt` is created in either workspace.
   4. **Entity-server startup backfill:**
      - **Before:** list pedantic-drip's row-less entities with SQL on the copy (entities with no `workflow_phases` row for the same workspace and type_id, of kinds feature, brainstorm and backlog).
@@ -421,7 +465,8 @@ A new failure that is explained but not fixed does not pass. It goes through the
 - **After F2,** it asks about:
   - publishing and pushing again;
   - D2 (leave, or restore the archived features);
-  - the README patch (D4).
+  - the README patch (D4);
+  - removing the test-generated lines from `~/.claude/pd/notifications.jsonl` (7,114 of 7,657 on 2026-09-26), after a backup (added 2026-09-26). Its only reader, `drain`, filters by project root, so the lines never reach the user, but they bloat the file.
 - **On a yes:**
   - the orchestrator carries out the publish, the push or the restore, the restore as a gated live write with a fingerprint check;
   - the user applies the README patch, since the file holds their edits.

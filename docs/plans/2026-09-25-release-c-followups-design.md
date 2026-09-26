@@ -173,12 +173,18 @@ Each has a recommended default. The plan follows the default unless the user rul
      - Part 2 of `_sync_brainstorm_entities`, which archives a brainstorm whose `.prd.md` is missing (`:211-233`).
    - **Rewrite:** the module docstring, and the comment at `:170` that points at the deleted function.
    - **Keep:** Part 1 of the brainstorm helper (`:180-209`). It registers new `.prd.md` files and is the only path by which brainstorms reach the registry.
+   - **Execution note (2026-09-26, task 1C):** Part 1 is exactly registration.
+     - **Existence:** checked in the registration workspace. Any row that workspace holds for the type_id counts, archived or soft-deleted included.
+     - **Insert only:** a new row goes in through `register_entity`, and no existing row is ever updated.
+     - **Held by another workspace:** a type_id that another workspace holds, and this one doesn't, is skipped. It is counted, and `sync_entity_statuses`' `warnings` names it. Registering it would create a namesake, and `get_entity` answers `None` for a type_id two workspaces hold (`database.py:8229-8232`). So one session start would make another workspace's brainstorm unreachable by type_id until W3.4 and Phase R land. Phase R removes this skip, once namesakes are safe.
+     - **Why:** Part 1 checked existence with an unscoped `get_entity(type_id)`. A type_id two workspaces hold read as missing, and `upsert_entity(status="active")` rewrote the session workspace's existing row at every session start, which F1 run 2 observed on a live copy.
    - **Result keys:** only `test_orchestrator.py` reads them, so it follows whatever the remaining helper returns.
 2. **Archive brainstorms explicitly.**
    - **The tool:** the `update_entity` MCP tool gains `archived: bool | None = None`, which calls `db.set_archived(<resolved uuid>, archived)`. The tool count is unchanged.
    - **The command:** `/pd:cleanup-brainstorms` step 4 calls `update_entity(type_id="brainstorm:{stem}", archived=true)` instead of writing the retired status `"archived"` (`commands/cleanup-brainstorms.md:25`).
    - **Sweep:** other markdown writing `status="archived"`.
    - **Docs that list `update_entity`'s parameters** gain `archived`: `docs/technical/api-reference.md:135-141`, `README_FOR_DEV.md:447`, `plugins/pd/README.md:130`.
+   - **Execution note (2026-09-26, task 1B):** `db.set_archived` matched `WHERE type_id = ?`, so a uuid matched no row. 1B made it accept an entity uuid as its first argument; its type_id path is unchanged.
 3. **Delete Task 2's writers.**
    - **Remove:**
      - the orchestrator's Task 2 (`reconciliation_orchestrator/__main__.py:126-142`);
@@ -206,7 +212,7 @@ Each has a recommended default. The plan follows the default unless the user rul
      - `README_FOR_DEV.md:485`;
      - `docs/technical/api-reference.md:63-69`;
      - `docs/dev-guide/architecture-overview.md:120`, `:122` (drift "repaired by reconcile_check / reconcile_apply"), `:131` and `:133`.
-   - **Done when:** `git grep -n reconcile_apply -- ':!CHANGELOG.md' ':!docs/plans' ':!docs/features'` prints nothing.
+   - **Done when:** `git grep -n reconcile_apply -- ':!CHANGELOG.md' ':!docs/plans' ':!docs/features' ':!docs/brainstorms'` prints nothing. The `docs/brainstorms` exclusion was added 2026-09-26: five historical brainstorm PRDs name the tool.
    - **Tests:**
      - three modules import the deleted names, so they fail collection: `test_reconciliation`, `test_c11_reconciliation_dir_name` and `test_workflow_state_server`;
      - two more reference them: `test_orchestrator` and `test_c11_mcp_dir_name`;
@@ -224,6 +230,9 @@ Each has a recommended default. The plan follows the default unless the user rul
    - **Health:** only features whose DB state and projection disagree (`db_ahead`, `meta_json_ahead`) make it unhealthy.
    - **Listed but not counted:** `db_only` (no projection) and `meta_json_only` (no row).
    - **Docs:** the docstring and the tool description say so.
+   - **Execution notes (2026-09-26, task 1B):**
+     - `'error'` reports, for example a malformed projection, are listed and not counted.
+     - **Known gap until Phase R:** the drift check still pairs a namesake `.meta.json` with another workspace's row by type_id (`_check_single_feature`), because `workflow_phases` is keyed by type_id. The docstring states the gap.
 7. **Cascade recovery becomes its own task, scoped and by uuid.**
    - **Its own task:** the orchestrator's new Task 2 calls `_recover_pending_cascades(db, workspace_uuid)` directly. Until now it ran inside `apply_workflow_reconciliation` (`reconciliation.py:908`).
      - **Unresolved workspace:** skipped, and recorded under `errors`.
@@ -232,6 +241,12 @@ Each has a recommended default. The plan follows the default unless the user rul
    - **Writes by uuid:**
      - the rollup writes (`rollup.py:196`, `:267`, `:373`; `reconciliation.py:690`) pass the uuid they already hold;
      - `DependencyManager._evaluate_and_flip` writes status and its phase event by the entity's uuid (`dependencies.py:184-185`), and drops its `"__unknown__"` project fallback.
+   - **Execution notes (2026-09-26, task 1B and the Phase 1 integration):**
+     - **The flip's event:** `cascade_ready` records the dependent's workspace legacy id, or its workspace uuid when `project_id_legacy` is NULL, since `phase_events.project_id` is NOT NULL. The library `update_entity`'s own status event keeps its `'__unknown__'` default, as Deferred says.
+     - **Scans versus writes:** the scans are scoped, but writes follow edges. `cascade_unblock` flips dependents across cross-workspace `blocks` edges (feature 124). Objective rescoring rewrites key results linked under the session's objective, wherever they are registered. The code's comments said "only this workspace" until the integration fix round (`5cc2ab75`), which reworded them.
+     - **Compare before write** (integration fix round, `5cc2ab75`): `rollup_parent`, `compute_okr_score` and `compute_objective_score` skip the write when the stored value already matches, within `rollup.SAME_VALUE_TOLERANCE`. So a session start changes no row when nothing changed; before, it rewrote every objective and key result, and every ancestor on a rollup's walk.
+     - **First-time values:** recovery still writes a parent's missing rollup `progress` and `traffic_light` once, from registry state. F1 was amended for this (plan, F1 steps 1–3).
+   - **Each guard has its own test** (integration fix round): the completed-child scan's scope, the first-level parent skip, and `cleanup_stale_dependencies`' own no-workspace return. Each test fails when only its guard is removed; 1B's QA had shown the suite stayed green without any one of them.
 8. **Task 3 is scoped.** `dependency_freshness.cleanup_stale_dependencies` takes the session's workspace, and lists only that workspace's blocked entities (`dependency_freshness.py:25`). With no workspace, it is skipped.
 
 **Tests.** Each one fails on today's develop and passes after:
@@ -471,7 +486,7 @@ Each has a recommended default. The plan follows the default unless the user rul
 
 ### W5. Tooling and docs
 
-**Problems:** 9, 10, 11, N10, N13.
+**Problems:** 9, 10, 11, N10, N13, and the execution findings added 2026-09-26 (changes 6–8).
 
 **Changes:**
 1. **Delete `entity_registry/display.py` and `test_display.py`** (22 tests).
@@ -503,6 +518,29 @@ Each has a recommended default. The plan follows the default unless the user rul
      - **Test:** a test that sets `ENTITY_DB_PATH` itself (monkeypatch) to a sentinel path under its tmp dir runs an export and an import. Both succeed, and the sentinel is never created. Today it fails. It sets the variable itself because the gate that runs it (G5) unsets it.
    - **`TestMigration6`:** rewritten against the current chain's version and columns, or deleted where it only pins a retired schema. The v1 chain is also covered under `plugins/pd/hooks/lib/entity_registry/`.
    - **Gate:** the repo-root script tests become a gate (G5), with 0 failures expected.
+   - **Leftovers (added 2026-09-26):** a G5 run leaves `db.db`, `src.db` and `dst.db` at the repo root. The tests that make them write under their tmp dirs instead. Done when a G5 run leaves `git status --short` unchanged.
+6. **The test suites stop writing the real HOME, and the flaky race goes** (added 2026-09-26; found by task 1A's QA, all pre-existing).
+   - **Notifications:** a G1 run under the real HOME appends about 14 lines to `~/.claude/pd/notifications.jsonl`, through `test_complete_phase_closes.py` and `NotificationQueue`'s default path. The file already holds 7,114 test lines out of 7,657. Every test that queues a notification writes under its own tmp dir.
+   - **Server lifecycle:** `server_lifecycle.PID_DIR` is computed from HOME at import time, so a test that runs a real lifespan writes the real `~/.claude/pd/run` unless it patches it. `start_parent_watchdog` can `os._exit` a re-parented pytest run. Both hazards become structural, not per-test: no test can write the process HOME's `run/`, and none can be killed by the watchdog.
+   - **The race:** `test_database.py::TestMigration11ConcurrentRunners::test_migration_11_concurrent_runners` fails about 2 runs in 30 on develop (a duplicate-column race). Find whether migration 11 races under concurrent runners, which matters because two servers can start at once. If it does, fix the migration; if only the test races, fix the test.
+   - **Done when:**
+     - G1 run with HOME set to a fresh empty directory leaves no file under that directory's `.claude/`;
+     - the race test passes 50 consecutive runs;
+     - no test patches `PID_DIR` or the watchdog by hand any more.
+7. **Delete the code Phase 1 left without a production caller** (added 2026-09-26).
+   - **From W2.6:** `backfill._derive_next_phase`, `PHASE_SEQUENCE` and `VALID_MODES`, with their unit tests.
+   - **From W1.5:** `engine._kanban_column_for` and `_PHASE_TO_KANBAN`; hydration was their only caller.
+     - **Ripples:** the parity pins that use them as their representative producer (`test_constants.py`'s `_REPRESENTATIVE`, `test_axes.py`, `test_workflow_state_server.py` ~:11149, `test_deepened_app.py` ~:1014) and 5 sibling comments.
+     - **Each pin** is repointed at a live producer or deleted, with its reason in the task report.
+   - **Done when:** `git grep` of each symbol prints only history (`CHANGELOG.md`, `docs/plans`, `docs/features`, `docs/rca`, `docs/knowledge-bank`).
+8. **Correct the stale archive and sync docs** (added 2026-09-26; pre-existing, found by task 1B's review).
+   - **The archive manifest:** `scripts/gen_archive_manifest.py` (`:73`, `:80`, `:87-88`) and its committed output `docs/entity-archive-manifest.md` (`:11`, `:14`, `:20`) say:
+     - archival sets `status` and adds a tag;
+     - the recipe is `update_entity(type_id, status="archived")`;
+     - each archive/restore pair leaves about 2 immutable event rows.
+
+     Correct all three: archival sets the `is_archived` flag and leaves `status` alone, and the recipe is `update_entity(type_id=..., archived=true)`. Re-measure the event-row claim against `set_archived`. The generator runs only against a copy of the registry made as the plan's safety section says.
+   - **The schema page:** `docs/entity-schema.html:447` describes `sync_entity_statuses` as "Reconcile .meta.json → DB". It now registers brainstorms from tracked `.prd.md` files. The row's text and its read/write cells are re-derived from the code by hand, with a dated note, since the page's generator is not in the repo.
 
 ## Order and gates
 
