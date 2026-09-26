@@ -67,8 +67,14 @@ def _setup_pd_state(
 def _run_migrate(
     base_dir: Path, args: list[str], *, env_extra: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess:
-    """Run migrate.sh with HOME set to base_dir."""
+    """Run migrate.sh with HOME set to base_dir.
+
+    The caller's ENTITY_DB_PATH is removed from the environment passed on:
+    migrate.sh prefers it over HOME, so only base_dir names the database.
+    A test that means to set it passes it in env_extra.
+    """
     env = os.environ.copy()
+    env.pop("ENTITY_DB_PATH", None)
     env["HOME"] = str(base_dir)
     env["NO_COLOR"] = "1"
     if env_extra:
@@ -638,3 +644,56 @@ class TestForceOverwrite:
         assert "project-new" in dst_projects.read_text(), (
             f"With --force, file should be overwritten. Got: {dst_projects.read_text()}"
         )
+
+
+# ============================================================
+# Test 13: the caller's ENTITY_DB_PATH never reaches migrate.sh (W5.5)
+# ============================================================
+
+
+class TestCallerEntityDbPathIgnored:
+    """Only the test's HOME names the database migrate.sh reads and writes.
+
+    migrate.sh prefers ENTITY_DB_PATH over $HOME/.claude/pd/entities/entities.db.
+    A caller whose environment names another registry (a temp DB, or the live
+    one) would otherwise redirect every export and import. The repo-root gate
+    runs with the variable unset, so this test sets it itself.
+    """
+
+    def test_export_and_import_ignore_callers_entity_db_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The sentinel's directory exists, so an import that honoured the
+        # variable could create it.
+        sentinel_db = tmp_path / "sentinel-entities.db"
+        monkeypatch.setenv("ENTITY_DB_PATH", str(sentinel_db))
+
+        src_home = tmp_path / "src_home"
+        src_home.mkdir()
+        _setup_pd_state(
+            src_home,
+            entities=[{"type_id": "feature:s-001", "name": "SentinelFeat"}],
+            workflow_phases=[{"type_id": "feature:s-001"}],
+        )
+
+        fake_bin = tmp_path / "fakebin"
+        fake_bin.mkdir()
+        _make_fake_pgrep(fake_bin, exit_code=1)
+        env_extra = {"PATH": f"{fake_bin}:{os.environ['PATH']}"}
+
+        bundle_path = str(tmp_path / "bundle.tar.gz")
+        export = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
+        assert export.returncode == 0, f"Export failed: {export.stderr}"
+
+        dst_home = tmp_path / "dst_home"
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
+        imported = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
+        assert imported.returncode == 0, f"Import failed: {imported.stderr}"
+
+        assert not sentinel_db.exists(), "migrate.sh wrote the caller's ENTITY_DB_PATH"
+        dst_db = dst_home / ".claude" / "pd" / "entities" / "entities.db"
+        assert dst_db.is_file(), "the import did not write the test HOME's registry"
+        conn = sqlite3.connect(str(dst_db))
+        imported_type_ids = [r[0] for r in conn.execute("SELECT type_id FROM entities")]
+        conn.close()
+        assert imported_type_ids == ["feature:s-001"]

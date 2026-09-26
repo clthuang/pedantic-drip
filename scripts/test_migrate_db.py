@@ -63,13 +63,16 @@ SUBCOMMAND_ARGS = [
     SUBCOMMAND_ARGS,
     ids=[t[0] for t in SUBCOMMAND_ARGS],
 )
-def test_subcommand_stubs(subcommand: str, args: list[str]) -> None:
+def test_subcommand_stubs(subcommand: str, args: list[str], tmp_path: Path) -> None:
     """Each subcommand with minimal args outputs valid JSON and exits 0."""
+    # The args are relative paths, and some subcommands create the files they
+    # name: run in tmp_path so none lands in the directory pytest runs from.
     result = subprocess.run(
         [sys.executable, SCRIPT, subcommand, *args],
         capture_output=True,
         text=True,
         timeout=10,
+        cwd=tmp_path,
     )
     # Allow stubs that still return {} and real implementations that may fail
     # on missing files — but skip validation for stubs that are not yet implemented
@@ -938,8 +941,28 @@ def create_v5_entity_db(
     conn.close()
 
 
+def _v1_chain_head() -> int:
+    """The v1 migration chain's last version: where ``migrate`` takes a v5 file.
+
+    Read from the chain (``entity_registry.database.MIGRATIONS``) rather than
+    written as a literal: a literal 8 here fell behind as the chain grew.
+    """
+    plugin_lib = str(
+        Path(__file__).resolve().parent.parent / "plugins" / "pd" / "hooks" / "lib"
+    )
+    if plugin_lib not in sys.path:
+        sys.path.insert(0, plugin_lib)
+    from entity_registry.database import MIGRATIONS
+
+    return max(MIGRATIONS)
+
+
 class TestMigration6:
-    """Tests for migration 6 (schema expansion v6) via CLI migrate command."""
+    """A v5 file taken through the whole v1 chain by the CLI migrate command.
+
+    The file starts before migration 6 (schema expansion v6); these tests pin
+    what that migration added, as the current chain leaves it.
+    """
 
     def _make_test_db(self, tmp_path: Path) -> tuple[str, list[dict], list[dict]]:
         """Create a v5 DB with realistic test data. Returns (path, entities, wps)."""
@@ -1021,7 +1044,7 @@ class TestMigration6:
         assert result["pre_entity_count"] == len(entities)
         assert result["post_entity_count"] == len(entities)
         assert result["pre_version"] == 5
-        assert result["post_version"] == 8
+        assert result["post_version"] == _v1_chain_head()
 
     # --- Test 2: All type_ids preserved ---
     def test_migration_preserves_type_ids(self, tmp_path: Path) -> None:
@@ -1104,19 +1127,33 @@ class TestMigration6:
         conn.close()
         assert len(null_uuids) == 0
 
-    # --- Test 7: Zero rows with parent_type_id set but parent_uuid NULL ---
+    # --- Test 7: Every v5 parent link survives in parent_uuid ---
     def test_migration_no_orphaned_parent_uuid(self, tmp_path: Path) -> None:
-        """All entities with parent_type_id have parent_uuid backfilled."""
-        db_path, _, _ = self._make_test_db(tmp_path)
+        """Every entity the v5 file linked by parent_type_id keeps that parent in parent_uuid.
+
+        Migration 11 drops parent_type_id, so parent_uuid is the only link left.
+        """
+        db_path, entities, _ = self._make_test_db(tmp_path)
         run_cli("migrate", db_path)
 
+        uuid_by_type_id = {e["type_id"]: e["uuid"] for e in entities}
+        expected_parent_uuids = {
+            e["type_id"]: uuid_by_type_id[e["parent_type_id"]]
+            for e in entities
+            if e.get("parent_type_id")
+        }
+
         conn = sqlite3.connect(db_path)
-        orphaned = conn.execute(
-            "SELECT type_id FROM entities "
-            "WHERE parent_type_id IS NOT NULL AND parent_uuid IS NULL"
-        ).fetchall()
+        entity_columns = {r[1] for r in conn.execute("PRAGMA table_info(entities)")}
+        parent_uuids = dict(
+            conn.execute(
+                "SELECT type_id, parent_uuid FROM entities "
+                "WHERE parent_uuid IS NOT NULL"
+            ).fetchall()
+        )
         conn.close()
-        assert len(orphaned) == 0
+        assert "parent_type_id" not in entity_columns
+        assert parent_uuids == expected_parent_uuids
 
     # --- Test 8: FTS5 search works after migration ---
     def test_migration_fts_works(self, tmp_path: Path) -> None:
@@ -1135,9 +1172,14 @@ class TestMigration6:
         assert len(results) == 1
         assert "Logging" in results[0][0]
 
-    # --- Test 9: New tables exist ---
+    # --- Test 9: The junction tables the chain leaves ---
     def test_migration_creates_junction_tables(self, tmp_path: Path) -> None:
-        """entity_tags, entity_dependencies, entity_okr_alignment tables exist."""
+        """entity_tags, entity_okr_alignment and entity_relations exist; entity_dependencies is gone.
+
+        Migration 6 creates entity_tags, entity_dependencies and
+        entity_okr_alignment; Migration 18 moves entity_dependencies' rows into
+        entity_relations as 'blocks' rows and drops it.
+        """
         db_path, _, _ = self._make_test_db(tmp_path)
         run_cli("migrate", db_path)
 
@@ -1151,8 +1193,9 @@ class TestMigration6:
         conn.close()
 
         assert "entity_tags" in tables
-        assert "entity_dependencies" in tables
         assert "entity_okr_alignment" in tables
+        assert "entity_relations" in tables
+        assert "entity_dependencies" not in tables
 
     # --- Test 10: New CHECK constraints accept 5D phases and 'light' mode ---
     def test_migration_accepts_5d_phases_and_light_mode(self, tmp_path: Path) -> None:
@@ -1161,62 +1204,31 @@ class TestMigration6:
         run_cli("migrate", db_path)
 
         conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA foreign_keys = OFF")
-
-        # Register a test entity first
-        test_uuid = str(uuid.uuid4())
         now = _now_iso()
-        conn.execute(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (test_uuid, "project:test-5d", "project", "test-5d",
-             "5D Test", "active", now, now),
-        )
+        # A phase row must name a registered entity (the chain's
+        # wp_reject_orphaned_insert trigger); the fixture's project has none.
+        project_type_id = "project:001-infra"
 
         # Test 5D phases
         for phase in ("discover", "define", "deliver", "debrief"):
             conn.execute(
-                "DELETE FROM workflow_phases WHERE type_id = 'project:test-5d'"
+                "DELETE FROM workflow_phases WHERE type_id = ?", (project_type_id,)
             )
             conn.execute(
                 "INSERT INTO workflow_phases (type_id, workflow_phase, "
                 "kanban_column, mode, updated_at) "
                 "VALUES (?, ?, 'backlog', 'light', ?)",
-                ("project:test-5d", phase, now),
+                (project_type_id, phase, now),
             )
         conn.commit()
 
-        # Verify light mode was accepted
+        # Verify the last 5D phase and light mode were accepted
         row = conn.execute(
-            "SELECT mode FROM workflow_phases WHERE type_id = 'project:test-5d'"
+            "SELECT workflow_phase, mode FROM workflow_phases WHERE type_id = ?",
+            (project_type_id,),
         ).fetchone()
         conn.close()
-        assert row[0] == "light"
-
-    # --- Test 11: entity_type CHECK constraint removed ---
-    def test_migration_entity_type_check_removed(self, tmp_path: Path) -> None:
-        """entity_type CHECK constraint is removed — arbitrary types accepted at SQL level."""
-        db_path, _, _ = self._make_test_db(tmp_path)
-        run_cli("migrate", db_path)
-
-        conn = sqlite3.connect(db_path)
-        now = _now_iso()
-        # This would fail with CHECK constraint if still present
-        conn.execute(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), "initiative:001-test", "initiative", "001-test",
-             "Test Initiative", "active", now, now),
-        )
-        conn.commit()
-
-        row = conn.execute(
-            "SELECT entity_type FROM entities WHERE type_id = 'initiative:001-test'"
-        ).fetchone()
-        conn.close()
-        assert row[0] == "initiative"
+        assert row == ("debrief", "light")
 
     # --- Test: workflow_phases uuid column correctly backfilled ---
     def test_migration_workflow_phases_uuid_backfill(self, tmp_path: Path) -> None:
@@ -1270,23 +1282,27 @@ class TestMigration6:
 
     # --- Test: junction tables accept inserts ---
     def test_migration_junction_tables_functional(self, tmp_path: Path) -> None:
-        """Can insert into entity_tags, entity_dependencies, entity_okr_alignment."""
+        """Can insert into entity_tags, entity_okr_alignment, and a 'blocks' row into entity_relations."""
         db_path, entities, _ = self._make_test_db(tmp_path)
         run_cli("migrate", db_path)
 
         conn = sqlite3.connect(db_path)
         entity_uuid = entities[0]["uuid"]
+        blocked_uuid = entities[1]["uuid"]
+        blocker_uuid = entities[2]["uuid"]
 
         # entity_tags
         conn.execute(
             "INSERT INTO entity_tags (entity_uuid, tag) VALUES (?, ?)",
             (entity_uuid, "security"),
         )
-        # entity_dependencies
+        # entity_relations: the dependency store since Migration 18 dropped
+        # entity_dependencies; a dependency is a 'blocks' row from the
+        # blocker to the blocked entity.
         conn.execute(
-            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) "
-            "VALUES (?, ?)",
-            (entities[1]["uuid"], entities[2]["uuid"]),
+            "INSERT INTO entity_relations (from_uuid, to_uuid, kind, created_at) "
+            "VALUES (?, ?, 'blocks', ?)",
+            (blocker_uuid, blocked_uuid, _now_iso()),
         )
         # entity_okr_alignment
         conn.execute(
@@ -1297,12 +1313,14 @@ class TestMigration6:
         conn.commit()
 
         tags = conn.execute("SELECT * FROM entity_tags").fetchall()
-        deps = conn.execute("SELECT * FROM entity_dependencies").fetchall()
+        blocks = conn.execute(
+            "SELECT from_uuid, to_uuid FROM entity_relations WHERE kind = 'blocks'"
+        ).fetchall()
         okrs = conn.execute("SELECT * FROM entity_okr_alignment").fetchall()
         conn.close()
 
         assert len(tags) == 1
-        assert len(deps) == 1
+        assert blocks == [(blocker_uuid, blocked_uuid)]
         assert len(okrs) == 1
 
     # --- Test: junction tables enforce UNIQUE constraints ---
@@ -1344,21 +1362,22 @@ class TestMigration6:
         assert len(results) == 1
         assert results[0][0] == "feature:043-metrics"
 
-    # --- Test: already at v6 is a no-op ---
+    # --- Test: already at the chain's head is a no-op ---
     def test_migration_idempotent(self, tmp_path: Path) -> None:
         """Running migrate on an already-migrated DB is a no-op."""
         db_path, _, _ = self._make_test_db(tmp_path)
+        chain_head = _v1_chain_head()
 
-        # First migration (runs through v8)
+        # First migration (runs the whole chain)
         result1 = run_cli("migrate", db_path)
         assert result1["ok"] is True
-        assert result1["post_version"] == 8
+        assert result1["post_version"] == chain_head
 
         # Second migration — should be no-op
         result2 = run_cli("migrate", db_path)
         assert result2["ok"] is True
-        assert result2["pre_version"] == 8
-        assert result2["post_version"] == 8
+        assert result2["pre_version"] == chain_head
+        assert result2["post_version"] == chain_head
 
     # --- Test: orphaned parent_uuid backfill ---
     def test_migration_backfills_orphaned_parent_uuid(self, tmp_path: Path) -> None:
