@@ -1734,10 +1734,12 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
     plus the concurrent re-check guard (database.py:1396-1418).
 
     17 steps:
-      0. Pre-tx: workspace mapping audit (writes JSON file).
       1. PRAGMA foreign_keys = OFF (outside transaction).
       2. BEGIN IMMEDIATE.
       3. Concurrent re-check guard.
+      0. Workspace mapping (legacy project_id -> workspace uuid), read
+         under the lock after step 3. It ran pre-transaction until W5.6,
+         which raced a peer runner; its audit JSON write went in 132.
       4. Pre-migration FK check.
       5. Bootstrap workspaces table.
       6. Pre-migration parent_type_id orphan assertion.
@@ -1758,10 +1760,11 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
     # ----------------------------------------------------------------------
     # Pre-step 0: outer-level early-return guard.
     # ----------------------------------------------------------------------
-    # If the schema is already at version 11, step 0 (which reads the
-    # legacy ``project_id`` column) would crash with OperationalError.
-    # The in-tx re-check guard (step 3) cannot help because step 0 runs
-    # pre-transaction. Bail out early — this also makes the migration
+    # If the schema is already at version 11, return before taking the
+    # write lock. Step 0 reads the legacy ``project_id`` column, which a
+    # post-11 file no longer has; it runs inside the transaction after the
+    # in-tx re-check (step 3), so a peer that finishes migration 11 after
+    # this check is caught there. This guard also makes the migration
     # idempotent for callers outside the outer ``_migrate()`` loop.
     try:
         v_row = conn.execute(
@@ -1789,46 +1792,6 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError as e:
         if "no such table" not in str(e).lower():
             raise
-
-    # ----------------------------------------------------------------------
-    # Step 0: workspace mapping audit (PRE-TRANSACTION)
-    # ----------------------------------------------------------------------
-    # Compute the mapping {legacy_project_id: new_workspace_uuid} for every
-    # distinct project_id present in entities.
-    distinct_pids = [
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT project_id FROM entities"
-        ).fetchall()
-    ]
-    mapping: dict[str, str] = {}
-    unknown_count = 0
-    for pid in distinct_pids:
-        if pid == "__unknown__":
-            mapping[pid] = _UNKNOWN_WORKSPACE_UUID
-            unknown_count = conn.execute(
-                "SELECT COUNT(*) FROM entities WHERE project_id = '__unknown__'"
-            ).fetchone()[0]
-        else:
-            mapping[pid] = str(uuid_mod.uuid4())
-
-    # Feature 132 (D6.5): the workspace-mapping audit JSON write is
-    # REMOVED here — a filesystem side effect inside a migration body,
-    # incompatible with the rebuild tool's step-1 chain replay running
-    # this same function against an empty staging file (spec FR132-5b;
-    # #066's root cause). DDL/DML is unchanged: `mapping` (built above)
-    # still seeds the `workspaces` table below; only the JSON emission is
-    # gone. The helper that used to perform that write (task 1's call-half
-    # removal left it callerless) is deleted in the same change (D6.5
-    # body-half, task 5).
-
-    if unknown_count:
-        print(
-            f"[migration-11] WARN: {unknown_count} entities with "
-            f"project_id='__unknown__' attributed to canonical "
-            f"unknown-workspace UUID; review with claim_unknown_entities "
-            f"post-migration.",
-            file=sys.stderr,
-        )
 
     # ----------------------------------------------------------------------
     # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
@@ -1881,6 +1844,53 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
             # locked') must propagate.
             if "no such table" not in str(e).lower():
                 raise
+
+        # ------------------------------------------------------------------
+        # Step 0: workspace mapping (inside the transaction, after step 3)
+        # ------------------------------------------------------------------
+        # Read under the write lock (W5.6). Run before BEGIN IMMEDIATE, it
+        # raced a peer runner: a peer finishing migration 11 between this
+        # runner's version check and this read dropped ``project_id`` under
+        # it ("no such column: project_id"). Here step 3 has already
+        # returned in that case, and the read sees every entity a
+        # concurrent writer committed before the lock.
+        #
+        # Compute the mapping {legacy_project_id: new_workspace_uuid} for
+        # every distinct project_id present in entities.
+        distinct_pids = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT project_id FROM entities"
+            ).fetchall()
+        ]
+        mapping: dict[str, str] = {}
+        unknown_count = 0
+        for pid in distinct_pids:
+            if pid == "__unknown__":
+                mapping[pid] = _UNKNOWN_WORKSPACE_UUID
+                unknown_count = conn.execute(
+                    "SELECT COUNT(*) FROM entities WHERE project_id = '__unknown__'"
+                ).fetchone()[0]
+            else:
+                mapping[pid] = str(uuid_mod.uuid4())
+
+        # Feature 132 (D6.5): the workspace-mapping audit JSON write is
+        # REMOVED here — a filesystem side effect inside a migration body,
+        # incompatible with the rebuild tool's step-1 chain replay running
+        # this same function against an empty staging file (spec FR132-5b;
+        # #066's root cause). DDL/DML is unchanged: `mapping` (built above)
+        # still seeds the `workspaces` table below; only the JSON emission is
+        # gone. The helper that used to perform that write (task 1's call-half
+        # removal left it callerless) is deleted in the same change (D6.5
+        # body-half, task 5).
+
+        if unknown_count:
+            print(
+                f"[migration-11] WARN: {unknown_count} entities with "
+                f"project_id='__unknown__' attributed to canonical "
+                f"unknown-workspace UUID; review with claim_unknown_entities "
+                f"post-migration.",
+                file=sys.stderr,
+            )
 
         # ------------------------------------------------------------------
         # Step 4: pre-migration FK check (must be empty)
@@ -4720,12 +4730,13 @@ def _copy_rename_phase_events_for_v14(conn: sqlite3.Connection) -> None:
 def _v14_schema_already_applied(conn: sqlite3.Connection) -> bool:
     """Return True if all three v14 DDL artifacts are already in place.
 
-    Probes the SCHEMA (sqlite_master), not _metadata.schema_version — the
-    outer ``_migrate`` loop clobbers schema_version after each migration_fn
-    returns, so under concurrent-runner conditions the racer's schema_version
-    may read as 13 even when the peer has fully applied v14 DDL. The schema
-    artifacts (entity_relations table + widened CHECKs) are the stable
-    racer-tolerant fingerprint.
+    Probes the SCHEMA (sqlite_master), not _metadata.schema_version — under
+    concurrent-runner conditions the racer's schema_version may read as 13
+    even when the peer has fully applied v14 DDL (the outer ``_migrate``
+    loop no longer lowers it (W5.6, ``_stamp_schema_version``), but a
+    replayed step that stamps inside its own transaction, as Migration 15
+    does, still can). The schema artifacts (entity_relations table +
+    widened CHECKs) are the stable racer-tolerant fingerprint.
 
     Used by Migration 14's step 0 and step 3 to short-circuit silently when
     a peer process has already applied the migration — preserves the
@@ -4778,9 +4789,9 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
 
     Replay-safe (FR-MR.8): early-return if already at v14 OR if schema
     artifacts indicate a concurrent peer has already applied v14 DDL
-    (concurrent-runner safety; the outer ``_migrate`` clobbers
-    ``_metadata.schema_version`` after each migration_fn return, so the
-    SCHEMA fingerprint is the racer-tolerant idempotency signal).
+    (concurrent-runner safety; ``_metadata.schema_version`` can read low
+    under a concurrent replay, see :func:`_v14_schema_already_applied`, so
+    the SCHEMA fingerprint is the racer-tolerant idempotency signal).
     """
     # ----------------------------------------------------------------------
     # Step 0: Outer-level idempotency early-return (FR-MR.8).
@@ -4807,8 +4818,8 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
             return
 
     # Concurrent-runner short-circuit: peer process has already applied
-    # v14 DDL even though our outer _migrate just stamped schema_version
-    # back to 13.
+    # v14 DDL even though schema_version reads below 14 (a concurrent
+    # replay's in-transaction stamp can lower it).
     if _v14_schema_already_applied(conn):
         return
 
@@ -4847,9 +4858,9 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         # Racer-tolerant re-check at the SCHEMA level: peer process may
         # have applied v14 DDL between our step-0 probe and BEGIN IMMEDIATE
         # acquisition. Short-circuit silently to preserve concurrent-runner
-        # safety (the outer ``_migrate`` clobbers schema_version after each
-        # migration_fn return, so the schema fingerprint is the stable
-        # idempotency signal under this race).
+        # safety (schema_version can read low under a concurrent replay, so
+        # the schema fingerprint is the stable idempotency signal under
+        # this race).
         if _v14_schema_already_applied(conn):
             conn.rollback()
             return
@@ -5898,16 +5909,41 @@ def _upsert_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
 
     Feature 132 #062: a plain ``INSERT OR IGNORE`` would silently skip a
     version bump against an existing cell. Takes a raw connection (not an
-    ``EntityDatabase`` instance) so both schema generations' stamp-write
-    sites share this one implementation: ``EntityDatabase._migrate()``'s
-    per-version write (v1, below) and the v2 rebuild tool's
-    staging-connection generation stamp (``entity_registry.rebuild_tool``,
-    design 132 D1 step 3).
+    ``EntityDatabase`` instance) so stamp-write sites outside an instance
+    can share it: the v2 rebuild tool's staging-connection generation
+    stamp (``entity_registry.rebuild_tool``, design 132 D1 step 3). The
+    migration loops' per-version stamp is ``_stamp_schema_version`` below,
+    which never lowers the version.
     """
     conn.execute(
         "INSERT INTO _metadata (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
+    )
+
+
+def _stamp_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    """Record that the forward chain has reached *version*: never lower it.
+
+    The step stamp of ``EntityDatabase._migrate`` and ``_migrate_v2``. Two
+    processes can migrate one file at once (two MCP servers start
+    together). A runner that read an older version before a peer migrated
+    the file replays the peer's steps. Overwriting the stamp after each
+    replayed step moved the peer's newer version back, and a third runner
+    entering migration 13 then read a version its pre-flight rejects
+    ("Manual reconciliation required"). Stamped only upward here, the loop
+    never lowers it. (Migrations 15 and 17 still stamp their own number
+    inside their transactions, so a replay of either can lower it to 15 or
+    17 until the next step's stamp; every guard of steps 11-14 reads that
+    as done, and steps 18-25 probe the schema or are idempotent DDL.)
+    Downgrades go through
+    ``_migrate_down``, whose steps stamp their own versions.
+    """
+    conn.execute(
+        "INSERT INTO _metadata (key, value) VALUES ('schema_version', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value "
+        "WHERE CAST(_metadata.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
+        (str(version),),
     )
 
 
@@ -5967,7 +6003,9 @@ MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
 #
 # Forward-only by construction: there is no ``V2_MIGRATIONS_DOWN``. Every
 # entry MUST be replay-safe (probe the live schema, skip when already
-# applied) so an interrupted run converges on the next open.
+# applied) so an interrupted run converges on the next open, and safe
+# against a peer running it at the same moment: probe again under the
+# write lock before writing (``_write_transaction_unless_applied``; W5.6).
 
 
 def _v2_migration_2_mini_spec(conn: sqlite3.Connection) -> None:
@@ -6203,6 +6241,56 @@ def _v2_migration_3_state_only_axis_views(conn: sqlite3.Connection) -> None:
     conn.executescript(_views._VIEWS_DDL)
 
 
+def _entities_columns(conn: sqlite3.Connection) -> set[str]:
+    """The ``entities`` table's column names, from ``PRAGMA table_info``."""
+    return {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+
+
+@contextmanager
+def _write_transaction_unless_applied(
+    conn: sqlite3.Connection,
+    already_applied: Callable[[], bool],
+):
+    """Yield whether the step is still to do; if so, inside one
+    ``BEGIN IMMEDIATE`` transaction that commits when the block ends.
+
+    For the probe-then-write migrations (v1 22-24, v2 4-6; W5.6). Two
+    processes can migrate one file at once (two MCP servers start
+    together). Probing outside a lock let both see the work undone and both
+    write it: the second ``ALTER TABLE ... ADD COLUMN`` raised ``duplicate
+    column name``. The probe is repeated under the write lock, so a peer
+    that finished in between wins cleanly. One transaction also makes the
+    step all-or-nothing: an interruption leaves no column without its
+    backfill for the next open's probe to take as done. An exception rolls
+    it back and propagates.
+
+    The block's statements stay in the migration function itself, so
+    ``check_status_write_path`` still attributes them to it.
+
+    Transaction control is literal SQL, as in ``_v2_migration_2_mini_spec``:
+    ``rebuild_tool`` runs the v2 chain on an ``autocommit=True`` connection,
+    where ``conn.commit()`` / ``conn.rollback()`` do nothing.
+    """
+    if already_applied():
+        yield False
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if already_applied():
+            conn.execute("ROLLBACK")
+            yield False
+            return
+        yield True
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+
 def _v2_migration_4_explicit_legacy_flag(conn: sqlite3.Connection) -> None:
     """v2 migration 4 — state legacy-ness as a column instead of inferring it.
 
@@ -6223,28 +6311,31 @@ def _v2_migration_4_explicit_legacy_flag(conn: sqlite3.Connection) -> None:
     licence the legacy id parse gets in ``clean_break.parse_legacy_seq``.
 
     Replay-safe: probes ``PRAGMA table_info`` and returns if the column is
-    already present.
+    already present. Runner-safe (W5.6): the probe is repeated under the
+    write lock, and the column, its backfill and its index commit together
+    (:func:`_write_transaction_unless_applied`).
     """
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
-    if "is_legacy" in cols:
-        return
-
-    conn.execute(
-        "ALTER TABLE entities ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0"
-    )
-
-    has_display = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_display'"
-    ).fetchone() is not None
-    if has_display:
+    with _write_transaction_unless_applied(
+        conn, lambda: "is_legacy" in _entities_columns(conn),
+    ) as still_to_do:
+        if not still_to_do:
+            return
         conn.execute(
-            "UPDATE entities SET is_legacy = 1 "
-            "WHERE uuid NOT IN (SELECT uuid FROM entity_display)"
+            "ALTER TABLE entities ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0"
         )
 
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entities_is_legacy ON entities(is_legacy)"
-    )
+        has_display = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_display'"
+        ).fetchone() is not None
+        if has_display:
+            conn.execute(
+                "UPDATE entities SET is_legacy = 1 "
+                "WHERE uuid NOT IN (SELECT uuid FROM entity_display)"
+            )
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_is_legacy ON entities(is_legacy)"
+        )
 
 
 def _v2_migration_5_explicit_archived_flag(conn: sqlite3.Connection) -> None:
@@ -6268,51 +6359,55 @@ def _v2_migration_5_explicit_archived_flag(conn: sqlite3.Connection) -> None:
     rather than a guess, and ``is_archived`` is set for them either way.
 
     Replay-safe: probes ``PRAGMA table_info`` and returns if present.
+    Runner-safe (W5.6): the probe is repeated under the write lock, and the
+    column, its flag, its index and the restored statuses commit together
+    (:func:`_write_transaction_unless_applied`).
     """
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
-    if "is_archived" in cols:
-        return
+    with _write_transaction_unless_applied(
+        conn, lambda: "is_archived" in _entities_columns(conn),
+    ) as still_to_do:
+        if not still_to_do:
+            return
+        conn.execute(
+            "ALTER TABLE entities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute("UPDATE entities SET is_archived = 1 WHERE status = 'archived'")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_is_archived ON entities(is_archived)"
+        )
 
-    conn.execute(
-        "ALTER TABLE entities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0"
-    )
-    conn.execute("UPDATE entities SET is_archived = 1 WHERE status = 'archived'")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entities_is_archived ON entities(is_archived)"
-    )
+        has_phase_events = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='phase_events'"
+        ).fetchone() is not None
+        if not has_phase_events:
+            return
 
-    has_phase_events = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='phase_events'"
-    ).fetchone() is not None
-    if not has_phase_events:
-        return
+        import json as _json
 
-    import json as _json
-
-    restored = 0
-    for row in conn.execute(
-        "SELECT uuid, type_id FROM entities WHERE is_archived = 1 AND status = 'archived'"
-    ).fetchall():
-        prior = None
-        for ev in conn.execute(
-            "SELECT metadata FROM phase_events WHERE type_id = ? "
-            "AND event_type = 'entity_status_changed' ORDER BY id DESC",
-            (row[1],),
-        ):
-            try:
-                meta = _json.loads(ev[0] or "{}")
-            except (ValueError, TypeError):
-                continue
-            if meta.get("new_status") == "archived" and meta.get("old_status"):
-                prior = meta["old_status"]
-                break
-        # 'archived' as a prior value carries no information; leave it.
-        if prior and prior != "archived":
-            conn.execute(
-                "UPDATE entities SET status = ? WHERE uuid = ?", (prior, row[0])
-            )
-            restored += 1
-    _upsert_metadata(conn, "migration_5_statuses_restored", str(restored))
+        restored = 0
+        for row in conn.execute(
+            "SELECT uuid, type_id FROM entities WHERE is_archived = 1 AND status = 'archived'"
+        ).fetchall():
+            prior = None
+            for ev in conn.execute(
+                "SELECT metadata FROM phase_events WHERE type_id = ? "
+                "AND event_type = 'entity_status_changed' ORDER BY id DESC",
+                (row[1],),
+            ):
+                try:
+                    meta = _json.loads(ev[0] or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if meta.get("new_status") == "archived" and meta.get("old_status"):
+                    prior = meta["old_status"]
+                    break
+            # 'archived' as a prior value carries no information; leave it.
+            if prior and prior != "archived":
+                conn.execute(
+                    "UPDATE entities SET status = ? WHERE uuid = ?", (prior, row[0])
+                )
+                restored += 1
+        _upsert_metadata(conn, "migration_5_statuses_restored", str(restored))
 
 
 def _v2_migration_6_soft_delete(conn: sqlite3.Connection) -> None:
@@ -6333,16 +6428,21 @@ def _v2_migration_6_soft_delete(conn: sqlite3.Connection) -> None:
     actually deleted.
 
     Replay-safe: probes ``PRAGMA table_info`` and returns if present.
+    Runner-safe (W5.6): the probe is repeated under the write lock, and the
+    column and its index commit together
+    (:func:`_write_transaction_unless_applied`).
     """
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
-    if "is_deleted" in cols:
-        return
-    conn.execute(
-        "ALTER TABLE entities ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entities_is_deleted ON entities(is_deleted)"
-    )
+    with _write_transaction_unless_applied(
+        conn, lambda: "is_deleted" in _entities_columns(conn),
+    ) as still_to_do:
+        if not still_to_do:
+            return
+        conn.execute(
+            "ALTER TABLE entities ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_is_deleted ON entities(is_deleted)"
+        )
 
 
 def _v2_migration_7_immutable_is_legacy(conn: sqlite3.Connection) -> None:
@@ -11139,7 +11239,7 @@ class EntityDatabase:
         for version in range(current + 1, target + 1):
             migration_fn = MIGRATIONS[version]
             migration_fn(self._conn)
-            _upsert_metadata(self._conn, "schema_version", str(version))
+            _stamp_schema_version(self._conn, version)
             self._commit()
 
     def _refuse_if_file_is_from_the_future(self) -> bool:
@@ -11193,9 +11293,10 @@ class EntityDatabase:
 
         Same loop shape as the v1 chain in :meth:`_migrate`: run each
         pending version's function, then stamp ``schema_version`` to that
-        version via ``_upsert_metadata`` and commit, so an interruption
-        resumes from the last completed step rather than replaying the
-        whole chain. Called ONLY from :meth:`_migrate`'s v2 branch.
+        version via ``_stamp_schema_version`` (which never lowers it) and
+        commit, so an interruption resumes from the last completed step
+        rather than replaying the whole chain. Called ONLY from
+        :meth:`_migrate`'s v2 branch.
 
         The v2 lineage starts at 1 (the cutover baseline, which has no
         migration function of its own), so a file already at
@@ -11211,7 +11312,7 @@ class EntityDatabase:
             migration_fn = V2_MIGRATIONS.get(version)
             if migration_fn is not None:
                 migration_fn(self._conn)
-            _upsert_metadata(self._conn, "schema_version", str(version))
+            _stamp_schema_version(self._conn, version)
             self._commit()
 
     # ------------------------------------------------------------------

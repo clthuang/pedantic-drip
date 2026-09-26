@@ -218,9 +218,6 @@ async def lifespan(server):
     global _db, _db_unavailable, _recovery_thread
     global _engine, _entity_engine, _artifacts_root, _project_root, _project_id, _workspace_uuid, _notification_queue
 
-    write_pid("workflow_state_server")
-    start_parent_watchdog()
-
     db_path = os.environ.get(
         "ENTITY_DB_PATH",
         os.path.expanduser("~/.claude/pd/entities/entities.db"),
@@ -264,7 +261,6 @@ async def lifespan(server):
     try:
         yield {}
     finally:
-        remove_pid("workflow_state_server")
         if _db is not None:
             _db.close()
             _db = None
@@ -3083,4 +3079,13 @@ def _compute_durations(events: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # The server process's own bookkeeping lives here, not in the lifespan:
+    # tests run the lifespan in-process, where the PID file would land in
+    # the test process's HOME and the watchdog could end the test run. The
+    # watchdog is armed first, so a PID file names a process it guards.
+    start_parent_watchdog()
+    write_pid("workflow_state_server")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        remove_pid("workflow_state_server")

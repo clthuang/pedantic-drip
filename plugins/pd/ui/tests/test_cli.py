@@ -34,8 +34,9 @@ def test_cli_startup_url_output(capsys):
     Runs on an ephemeral free port, not the 8718 default: the plugin's
     session-start hook legitimately holds 8718 whenever a real pd session
     is live, which made the old `main([])` form environmentally flaky.
-    The pid-file/watchdog lifecycle trio is mocked for the same reason --
-    the unmocked test overwrote (then atexit-DELETED) the live server's
+    Nothing needs to mock the pid-file/watchdog lifecycle trio: only the
+    entry point's ``main(server_process=True)`` runs it (W5.6), so this
+    in-process call cannot overwrite (then atexit-delete) a live server's
     pid bookkeeping.
     """
     from ui.__main__ import main
@@ -44,12 +45,7 @@ def test_cli_startup_url_output(capsys):
         probe.bind(("127.0.0.1", 0))
         free_port = probe.getsockname()[1]
 
-    with (
-        unittest.mock.patch("ui.__main__.uvicorn") as mock_uvicorn,
-        unittest.mock.patch("ui.__main__.write_pid"),
-        unittest.mock.patch("ui.__main__.remove_pid"),
-        unittest.mock.patch("ui.__main__.start_lifetime_watchdog"),
-    ):
+    with unittest.mock.patch("ui.__main__.uvicorn") as mock_uvicorn:
         mock_uvicorn.run = unittest.mock.MagicMock()
         main(["--port", str(free_port)])
 

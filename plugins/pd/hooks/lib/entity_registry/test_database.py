@@ -7885,7 +7885,14 @@ def _migration_11_race_runner(args):
 
 
 class TestMigration11ConcurrentRunners:
-    """Two pool workers race on Migration 11; second must short-circuit."""
+    """Two pool workers race the chain from v10; both must reach head.
+
+    Named for Migration 11, but both workers run every step from 11 to head
+    at the same time. Its flakes (about 1 run in 20) were ``duplicate
+    column name`` from the flag migrations (v1 22-24), never Migration 11;
+    ``test_migration_concurrent_runners.py`` replays each losing
+    interleaving deterministically (W5.6).
+    """
 
     def test_migration_11_concurrent_runners(self, tmp_path):
         """Use multiprocessing.Pool(2) to race forward migrations.
@@ -7921,9 +7928,9 @@ class TestMigration11ConcurrentRunners:
             )
 
         # Both workers should converge on the latest schema_version (dynamic
-        # head — F117 FR-B.2a sweep site). The race condition under test is
-        # migration 11's concurrent-runner short-circuit; subsequent migrations
-        # run sequentially after 11 stamps in both workers.
+        # head — F117 FR-B.2a sweep site). They run every step from 11 to
+        # head concurrently, not only 11, so each step must be safe against
+        # a peer running it at the same moment (W5.6).
         assert all(r == str(_latest_entity_version()) for r in results), results
 
         # Open the DB again and check exactly one row per legacy project_id.
