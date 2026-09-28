@@ -34,8 +34,8 @@ from entity_registry.id_generator import (
 )
 from entity_registry.project_identity import (
     GitProjectInfo,
+    _checkout_git_cannot_answer_for,
     _compute_legacy_project_id,
-    _git_cannot_answer_for_git_file,
     _repository_root,
     collect_git_info,
     resolve_startup_workspace_uuid,
@@ -148,9 +148,10 @@ def _require_workspace() -> str:
        there is no such row). The legacy id comes from the root commit, so
        it is the same from a subdirectory, a linked worktree or a second
        clone. Skipped when ``_project_id`` is empty or ``"__unknown__"``,
-       which that method maps to the unknown workspace. In an orphaned
-       worktree (a ``.git`` file git cannot answer for) the legacy id is a
-       hash of the path, and the lifespan mints no row for it.
+       which that method maps to the unknown workspace. Started at the root
+       of an orphaned worktree (a ``.git`` file git cannot answer for) or in
+       a subdirectory of one, the legacy id is a hash of the directory the
+       server started in, and the lifespan mints no row for it.
 
     A success is cached in ``_workspace_uuid``. A failure is not, so the
     next call tries again. A successful step 2 may write
@@ -316,21 +317,26 @@ async def lifespan(server):
         # session in a repository with no .claude/ gets the workspace
         # _require_workspace() then finds (W4.1).
         #
-        # All three are skipped when the root's .git is a FILE git cannot
-        # answer for (an orphaned worktree, or a git older than 2.31). Such
+        # All three are skipped when the checkout the server starts in has a
+        # .git FILE git cannot answer for (an orphaned worktree, or a git
+        # older than 2.31), whether it starts at the checkout's root or in a
+        # subdirectory: _checkout_git_cannot_answer_for walks up to the
+        # nearest .git, where the session-start hook roots the session. Such
         # a checkout resolves no workspace (resolve_workspace_uuid), and
-        # these steps would mint one keyed on its own path, which step 3 of
-        # _require_workspace() then finds by the legacy id (in an orphan, a
-        # hash of that path). So the server mints nothing, and its write
-        # tools answer workspace_unresolved. One case still resolves: a
-        # healthy linked worktree under a git older than 2.31 keeps the root
-        # commit's legacy id, so step 3 finds the repository's own
-        # workspace when one exists, the one place a server resolves where
-        # the session-start hook refuses.
-        if _git_cannot_answer_for_git_file(_project_root):
+        # these steps would mint one keyed on the directory the server
+        # started in, which step 3 of _require_workspace() then finds by the
+        # legacy id (in an orphan, a hash of that directory). So the server
+        # mints nothing, and its write tools answer workspace_unresolved.
+        # One case still resolves: a healthy linked worktree under a git
+        # older than 2.31 keeps the root commit's legacy id, so step 3 finds
+        # the repository's own workspace when one exists, the one place a
+        # server resolves where the session-start hook refuses.
+        unanswerable_checkout = _checkout_git_cannot_answer_for(_project_root)
+        if unanswerable_checkout is not None:
             print(
                 "entity-server: project registration and backfill skipped: "
-                f"the .git at {_project_root!r} is a file git cannot answer for",
+                f"the .git at {unanswerable_checkout!r} is a file git cannot "
+                f"answer for",
                 file=sys.stderr,
             )
         else:

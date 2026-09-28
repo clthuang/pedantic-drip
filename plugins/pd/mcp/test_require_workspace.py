@@ -411,42 +411,78 @@ def _error_type(reply: str):
         return reply
 
 
-def test_a_server_in_an_orphaned_worktree_mints_no_workspace_and_refuses(
-    first_session, monkeypatch, capsys,
-):
-    """Both servers start in a linked worktree whose directory under
-    ``<main>/.git/worktrees`` is gone, so git cannot answer there. Phase 3
-    decided such a checkout resolves no workspace, and the hook refuses it.
-    The worktree holds pd's ``.claude/`` and a brainstorm, which the entity
-    server's startup backfill would register.
+# The checkouts whose .git is a FILE git cannot answer for (Phase 3's class),
+# and the places a server starts in one. The session-start hook roots a
+# session at the checkout's root from either place: detect_project_root walks
+# up to the nearest .git.
+_CHECKOUTS_GIT_CANNOT_ANSWER_FOR = ("orphaned worktree", "missing gitdir")
+_CHECKOUT_LAUNCH_PLACES = ("root", "subdirectory")
 
-    That startup registers no project and backfills nothing, so no
-    workspace keyed on the orphan's path appears for step 3 of
-    ``_require_workspace()`` to find by the path-hash legacy id. Each
-    server's write tools answer ``workspace_unresolved``, and no registry
-    table gains a row.
+
+def make_checkout_git_cannot_answer_for(shape, repository, tmp_path):
+    """A checkout whose ``.git`` is a FILE git cannot answer for, holding
+    pd's ``.claude/`` and a brainstorm the entity server's startup backfill
+    would register:
+
+    - ``"orphaned worktree"``: a linked worktree of *repository* whose
+      directory under ``<main>/.git/worktrees`` is gone;
+    - ``"missing gitdir"``: a directory in no repository whose ``.git`` file
+      names a gitdir that does not exist.
     """
-    repository = first_session["repository"]
-    (repository / ".claude").mkdir()
-    (repository / ".claude" / "settings.json").write_text("{}\n")
-    run_git("-C", str(repository), "add", ".claude")
-    run_git("-C", str(repository), "commit", "-q", "-m", "enable pd")
-    orphan = repository / ".pd-worktrees" / "task"
-    run_git("-C", str(repository), "worktree", "add", "-q", "-b", "task",
-            str(orphan))
-    shutil.rmtree(
-        (orphan / ".git").read_text().strip().removeprefix("gitdir: ")
-    )
-    brainstorms = orphan / "docs" / "brainstorms"
+    if shape == "orphaned worktree":
+        (repository / ".claude").mkdir()
+        (repository / ".claude" / "settings.json").write_text("{}\n")
+        run_git("-C", str(repository), "add", ".claude")
+        run_git("-C", str(repository), "commit", "-q", "-m", "enable pd")
+        checkout = repository / ".pd-worktrees" / "task"
+        run_git("-C", str(repository), "worktree", "add", "-q", "-b", "task",
+                str(checkout))
+        shutil.rmtree(
+            (checkout / ".git").read_text().strip().removeprefix("gitdir: ")
+        )
+    else:
+        checkout = tmp_path / "checkout"
+        (checkout / ".claude").mkdir(parents=True)
+        (checkout / ".claude" / "settings.json").write_text("{}\n")
+        missing_gitdir = tmp_path / "missing" / ".git" / "worktrees" / "checkout"
+        (checkout / ".git").write_text(f"gitdir: {missing_gitdir}\n")
+    brainstorms = checkout / "docs" / "brainstorms"
     brainstorms.mkdir(parents=True)
     (brainstorms / "20260927-orphan-idea.prd.md").write_text("# Orphan idea\n")
-    feature_directory = orphan / "docs" / "features" / "001-demo"
+    return checkout
+
+
+@pytest.mark.parametrize("launch_place", _CHECKOUT_LAUNCH_PLACES)
+@pytest.mark.parametrize("shape", _CHECKOUTS_GIT_CANNOT_ANSWER_FOR)
+def test_a_server_in_a_checkout_git_cannot_answer_for_mints_no_workspace_and_refuses(
+    shape, launch_place, first_session, tmp_path, monkeypatch, capsys,
+):
+    """Both servers start in a checkout whose ``.git`` is a file git cannot
+    answer for: an orphaned worktree, or a directory whose ``.git`` file
+    names a missing gitdir. Phase 3 decided such a checkout resolves no
+    workspace, and the hook refuses it, rooting the session at the
+    checkout's root from the root or from a subdirectory. The servers start
+    at either place, rooted at the working directory as the launchers
+    start them.
+
+    From either place, the entity server's startup registers no project and
+    backfills nothing, so no workspace keyed on the launch path appears for
+    step 3 of ``_require_workspace()`` to find by the path-hash legacy id.
+    Both servers' startup resolution refuses for the checkout's ``.git``,
+    as the hook does, not for a missing ``.claude/``. Each server's write
+    tools answer ``workspace_unresolved``, no registry table gains a row,
+    and no ``workspace.json`` is written anywhere in the checkout.
+    """
+    checkout = make_checkout_git_cannot_answer_for(
+        shape, first_session["repository"], tmp_path,
+    )
+    feature_directory = checkout / "docs" / "features" / "001-demo"
     feature_directory.mkdir(parents=True)
     db_path = first_session["db_path"]
     os.makedirs(os.path.dirname(db_path))
     EntityDatabase(db_path).close()
     registry_before = _registry_snapshot(db_path)
-    monkeypatch.chdir(orphan)
+    monkeypatch.chdir(checkout if launch_place == "root" else checkout / "docs")
 
     async def session():
         async with entity_server.lifespan(None), wss.lifespan(None):
@@ -474,7 +510,19 @@ def test_a_server_in_an_orphaned_worktree_mints_no_workspace_and_refuses(
     )
     assert _registry_snapshot(db_path) == registry_before
     assert os.listdir(feature_directory) == []
-    assert "project registration and backfill skipped" in capsys.readouterr().err
+    assert sorted(checkout.rglob("workspace.json")) == []
+    refusal = (f"the .git at {os.path.realpath(checkout)!r} is a file git "
+               f"cannot answer for")
+    server_log = capsys.readouterr().err
+    refusing_steps = (
+        "entity-server: project registration and backfill skipped",
+        "entity-server: workspace_uuid resolution failed: "
+        "Cannot resolve workspace_uuid",
+        "workflow-engine: workspace_uuid resolution failed: "
+        "Cannot resolve workspace_uuid",
+    )
+    assert {step: f"{step}: {refusal}" in server_log
+            for step in refusing_steps} == dict.fromkeys(refusing_steps, True)
 
 
 @pytest.mark.parametrize("start_order", _START_ORDERS)

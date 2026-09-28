@@ -215,9 +215,10 @@ def _require_workspace() -> str:
        there is no such row). The legacy id comes from the root commit, so
        it is the same from a subdirectory, a linked worktree or a second
        clone. Skipped when ``_project_id`` is empty or ``"__unknown__"``,
-       which that method maps to the unknown workspace. In an orphaned
-       worktree (a ``.git`` file git cannot answer for) the legacy id is a
-       hash of the path, and the entity server's startup mints no row for
+       which that method maps to the unknown workspace. Started at the root
+       of an orphaned worktree (a ``.git`` file git cannot answer for) or in
+       a subdirectory of one, the legacy id is a hash of the directory the
+       server started in, and the entity server's startup mints no row for
        it.
 
     A success is cached in ``_workspace_uuid``, which every write path

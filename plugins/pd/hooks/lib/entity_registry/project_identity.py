@@ -562,8 +562,9 @@ def resolve_workspace_uuid(
          checkout (:func:`_repository_root`); steps 2-4 key on that path.
          A checkout whose ``.git`` is a file git cannot answer for (an
          orphaned worktree, or a git older than 2.31) resolves no
-         workspace: it would key on its own path, and step 4 would mint
-         a workspace for it (:func:`_git_cannot_answer_for_git_file`).
+         workspace, from its root or from a subdirectory: steps 2-4 would
+         key on the directory's own path, and step 4 would mint a workspace
+         for it (:func:`_checkout_git_cannot_answer_for`).
       2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level)
          — self-healing: an orphaned file uuid is reconciled against the
          workspaces table (adopt the project_root row, or insert the missing
@@ -586,8 +587,8 @@ def resolve_workspace_uuid(
     ------
     ValueError: env var present but malformed.
     WorkspaceCorruptedError: workspace.json present but malformed; the
-        directory's ``.git`` is a file git cannot answer for; or, at step 4,
-        ``.claude/`` is missing.
+        ``.git`` of the checkout the directory is in is a file git cannot
+        answer for; or, at step 4, ``.claude/`` is missing.
 
     Side effects
     ------------
@@ -602,11 +603,13 @@ def resolve_workspace_uuid(
         return _validate_workspace_uuid(env_uuid)
 
     cwd = _repository_root(cwd)
-    if _git_cannot_answer_for_git_file(cwd):
+    unanswerable_checkout = _checkout_git_cannot_answer_for(cwd)
+    if unanswerable_checkout is not None:
         raise WorkspaceCorruptedError(
-            f"Cannot resolve workspace_uuid: the .git at {cwd!r} is a file "
-            f"git cannot answer for (an orphaned worktree, or a git older "
-            f"than 2.31), so no workspace is created for it."
+            f"Cannot resolve workspace_uuid: the .git at "
+            f"{unanswerable_checkout!r} is a file git cannot answer for (an "
+            f"orphaned worktree, or a git older than 2.31), so no workspace "
+            f"is created for it."
         )
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
     # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
@@ -887,11 +890,43 @@ def _git_cannot_answer_for_git_file(path: str) -> bool:
     repository's worktree). ``hooks/lib/common.sh``'s
     ``may_publish_plugin_cache`` makes the same test: sync-cache publishes
     nothing from such a checkout.
+
+    This tests *path* itself, so a caller holding a directory that may be a
+    subdirectory of the checkout goes through
+    :func:`_checkout_git_cannot_answer_for`, which finds the checkout first.
     """
     return (
         os.path.isfile(os.path.join(path, ".git"))
         and _git_dirs(path) is None
     )
+
+
+def _checkout_git_cannot_answer_for(path: str) -> str | None:
+    """The checkout *path* is in, when its ``.git`` is a FILE git cannot
+    answer for (:func:`_git_cannot_answer_for_git_file`); None otherwise.
+
+    The checkout is the nearest directory at or above *path* that has a
+    ``.git`` entry, a file or a directory. That is the walk
+    ``hooks/lib/common.sh``'s ``detect_project_root`` makes (``-e .git`` in
+    each directory up to, not including, ``/``), so it is where the
+    session-start hook roots a session started at *path*. A server started in a subdirectory of an
+    orphaned worktree is then in this class, as one started at its root is.
+    None when no ``.git`` exists up the tree: a directory in no repository
+    is not in this class.
+
+    Every place that tests for this class calls this:
+
+    - the entity server's startup, which then registers no project;
+    - :func:`resolve_workspace_uuid`, which then resolves no workspace.
+    """
+    directory = os.path.abspath(path)
+    while directory != os.path.dirname(directory):
+        if os.path.exists(os.path.join(directory, ".git")):
+            if _git_cannot_answer_for_git_file(directory):
+                return directory
+            return None
+        directory = os.path.dirname(directory)
+    return None
 
 
 def _compute_legacy_project_id(working_dir: str | None = None) -> str:
