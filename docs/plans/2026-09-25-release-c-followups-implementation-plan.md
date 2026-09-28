@@ -72,11 +72,16 @@ Each problem in the design's two triage tables is closed when the check named fo
 - **Anchors:** before editing, re-verify every file:line anchor on the task branch; the anchors here are from develop `84fc9376`.
   - **Moved:** find the symbol by name (codegraph), and record old → new in the task report.
   - **Gone or changed in meaning:** stop and escalate to the orchestrator.
-- **Landing:** Phases 2, 3 and 4 run side by side after Phase 1, and land in whatever order they finish.
-  - **Rebase rule:** a phase that finds develop has moved rebases onto develop, re-runs its integration QA (all gates), then fast-forwards.
+- **Landing:** Phases 2, 3 and 4 run side by side after Phase 1, and land in whatever order they finish. Phase R lands on develop only in the live-migration sitting, after the user's one yes (Phase R playbook, Part 3). Until then it waits on `followups-phase-r`, under the rebase rule below.
+  - **Rebase rule:** a phase that finds develop has moved rebases onto develop, re-runs its integration QA (all gates), then fast-forwards. A phase that rebases onto develop after Phase R has landed adopts Phase R's naming rule and row view (the re-key design, section 6). Strict-rule failures in its own new tests are its own to fix.
   - **Shared files:** the phases share some files, in separate hunks:
-    - `database.py` (2B edits `list_workflow_phases` and the writers; 4A edits a docstring);
-    - `hooks/tests/test-worktree-dispatch.sh` (3A at `:86`, `:132`; 4A at `:48-49`).
+    - `database.py` (Phase R re-keys `workflow_phases` and `phase_events`; 4A edits a docstring; 4C serializes the migration runner);
+    - `hooks/tests/test-worktree-dispatch.sh` (3A at `:86`, `:132`; 4A at `:48-49`);
+    - `hooks/lib/entity_registry/backfill.py` and `hooks/lib/workflow_engine/engine.py` (Phase R; 4A's W5.7 deletions);
+    - `mcp/test_workflow_state_server.py` (Phase R; 4A deletes tests; 4C may edit fixtures);
+    - `mcp/test_create_feature_lanes.py` (Phase R; 4C's fixtures);
+    - `hooks/sync-cache.sh` (3A; Phase R's R4-E guard);
+    - `mcp/entity_server.py` (2A and 2C; Phase 4's integration fix to `update_entity`'s metadata; Phase R's R4-B). Phase 2's rebase onto Phase 4 conflicted there, in `update_entity`'s call to `_process_update_entity` (2026-09-27).
 
     A rebase conflict goes back to the phase's implementer, then through the phase's QA.
 
@@ -256,6 +261,40 @@ It starts when Phase 1 has landed.
   - one W3.4 tool answering `workspace_unresolved`.
 - **Existing tests:** feature 129's four cross-workspace tests (named in W3.4) pass with their assertions unchanged.
 
+**Phase 2 integration:**
+- **Record (2026-09-26 to 2026-09-29):**
+  - **The tasks:**
+    - **2A:** QA passed at `d7c56f0f` (G1 4389 passed, 2 skipped).
+    - **2C:** its first run built nothing: every stage read the user's relayed "give me a status update" as its own instruction. Relaunched as a new run, it passed QA at `95daac82` (G1 4489 passed, 2 skipped).
+  - **The rebase:** onto `f3f5ada8` (develop plus Phase 4), `95daac82` → `2fbce9d4`.
+    - **One conflict:** `update_entity`'s call to `_process_update_entity`, where 2C's rewrite met Phase 4's metadata fix. The orchestrator resolved it as the union of both sides, because 2C's implementer run had ended; the round's review and QA verified it.
+  - **Run 1, review and QA at `2fbce9d4`:** not approved and failed.
+    - **Review:** 2 blockers, 6 warnings, 1 suggestion.
+    - **QA:** G1 1 failed, 4499 passed, 2 skipped. The failure was 4C's guard against 2A's two hand patches, which were dead since 4C.
+    - **The blockers:**
+      - that seam;
+      - servers in an orphaned worktree minted a workspace and wrote there.
+    - **The warnings,** including:
+      - a first session in a linked worktree minted its workspace keyed at the worktree, not the repository (L3);
+      - three over-claiming doc lines;
+      - stale recovery-thread prose.
+  - **The orchestrator's correction during the round:** its added carried finding C4 first proposed skipping the lifespan's mint whenever no workspace resolved. That would have broken W4's first-session contract (a repository with no `.claude/` registers through that mint). The run was stopped before the fixer edited anything, C4 was rewritten, and the run resumed.
+  - **One fix round:**
+    - `b99b1237`: the hand patches deleted;
+    - `f071d292`:
+      - the entity lifespan mints nothing for a `.git` file git cannot answer for;
+      - the mint is keyed at the repository root (L3);
+      - issue_spawn's label is restored;
+    - `c4eef3c1`: the docs, including C5, the manifest's "pass `project_id`" line that 2C made false.
+  - **One re-QA at `c4eef3c1`:**
+    - **Gates:** all matched: G1 4504 passed, 2 skipped under a fresh HOME left empty; G2 49/1; G3 0/0; G4 66/66; G5 158/1.
+    - **The one blocker left:** a server launched from a SUBDIRECTORY of an orphaned worktree still minted a workspace there.
+  - **The user's ruling (2026-09-28),** verbatim: "One targeted fix + re-QA (Recommended)".
+    - **Targeted fix:** `23872c56`: the orphan predicate is applied at the nearest ancestor with a `.git` entry (`project_identity._checkout_git_cannot_answer_for`), in the entity lifespan and in `resolve_workspace_uuid`.
+    - **Independent QA:** passed at `23872c56`: G1 4507 passed, 2 skipped under a fresh HOME left empty (4504 + 3 new cases); G2 49/1; G3 0/0; G4 66/66; G5 158/1; the new subdirectory cases fail on `c4eef3c1`; 11/11 probes ok.
+  - **Landed:** develop was fast-forwarded `f3f5ada8` → `23872c56`.
+  - **Evidence:** `agent_sandbox/2026-09-26/release-c-followups-execution/phase-2/`.
+
 ## Phase R (P1): re-key `workflow_phases` per entity (D3 ruling)
 
 **Why:** the user ruled that the re-key happens this round, through a survey, an inventory, a precise playbook and manual, and independent agent verification, before any code changes. It must be consistent with the design (rev 2.1) and future-proof.
@@ -312,8 +351,17 @@ It starts when Phase 1 has landed.
 
 At most one revision absorbs their findings; remaining blockers go to the user.
 
+**Phase R's first question batch, answered by the user on 2026-09-26** (Phase R playbook, section 0.4, "Batch 1 answered"):
+- **Q1, holding the live sitting this round, with pd disabled until it:** the user asked, verbatim, "since pd is off, isn't it a good time to fully re-key with any side effect?". The orchestrator read it as option 1 (hold the sitting this round; pd stays off) and told the user so. The live migration itself still waits for Q5's yes.
+- **Q2, the strict naming rule:** "Strict (Recommended)". R4-F1 to R4-F4 run.
+- **Q3, the three list tools with no resolved workspace:** "Refuse (Recommended)". R4-B scopes them to `_require_workspace()` (design W4.1's note).
+- **Q4, `scripts/migrate_db.py merge-entities`:** "Delete it (Recommended)". R4-E deletes it.
+
 **R4: execute.**
-- **Order:** once Phase 1 and 2A have landed, the playbook's tasks run under this plan's review protocol, gates and landing rules.
+- **Order:** once Phase 1, 2A and 2C have landed and the user has answered the playbook's first question batch (its section 0.4), the playbook's tasks run under this plan's review protocol, gates and landing rules. R4-C also waits for 4C, and R4-F3 for 4A.
+  - **Why 2C:** it edits `_resolve_ref_param` and the entity tools, which R4-B also edits.
+  - **Why 4C:** its serialized, monotonic migration runner keeps migration 26 from bricking a file.
+  - **Why 4A:** it deletes tests in `test_workflow_state_server.py`, R4-F3's largest file.
 - **Then:** F1 on the phase branch.
 - **The live migration** follows only on the user's yes, using the manual.
 
@@ -338,6 +386,18 @@ It starts when Phase 1 has landed, and runs beside Phase 2.
   They build temp repos with linked worktrees. HOME is a temp dir whose `.claude/plugins/installed_plugins.json` names a temp cache.
 - **The four edited scripts no gate runs** (`test-data-file-guard`, `test-promptimize-content`, `test-enriched-docs-content`, `test-worktree-dispatch`; N9): 3A's QA runs each once under a temp HOME, after reading it to confirm it is isolated. One that isn't isolated is recorded as unverified with N9.
 - **G4 runs twice:** from the scratch clone (13b and 13c run), and from a linked worktree added to that clone (13b and 13c skip).
+
+**Phase 3 integration:**
+- **Record (2026-09-26):**
+  - **Run 1, review and QA at `8dcd406a`:** failed, with 1 blocker and 2 warnings.
+    - **The blocker:** a session started in an orphaned nested worktree minted a phantom workspace. W4.4's `-e` rooted the session at the orphan, where git cannot answer, so the workspace lookup keyed on the orphan's own path and wrote a new workspaces row and a `workspace.json`. On `c1bbfae0` the same session changed no row.
+    - **Warning C1:** stale docs still described the old root detection and sync-cache publishing.
+    - **Warning C2:** sync-cache published where git cannot answer: an orphaned worktree, a `.git` file naming a missing gitdir, a failing git and a git older than 2.31.
+  - **One fix round,** `bfe3a0b7`: a `.git` file git cannot answer for resolves no workspace and publishes no plugin; sync-cache copies `marketplace.json` only with pd's plugin; the docs say where sync-cache publishes (design W4.4's execution note).
+  - **One re-QA: passed at `bfe3a0b7`,** with 0 blockers. The fix round's 8 new tests fail on `8dcd406a`.
+    - **Gates:** G1 4362 passed, 2 skipped (3A's 4354 plus the 8); G2 49 passed, 1 skipped; G3 0 errors, 0 warnings; G4 run twice, 66/66 from the scratch clone and 64/64 from a nested linked worktree, where 13b and 13c skip; G5 at base (the 7 `TestMigration6` failures).
+  - **Landed:** develop was fast-forwarded `c1bbfae0` → `bfe3a0b7`.
+  - **Evidence:** `agent_sandbox/2026-09-26/release-c-followups-execution/phase-3/integration/`.
 
 ## Phase 4 (P2): tooling and docs (W5)
 
@@ -367,12 +427,35 @@ It starts when Phase 1 has landed, and runs beside Phases 2 and 3.
 - **Measured:** G5 has 0 failures, and leaves `git status --short` unchanged.
 
 **4C: test isolation** (W5.6, added 2026-09-26). Runs beside 4A and 4B.
-- **Files:** `NotificationQueue`'s default path and `test_complete_phase_closes.py`; `server_lifecycle.py` (`PID_DIR`, `start_parent_watchdog`) and the fixtures that patch them by hand (for example `plugins/pd/mcp/test_create_feature_lanes.py`); migration 11 or its concurrency test.
+- **Files:** `NotificationQueue`'s default path and `test_complete_phase_closes.py`; `server_lifecycle.py` (`PID_DIR`, `start_parent_watchdog`) and the fixtures that patch them by hand (for example `plugins/pd/mcp/test_create_feature_lanes.py`); the migration runner, `_migrate` and `_migrate_v2` in `database.py` (amended 2026-09-26: the race is in the runner, not in migration 11; design W5.6).
 - **Shared files:** 4A deletes tests in `test_workflow_state_server.py`, and 4C may edit its fixtures. Separate hunks; a rebase conflict goes back to the implementer, as the landing rules say.
 - **Measured:**
   - a G1 run with HOME set to a fresh empty directory leaves no file under its `.claude/`;
   - the race test passes 50 consecutive runs;
   - G1's count is unchanged, apart from new isolation tests.
+
+**Phase 4 integration:**
+- **Record (2026-09-26 to 2026-09-27):**
+  - **Run 1, review then QA at `d5d6e2bc` (base `c1bbfae0`):**
+    - **Review:** approved, with carried findings C1–C4 confirmed as warnings.
+    - **QA:** failed, with 4 blockers. The gates matched (G1 4340 passed, 2 skipped under a fresh HOME; G5 0 failed, 157 passed, twice).
+      - **W5.8's recipe claim was false:** the `update_entity` tool erased an entity's metadata whenever `metadata` was omitted. It passed `parse_metadata(None) == {}`, which `EntityDatabase.update_entity` reads as "clear". This was pre-existing, and it also hit `/pd:cleanup-brainstorms` and every status-only update.
+      - **C3:** `overview.md:20` claimed a card for all active work.
+      - **C4:** the manifest's recipe acts in the calling session's workspace only.
+      - **C1:** the manifest generator opened the live file with `mode=ro`, which created `-wal` and `-shm` beside it on SQLite 3.53.4.
+  - **One fix round:**
+    - `f20080af`: the tool passes `metadata=None` when it is omitted, and an explicit `{}` still clears; the recipe's scope line; the generator opens with `immutable=1` when no `-wal` exists.
+    - `39fc5f41`: C2, a bounded wait on the migration lock (design W5.6's note).
+    - `a412c685`: C3, and the migration comments.
+  - **One re-QA at `a412c685`:**
+    - **Gates:** all at the expected figures: G1 4345 passed, 2 skipped; G2 49/1; G3 0/0; G4 66/66; G5 0 failed, 158 passed, twice.
+    - **Red-first:** 6/6 fail on `d5d6e2bc`.
+    - **The one blocker:** the bounded wait sends a stopped lock holder's peers into a degraded start. The pre-existing recovery thread then published a connection opened in another thread, so the entity server failed every call.
+  - **The user's ruling (2026-09-27),** verbatim: "Land; Phase 2 removes it (Recommended)". Phase 2's W4.2 deletes both recovery threads, and Phase 2's integration re-checks the scenario.
+  - **The rebase:** `git rebase --rebase-merges` onto develop `bfe3a0b7`, with no conflict. The rebased tree differs from `a412c685` by exactly Phase 3's patch.
+  - **The rebase QA:** passed at `f3f5ada8`: G1 4359 passed, 2 skipped under a fresh HOME left empty; G2 49/1; G3 0/0; G4 66/66 from a clone and 64/64 (Skipped: 3) from a nested linked worktree; G5 0 failed, 158 passed, twice; 17/17 probes.
+  - **Landed:** develop was fast-forwarded `bfe3a0b7` → `f3f5ada8`.
+  - **Evidence:** `agent_sandbox/2026-09-26/release-c-followups-execution/phase-4/integration/`.
 
 ## Gates
 
@@ -404,7 +487,7 @@ A new failure that is explained but not fixed does not pass. It goes through the
 
 ## Final checks
 
-**F1: live-copy check.** It runs at Phase 1's integration, on the phase branch, and again at F2, on develop.
+**F1: live-copy check.** It runs at Phase 1's integration and at Phase R's (R4), each on the phase branch, and again at F2, on develop.
 - **Why it exists:** it replays the changed session start, backfill and create-feature against the real registry's shapes. Synthetic fixtures don't carry those shapes: 21 workspaces, 7 shared type_ids, mixed `artifact_path`s, 181 archived rows (135 of them features) and legacy ids. It is Release C's live rehearsal, repeated. (The archived figure was corrected 2026-09-26 from a stale 128, re-measured read-only on the live file.)
 - **Setup:**
   1. **The code:** a scratch clone of the branch under test, whose own orchestrator and entity server run every step.
@@ -453,15 +536,28 @@ A new failure that is explained but not fixed does not pass. It goes through the
   - the results go in the phase report.
 - **A failure** is a phase integration QA failure. It gets one fix round and one F1 re-run, then escalation.
 - **A changed live fingerprint** means something outside this plan wrote the file, for example the user's own session. The orchestrator stops and asks the user. The copy-based results still stand, and the change and its cause are recorded.
+- **Whenever the code under test holds Phase R:** at Phase R's integration (Phase R playbook, section 1.12), and at F2 after the sitting.
+  - **Setup step 2** (the snapshot): after making S, open one copy of S with the code under test, which migrates it (Phase R's migration tripwire is inert on copies). Fingerprint that copy as the baseline. Each step starts from a copy of the migrated S.
+  - **Row fingerprint:** `workflow_phases` sorts by its primary key, now `entity_uuid`.
+  - **Step 4's "Before":**
+    ```sql
+    SELECT e.uuid FROM entities e
+    LEFT JOIN workflow_phases wp ON wp.entity_uuid = e.uuid
+    WHERE wp.entity_uuid IS NULL AND e.workspace_uuid = ? AND e.kind <> 'project'
+      AND e.is_deleted = 0
+    ```
+    This is the backfill's own rule: it lists the workspace's entities (backfill.py:253), which leaves out soft-deleted ones by default (`list_entities`, database.py:8282), and skips projects (backfill.py:254). On today's data it selects pedantic-drip's 28 row-less entities (0 soft-deleted entities today).
+  - **Step 4's "Expected":** exactly those entities gain rows, each keyed by its own `entity_uuid`.
+  - **Steps 1–3 (amended 2026-09-26) hold unchanged under Phase R.** Step 1's registration clause covers a brainstorm whose type_id only another workspace holds, which registers here once R4-C removes 1C's skip. Step 3's `feature:035` check concerns a feature, which brainstorm registration never touches.
 
-**F2: final gate.** After all four phases land:
+**F2: final gate.** After all four phases land, and Phase R has landed or the user has deferred it (recorded):
 - G1–G5 on develop;
 - F1 on develop;
 - the follow-ups section of `docs/plans/2026-09-22-structural-identity-completion-plan.md` updated. Each item is marked with the commit that closed it, or with its row in the design's "Deferred" table, which is on develop since kickoff.
 
 **F3: hand-offs to the user.** Nothing is published, pushed or written live without a yes.
 - **After Phase 1 lands,** the orchestrator asks whether to publish the plugin cache (`sync-cache.sh` from the main checkout) and push develop. With Phase 1 published, the user can re-enable pd in their settings; the plan never re-enables it.
-- **After Phase R's code lands,** it asks whether to migrate the live registry, per Phase R's manual.
+- **When Phase R's branch is ready to land,** it asks one question: land Phase R, migrate the live registry and publish, in one sitting with pd disabled in every session (Phase R playbook, Part 3). The order is: migrate from the commit that will land, verify, land, publish. It asks at the same time about the five namesakes and the operator tool's fate (Phase R playbook, section 0.4, batch 2).
 - **After F2,** it asks about:
   - publishing and pushing again;
   - D2 (leave, or restore the archived features);
@@ -477,7 +573,9 @@ A new failure that is explained but not fixed does not pass. It goes through the
    - closed by a merged change;
    - in the design's "Deferred" table;
    - or settled by a user decision (D2 for N7, D4 for the README half of W5.3).
-2. **Tests:** every test the design names exists and passes on develop. Its red output on its base is in the task report, or the design marks it keep-green.
+
+   Under a recorded deferral of Phase R's sitting, the type_id-only updates, W3.1–W3.3 and problem 1's read-scoping stay in the design's Deferred table, each marked to reopen when the sitting runs.
+2. **Tests:** every test the design names exists and passes on develop. Its red output on its base is in the task report, or the design marks it keep-green. Tests that live only on `followups-phase-r` under a recorded deferral are exempt.
 3. **Gates:** G1–G5 pass on develop at F2.
 4. **Live copy:** F1 passes at Phase 1's integration and at F2, and the live registry's fingerprint matches kickoff's, or its change is recorded as F1 says.
 5. **Status recorded:** the completion plan's follow-ups section records each item's resolution.

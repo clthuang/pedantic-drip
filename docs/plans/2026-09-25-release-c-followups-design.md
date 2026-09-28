@@ -376,6 +376,15 @@ Each has a recommended default. The plan follows the default unless the user rul
      - `test_issue_spawn.py::TestAC95ParentValidation::test_cross_workspace_parent_spawn_succeeds`.
 
      The last one's fixture must set a workspace, since W4.1 removes the `__unknown__` fallback it relied on. The W3–W5 prototype failed it with `workspace_unresolved`.
+   - **Execution note (2026-09-27, task 2C and the Phase 2 integration; landed at `23872c56`):**
+     - **uuid-only calls need no workspace:** `_require_workspace()` runs only when a type_id or a non-uuid ref needs resolving (D5).
+       - **The exception:** `create_key_result`, whose new key result registers in the server's workspace, so it always needs one.
+       - **Where it lives:** `_resolve_ref_param` returns `(uuid, type_id)`.
+     - **Dropped:** `update_entity`'s `project_id` parameter. The MCP argument model ignores an unknown key, and no caller passed it.
+     - **Kept:** each tool's soft-delete matching from before (`ref_may_be_deleted` for the dependency and alignment tools).
+     - **Confirmations and the cycle and has-children refusals** name type_ids.
+     - **Reads:** the read tools (`get_entity`, `get_lineage`, `get_entity_tags`, `get_okr_alignments`) keep the legacy resolution (D3, Phase R).
+     - **Not scoped yet:** `update_entity(new_project_id=...)`'s re-attribution cascade still moves the one type_id-keyed `workflow_phases` row (`database.py:8986-8988` at `23872c56`), even when another workspace owns it (W3.3, Phase R).
 
 **Named, and deferred with the re-key (D3):**
 - **Writers keyed by type_id alone, when called without a workspace:**
@@ -432,6 +441,7 @@ Each has a recommended default. The plan follows the default unless the user rul
        - `init_feature_state`, `init_project_state` and `init_entity_workflow`;
        - `transition_entity_phase`, `record_backward_event`, `record_mini_spec` and `promote_task`.
    - **Read tools** keep today's behaviour.
+     - **Superseded for three list tools (2026-09-26, the user's Phase R ruling Q3):** once Phase R's R4-B lands, `list_features_by_phase`, `list_features_by_status` and `query_ready_tasks`, called with `project_id` omitted, refuse with `workspace_unresolved` when no workspace resolves. R4-B scopes them to `_require_workspace()`. `project_id='*'` still lists every workspace.
    - **What goes:** the `_project_id or "__unknown__"` fallbacks (`entity_server.py:633`, `:888`, `:1538`).
    - **Side effect:** a successful retry may write `.claude/pd/workspace.json`, the normal file of a pd project.
    - **What this fixes:**
@@ -453,6 +463,18 @@ Each has a recommended default. The plan follows the default unless the user rul
      - its hook state (`.claude/.yolo-hook-state`, `.claude/.plan-review-state`) and `pd-state.diff.md` live in the worktree;
      - a gitignored `.claude/pd.local.md` is absent there, so the defaults apply;
      - the workspace still resolves to the repository's.
+   - **Execution note (2026-09-26, the Phase 3 integration, `bfe3a0b7`):** the list above holds for a healthy nested worktree. A `.git` FILE git cannot answer for fails closed.
+     - **Which checkouts:** for example an orphaned worktree, whose `<common dir>/worktrees/<name>` is gone; a `.git` file naming a missing gitdir; and any worktree under a failing git or a git older than 2.31, which prints the `--path-format` option back as a third line.
+     - **No workspace resolves:** `resolve_workspace_uuid` raises `WorkspaceCorruptedError` (`project_identity.py:605-610` at `bfe3a0b7`; since the Phase 2 note below, the guard at `:606-607` uses the walk) instead of minting a workspace keyed on the checkout's own path.
+     - **Root detection is unchanged:** `detect_project_root` still roots the session at such a checkout, so sync-cache's check sees its `.git` file.
+     - **sync-cache (change 5) publishes only where `may_publish_plugin_cache` allows** (`hooks/lib/common.sh`): where git prints exactly two equal paths (a main checkout), or where the root has no `.git` file. So nothing publishes from such a checkout.
+     - **sync-cache copies `marketplace.json` only when pd's `plugin.json` exists,** so another plugin repository's `marketplace.json` never replaces pd's.
+     - **Why:** Phase 3's integration run 1 found a session in an orphaned nested worktree minting a phantom workspace where `c1bbfae0` changed no row (its blocker), and sync-cache publishing where git cannot answer (warning C2).
+   - **Execution note (2026-09-29, the Phase 2 integration, `23872c56`): the servers agree.**
+     - **Finding the checkout:** both servers find the checkout by walking up from the directory they started in to the nearest `.git` entry, as `detect_project_root` does (`project_identity._checkout_git_cannot_answer_for`). So the rule holds from the root and from any subdirectory; `resolve_workspace_uuid` uses the same walk.
+     - **Such a checkout mints nothing:** the entity server's lifespan skips its project upsert and backfills there, so the servers answer `workspace_unresolved` and write nothing.
+     - **A first session keys its workspace at the repository root** (`_repository_root`), not a linked worktree's path. So a `.claude/` created at the main checkout later resolves the same workspace.
+     - **The one accepted exception:** under a git older than 2.31, a healthy worktree is in this class. The hook refuses there, but the servers' `_require_workspace()` step 3 still resolves the repository's own workspace through the root-commit legacy id.
 5. **`sync-cache.sh` publishes only from the main checkout.**
    - **Detection:** when `git rev-parse --git-dir` and `--git-common-dir` differ, the session is in a linked worktree, and nothing is published.
    - **Why:** this stops a worktree publishing its branch's plugin, or the main checkout's half-edited one, over the shared cache (premortem story 9).
@@ -472,6 +494,7 @@ Each has a recommended default. The plan follows the default unless the user rul
 
   Today it refuses (entity server) or writes to `__unknown__` (workflow server).
 - **`/pd:add-to-backlog` in a first session:** `init_entity_workflow` succeeds. Today it fails with "not found in project '__unknown__'".
+  - **Corrected 2026-09-26** (task 2A's review and QA): "Today" predates Phase 1. At `c1bbfae0` a first session's `init_entity_workflow` already succeeds, since Phase 1's W2.1 made `upsert_workflow_phase` resolve a globally unique type_id when no workspace is given (`upsert_workflow_phase` and `_workflow_row_owner`, `database.py:10300-10328` and `:9961-9984` at `c1bbfae0`). The test is red on the base only through W4.1's resolve-and-cache: its one assertion that fails there is that the workflow server resolved and cached the repository's workspace.
 - **Refuse:** a server with no resolvable workspace answers `workspace_unresolved` from `init_feature_state`, and writes no row.
 - **Relabel:** create-project with another workspace's parent answers `cross_workspace_parent`.
 - **Root detection:** in a nested linked worktree, `detect_project_root` answers the worktree's root. Today it answers the main checkout.
@@ -523,10 +546,25 @@ Each has a recommended default. The plan follows the default unless the user rul
    - **Notifications:** a G1 run under the real HOME appends about 14 lines to `~/.claude/pd/notifications.jsonl`, through `test_complete_phase_closes.py` and `NotificationQueue`'s default path. The file already holds 7,114 test lines out of 7,657. Every test that queues a notification writes under its own tmp dir.
    - **Server lifecycle:** `server_lifecycle.PID_DIR` is computed from HOME at import time, so a test that runs a real lifespan writes the real `~/.claude/pd/run` unless it patches it. `start_parent_watchdog` can `os._exit` a re-parented pytest run. Both hazards become structural, not per-test: no test can write the process HOME's `run/`, and none can be killed by the watchdog.
    - **The race:** `test_database.py::TestMigration11ConcurrentRunners::test_migration_11_concurrent_runners` fails about 2 runs in 30 on develop (a duplicate-column race). Find whether migration 11 races under concurrent runners, which matters because two servers can start at once. If it does, fix the migration; if only the test races, fix the test.
+     - **Amended 2026-09-26** (after Phase R's prototype; task 4C's amended brief): the race is in the migration runner, not in migration 11, so 4C fixes the runner.
+       - **The mechanism:** `EntityDatabase._migrate` and `_migrate_v2` read the schema version once, with no lock, then stamp each step through `_upsert_metadata`, a non-monotonic upsert that can lower a higher stored version (`database.py:11078`, `:11191` and `:5896` at `c1bbfae0`). So two processes opening one file with a step pending, such as two MCP servers starting at once, both run the same steps, and the loser stamps a lower version over the winner's.
+       - **Why it blocks Phase R** (R3's verification, blast blocker 1): once Phase R's migration 26 exists, concurrent openers can brick a file. In Phase R's prototype, two runners on a v10 file bricked it in 12 of 20 rounds: the loser stamped 11 over 26, and every later open failed in migration 12. On the base, 1 of 12 fresh-file rounds bricked the file at stamp 7.
+       - **The fix contract:**
+         - **Serialized:** a pending run, on either chain, holds a cross-process lock file beside the database, `<db>.migrate.lock`, and re-reads the version under it, so an opener that waited runs no step a peer already applied;
+         - **Monotonic:** each step's stamp goes through `_stamp_schema_version`, which never lowers a stored higher version;
+         - **No lock when nothing is pending:** an open that finds the file at this build's newest version, or a newer one, takes no lock, so only the first open after a schema change can wait;
+         - **Single-process behaviour unchanged:** resumable after a crash between steps, idempotent on re-open, and the C23 future-file guard (`_refuse_if_file_is_from_the_future`) still fires first.
+       - **Tests,** red-first on `c1bbfae0` through a probe that forks runners: a fresh-file race, an old-file race on the v1 chain, the v2 chain with a pending step, and the monotonic stamp. The existing race test keeps its subject. QA reruns the probe on the head: 0 bricked files in at least 20 rounds of each shape.
+       - **Sweep:** `_migrate`'s and `_migrate_v2`'s docstrings, and any doc that says a migration runs once per file.
+       - **Order:** it lands before Phase R's R4-C.
    - **Done when:**
      - G1 run with HOME set to a fresh empty directory leaves no file under that directory's `.claude/`;
      - the race test passes 50 consecutive runs;
      - no test patches `PID_DIR` or the watchdog by hand any more.
+   - **Execution note (2026-09-27, Phase 4's integration, `39fc5f41`): the migration lock's wait is bounded.**
+     - **The bound:** an opener polls the lock (`LOCK_EX|LOCK_NB`) every `_MIGRATION_LOCK_POLL_SECONDS` (0.05 s) for at most `_MIGRATION_LOCK_WAIT_SECONDS` (15 s). It then raises `sqlite3.OperationalError` naming `<db>.migrate.lock` (`database.py:5947-5965` at `f3f5ada8`). The MCP servers' `_init_db_with_retry` already catches that error, so the server starts degraded.
+     - **Why:** a stopped or stuck holder no longer stalls every other opener indefinitely. Only an open with a migration step pending can wait, and a crashed holder releases the lock automatically.
+     - **A consequence ruled on by the user:** a degraded server stays degraded until restarted (W4.2). Before W4.2 landed, the old recovery thread brought such a server back with a connection opened in another thread (Phase 4's integration re-QA). The user ruled on 2026-09-27: "Land; Phase 2 removes it (Recommended)".
 7. **Delete the code Phase 1 left without a production caller** (added 2026-09-26).
    - **From W2.6:** `backfill._derive_next_phase`, `PHASE_SEQUENCE` and `VALID_MODES`, with their unit tests.
    - **From W1.5:** `engine._kanban_column_for` and `_PHASE_TO_KANBAN`; hydration was their only caller.
@@ -541,6 +579,12 @@ Each has a recommended default. The plan follows the default unless the user rul
 
      Correct all three: archival sets the `is_archived` flag and leaves `status` alone, and the recipe is `update_entity(type_id=..., archived=true)`. Re-measure the event-row claim against `set_archived`. The generator runs only against a copy of the registry made as the plan's safety section says.
    - **The schema page:** `docs/entity-schema.html:447` describes `sync_entity_statuses` as "Reconcile .meta.json → DB". It now registers brainstorms from tracked `.prd.md` files. The row's text and its read/write cells are re-derived from the code by hand, with a dated note, since the page's generator is not in the repo.
+
+   - **Execution note (2026-09-27, Phase 4's integration, `f20080af`):**
+     - **The recipe's claim was true only after a tool fix.** The `update_entity` tool erased an entity's metadata whenever `metadata` was omitted: it passed `parse_metadata(None) == {}`, which `EntityDatabase.update_entity` reads as "clear". This was pre-existing, and it also hit `/pd:cleanup-brainstorms` and every status-only update. It now passes `None` when `metadata` is omitted; an explicit `{}` still clears. `plugins/pd/mcp/test_update_entity_keeps_metadata.py` pins it.
+     - **The recipe's scope:** the manifest says to run the recipe from the listed project's session, because the tool resolves a type_id in the calling session's workspace (W3.4).
+     - **The generator's open:** it opens the registry with `immutable=1` when no `-wal` exists, and `mode=ro` only when one does, so a regeneration run never writes beside the live file.
+     - **Historical loss:** entities updated through the tool before this fix may have lost their metadata in the live registry. Any restore is a live write that needs the user's yes, so it is left for F3.
 
 ## Order and gates
 

@@ -203,6 +203,7 @@ These amend D1–D7; where they conflict, the amendment wins.
 - **D4a, degraded mode.** Malformed ids change from ValueError to None. Recorded, and pinned by a degraded test: `feature:../x` returns None.
 - **D5a, init.** It calls `check_feature_dir_name` directly.
 - **D7 replaced.** `display.rename_entity` runs only against the v2 `events` schema, which has no `entity_id` column; the registry schema has no events table (plan review blocker 3, verified by its probe). It cannot break the invariant on the registry today. No change. Recorded follow-up: if it is ever wired to the registry, it must take a new entity_id and compose the type_id from it.
+- **D7's premise corrected (2026-09-29, release C follow-ups W5.4, N10).** The premise above came from a fresh v1 database. The live registry (v2 generation) has an `events` table, which `rename_entity` appended to, and `entities.entity_id`, which its type_id-only UPDATE would have left stale. So the invariant was breakable on the registry. The follow-up is moot: `display.py`, and `rename_entity` with it, is deleted (W5.1).
 - **D6 per reader.** The disagreeing-row test (D6.1) runs for every engine reader (transition, validate, hydration, degraded) and every validator caller (activate, the MCP prechecks, reconcile_frontmatter). Additional tests:
   - D6.4's hydration assertion;
   - hydration returns None on a name-check ValueError;
