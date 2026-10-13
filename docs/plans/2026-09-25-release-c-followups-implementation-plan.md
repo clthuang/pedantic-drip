@@ -87,13 +87,16 @@ Each problem in the design's two triage tables is closed when the check named fo
 
 ## Review protocol
 
-1. **Per task:**
-   1. one implementer;
-   2. an independent review;
-   3. a fix round, only if the review has findings, and at most one;
-   4. an independent QA that re-runs the task's red-first tests and all gates.
+1. **Per milestone** (since 2026-10-13; the user: "reduce the review and QA cadence. Keep Code review and QA after each phase milestone implementation."):
+   1. **Each task:** one implementer, who writes red-first and runs all five gates on its final commit. The orchestrator merges the task into the phase branch and runs G1 on the merged head. No per-task review or QA.
+   2. **At the milestone,** once all of its tasks have merged: one independent code review and one independent QA of the milestone's whole diff, run side by side. Then at most one fix round, covering both, and one QA re-run.
+   3. **The milestones left:**
+      - **M1, Phase R code-complete:** R4-F4, R4-F4b, R4-G, R4-H. Its review and QA are Phase R's integration review and QA (playbook 1.12).
+      - **M2, F2 on develop.**
+   4. **Code review routing:** Codex first when the user's Codex reviewer is enabled, with a Claude reviewer as the fallback. QA stays a Claude agent, because it runs the gates.
+   5. **Before 2026-10-13, every task had its own** independent review, at most one fix round, and an independent QA. That covers Phases 1–4, and Phase R's R4-A to R4-E and the five codemod slices.
 2. **QA findings:** at most one fix round, then QA re-runs once. No confirmatory re-run follows a clean pass.
-3. **Per phase,** after its tasks merge: an independent integration review and QA, then at most one fix round and one QA re-run, as in step 2.
+3. **Per phase:** the review and QA of the phase's last milestone serve as its integration review and QA. There is no separate pass.
 4. **Escalation:** a blocker still open after its fix round goes to the user.
    - **While it waits:** tasks that don't depend on it continue, and its phase does not land.
 5. **Concurrency:** at most 6 agents at a time (implementers, reviewers and QA together).
