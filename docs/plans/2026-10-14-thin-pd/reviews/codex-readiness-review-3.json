@@ -1,0 +1,37 @@
+{
+  "verdict": "READY",
+  "summary": "All six scoped findings are resolved; the 16 prior resolutions remain resolved. No new defects were found in the supplied diff hunks.\nRuntime assumptions still require the planned bake-off (docs/plans/2026-10-14-thin-pd-native-design.md:342-345).\nRead-only review: no files modified, staged or committed; prohibited scripts were not run; the registry database was not opened.",
+  "findings": [
+    {
+      "id": "C4",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:72 now requires 'no file under source_paths, test_paths or fixture_paths changed since'. docs/plans/2026-10-14-thin-pd/build-tasks.md:209 requires a retro-only commit to pass and a later source, test or fixture change to fail."
+    },
+    {
+      "id": "C5",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:140 requires the conductor to record calvin_ledger before dispatch and permits 'that exact path and nothing else'; line 865 matches. docs/plans/2026-10-14-thin-pd/build-tasks.md:304-308 tests the assigned path, rejects another pattern-valid ledger, and rejects every write when authorization is absent. The parent-session identifier assumption has an explicit bake-off check at docs/plans/2026-10-14-thin-pd-native-design.md:348."
+    },
+    {
+      "id": "C8",
+      "status": "resolved",
+      "evidence": "All seven formerly bare self-test commands now use 'plugins/pd/scripts/': docs/plans/2026-10-14-thin-pd/build-tasks.md:155,178,220,237,253,318,409. The existing pd-html command at line 145 also uses its path. No bare self-test invocation remains."
+    },
+    {
+      "id": "C10",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:264 requires instrumentation recording 'every path opened and every connection closed'; lines 265-267 require exactly one read-only source connection, closure 'before step 1', and every later open targeting the copy. This excludes continued migration reads through the original connection."
+    },
+    {
+      "id": "C14",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:389 names '~/.claude/pd/gate/<repo key>/<feature id>.json'; line 390 explicitly requires 'two fixture repositories with the same feature id' to retain 'separate totals and budgets', matching docs/plans/2026-10-14-thin-pd-native-design.md:278."
+    },
+    {
+      "id": "N1",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:173 moves template compatibility into T3.5's self-test and explicitly adds T3.4 as a dependency. T3.4's proof at lines 155-165 no longer requires T3.5; its prerequisite remains T3.2 at line 153."
+    }
+  ],
+  "new_in_diff": []
+}
