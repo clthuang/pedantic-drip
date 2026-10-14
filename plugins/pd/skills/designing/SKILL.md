@@ -5,7 +5,9 @@ description: Quality criteria for a feature's Design section. Use when writing o
 
 # Designing
 
-`## Design` extends the same `shape.md` the requirements live in, and carries four things.
+`## Design` extends the same `shape.md` the requirements live in, and carries five things.
+
+**Architecture diagram.** An `### Architecture` subsection holding one fenced `mermaid` block: the modules, the data that flows between them, and an edge label naming the contract that governs each crossing. It shows where the boundaries are; the contracts say what crosses them. Every edge carries a contract and every contract sits on an edge — an edge without one is an unpinned seam. The diagram names modules and edges only and never restates a signature. Even a one-module change draws its module and its callers.
 
 **Decisions with rationale.** Per choice: what was decided, the alternatives rejected and why, the principle it serves (KISS, YAGNI, DRY, single responsibility), and its evidence — `file:line`, a documentation URL, or first-principles reasoning. A choice with no rejected alternative is a description, not a decision.
 

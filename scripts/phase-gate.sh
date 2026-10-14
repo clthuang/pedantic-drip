@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # phase-gate.sh — FR-4 tier-1 mechanical phase-boundary gate (workflow-rebuild).
 # Zero-dispatch checks: artifact existence, required sections, duplicate
-# contract blocks (#074 restatement class). LLM review moments are NOT here.
+# contract blocks (#074 restatement class), the design's architecture diagram.
+# LLM review moments are NOT here.
 #
 # Usage: phase-gate.sh <phase> <feature-dir> [--express]
 #   phase ∈ specify|design|create-plan|implement|finish
@@ -49,6 +50,9 @@ case "$PHASE" in
     need_file shape.md
     need_section shape.md Requirements
     need_section shape.md Design
+    # The design draws its architecture: a mermaid block inside ## Design.
+    [ -f "$DIR/shape.md" ] && ! awk '/^## /{d=($0 ~ /^## Design/)} d && /^```mermaid/{f=1} END{exit !f}' "$DIR/shape.md" &&
+      say "shape.md ## Design missing its architecture diagram (a \`\`\`mermaid block)"
     [ -n "$(dupe_contract_blocks)" ] && say "duplicate contract block in artifact set (pin each contract once)"
     ;;
   create-plan)

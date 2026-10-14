@@ -11,7 +11,7 @@ Contract command. Shared mechanics (entry, exit, YOLO, review gate, dispatch hyg
 
 **Inputs:** `shape.md` `## Requirements` (specify output); engine phase state.
 
-**Output:** `shape.md` `## Design` section — decisions with rationale, data/schema changes, each interface contract pinned in exactly ONE code block (a second restatement anywhere in the artifact set is a defect), risks with mitigations, test strategy.
+**Output:** `shape.md` `## Design` section — an `### Architecture` mermaid diagram (modules, data flows, the contract on each edge), decisions with rationale, data/schema changes, each interface contract pinned in exactly ONE code block (a second restatement anywhere in the artifact set is a defect), risks with mitigations, test strategy.
 
 **Steps:**
 1. Engine entry (workflow-transitions) with `target_phase="design"`.

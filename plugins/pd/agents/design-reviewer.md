@@ -99,6 +99,7 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 ### Completeness
 
 - [ ] All component boundaries have defined interactions
+- [ ] The `### Architecture` mermaid diagram matches the contracts: every edge names a contract that is pinned in a code block, every pinned contract sits on an edge, and no edge restates a signature
 - [ ] Data flows are explicit (what goes in, what comes out)
 - [ ] Error handling is specified, not hand-waved
 - [ ] Edge cases are addressed
