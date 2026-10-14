@@ -38,11 +38,11 @@ T2.1 deletes `transition_gate/` only after this file is committed (build-tasks T
 | G-31 | `brainstorm_readiness_gate`: the PRD readiness loop | dropped | A PRD gets no review; calvin covers it at Criteria (§A2 row 1, §A8.3 S2) |
 | G-32 | `brainstorm_quality_gate`: the PRD quality review loop | dropped | `prd-reviewer` retires (§A8.3 S2) |
 | G-33 | `brainstorm_readiness_gate`: blockers remain or the cap is reached | dropped | As G-31 |
-| G-34 | `review_quality_gate` (create-plan): the plan review approved or capped | dropped | The test-case review is the conductor's bounded loop (§A2 row 4); an open blocker it leaves shows in `pd-status` and holds the `Stop` gate (§A5, §11). No script requires the `review` entry itself (judgment call 1) |
+| G-34 | `review_quality_gate` (create-plan): the plan review approved or capped | dropped | The test-case review is the conductor's bounded loop (§A2 row 4); an open blocker it leaves shows in `pd-status` and holds the `Stop` gate (§A5, §11). No script requires the `review` entry itself (D18: the user, "No, as planned") |
 | G-35 | `phase_handoff_gate` (create-plan): the handoff review | dropped | As G-34: one review moment per stage, no separate handoff review (§A8.3 S2) |
 | G-36 | `review_quality_gate` (create-tasks) | dropped | No emitter since feature 134 folded `create-tasks` into `create-plan` (absent from `PHASE_GUARD_MAP`); the test-case review covers it |
 | G-37 | `phase_handoff_gate` (create-tasks) | dropped | As G-36 |
-| G-38 | `review_quality_gate` (design): the design review approved or capped | dropped | As G-34, for the design review (§A2 row 3; judgment call 1) |
+| G-38 | `review_quality_gate` (design): the design review approved or capped | dropped | As G-34, for the design review (§A2 row 3; D18) |
 | G-39 | `phase_handoff_gate` (design) | dropped | As G-35 |
 | G-40 | `review_quality_gate` (implement): the code review approved or capped | phase-gate | The code review moves to Verify, and `phase-gate.sh verify` requires no open blockers (§A2 row 6) |
 | G-41 | `implement_circuit_breaker`: the review-iteration cap | pd-lint | The cap becomes control flow, a loop bounded at three in `verify-change` and `implement-tasks` (§A4); the `capped` entry it leaves must have its four lists and backlog lines (§9) |
@@ -65,9 +65,9 @@ T2.1 deletes `transition_gate/` only after this file is committed (build-tasks T
 | pd-lint | 6: G-08, G-18, G-22, G-23, G-41, G-50 |
 | dropped | 28 |
 
-## Judgment calls for the user's review
+## The user's ruling (D18, 2026-10-15)
 
-1. **The design and test-case reviews aren't mechanically required** (G-34, G-35, G-38, G-39). This follows the plan: §A2's "Mechanical gate" column for Contracts and Plan names no review entry, and `phase-gate.sh verify` alone requires "no open blockers". An open blocker still shows in `pd-status` and holds a goal run's `Stop` gate. The alternative is to have `phase-gate.sh design` and `create-plan` require the stage's `review` entry with no open blocker (or a `capped` entry), as `verify` does: about ten lines in T3.6, plus a fixture each.
+**The design and test-case reviews aren't mechanically required** (G-34, G-35, G-38, G-39): "No, as planned". §A2's "Mechanical gate" column for Contracts and Plan names no review entry, and `phase-gate.sh verify` alone requires "no open blockers". An open blocker still shows in `pd-status` and holds a goal run's `Stop` gate.
 
 ## Proof
 

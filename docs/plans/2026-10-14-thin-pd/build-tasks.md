@@ -537,3 +537,7 @@ Raw result: `reviews/codex-readiness-review-2.json`.
 ## 2026-10-14 16:25+08:00 review-3 readiness — codex (fallback: no)
 Verdict: READY. Cycle 3 of 3 checked the six findings left by cycle 2 (C4, C5, C8, C10, C14, N1): all are resolved, the 16 earlier resolutions stand, and the diff holds no new defects. The runtime assumptions are left to the bake-off (§A7). Raw result: `reviews/codex-readiness-review-3.json`.
 
+## 2026-10-15 02:53+08:00 decision
+Q: The inventory's and the guard map's judgment calls (T1.1, T1.2): keep the project decomposition components? Delete `implementing-with-tdd`, `investigation-agent`, `/pd:wrap-up`? Require the design and test-case reviews in `phase-gate.sh`? Build the T2.1 diff now?
+A (user, verbatim): "delete them for now, and we can recreate them more appropriately if the need arises"; "implementing-with-tdd, investigation-agent could be called by the secretary"; "No, as planned (Recommended)"; "Build T2.1 diff now (Recommended)".
+Applied as plan D18: `inventory.md` and §A6 updated (19 of the 24 agents kept). Waves 0 and 1 are committed at `77687148`, `3e5b2166`, `ea883e45` and `7ddd81e2`.

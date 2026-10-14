@@ -22,12 +22,12 @@ Every skill, command, agent and hook script under `plugins/pd/`, with its verdic
 | skills/creating-specialist-teams | keep | [A9-scope] |
 | skills/crypto-analysis | keep | [A9-scope] |
 | skills/data-science-analysis | keep | [A9-scope] |
-| skills/decomposing | keep-rewrite | §7.1: decomposing a PRD now writes a plan's `roadmap:` instead of `projects/<id>/`; it is `project-decomposer`'s caller, which §A6 keeps (judgment call 1) |
+| skills/decomposing | delete | D18 (the user: "delete them for now, and we can recreate them more appropriately if the need arises"); a plan's `roadmap:` is written by hand (§7.1) |
 | skills/designing | keep-rewrite | §A6: a phase skill (T4.5c); its D12 diagram rule landed at T0.2 |
 | skills/detecting-kanban | delete | [no-use]: the Kanban UI retires (§A6, the user's ruling); no caller |
 | skills/finishing-branch | keep-rewrite | §A6: a phase skill (T4.5g); dispatches `security-reviewer` (§A4) |
 | skills/game-design | keep | [A9-scope] |
-| skills/implementing-with-tdd | delete | [no-use]: no caller; tests-first is now the executor brief plus the merger's `pd-proof` check (§A4), not a skill (judgment call 2) |
+| skills/implementing-with-tdd | delete | [no-use], D18: no caller; tests-first is now the executor brief plus the merger's `pd-proof` check (§A4) |
 | skills/implementing | keep-rewrite | §A6: a phase skill (T4.5e); loses its hand-run worktree steps |
 | skills/planning | keep-rewrite | §A6: a phase skill (T4.5d) |
 | skills/promptimize | keep | [A9-scope] |
@@ -56,7 +56,7 @@ Every skill, command, agent and hook script under `plugins/pd/`, with its verdic
 | commands/cleanup-brainstorms.md | delete | [no-use]: deletes brainstorm files, which §10 now keeps forever |
 | commands/create-feature.md | keep-rewrite | §A2 row 0: Triage's `pd-new feature`, including `--from` promotion |
 | commands/create-plan.md | keep-rewrite | §A2 row 4: the Plan stage |
-| commands/create-project.md | keep-rewrite | §7.1, §13: a project becomes a plan with a `roadmap:`; the entry point to `decomposing` (judgment call 1) |
+| commands/create-project.md | delete | D18, with `decomposing` |
 | commands/create-specialist-team.md | keep-rewrite | [A9-scope], but it reads `.meta.json` for the active feature; that becomes the README frontmatter (§5) |
 | commands/design.md | keep-rewrite | §A2 row 3: the Contracts stage |
 | commands/doctor.md | delete | [no-use]: `pd-lint` takes over the doctor's role (§A6) |
@@ -78,14 +78,14 @@ Every skill, command, agent and hook script under `plugins/pd/`, with its verdic
 | commands/subagent-ras.md | keep | [A9-scope]: research-and-summarize; no registry use |
 | commands/sync-cache.md | keep | pd's own dev loop: publishes plugin source to the cache; no registry use |
 | commands/test-debt-report.md | delete | [no-use]: reads `.qa-gate.json`, which §9 forbids after adopt; follow-ups now go to `backlog.md` through `capped` entries (§A2) |
-| commands/wrap-up.md | keep-rewrite | §6, §13: a session bookend that writes `## Now` and a `handoff` entry instead of reading engine state (judgment call 3) |
+| commands/wrap-up.md | keep-rewrite | §6, §13, D18: a session bookend that writes `## Now` and a `handoff` entry instead of reading engine state |
 | commands/yolo.md | delete | [no-use]: replaced by `/goal` and the `Stop` gate (§A6) |
 
 `/pd:init`, `/pd:adopt` and the `verifying` skill are new (T4.5f, T4.8, T4.9), so they have no row here.
 
 ## Agents (24)
 
-§A6 keeps 21 of the 24, retires three (S2), and adds `merger` and `calvin-runner` (T4.1).
+§A6 keeps 19 of the 24: S2 retires three, D18 deletes the two decomposers, and T4.1 adds `merger` and `calvin-runner`.
 
 | Name | Verdict | Reason |
 |---|---|---|
@@ -100,11 +100,11 @@ Every skill, command, agent and hook script under `plugins/pd/`, with its verdic
 | agents/generic-worker.md | keep | [A9-scope]: `creating-specialist-teams`' worker |
 | agents/implementer.md | keep-rewrite | §A3: the executor (`sonnet`, `effort: medium`, the verification paragraph), plus the fixer brief |
 | agents/internet-researcher.md | keep | §A4, §A8.3 S5: Clarify's researcher |
-| agents/investigation-agent.md | keep | §A6 counts it among the 21; no caller names it today (judgment call 4) |
+| agents/investigation-agent.md | keep | D18 (the user: "investigation-agent could be called by the secretary"): `/pd:secretary` may dispatch it |
 | agents/plan-reviewer.md | keep | §A6, D14: the test-case review's Claude fallback; T4.1 sets reviewer tools |
 | agents/prd-reviewer.md | delete | §A8.3 S2: calvin covers it |
-| agents/project-decomposer.md | keep | §A6 counts it; `decomposing`'s dispatch (judgment call 1) |
-| agents/project-decomposition-reviewer.md | keep | §A6 counts it; `decomposing`'s dispatch (judgment call 1) |
+| agents/project-decomposer.md | delete | D18, with `decomposing` |
+| agents/project-decomposition-reviewer.md | delete | D18, with `decomposing` |
 | agents/qa-executor.md | keep | §A3: QA; T4.1 sets the strongest model, T4.2 limits its writes to `agent_sandbox/` |
 | agents/ras-synthesizer.md | keep-rewrite | §A4: `research-fanout`'s synthesizer; its "entity registry" work-context source goes |
 | agents/rca-investigator.md | keep | §A4: `rca-fanout`'s investigator; the refuter brief travels in the workflow's prompt |
@@ -139,9 +139,9 @@ Every skill, command, agent and hook script under `plugins/pd/`, with its verdic
 
 | | keep | keep-rewrite | delete | all |
 |---|---|---|---|---|
-| Skills | 14 | 10 | 3 | 27 |
-| Commands | 8 | 15 | 8 | 31 |
-| Agents | 18 | 3 | 3 | 24 |
+| Skills | 14 | 9 | 4 | 27 |
+| Commands | 8 | 14 | 9 | 31 |
+| Agents | 16 | 3 | 5 | 24 |
 | Hook scripts | 3 | 1 | 12 | 16 |
 
 ## What else goes in T2.1
@@ -155,13 +155,11 @@ Not inventory rows, but files that serve only deleted components or the registry
 
 T2.1 re-checks each of these with `grep` before deleting it; a caller found in a kept file gets the T2.1 marker.
 
-## Judgment calls for the user's review
+## The user's rulings (D18, 2026-10-15)
 
-The verdicts above that the plan doesn't settle by name. T2.1's AskUserQuestion puts these to the user with the diff.
-1. **`decomposing`, `/pd:create-project` and the two decomposer agents: keep.** §A6 keeps the agents, and their only caller is `decomposing`. Rewritten, they write a plan's `roadmap:` (§7.1). The alternative is to delete all four and write roadmaps by hand, since §14 defers `pd-plan` commands.
-2. **`implementing-with-tdd`: delete.** Nothing calls it; the merger enforces tests-first mechanically. It is also a skill the user can invoke by saying "use TDD".
-3. **`/pd:wrap-up`: keep, rewritten** to write `## Now` and a `handoff` entry (§13 names `handoff` entries as the HANDOFF.md replacement). The alternative: delete it, and the conductor writes the entry unprompted.
-4. **`investigation-agent`: keep,** because §A6 counts 21 kept agents. Nothing calls it today; under D17 it would go. Deleting it makes §A6's count 20.
+The verdicts the plan didn't settle by name, put to the user before T2.1:
+1. **Project decomposition:** "delete them for now, and we can recreate them more appropriately if the need arises". `decomposing`, `/pd:create-project` and both decomposer agents are `delete`.
+2. **Components nothing calls:** "implementing-with-tdd, investigation-agent could be called by the secretary". `implementing-with-tdd` is `delete`; `investigation-agent` is `keep`; `/pd:wrap-up` was not chosen for deletion, so it stays `keep-rewrite`.
 
 ## Proof
 

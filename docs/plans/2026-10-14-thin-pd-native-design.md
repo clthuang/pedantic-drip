@@ -300,9 +300,9 @@ A task the conductor marks `proof: green-only` at Plan, with a reason (`refactor
   - **Plus one new phase skill, `verifying`:** it starts `verify-change` and writes the stage's entries.
 - **The `updating-docs` skill,** which publishes artifacts to the human docs (Part B §3, §3.1).
 - **The commands this section names or a kept playbook calls,** `/pd:secretary`'s triage among them: thin entry points, as they are now. The §16 inventory lists them. They stay the user's entry points; the stage skills start the workflows, which users don't type (§A4).
-- **21 of the 24 agents:** the same roles, with `tools`, `model`, `effort` and `skills` frontmatter per §A3. S2 retires `prd-reviewer`, `relevance-verifier` and `test-deepener`. `plan-reviewer` stays, as the Claude fallback for the Plan stage's test-case review (D14).
+- **19 of the 24 agents:** the same roles, with `tools`, `model`, `effort` and `skills` frontmatter per §A3. S2 retires `prd-reviewer`, `relevance-verifier` and `test-deepener`; D18 deletes `project-decomposer` and `project-decomposition-reviewer`, with the `decomposing` skill and `/pd:create-project`. `plan-reviewer` stays, as the Claude fallback for the Plan stage's test-case review (D14).
   - **Two kept agents take a second brief:** `implementer` plays the fixer, as a separate instance, and `rca-investigator` the refuter.
-  - **Plus two new agents:** `merger`, which runs git and `pd-proof`, and `calvin-runner`, which runs calvin at Criteria; §A3 sets their tools. So: 21 kept plus 2 new.
+  - **Plus two new agents:** `merger`, which runs git and `pd-proof`, and `calvin-runner`, which runs calvin at Criteria; §A3 sets their tools. So: 19 kept plus 2 new.
 - **The backlog:** a file (Part B §7). The knowledge bank is frozen as a read-only archive (§A8.3 S4).
 
 **Replaced by a native feature:**
@@ -1151,6 +1151,10 @@ These are tracker features. Build each one only when a real project asks for it;
     - the original token budget is recorded in the goal's `run` entry, in git;
     - a small feature's overrun is a `note`, not a decision;
     - the `goal:` line is also cleared when the target is reached.
+- **D18, the build inventory's judgment calls (resolved 2026-10-15):** four verdicts §A6 didn't settle by name (`inventory.md`, judgment calls; `guard-map.md`). The user ruled, verbatim:
+  - **Project decomposition:** "delete them for now, and we can recreate them more appropriately if the need arises". `decomposing`, `/pd:create-project`, `project-decomposer` and `project-decomposition-reviewer` go at §16 step 3; a plan's `roadmap:` is written by hand (§7.1) until a need arises.
+  - **Components nothing calls:** "implementing-with-tdd, investigation-agent could be called by the secretary". `implementing-with-tdd` goes; `investigation-agent` stays, for `/pd:secretary` to dispatch; `/pd:wrap-up` stays, rewritten to write `## Now` and a `handoff` entry.
+  - **The review gate:** "No, as planned". `phase-gate.sh design` and `create-plan` don't require the stage's `review` entry (§A2); guards G-34, G-35, G-38 and G-39 stay dropped.
 
 ## 16. Rollout
 
