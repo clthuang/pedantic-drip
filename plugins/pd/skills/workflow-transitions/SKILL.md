@@ -17,7 +17,7 @@ The main session is the conductor. It owns every decision that needs the user, a
 ## Phase entry
 1. **Resolve the feature:** the `--feature=<id>` argument, else the checked-out `feature/<id>` branch, else `pd-status`'s active features. None or several: ask.
 2. **Check out its branch** (the README's `branch:`). If another branch is checked out with changes, ask before switching.
-3. **Read** the README, `## Now` and `pd-status <id>`'s open blockers before any work.
+3. **Read** the README, `## Now` and `pd-status`'s open blockers for the feature before any work.
 4. **A backward move** sets `phase:` back and appends `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`, committed before the work starts.
 
 ## Phase exit

@@ -12,7 +12,7 @@ The Contracts stage (`phase: design`) removes one unknown: what crosses each bou
 1. **Phase entry** per `workflow-transitions`.
 2. **Ground it:** dispatch `codebase-explorer` for the modules, patterns and callers the change touches. Its report is claims; check the ones the design rests on at file:line.
 3. **Write `## Design`** in `shape.md` under the existing `## Requirements`, using `${CLAUDE_PLUGIN_ROOT}/templates/shape.md`. The bar is the checklist below.
-4. **Review:** the review call per `${CLAUDE_PLUGIN_ROOT}/references/review-call.md`, with this skill's `## Review checklist` inline, given `shape.md`, read access to the code, and the open assumptions from `pd-status <id>`. Up to three review-revise cycles:
+4. **Review:** the review call per `${CLAUDE_PLUGIN_ROOT}/references/review-call.md`, with this skill's `## Review checklist` inline, given `shape.md`, read access to the code, and the feature's open assumptions from `pd-status`. Up to three review-revise cycles:
    - **revise** for each blocker; a finding you can refute at file:line gets a `Rejects:` line instead, and only the user accepts it;
    - **re-review scoped** to the earlier findings and the edit that answered them (`pd-review-filter --range <reviewed commit>..HEAD` drops new findings outside the edit);
    - **the loop ends** at the first pass with no blocker, whatever its warnings say. Still open after the third: a `capped` entry, then ask the user.

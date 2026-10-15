@@ -47,7 +47,7 @@ Rejects: review@2026-10-13 10:05+08:00#R3 — src/pd/io.py:12 already closes the
 ```
 
 ### qa
-One QA battery run: the commit it ran against, one `Ran:` line per `qa_battery` command, what passing each criterion would still allow, and issue lines.
+One QA battery run: the commit it ran against, one `Ran:` line per `qa_battery` command, what passing each criterion would still allow, issue lines, and in Verify one `Fixed: <id> by <commit> — <test>` line per fix, with a `Closes:` line naming those issues.
 
 ```markdown
 ## 2026-10-14 12:30+08:00 qa
@@ -67,14 +67,16 @@ G1 4920/2, G2 51/1, G3 0/0. Raw logs: agent_sandbox/2026-10-14/m1/.
 ```
 
 ### run
-A workflow launched or finished. A finished `implement-tasks` run lists every plan task, as `phase-gate.sh implement` reads it. A goal's first `run` entry records the original `feature_token_budget` (or `unset`).
+A workflow launched or finished. A finished `implement-tasks` run lists every plan task, as `phase-gate.sh implement` reads it, each followed by an indented `case_map:` line that Verify (and a resumed run) reads back. A goal's first `run` entry records the original `feature_token_budget` (or `unset`).
 
 ```markdown
 ## 2026-10-14 14:00+08:00 run implement-tasks — finished
 Session: 0b5e…  Agents: 6. Tokens: 412000. Journal: ~/.claude/projects/…/journal.jsonl
 Budget: feature_token_budget=unset
 - task 1: merged, proof pass, cycles 0, branch pd/2026-10-14-x/task-1
+  case_map: C1=tests/test_parse.py::test_empty_input; greens: none; skipped: none
 - task 2: merged, proof pass, cycles 1, branch pd/2026-10-14-x/task-2
+  case_map: C2=tests/test_io.py::test_round_trip; greens: none; skipped: none
 ```
 
 ### handoff
