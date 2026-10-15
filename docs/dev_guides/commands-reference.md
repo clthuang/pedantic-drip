@@ -1,67 +1,34 @@
 # Commands Reference
 
+Run every test with a throwaway `HOME`: `test-hooks.sh` and `validate.sh` rsync into the plugin cache under `$HOME`. Prefix each command below with `env -u ENTITY_DB_PATH HOME=$(mktemp -d)`.
+
 ```bash
-# Validate components
+# Validate components (0 errors, 0 warnings expected)
 ./validate.sh
 
-# For a current test count of any pytest suite below, append: --collect-only -q
+# Docs match the components (skill, command, agent and hook counts)
+bash scripts/check-doc-drift.sh
 
-# Run MCP bootstrap shared library tests (unit + integration, ~2-5 min)
-bash plugins/pd/mcp/test_bootstrap_venv.sh
+# Script self-tests (stdlib Python)
+for s in pd-lint pd-proof pd-adopt pd-new pd-status pd-init pd-review-filter; do python3 plugins/pd/scripts/$s --self-test; done
+python3 plugins/pd/scripts/pd_common.py --self-test
+uv run plugins/pd/scripts/pd-html.py --self-test
 
-# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search, metadata)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
+# Phase exit checks
+bash plugins/pd/scripts/test-phase-gate.sh
 
-# Run sqlite retry unit tests
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/test_sqlite_retry.py -v
-
-# Run sqlite retry concurrent-write integration tests
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/test_sqlite_retry_integration.py -v
-
-# Run entity search MCP tool tests
-plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py -v
-
-# Run entity server bootstrap wrapper tests
-bash plugins/pd/mcp/test_entity_server.sh
-
-# Run transition gate tests (gate functions, constants, models)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
-
-# Run workflow engine tests (state engine, transitions, degradation)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
-
-# Run reconciliation orchestrator tests (brainstorm registration, cascade recovery, dependency cleanup)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/reconciliation_orchestrator/ -v
-
-# Run reconciliation module tests (drift detection, cascade recovery)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v
-
-# Run workflow state MCP server tests (processing + reconciliation integration)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v
-
-# Run workflow server bootstrap wrapper tests
-bash plugins/pd/mcp/test_run_workflow_server.sh
-
-# Run UI server tests (app + CLI + deepened; requires PYTHONPATH for entity_registry + ui)
-PYTHONPATH="plugins/pd/hooks/lib:plugins/pd" plugins/pd/.venv/bin/python -m pytest plugins/pd/ui/tests/ -v
-# Known pre-existing test issues (not regressions):
-# - test_deepened_app.py: intermittent segfault (SQLite threading)
-# - test_cli.py::test_cli_startup_url_output: fails when port 8718 in use
-
-# Run doctor diagnostic + auto-fix tests
-PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -v
-# Doctor CLI supports --fix (apply safe fixes) and --fix --dry-run (preview fixes)
-
-# Run migration tool tests (system python3, not plugin venv)
-python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v
-bash scripts/test_migrate_bash.sh
-
-# Rebuild FTS index on entities DB (kills MCP servers temporarily, they auto-restart)
-python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
-
-# Run hook integration tests (includes external test scripts:
-# test-session-start.sh)
+# Hooks: each new hook's own test, then the integration suite
+bash plugins/pd/hooks/tests/test-pd-commit-lint.sh
+bash plugins/pd/hooks/tests/test-pd-stop-gate.sh
+bash plugins/pd/hooks/tests/test-pd-session-start.sh
+bash plugins/pd/hooks/tests/test-pd-agent-write-guard.sh
 bash plugins/pd/hooks/tests/test-hooks.sh
+
+# Workflow scripts: syntax, result shapes and stubbed runs
+node plugins/pd/workflows/tests/test-workflows.mjs
+
+# Python hook tests (sync-cache, project root, unicode guard)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks -q
 
 # Release (bumps version, merges develop→main, tags)
 # Uses --ci for non-interactive; BUMP_OVERRIDE=patch|minor|major to force bump type

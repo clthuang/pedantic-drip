@@ -571,3 +571,13 @@ Codex (gpt-6-astra, xhigh) on 35e45296..6d12d835's Wave 3 scripts: changes reque
 - R14 phase-gate.sh: a quoted `mode: "express"` is express.
 - R15 pd-commit-lint.sh: shell words, not a regex: `git --no-pager commit`, a quoted `-C` path and `cd dir &&` lint; quoted prose doesn't.
 Battery after the round: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-hooks 26/26; validate.sh 0 errors, 0 warnings; pytest 24. No re-review (one pass, one fix round).
+
+## 2026-10-15 12:25+08:00 note
+Wave 4 committed: T4.1 `003fddff`, T4.3 `fb7dee63`, T4.2 `d1b1a883`, T4.7 `7cb87785` (fixes `cdaeaac6`, `72f8b37c`), T4.5b–d `0d549528`, T4.8 + T4.9 `0413fa20`, T4.4 `aa34b5a7`, T4.5h `bba47e7b`, T4.6 `ce3f4ada`, T4.5g + i `79bacfd0`, T4.5a `6709f793`, T4.5e + f `abf818c3`, T4.12 `91a69d3d`, T4.10 `1d450986`, the reviewer preloads `ad1914d5`, T4.11 `ac80ed7e`.
+Deviations, each named in its commit:
+- **Preloads:** only the three reviewers preload their stage skill (designing, planning, verifying). The other stage skills are conductor playbooks with no section for their agent; implementing's steps contradict the implementer's job.
+- **T4.11:** no guardrail removed; each carries a `*Stays because:*` line. The Review gate protocol is restated for thin pd.
+- **Found during Wave 4:** `pd-stop-gate.sh` lacked its execute bit (caught by T4.12's registered-command test); nothing injected `{pd_artifacts_root}`/`{pd_base_branch}` after T2.1 deleted session-start.sh (pd-session-start.sh now does).
+Battery: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-init 10, pd-review-filter 4, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-pd-stop-gate 26; test-pd-session-start 29; test-pd-agent-write-guard 20; test-hooks 25/25; test-workflows all passed; pytest 18 (the 6 extract_workarounds tests went with the script); validate.sh 0 errors, 0 warnings; doc-drift OK. Size guard: 4,561 of 5,000 added lines.
+Not verified until the T5.2 bake-off: `${CLAUDE_SESSION_ID}` substitution in skills; plugin agent, skill and workflow names with the `pd:` prefix, and plain skill names in `skills:`; subagent hook input carrying `agent_type` and the parent `session_id`; the `background_tasks` status values the Stop gate reads.
+Next: T5.1, the user picks the bake-off feature.
