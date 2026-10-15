@@ -1,5 +1,5 @@
 ---
-description: End the session — commit WIP, write ## Now and a handoff entry for the next session
+description: End the session — commit WIP, write ## Now and a handoff entry
 ---
 
 # /pd:wrap-up

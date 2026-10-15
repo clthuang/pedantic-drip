@@ -192,7 +192,7 @@ Tasks live in `plan.md` under `## Plan` and are derived into dispatches at imple
 
 ## Reference
 
-pd includes 23 skills and 21 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 24 skills and 21 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 

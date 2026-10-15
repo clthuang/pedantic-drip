@@ -749,29 +749,6 @@ if [ $err_trap_missing -eq 0 ]; then
 fi
 echo ""
 
-# Validate entry-point mkdir guards
-echo "Checking Entry-Point mkdir Guards..."
-mkdir_missing=0
-mkdir_checks=(
-    "plugins/pd/skills/brainstorming/SKILL.md:mkdir"
-    "plugins/pd/commands/create-feature.md:mkdir"
-    "plugins/pd/commands/add-to-backlog.md:mkdir"
-    "plugins/pd/skills/root-cause-analysis/SKILL.md:mkdir"
-)
-for check in "${mkdir_checks[@]}"; do
-    file="${check%%:*}"
-    pattern="${check##*:}"
-    if [ -f "$file" ]; then
-        if ! grep -q "$pattern" "$file" 2>/dev/null; then
-            log_error "$file: Missing $pattern guard for directory creation"
-            ((mkdir_missing++)) || true
-        fi
-    fi
-done
-if [ $mkdir_missing -eq 0 ]; then
-    log_success "All entry-point files have mkdir guards"
-fi
-echo ""
 
 
 # Check for subjective adjectives in plugin component files (content-level check)

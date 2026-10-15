@@ -163,8 +163,9 @@ flowchart TD
     end
 
     subgraph HOOKS["Hooks · scripts"]
-        H1["SessionStart (2)<br/>sync-cache,<br/>cleanup-stale-versions"]
-        H2["PreToolUse (3)<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard"]
+        H1["SessionStart (3)<br/>sync-cache,<br/>cleanup-stale-versions,<br/>pd-session-start"]
+        H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard,<br/>pd-agent-write-guard"]
+        H3["Stop (1)<br/>pd-stop-gate"]
     end
 
     HOOKS -.->|"lifecycle events"| SK
@@ -190,17 +191,18 @@ Skills are instructions Claude follows for specific development practices. Locat
 |-------|---------|
 | `brainstorming` | Guides 6-stage process producing evidence-backed PRDs with advisory team analysis and structured problem-solving |
 | `structured-problem-solving` | Applies SCQA framing and type-specific decomposition to problems during brainstorming |
-| `specifying` | Creates precise specifications with acceptance criteria |
-| `designing` | Creates design.md with architecture and contracts |
-| `planning` | Produces plan.md with dependencies and ordering |
-| `implementing` | Execution mechanics for the implement phase — inline vs worktree-isolated task dispatch, merge-back |
-| `finishing-branch` | Guides branch completion with PR or merge options |
+| `specifying` | Criteria: B-numbered expectations in `shape.md`, calvin cycles, the user's sign-off |
+| `designing` | Contracts: `shape.md` `## Design` with its diagram, contracts and test strategy, then the review call |
+| `planning` | Plan: `plan.md` task blocks with test cases, then the test-case review |
+| `implementing` | Execute: launches `implement-tasks` from `plan.md` and records each task's merge and proof |
+| `verifying` | Verify: launches `verify-change` (the code review beside QA, then fix cycles) and records the review and QA entries |
+| `finishing-branch` | Finish: security review, docs, metrics, the retro check, replan, merge and cleanup |
 
 ### Quality & Review
 | Skill | Purpose |
 |-------|---------|
 | `promptimize` | Reviews plugin prompts against best practices guidelines and returns scored assessment with improved version |
-| `workflow-transitions` | Shared phase-transition contract (engine entry/exit, global YOLO rule, review gate, dispatch hygiene) |
+| `workflow-transitions` | The conductor's shared contract: where state lives, phase entry and exit, the review call, caps, workflow and goal runs |
 
 ### Investigation
 | Skill | Purpose |
@@ -300,10 +302,13 @@ Hooks execute automatically at lifecycle points.
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit`; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
+| `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
+| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt` |
+| `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-feature token cap |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py` — a worker module invoked by the wrapper, not separately registered.
 
-SessionStart hooks match `startup|resume|clear` only -- they do not fire on `compact` events, preserving context window savings from compaction.
+`sync-cache` and `cleanup-stale-versions` match `startup|resume|clear` only; `pd-session-start` also fires on `compact`, so the summary survives compaction.
 
 Defined in `plugins/pd/hooks/hooks.json`.
 
@@ -313,25 +318,38 @@ The `pre-commit-guard` hook warns when committing to protected branches (main/ma
 
 ## Workflow Mechanics
 
-Each phase command in `plugins/pd/commands/` is a short **contract** — purpose, inputs, output, steps, constraints — and is the source of truth for its own phase. Read the command file before this section; what follows is only the shared machinery.
+Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/plans/2026-10-14-thin-pd-native-design.md`.
 
-**State.** The workflow engine and the entity registry are retired (thin pd, `docs/plans/2026-10-14-thin-pd-native-design.md`); state moves onto committed files, and build task T4.10 rewrites this section.
+**State lives in committed files** (no engine, no registry, no MCP server):
 
-**Artifact inventory.** Two artifacts carry a feature, plus the retro:
+| File | Holds |
+|------|-------|
+| `features/<id>/README.md` | Frontmatter (`status`, `phase`, `mode`, `branch`, `risk`) and `## Now` (next step, `goal:` and `run in flight:` lines) |
+| `features/<id>/log.md` | Append-only history: one entry per decision, phase move, review, QA run, gate, workflow run, cap, metrics or defect (`references/log-entries.md`) |
+| `features/<id>/shape.md` | `## Requirements` (B-numbered expectations) and `## Design` (architecture diagram, contracts, test strategy) |
+| `features/<id>/plan.md` | `## Plan`: waves of task blocks, each with its contract, files, proving command, JUnit path and test cases |
+| `features/<id>/retro.md` | Written only when a retro trigger fired |
 
-| Artifact | Written by | Contains |
-|----------|-----------|----------|
-| `shape.md` | `/pd:specify`, then `/pd:design` | `## Requirements` (mechanically checkable success criteria, scope, edge cases), then `## Design` |
-| `plan.md` | `/pd:create-plan` | `## Plan` — ordered tasks, each with files touched and the command that proves it done; parallel-safe tasks flagged |
-| `retro.md` | `/pd:finish-feature` | AORTA retrospective, written before branch cleanup |
+Everything else is computed by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
 
-There is no `spec.md`, no `tasks.md`, and no implementation log. Tasks are derived from `plan.md` at dispatch time by the `implementing` skill, which runs parallel-safe tasks as `implementer` agents in `.pd-worktrees/task-{N}` worktrees and merges them back in plan order.
+**The scripts** (`plugins/pd/scripts/`, stdlib Python unless noted):
 
-**Mechanical gates (tier 1).** `plugins/pd/scripts/phase-gate.sh <phase> <feature-dir>` runs at every phase boundary with zero dispatch: artifact existence, required sections, duplicate fenced contract blocks across the artifact set, and uncommitted artifacts at implement entry. Each failure prints one line; exit 0 means pass.
+| Script | Role |
+|--------|------|
+| `pd-new` | Creates a feature, plan, brainstorm, rca or backlog item with a local `YYYY-MM-DD-slug` id |
+| `phase-gate.sh` | A phase's exit check: what the phase must hand down |
+| `pd-lint` | The artifact checks, run by the commit hook on staged items; also `--isolation`, `--risk`, `--archive`, `--sweep` |
+| `pd-status` | The repository's state, computed from its files |
+| `pd-proof` | Judges a proving command's JUnit XML for the merger |
+| `pd-review-filter` | Drops a scoped re-review's findings outside the diff |
+| `pd-html.py` | Markdown to standalone HTML (PEP 723, `uv run`) |
+| `pd-init` / `pd-adopt` | Set a new project up; migrate an old-layout one |
 
-**Review moments (tier 2).** Exactly two LLM reviews per deep feature — `pd:design-reviewer` after the design gate, and `pd:code-quality-reviewer` on the full branch diff during implement. Each is one pass plus at most one fix round; still-open blockers escalate to the user rather than looping to a cap. Alongside them, `pd:qa-executor` supplies execution-grounded evidence during implement (runs the suites, drives affected flows, reports without fixing), and `pd:security-reviewer` runs from `/pd:finish-feature` when the branch touches a security surface. Implement carries one circuit breaker for the whole phase: 3 fix cycles total.
+**The workflows** (`plugins/pd/workflows/`) are the only fan-outs: `implement-tasks` (one implementer per task in its own worktree, the merger landing each in plan order, up to three fix cycles), `verify-change` (the review call beside QA, then up to three fixer cycles), `research-fanout` and `rca-fanout`. Their results are pinned in `references/workflow-results.md`; the conductor writes `log.md` from them.
 
-**Express mode.** `/pd:create-feature --express` records an inline mini-spec as a `mini_spec` phase event, passes `skipped_phases=["brainstorm","specify","design","create-plan"]` to the engine, and hands straight to `/pd:implement`, where QA and review collapse into one combined pass. `/pd:secretary` picks the lane: any of security surface, schema/data migration, multi-file blast radius, novel domain, or non-mechanical success criteria forces deep mode.
+**Reviews.** One review call per stage that has one (`references/review-call.md`): Codex first with one retry, else the stage's Claude reviewer; one pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
+
+**Long runs.** `/goal` drives a feature; the `Stop` gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per feature (`feature_token_budget`).
 
 ## Knowledge Bank
 

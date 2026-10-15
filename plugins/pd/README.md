@@ -8,9 +8,9 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 | Type | Count |
 |------|-------|
-| Skills | 23 |
+| Skills | 24 |
 | Agents | 21 |
-| Commands | 22 |
+| Commands | 25 |
 
 ## Commands
 
@@ -18,18 +18,19 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | Command | Description |
 |---------|-------------|
 | `/pd:brainstorm [topic]` | Explore an idea into an evidence-backed PRD |
-| `/pd:create-feature <desc>` | Start building (creates folder + branch); `--express` records an inline mini-spec and jumps to implement |
+| `/pd:create-feature <desc>` | Start building: `pd-new feature` creates the folder and branch; `--mode express` writes a mini-spec and goes to implement |
 
 **Build phases** (run in order):
 | Command | Output |
 |---------|--------|
-| `/pd:specify [--feature=ID]` | `shape.md` — `## Requirements` |
-| `/pd:design` | `shape.md` — `## Design` (+ design review moment) |
-| `/pd:create-plan` | `plan.md` — `## Plan` (ordered tasks; no separate tasks.md) |
-| `/pd:implement` | Code changes (QA execution + code-quality review) |
+| `/pd:specify [--feature=ID]` | `shape.md` — `## Requirements`, calvin, your sign-off |
+| `/pd:design` | `shape.md` — `## Design` (+ the review call) |
+| `/pd:create-plan` | `plan.md` — `## Plan` (task blocks with test cases, + the test-case review) |
+| `/pd:implement` | Code changes: the `implement-tasks` workflow, one task per worktree |
+| `/pd:verify` | The code review beside QA, then fix cycles (`verify-change`) |
 | `/pd:abandon-feature` | Transition a feature to abandoned status |
-| `/pd:finish-feature` | QA battery, docs sync, retro, merge |
-| `/pd:wrap-up` | End the session — commit WIP, report engine state and open items |
+| `/pd:finish-feature` | Security review, docs sync, metrics, retro, merge |
+| `/pd:wrap-up` | End the session — commit WIP, write `## Now` and a handoff entry |
 
 **Anytime:**
 | Command | Purpose |
@@ -50,27 +51,13 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 ## Quality Gates
 
-Quality is enforced in two tiers: **mechanical gates** on every phase boundary, and exactly **two LLM review moments** per deep feature.
-
-### Tier 1 — Mechanical gates (zero dispatch)
-
-`plugins/pd/scripts/phase-gate.sh <phase> <feature-dir>` runs at each phase boundary and checks artifact existence, required sections, duplicate contract blocks (the restated-contract class), and uncommitted artifacts at implement entry. Failures print one line per problem; fix and re-run.
-
-### Tier 2 — LLM review moments
-
-| Moment | Phase | Agent | Question |
-|--------|-------|-------|----------|
-| 1 of 2 | design | `pd:design-reviewer` | Is the design sound and grounded? |
-| 2 of 2 | implement | `pd:code-quality-reviewer` | Is the branch diff correct and maintainable? |
-
-Per moment: one reviewer pass → at most one fix round → still-open blockers escalate to the user. There is no iterate-to-a-cap loop. Reviewers run in fresh context, cite `file:line`, and own their return schema (defined only in the agent file).
-
-Two dispatches sit outside the review tier:
-
-- `pd:qa-executor` — execution-grounded QA during implement. Runs the test battery and drives affected flows end-to-end, returning commands plus output evidence. It fixes nothing; it reports.
-- `pd:security-reviewer` — dispatched from `/pd:finish-feature` when the branch touches a security surface (auth, secrets, input parsing, permissions, data deletion, dependency bumps). Always an Anthropic-model Task.
-
-**Express mode** (`/pd:create-feature --express`) records an inline mini-spec as a `mini_spec` phase event, skips specify/design/create-plan, and collapses QA and review into a single combined pass during implement.
+- **Exit checks:** `scripts/phase-gate.sh <phase> <feature dir>` checks what each phase must hand down; one line per failure.
+- **Commit checks:** the `pd-commit-lint` hook runs `pd-lint --staged` before every `git commit`; an error blocks it.
+- **The review call** at Contracts, Plan and Verify (`references/review-call.md`): Codex first with one retry, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then you.
+- **The merger** lands each task only if its tests failed at the test commit and pass at HEAD (`scripts/pd-proof`).
+- **QA** (`pd:qa-executor`) runs `qa_battery` beside the code review at Verify; it reports and fixes nothing.
+- **Security review** (`pd:security-reviewer`) runs at finish, on Anthropic models, mandatory for `risk: security`.
+- **Express** (`/pd:create-feature --mode express`) writes a mini-spec and goes straight to implement, with a lighter Verify.
 
 ## Agents
 
@@ -104,3 +91,11 @@ Two dispatches sit outside the review tier:
 /plugin marketplace add .
 /plugin install pd@pedantic-drip-marketplace
 ```
+
+Then, once per project, run `/pd:init`. It writes `.claude/pd.local.md` (paths, `qa_battery`, the budgets) and proposes, as a diff you approve, these `.claude/settings.json` entries:
+
+- **`worktree.baseRef: "head"`:** without it, each task's worktree starts from the default branch instead of the feature branch.
+- **The env cap** `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`: agents can't spawn agents.
+- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
+
+An old-layout pd project (`docs/features/` with `.meta.json`) runs `/pd:adopt` instead. The budgets in `.claude/pd.local.md`: `workflow_output_cap` (output tokens per workflow run, default 2,000,000), `feature_token_budget` (tokens per feature, unset by default) and `budget_increment`.

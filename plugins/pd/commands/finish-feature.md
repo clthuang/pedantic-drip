@@ -1,5 +1,5 @@
 ---
-description: Finish a feature — security review, metrics, retro on a trigger, merge and cleanup
+description: Finish a feature — security review, metrics, retro if owed, merge, cleanup
 argument-hint: "[--feature=<id>]"
 ---
 

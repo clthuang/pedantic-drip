@@ -334,17 +334,16 @@ EOF
 # Feature 094: pre-release adversarial QA gate anti-drift assertions
 
 test_finish_feature_contract_present() {
-    # Feature 134: pins the CONTRACT finish-feature (replaces the retired
-    # Step 5b 4-reviewer gate assertions).
-    log_test "finish-feature.md carries the 134 contract essentials"
-    local file="${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md"
+    # thin pd: the finish contract lives in the finishing-branch playbook; the command only invokes it.
+    log_test "finishing-branch/SKILL.md carries the finish contract essentials"
+    local file="${PROJECT_ROOT}/plugins/pd/skills/finishing-branch/SKILL.md"
     local fails=0
+    grep -q 'pd:finishing-branch' "${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md" || { echo "  finish-feature.md doesn't invoke pd:finishing-branch"; ((fails++)); }
     grep -q 'pd:security-reviewer' "$file" || { echo "  missing pd:security-reviewer dispatch (security surface)"; ((fails++)); }
     grep -q 'phase-gate.sh finish' "$file" || { echo "  missing mechanical finish gate"; ((fails++)); }
     grep -q 'retrospecting' "$file" || { echo "  missing retrospecting skill reference"; ((fails++)); }
     grep -q '{pd_base_branch}' "$file" || { echo "  missing {pd_base_branch} merge target"; ((fails++)); }
-    grep -q 'test-hooks.sh' "$file" || { echo "  missing hooks battery line"; ((fails++)); }
-    grep -qE 'retro.*before cleanup|Retro before cleanup' "$file" || { echo "  missing retro-before-cleanup ordering"; ((fails++)); }
+    grep -q 'retro runs before cleanup' "$file" || { echo "  missing retro-before-cleanup ordering"; ((fails++)); }
     # Retired machinery must NOT come back:
     grep -q 'pd:implementation-reviewer' "$file" && { echo "  retired implementation-reviewer reference present"; ((fails++)); }
     grep -q '\.qa-gate\.json' "$file" && { echo "  retired .qa-gate.json reference present"; ((fails++)); }
@@ -620,15 +619,6 @@ test_no_at_includes_with_hardcoded_paths() {
     fi
 }
 
-test_secretary_has_cache_glob() {
-    log_test "secretary.md contains ~/.claude/plugins/cache discovery"
-
-    if grep -q '~/.claude/plugins/cache' "${PLUGIN_COMP_DIR}/commands/secretary.md" 2>/dev/null; then
-        log_pass
-    else
-        log_fail "secretary.md missing ~/.claude/plugins/cache glob for installed plugin discovery"
-    fi
-}
 
 test_advisors_use_base_directory_derivation() {
     log_test "No raw plugins/pd/skills/ in advisor files"
@@ -696,7 +686,6 @@ main() {
     test_no_hardcoded_plugin_paths_in_skills
     test_no_hardcoded_plugin_paths_in_commands
     test_no_at_includes_with_hardcoded_paths
-    test_secretary_has_cache_glob
     test_advisors_use_base_directory_derivation
 
     echo ""

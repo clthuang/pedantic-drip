@@ -1,5 +1,5 @@
 ---
-description: Single entry point — triage a request into a feature at the right depth, a brainstorm, an RCA, or a specialist
+description: Triage a request into a feature, brainstorm, RCA or specialist
 argument-hint: "<request> [--standard|--small|--express]"
 ---
 

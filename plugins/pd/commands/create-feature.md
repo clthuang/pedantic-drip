@@ -1,5 +1,5 @@
 ---
-description: Create a feature and its branch, or promote a brainstorm, rca or backlog item into one
+description: Create a feature and its branch, or promote a brainstorm, rca or backlog item
 argument-hint: "\"<title>\" [--from <brainstorms/<id>.md | rca/<id>.md | backlog#<id>>] [--mode standard|small|express] | --plan <plan> <slug> \"<title>\""
 ---
 
