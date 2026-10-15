@@ -43,6 +43,7 @@ The main session is the conductor. It owns every decision that needs the user, a
 ## Goal runs
 - **`/goal` drives; the `Stop` gate decides.** On start, write `goal: <id> target <phase> session ${CLAUDE_SESSION_ID}` to `## Now`, commit, and print the goal: `/goal pd-status prints feature <id> as <target> with no open blockers, or the user has said to stop`.
 - **Every hard stop is an AskUserQuestion,** never a question in prose: a merge conflict, a cap, a finding with no testable check, the token cap, no progress, a criterion with no observable outcome, the criteria sign-off.
+- **At the token cap,** the gate blocks with "budget spent: continue or stop?". Continue is a `decision` entry with `Budget: feature_token_budget=<current + budget_increment>`.
 - **Clear the `goal:` line,** and commit, only when the user answers "stop", or when `pd-status` shows the target reached with no open blockers.
 - **Print mode (`claude -p`):** nothing can be asked. Each decision made for the user is a `decision` entry answered `A (conductor, on the user's behalf)`; a hard stop ends the run with a `handoff` entry.
 

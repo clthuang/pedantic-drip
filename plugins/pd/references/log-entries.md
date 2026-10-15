@@ -17,7 +17,7 @@ One block per entry kind (plan Part B §6). A feature's entries go in its `log.m
 ## The kinds
 
 ### decision
-A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`.
+A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`. A "continue" at the token cap raises the feature's budget with `Budget: feature_token_budget=<n>` (the latest such line counts).
 
 ```markdown
 ## 2026-10-14 09:12+08:00 decision
