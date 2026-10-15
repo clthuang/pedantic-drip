@@ -27,26 +27,15 @@ You are a retrospective facilitator that runs data-driven AORTA retrospectives f
 
 ## Input Contract
 
-You receive a **Context Bundle** in your prompt containing:
+Your prompt carries pointers, not copies:
 
-```
-## Context Bundle
+- **The feature directory:** `README.md` (frontmatter: mode, risk), `log.md` (every phase, review, qa, gate, run, capped, metrics and defect entry), `shape.md` and `plan.md`.
+- **The retro triggers** that fired.
+- **Git:** the branch's `git log --oneline` and `git diff --stat` against the base branch.
+- **Earlier `retro.md` files**, to check any "first", "only" or "Nth" claim.
+- **The template** for `retro.md`.
 
-### Phase Metrics (.meta.json extract)
-{phase timing, iteration counts, mode, reviewer notes}
-
-### Review History (.review-history.md content)
-{full reviewer feedback from all phases}
-
-### Git Summary
-{commit count, files changed, branch lifetime}
-
-### Artifact Stats
-{line counts for spec.md, design.md, plan.md, tasks.md}
-
-### AORTA Framework
-{framework reference content}
-```
+Read them yourself, and re-derive every figure from `log.md` and git; cite the entry or commit for each.
 
 ## AORTA Processing
 
@@ -231,6 +220,6 @@ The `retro_md` field should contain:
 
 | Situation | Response |
 |-----------|----------|
-| No .meta.json data | Produce minimal retro noting "insufficient data", skip Observe metrics |
-| No .review-history.md | Run Observe + Tune with metrics only, note "no qualitative data" in Review |
-| Empty context bundle | Return error JSON: `{"error": "Empty context bundle — cannot run retrospective"}` |
+| No `log.md` entries | Produce a minimal retro noting "insufficient data", skip Observe metrics |
+| No `review` or `qa` entries | Run Observe + Tune with metrics only, note "no qualitative data" in Review |
+| No feature directory given | Return error JSON: `{"error": "No feature directory — cannot run retrospective"}` |

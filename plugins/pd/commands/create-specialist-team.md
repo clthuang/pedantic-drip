@@ -102,15 +102,8 @@ For each selected template:
    - Limit context to most relevant 10-15 files
 
 3. Gather workflow context:
-   - Glob for `{pd_artifacts_root}/features/*/.meta.json`
-   - Find the active feature (`"status": "active"`)
-     - If multiple active features: use highest ID number, log warning
-   - If found: extract id, slug, lastCompletedPhase, mode; determine next phase
-      by calling `get_phase("feature:{id}-{slug}")` (using `id` and `slug` extracted above).
-      Parse the JSON response: if `current_phase` is non-null, use it; if null, determine next
-<!-- removed in T2.1: workflow-state skill; rewritten in T4.5i -->
-      If MCP unavailable, fall back to `lastCompletedPhase` from `.meta.json` (already extracted).
-      Apply the same edge cases: null+null → route to specify, last=finish → complete, no active feature → brainstorm.
+   - Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and take the active feature (several: the checked-out `feature/<id>` branch's, else ask).
+   - If found: read its README frontmatter for `id`, `phase` and `mode`. With no active feature, route to brainstorm.
      Check which artifacts exist (prd.md, shape.md, plan.md)
    - Format as:
      ```
@@ -176,7 +169,7 @@ After all specialists complete:
 
 3. **Assess workflow routing** — determine which workflow phase matches the specialist outputs:
 
-   Read active feature state (Glob `{pd_artifacts_root}/features/*/.meta.json`, find `"status": "active"`).
+   Read the active feature's `phase` from its README frontmatter (`pd-status` lists the active features).
 
    Phase names map 1:1 to commands: `pd:{phase-name}`, except:
    - finish → `pd:finish-feature`
@@ -190,9 +183,9 @@ After all specialists complete:
    | General analysis | `/brainstorm` — formalize into a feature |
 
    #### If active feature exists:
-   Determine next phase from `lastCompletedPhase`. Check if specialist output aligns:
+   Its current phase is the frontmatter's `phase`. Check if specialist output aligns:
 
-   | Output signals | Suggested phase (.meta.json name) |
+   | Output signals | Suggested phase |
    |---------------|----------------------------------|
    | Research, trade-off analysis, recommendations | `specify` (if brainstorm done) |
    | Requirements, acceptance criteria, success criteria | `specify` |
@@ -201,9 +194,8 @@ After all specialists complete:
    | Code changes, tests added, implementation complete | `implement` (continue) or `finish` |
    | Coverage gaps, test results | `implement` (address gaps) |
 
-   If the suggested phase differs from the MCP-reported current phase (from the
-   `get_phase` response `current_phase` field), recommend the current phase instead
-   (prerequisites must be satisfied first).
+   If the suggested phase differs from the frontmatter's `phase`, recommend the current
+   phase instead (prerequisites must be satisfied first).
 
 4. **Present workflow-aware follow-up:**
 

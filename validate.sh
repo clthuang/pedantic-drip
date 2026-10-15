@@ -806,11 +806,6 @@ if jq -e '(.hooks.Stop // []) | length <= 1' plugins/pd/hooks/hooks.json > /dev/
 else
     log_error "hooks.json: Stop length > 1"
 fi
-if grep -qE 'extract_workarounds|workaround_candidates' plugins/pd/skills/retrospecting/SKILL.md; then
-    log_success "retrospecting/SKILL.md references extract_workarounds"
-else
-    log_error "retrospecting/SKILL.md missing extract_workarounds reference"
-fi
 echo ""
 
 # --- hook JSON schema: hookSpecificOutput must include hookEventName (feature 087 RCA) ---

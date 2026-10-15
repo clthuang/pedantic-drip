@@ -1,15 +1,15 @@
 ---
-description: End the session — commit WIP, report engine state and open items
+description: End the session — commit WIP, write ## Now and a handoff entry for the next session
 ---
 
 # /pd:wrap-up
 
-Session bookend, not a phase. Leaves the feature branch committed and the open work visible. Merging, releasing, and phase exit belong to `/pd:finish-feature` and the phase commands.
+A session bookend, not a phase. The next session resumes from `## Now` and the `handoff` entry; merging and phase moves belong to the phase commands.
 
-**Steps:**
-1. `git branch --show-current`. On `{pd_base_branch}` → say so and stop; wrap-up never commits to the base branch.
-2. Uncommitted changes → `git add -A && git commit -m "wip: {one-line summary of the diff}"`. A push failure is reported, not retried or worked around.
-3. Engine status line for the active feature via `get_phase`, fields verbatim; none active → say so.
-4. Open items, one line each: uncommitted paths, verification commands last seen failing, unresolved reviewer blockers.
-
-**Constraints:** no state writes — no `transition_phase`, no `complete_phase`, no `.meta.json`. Nothing is carried into the next session but the commit and this report.
+1. **Branch:** `git branch --show-current`. On `{pd_base_branch}`, say so and stop: wrap-up never commits there.
+2. **The feature:** the one on the checked-out `feature/<id>` branch. None: commit any WIP (`wip: <summary>`) and report the open items only.
+3. **Write the resume point:**
+   - overwrite `## Now` with the next step and anything blocking, keeping its `goal:` and `run in flight:` lines;
+   - append a `handoff` entry with what the next session needs that `## Now` can't hold: verification commands last seen failing, decisions pending with the user, uncommitted experiments.
+4. **Commit** `wip: <summary>`, with the WIP, `log.md` and the README. A push failure is reported, not retried or worked around.
+5. **Report** the `pd-status` line for the feature and its open blockers.

@@ -1,37 +1,31 @@
 ---
 name: retrospecting
-description: Evidence-driven retrospective contract — reads the engine's recorded phase events and produces retro.md. Use when closing out a feature, before branch cleanup.
+description: The retro playbook — on a retro trigger, one retro-facilitator dispatch over the feature's log.md and git, written to retro.md with each lesson landing where it acts. Use when finish's exit check reports a retro trigger, or a defect owes a retro.
 ---
 
 # Retrospecting
 
-Runs while the branch, worktrees, and review history still exist — they are the inputs.
+A full retro runs only on a trigger: a second backward move, a `capped` entry, a cost overrun, or a post-merge `defect`. `phase-gate.sh finish` names the triggers, and `pd-status` lists done features that owe a retro. Without a trigger, finish writes one `note` entry instead (`finishing-branch` skill).
 
-## Build the bundle from the record, not from recollection
-Never ask the user how the feature went. Assemble:
+It runs while the branch and the task branches still exist, because they are inputs. Entry and commits follow the `workflow-transitions` skill.
 
-- **Engine phase events** (MCP read tools): per-phase timings, review iteration counts, reviewer notes on `completed` events (the review record — `.review-history.md` is retired), and every backward transition with its reason. A phase re-entered is the strongest signal in the bundle.
-- **Git**: `git log --oneline {pd_base_branch}..HEAD` and `git diff --stat {pd_base_branch}..HEAD`.
-- **Workaround candidates**, via the extractor — feed it the session texts (commit messages + event reviewer notes) as one temp file; it prints `[]` when there is nothing to report:
-  ```bash
-  PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)
-  if [ -z "$PLUGIN_ROOT" ]; then PLUGIN_ROOT="plugins/pd"; fi  # Fallback (dev workspace)
-  D="{pd_artifacts_root}/features/{id}-{slug}"
-  LOG=$(mktemp)
-  git log {pd_base_branch}..HEAD --format='%s%n%b' > "$LOG"
-  # Append reviewer notes pulled from the completed events (engine read).
-  "$PLUGIN_ROOT/.venv/bin/python" "$PLUGIN_ROOT/skills/retrospecting/scripts/extract_workarounds.py" \
-    --log-path "$LOG" --meta-json-path "$D/.meta.json" 2>/dev/null || echo "[]"
-  ```
+## Steps
 
-Every figure enters re-derived from its primary source. A count copied out of a briefing or an earlier artifact is a defect — restated metrics have drifted before, in both directions.
+1. **Assemble the inputs as pointers, not copies:**
+   - the feature directory: `README.md`, `log.md`, `shape.md` and `plan.md`;
+   - the trigger list from `phase-gate.sh finish`;
+   - `git log --oneline {pd_base_branch}..feature/<id>` and `git diff --stat {pd_base_branch}...feature/<id>`;
+   - the earlier `retro.md` files under `{pd_artifacts_root}/features/`, so self-labels ("first", "only", "Nth") can be checked.
+2. **Dispatch one `pd:retro-facilitator`.** The prompt carries those pointers and the template `${CLAUDE_PLUGIN_ROOT}/templates/retro.md`, and ends with the dispatch-hygiene line. The agent re-derives every figure from `log.md` and git, and every figure cites its entry or commit. A count copied from a briefing or an earlier artifact is a defect.
+3. **Write `{pd_artifacts_root}/features/<id>/retro.md`** from its result, in the template's sections.
+4. **Land each lesson where it acts,** in this order of preference:
+   - a `pd-lint` or hook check, if it can be checked;
+   - otherwise one line in the CLAUDE.md of the project where the feature ran;
+   - otherwise an edit to the stage skill. A lesson about pd itself goes into pd's skill.
 
-## Produce retro.md
-Dispatch `pd:retro-facilitator` with the bundle; it owns the analysis framework and its return shape. Write the result to `{pd_artifacts_root}/features/{id}-{slug}/retro.md`:
+   Name each landing in `## Takeaways`, with its commit. A follow-up gets a `pd-new backlog "<title>" --from features/<id>` line, listed in `## Actions`.
+5. **Commit `retro.md`** before any cleanup.
 
-- **Observe** — metrics table: phase, duration, iterations, backward transitions.
-- **Review** — recurring finding classes, each citing its evidence.
-- **Tune** — process changes, each naming the signal behind it.
-- **Act** — patterns, anti-patterns, heuristics, each with provenance.
-
-Check self-labels ("first", "only", "highest") against prior retros before writing them down. Promote anything that recurred across features into `{pd_artifacts_root}/knowledge-bank/`; one-offs stay in `retro.md`, which is committed before cleanup begins.
+## Never
+- **Never ask the user how the feature went.** The record is the input.
+- **Never write to `knowledge-bank/`.** It is a frozen, read-only archive.
