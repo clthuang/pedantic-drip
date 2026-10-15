@@ -1,44 +1,43 @@
 ---
-last-updated: 2026-07-25T12:00:00Z
-source-feature: 134-workflow-rebuild
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 134-workflow-rebuild -->
-
 # Workflow Artifacts
 
-Index of file artifacts produced by the pd workflow. Feature 134 cut the deep-mode inventory to three documents plus the projection; everything else the old flow maintained (tasks.md, implementation-log.md, .review-history.md, the .qa-gate sidecar family) is retired — their information now lives in the engine's event stream or in git.
+Index of the files the pd workflow commits. Templates: `plugins/pd/templates/`. Entry shapes: `plugins/pd/references/log-entries.md`.
 
-## Per-Feature Artifact Directory
+## Per-Feature Directory
 
-`{artifacts_root}/features/{id}-{slug}/`:
+`{artifacts_root}/features/<id>/`, where `<id>` is `YYYY-MM-DD-slug` (made by `pd-new feature`):
 
-| File | Produced by | Purpose |
-|------|-------------|---------|
-| `prd.md` | brainstorm promotion (`create-feature --prd=`) | Problem statement and proposed solution, when a brainstorm preceded the feature |
-| `shape.md` | specify (`## Requirements`) + design (`## Design`) | One document: mechanically checkable success criteria, scope, edge cases; then decisions with rationale, contracts pinned once, risks, test strategy |
-| `plan.md` | create-plan | Ordered tasks derived from `## Design` at dispatch time — deliverable, files, verification command, `[parallel-safe]` markers |
-| `retro.md` | retrospecting skill (finish, before cleanup) | Retrospective assembled from engine events, git, and the workaround extractor |
-| `.meta.json` | `_project_meta_json()` (MCP mutations only) | READ-ONLY projection of engine state for humans and tooling; never hand-edited (deny-by-default guard) |
+| File | Written by | Holds |
+|------|-----------|-------|
+| `README.md` | `pd-new`, then every stage | Frontmatter (`id`, `type`, `title`, `status`, `phase`, `mode`, `origin`, `branch`, `risk`, `issue`) and `## Now`, overwritten, never appended |
+| `log.md` | every stage | Append-only entries: `decision`, `phase`, `review`, `qa`, `gate`, `run`, `handoff`, `replan`, `metrics`, `defect`, `note`, `capped` |
+| `shape.md` | specify (`## Requirements`), design (`## Design`) | B-numbered expectations; then the architecture diagram, contracts pinned once, decisions, risks and test strategy. Express: a mini-spec with one task block |
+| `plan.md` | create-plan | `## Plan`: waves of task blocks, each with its contract, files, proving command, JUnit path and test cases |
+| `retro.md` | retrospecting (finish) | Only when `log.md` records a retro trigger |
 
-Express features produce no artifact files: the mini-spec is a `mini_spec` phase event (text in metadata, read back via `get_mini_spec`), and skipped phases are `skipped` events. `retro.md` is still expected at finish.
+## Other Items
 
-## Where the Old Artifacts' Information Went
+| Path | Made by | Holds |
+|------|---------|-------|
+| `plans/<id>.md` | `pd-new plan` | A multi-feature plan and its `roadmap:` |
+| `brainstorms/<id>.md` | `pd-new brainstorm` | A PRD, with its `## Log` |
+| `rca/<id>.md` | `pd-new rca` | A root-cause report, with its `## Log` |
+| `backlog.md` | `pd-new backlog` | One line per idea; `pd-lint --archive` moves ticked lines to `backlog-archive.md` |
 
-| Retired file | Now lives in |
-|--------------|--------------|
-| `spec.md` / `design.md` | `shape.md` (two sections, one document) |
-| `tasks.md` | `plan.md` tasks, derived at dispatch time |
-| `implementation-log.md` | commit messages + phase events |
-| `.review-history.md` | reviewer notes on each phase's `completed` event |
-| `.qa-gate.json` / `.qa-gate.log` / `.qa-gate-low-findings.md` / `qa-override.md` | the two review moments' findings land as reviewer notes; test debt arrives as backlog rows (`test-debt-report` still reads historical `.qa-gate.json` files) |
+## Checks
 
-## Mechanical Gates
+- **`phase-gate.sh <phase> <feature dir> [--express]`** — what each phase hands down: artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. Zero dispatch.
+- **`pd-lint`** — the artifact rules, run on staged items by the commit hook; it re-runs the gates for every phase a feature has passed.
 
-`scripts/phase-gate.sh <phase> <feature-dir> [--express]` checks artifact existence, required sections, and duplicate contract blocks at each phase boundary — zero dispatch cost. `--express` skips the artifact checks that express features never have.
+## Generated, Never Committed
 
-## Technical Documentation
+- `docs/_html/` — `pd-html.py` renders.
+- `agent_sandbox/` — QA output, JUnit files, scratch work.
+- `.claude/worktrees/` — task worktrees.
 
-Feature-level docs live in `docs/features/{id}-{slug}/` alongside the artifacts; historical features keep their original artifact sets (spec.md-era layouts are not migrated).
-<!-- AUTO-GENERATED: END -->
+Features from before thin pd keep their original layouts until `/pd:adopt` migrates the project.

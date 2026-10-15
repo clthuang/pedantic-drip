@@ -253,16 +253,16 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 
 Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd/agents/{name}.md`.
 
-**Reviewers (6):** — only `design-reviewer` and `code-quality-reviewer` sit on the feature workflow's two review moments; the rest are on-demand or non-feature paths.
-- `design-reviewer` — Challenges design assumptions and finds gaps (review moment 1 of 2, `/pd:design`)
-- `code-quality-reviewer` — Adversarially reviews the branch diff for correctness and maintainability (review moment 2 of 2, `/pd:implement`)
+**Reviewers (6):** — `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` are the Claude fallback for the review call at Contracts, Plan and Verify (Codex goes first); each preloads its stage skill's `## Review checklist`.
+- `design-reviewer` — Challenges design assumptions and finds gaps (`/pd:design`)
+- `code-quality-reviewer` — Adversarially reviews the whole branch diff, inside `verify-change` (`/pd:verify`)
 - `security-reviewer` — Reviews implementation for security vulnerabilities; dispatched from `/pd:finish-feature` on security-surface changes. Always an Anthropic-model Task, never routed to Codex
-- `plan-reviewer` — Skeptically reviews plans for failure modes and feasibility (Claude Code plan mode, pasted plans)
+- `plan-reviewer` — Reviews `plan.md`'s test cases for faithfulness and coverage (`/pd:create-plan`), and pasted plans
 - `ds-analysis-reviewer` — Reviews data analysis for statistical pitfalls, methodology issues, and conclusion validity; uses WebSearch + Context7
 - `ds-code-reviewer` — Reviews DS Python code for anti-patterns, pipeline quality, and best practices; uses Context7 for API verification
 
 **Workers (5):**
-- `implementer` — Implements tasks with TDD and self-review discipline
+- `implementer` — Implements one plan task in its own worktree inside `implement-tasks`, tests first; also the fixer in fix cycles
 - `qa-executor` — Execution-grounded QA: runs the test battery and drives affected flows, returning commands plus output as evidence. Fixes nothing
 - `generic-worker` — General-purpose implementation agent for mixed-domain tasks
 - `documentation-writer` — Writes and updates documentation based on research findings

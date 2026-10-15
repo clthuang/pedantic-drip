@@ -1,167 +1,96 @@
 ---
-last-updated: 2026-07-10T00:00:00Z
-source-feature: 109-polymorphic-taxonomy-and-event
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
-
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 
 # Architecture Overview
 
-A reference map of the plugin's components and how they connect. Read this to orient yourself before diving into a specific area.
+A map of the plugin's components and how they connect. Read this before diving into one area.
 
 ## Top-Level Model
 
 ```
 User
- ├── /command          → Command (.md) → Skill (SKILL.md) → Agents
- └── /secretary <req>  → Secretary routing pipeline → Skill or Agent
+ ├── /pd:<stage>        → Command (thin entry point) → Stage skill (the conductor's playbook)
+ │                            ├── scripts (pd-new, phase-gate.sh, pd-lint, pd-status, …)
+ │                            └── workflows (implement-tasks, verify-change, …) → Agents
+ └── /pd:secretary <req> → triage → a stage command, or a specialist agent
 ```
 
-Everything is prompts. Skills and agents are instruction files that Claude follows — there is no compiled runtime. The workflow state and entity lineage are persisted in SQLite databases (`~/.claude/pd/`), making any session resumable from the files alone.
+The main session is the **conductor**: it asks the user, writes the files and commits. Workflows and agents return results; they never write state. State lives in committed files under `{artifacts_root}` (default `docs/dev_artifacts/`); everything else is computed from them by `pd-status`.
 
 ## Component Locations
 
 | Component | Location | Count |
 |-----------|----------|-------|
-| Skills | `plugins/pd/skills/{name}/SKILL.md` | 29 |
-| Agents | `plugins/pd/agents/{name}.md` | 29 |
-| Commands | `plugins/pd/commands/{name}.md` | 33 |
-| Hooks | `plugins/pd/hooks/` | 17 scripts (15 registered) |
-| MCP servers | `plugins/pd/mcp/` | 2 |
-| Shared Python libs | `plugins/pd/hooks/lib/` | — |
+| Skills | `plugins/pd/skills/{name}/SKILL.md` | 24 |
+| Agents | `plugins/pd/agents/{name}.md` | 21 |
+| Commands | `plugins/pd/commands/{name}.md` | 25 |
+| Hooks | `plugins/pd/hooks/*.sh` | 8 scripts, all registered |
+| Workflows | `plugins/pd/workflows/*.js` | 4 |
+| Scripts | `plugins/pd/scripts/` | see [api-reference.md](../technical/api-reference.md) |
+| References | `plugins/pd/references/` | entry shapes, result schemas, the review call |
+| Templates | `plugins/pd/templates/` | README, log, shape, plan, roadmap, retro |
 
-## Workflow Phases
-
-Features progress through a linear phase sequence managed by the workflow engine:
+## Stages and Phases
 
 ```
-brainstorm → specify → design → create-plan → implement → finish
+Clarify (brainstorm | rca) → specify → design → create-plan → implement → verify → finish
 ```
 
-Each phase command calls `validateAndSetup` (from `workflow-transitions` SKILL.md) before doing phase work, and `commitAndComplete` after. These two shared procedures handle transition validation, branch checks, partial-phase recovery, state recording, auto-commit, and phase summary storage.
+A feature's README frontmatter holds `phase:`, one of `specify`, `design`, `create-plan`, `implement`, `verify`, `finish`. Clarify happens on a brainstorm or rca item, before the feature exists.
 
-### workflow-transitions Shared Boilerplate
+`workflow-transitions` is the contract every stage skill shares:
 
-`validateAndSetup(phaseName)` runs steps in order:
+- **Phase entry:** resolve the feature (argument, branch, or `pd-status`), check out its branch, read the README, `## Now` and the open blockers.
+- **Phase exit:** `phase-gate.sh <phase> <feature dir>` passes; set `phase:` to the next phase, append a `phase <from> -> <to>` entry, overwrite `## Now`, commit `<phase>: <summary>`.
+- **Backward move:** set `phase:` back and append `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`.
+- **Review call** (`references/review-call.md`): Codex first with one retry, else the stage's Claude reviewer; one pass, up to three fix cycles against runnable checks, then the user.
+- **Workflow runs:** write `run in flight:` to `## Now` before launching; append the `run`, `review`, `qa` entries from the result.
+- **Goal runs:** `goal: <id> target <phase> session <id>` in `## Now`; the Stop hook decides when the run may stop.
 
-1. **Validate Transition** — reads `.meta.json`, determines if the transition is normal forward, backward (re-running completed phase), or skip. Prompts user if backward or skip.
-2. **Phase Context Injection (Step 1b)** — on backward transitions, constructs a `## Phase Context` block containing reviewer referral findings (`backward_context`) and prior phase summaries (`phase_summaries`). Injected into the prompt before any skill invocation. Only present on backward transitions; no block is generated on normal forward transitions.
-3. **Check Branch** — verifies the current git branch matches the feature's expected branch.
-4. **Check for Partial Phase** — detects interrupted phase work and offers resume/restart options.
-5. **Mark Phase Started** — calls `transition_phase` MCP tool to record phase start.
-6. **Inject Project Context** — for features linked to a project, prepends PRD, roadmap, and completed dependency context.
+## Workflows
 
-`commitAndComplete(phaseName, artifacts[], iterations, capReached, reviewerNotes[])` runs after phase work:
+| Workflow | Stage | What it does |
+|----------|-------|--------------|
+| `implement-tasks` | Execute | One `implementer` per plan task in its own worktree; the `merger` lands each in plan order after `pd-proof`; up to three fix cycles |
+| `verify-change` | Verify | The review call beside `qa-executor`, then up to three cycles of a separate fixer and a QA re-run |
+| `research-fanout` | Clarify | Researchers, one `advisor` per lens, then `ras-synthesizer` |
+| `rca-fanout` | Clarify | One investigator per hypothesis, then a refuter for each supported one |
 
-1. **Auto-Commit** — runs frontmatter injection on artifacts, then `git add / commit / push`.
-2. **Update State** — calls `complete_phase` MCP tool to record completion and timing.
-3. **Phase Summary** — outputs a plain-text summary block (outcome, artifacts, reviewer notes).
-4. **Store Phase Summary (Step 3a)** — constructs a structured `summary_dict` (phase, timestamp, outcome, key decisions, reviewer feedback, rework trigger) and appends it to `phase_summaries` in entity metadata via `update_entity`. Capped at 2000 chars total; field truncation order: reviewer_feedback_summary → key_decisions → artifacts_produced → outcome. Best-effort — failures log a warning but do not block completion.
-5. **Forward Re-Run Check (Step 3b)** — handles automatic forward re-run when returning from a backward transition chain.
-
-### Phase Context Accumulation (Feature 075)
-
-Feature 075 adds the `phase_summaries` append-list to entity metadata, projected to `.meta.json`. When a backward transition is detected (re-entry into a completed phase), Step 1b reads `phase_summaries` and trims for display (last 2 entries per phase, display-only — full list persists in storage). This gives the re-entering phase visibility into what was decided in prior attempts, reducing rework churn.
+Each checks `workflow_output_cap` before every agent and returns `stopped: "budget"` with partial results at the cap. Results are pinned in `references/workflow-results.md`.
 
 ## Agents
 
-Agents are isolated subprocesses spawned by skills and commands via Task dispatch. They have a specific focus and return structured JSON results.
+- **Reviewers:** `design-reviewer`, `plan-reviewer`, `code-quality-reviewer` (each preloads its stage skill's `## Review checklist`), `security-reviewer` (finish), `ds-analysis-reviewer`, `ds-code-reviewer`.
+- **Workers:** `implementer`, `qa-executor`, `generic-worker`, `documentation-writer`, `ras-synthesizer`.
+- **Researchers:** `codebase-explorer`, `documentation-researcher`, `internet-researcher`, `investigation-agent`, `skill-searcher`.
+- **Advisory:** `advisor`.
+- **Orchestration:** `merger`, `calvin-runner`, `rca-investigator`, `retro-facilitator`.
 
-**Reviewers (14):** spec-reviewer, design-reviewer, plan-reviewer, task-reviewer, implementation-reviewer, code-quality-reviewer, security-reviewer, phase-reviewer, brainstorm-reviewer, prd-reviewer, project-decomposition-reviewer, relevance-verifier, ds-analysis-reviewer, ds-code-reviewer
-
-**Workers (6):** implementer, generic-worker, documentation-writer, documentation-researcher, ras-synthesizer, test-deepener
-
-**Researchers (5):** codebase-explorer, investigation-agent, internet-researcher, skill-searcher, project-decomposer
-
-**Advisory (1):** advisor
-
-**Orchestration (3):** secretary-reviewer, rca-investigator, retro-facilitator
-
-All agent files include a `model:` frontmatter field (`opus`/`sonnet`/`haiku`). Every dispatch must match this tier. Verify with: `grep -rn 'subagent_type:' plugins/pd/ | wc -l`.
+Each agent's frontmatter sets its `model:`, `effort:` and `tools:`; `validate.sh` checks the roles' tool limits.
 
 ## Hooks
 
-Hooks fire automatically at Claude Code lifecycle points and are defined in `plugins/pd/hooks/hooks.json`.
+Defined in `plugins/pd/hooks/hooks.json`.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `sync-cache` | SessionStart | Syncs plugin source to Claude cache from a main checkout; publishes nothing from a linked worktree |
-| `cleanup-locks` | SessionStart | Removes stale lock files |
-| `session-start` | SessionStart | Injects active feature context, runs doctor auto-fix |
-| `inject-secretary-context` | SessionStart | Injects available agent/command context for secretary routing |
-| `start-ui-server` | SessionStart | Auto-starts the Kanban board UI server |
-| `cleanup-stale-versions` | SessionStart | Deletes cached pd plugin versions older than the active one |
-| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind plan-reviewer dispatch |
-| `pre-commit-guard` | PreToolUse (Bash) | Branch protection; warns on commits to main/master |
-| `pre-push-guard` | PreToolUse (Bash) | Validates `.meta.json` consistency before git push |
-| `data-file-guard` | PreToolUse (Write/Edit) | Config-driven guard protecting `.meta.json` and other pd data files from unauthorized edits |
-| `pre-edit-unicode-guard` | PreToolUse (Write/Edit) | Non-blocking warning for risky Unicode codepoints |
-| `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries |
-| `post-enter-plan` | PostToolUse (EnterPlanMode) | Injects plan review instructions |
-| `post-exit-plan` | PostToolUse (ExitPlanMode) | Injects task breakdown and implementation workflow |
-| `yolo-stop` | Stop | Detects YOLO mode stop events and chains to next phase |
-
-SessionStart hooks match `startup|resume|clear` only — they do not fire on `compact` events.
-
-## MCP Servers
-
-Two MCP servers provide persistent state to Claude across sessions:
-
-### Entity Registry Server (`mcp/entity_server.py`)
-
-Tools (20): `allocate_entity_id`, `register_entity`, `issue_spawn`, `set_parent`, `get_entity`, `get_lineage`, `update_entity`, `export_lineage_markdown`, `search_entities`, `export_entities`, `delete_entity`, `add_entity_tag`, `get_entity_tags`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `get_okr_alignments`, `create_key_result`, `update_kr_score`, `list_projects`
-
-Tracks lineage of pd artifacts (backlog items, brainstorms, projects, features) in a cross-project SQLite DB at `~/.claude/pd/entities/entities.db`. The `type_id` format is `{entity_type}:{entity_id}` with a colon separator (e.g., `feature:075-phase-context-accumulation`).
-
-The `metadata` field on entities stores structured JSON. Entity-level metadata for features includes: `phase_summaries` (append-list of phase summary dicts), `backward_context` (reviewer referral for rework), `backward_return_target`, and `backward_history`. Always use `parse_metadata()` from `entity_registry.metadata` — never raw `json.loads` on metadata fields.
-
-### Workflow State Server (`mcp/workflow_state_server.py`)
-
-Tools (23): `get_phase`, `transition_phase`, `complete_phase`, `record_mini_spec`, `get_mini_spec`, `validate_prerequisites`, `reproject_meta_json`, `list_features_by_phase`, `list_features_by_status`, `reconcile_check`, `reconcile_frontmatter`, `reconcile_status`, `init_feature_state`, `init_project_state`, `activate_feature`, `init_entity_workflow`, `transition_entity_phase`, `get_notifications`, `promote_task`, `query_ready_tasks`, `get_progress_view`, `record_backward_event`, `query_phase_analytics`
-
-Manages feature lifecycle state as a SQLite-backed state machine. The state engine is defined in `hooks/lib/workflow_engine/`. The DB is the only source of workflow state: a feature's `workflow_phases` row is seeded by activation or the startup backfill, never read back from `.meta.json`, which is a projection of it. `reconcile_check` and `reconcile_status` report drift between the two and repair nothing; `reproject_meta_json` re-renders a projection from the DB.
-
-## Shared Python Libraries
-
-Located under `plugins/pd/hooks/lib/`:
-
-| Module | Purpose |
-|--------|---------|
-| `entity_registry/` | Entity DB, metadata parsing, backfill scanner, frontmatter injection |
-| `workflow_engine/` | State machine, transitions, drift detection, cascade recovery |
-| `transition_gate/` | Gate functions, constants, and transition models |
-| `reconciliation_orchestrator/` | Session start: brainstorm registration (insert-only), cascade recovery and dependency cleanup. Its scans list only the session's workspace; cascade recovery's writes follow edges (an unblock across a cross-workspace `blocks` edge, a changed key result under the session's objective) |
-| `doctor/` | 10 data consistency checks with auto-fix support |
-
-**Doctor check added in feature 109 — `check_status_write_path` (registered in CHECK_ORDER):** AST-based static audit that enforces AC-2.1 and AC-2.6. At session start it greps `plugins/pd/hooks/lib/` and `plugins/pd/mcp/` for direct `UPDATE entities SET status` and `UPDATE workflow_phases` writes outside the `append_phase_event` helper body. Emits a non-fatal stderr warning listing any violating `file:line` pairs. Identical grep to the CI test `test_no_direct_status_updates`.
-
-Use `uv add` to add dependencies — never `pip install`. Run tests with `plugins/pd/.venv/bin/python -m pytest`.
-
-## File Artifacts
-
-Each feature produces a set of files under `{artifacts_root}/features/{id}-{slug}/`:
-
-| File | Produced by |
-|------|-------------|
-| `prd.md` | brainstorm phase |
-| `spec.md` | specify phase |
-| `design.md` | design phase |
-| `plan.md` | create-plan phase |
-| `tasks.md` | create-plan phase |
-| `impl-log.md` | implement phase |
-| `.meta.json` | workflow engine (auto-managed) |
-| `.review-history.md` | reviewer agents (auto-managed) |
-
-`.meta.json` is the source of truth for workflow state. Modifications to it outside the workflow engine (MCP tools) are blocked by the `data-file-guard` hook.
+| `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to the Claude cache from a main checkout |
+| `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd versions older than the active one |
+| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The `{pd_*}` values, active and blocked items, next ready items, retros owed; offers `/pd:init` or `/pd:adopt` |
+| `pre-commit-guard` | PreToolUse (Bash) | Warns on commits to `main`/`master` |
+| `pd-commit-lint` | PreToolUse (Bash) | `pd-lint --staged` before a `git commit`; an error blocks it |
+| `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Warns on risky Unicode codepoints |
+| `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` only its ledger path |
+| `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached; yields to running workflows; the per-feature token cap |
 
 ## Design Principles
 
 | Principle | Meaning |
 |-----------|---------|
-| Everything is prompts | Skills and agents are instruction files; no compiled runtime |
-| Files are truth | Artifacts persist in files; any session can resume from them |
-| Humans unblock | When stuck, Claude asks — never spins endlessly |
-| Composable > Rigid | Phases work independently; combine as needed |
+| Everything is prompts | Skills and agents are instruction files; the scripts only check and compute |
+| Files are truth | State is committed markdown; any session resumes from it |
+| Checks over prose | A rule a script can check lives in `phase-gate.sh` or `pd-lint`, not in a skill |
+| Humans unblock | Every hard stop is an AskUserQuestion, never a loop to a cap |
 | No backward compatibility | Private tooling — delete old code, no shims |
-
-<!-- AUTO-GENERATED: END -->

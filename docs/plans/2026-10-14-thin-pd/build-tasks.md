@@ -586,3 +586,8 @@ Next: T5.1, the user picks the bake-off feature.
 Q: Review Wave 4 before the bake-off? Keep T4.11's CLAUDE.md changes (`ac80ed7e`)? The 11 stale docs and about 19 stale README.md lines? T5.1's bake-off feature?
 A (user, verbatim): "Codex review first (Recommended)"; "Keep"; "Rewrite docs, list README (Recommended)"; "Propose candidates".
 Applied: T4.11 is done, the user having reviewed its diff. A Codex review of Wave 4 runs, with one fix round. The stale docs are rewritten; the README.md lines are listed for the user. Bake-off candidates are proposed from the backlog.
+
+## 2026-10-15 13:05+08:00 decision
+Q: Which feature for the bake-off (standard mode, modest size, pytest so pd-proof gets JUnit, at least one parallel-safe task pair)?
+A (user, verbatim): "Backlog sweep tool (Recommended)".
+Applied (T5.1): the bake-off feature is a small Python CLI, in a fresh `/pd:init`'d repository, that sorts the 174-row legacy `docs/backlog.md` into keep and archive (rows naming the retired registry, MCP servers, UI or `.meta.json`). Three or four tasks: the row parser and the rules in parallel, then the report and the CLI. Its output feeds T6.1's MAP BY HAND step.
