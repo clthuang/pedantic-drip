@@ -59,8 +59,8 @@ Per [rca-report-template](references/rca-report-template.md):
 
 ## 8. Decide the fix's entry depth
 Ask through AskUserQuestion:
-- **Express:** only for one known pattern. The codebase already holds the same change shape, and the mini-spec will cite that example's path (§A2). `${CLAUDE_PLUGIN_ROOT}/scripts/pd-new feature --from rca/<id>.md "<title>" --mode express`, then the specifying skill's express mini-spec.
-- **Criteria:** apply `/pd:secretary`'s depth rules to pick `mode` and any `risk:` tag, then `pd-new feature --from rca/<id>.md "<title>" --mode <mode>`, set `risk:` in its README, and continue with the specifying skill.
+- **Express:** only for one known pattern. The codebase already holds the same change shape, and the mini-spec will cite that example's path (§A2). `/pd:create-feature "<title>" --from rca/<id>.md --mode express`, which writes the mini-spec before its first commit.
+- **Criteria:** `/pd:create-feature "<title>" --from rca/<id>.md`, which applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits; then continue with the specifying skill.
 - **No fix now:** `## Now` says why, and the recommendations go to the backlog with `pd-new backlog "<title>"`.
 
 Then the rca item takes `status: done` and a `note` entry naming where the fix went; commit.

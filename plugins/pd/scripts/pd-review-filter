@@ -6,7 +6,7 @@
 Prints the review JSON with `new_in_diff` cut to the findings whose file:line lies inside a hunk of
 the diff's new side, and names each dropped finding on stderr. Schema: references/workflow-results.md.
 """
-import argparse, json, re, subprocess, sys, tempfile  # noqa: E401
+import argparse, codecs, json, re, subprocess, sys, tempfile  # noqa: E401
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -21,6 +21,8 @@ def new_side(diff):
     for line in diff.split("\n"):
         if line.startswith("+++ ") and prev.startswith("--- "):  # a header, not an added line "++ …"
             name = line[4:].split("\t")[0]
+            if name.startswith('"'):  # git C-quotes a path with non-ASCII, quote or control characters
+                name = codecs.escape_decode(name[1:-1].encode())[0].decode("utf-8", "replace")
             path = None if name == "/dev/null" else name[2:] if name.startswith("b/") else name
         elif path and (m := HUNK_RE.match(line)):
             start, count = int(m.group(1)), int(m.group(2) or 1)
@@ -76,6 +78,10 @@ def self_test():
     c.check([i["id"] for i in out["new_in_diff"]] == ["K1", "K2", "K3", "K4", "K5"], "kept exactly the in-hunk findings")
     c.check(sorted(i["id"] for i in dropped) == ["D1", "D2", "D3", "D4", "D5", "D6"], "dropped the rest, edges included")
     c.check(out["findings"] == review["findings"], "the status findings pass through untouched")
+    quoted = 'diff --git "a/src/caf\\303\\251 \\"x\\".py" "b/src/caf\\303\\251 \\"x\\".py"\n--- "a/src/caf\\303\\251 \\"x\\".py"\n' \
+             '+++ "b/src/caf\\303\\251 \\"x\\".py"\n@@ -1,0 +1 @@\n+y = 1\n'
+    kept, _ = filter_review({"new_in_diff": [{"id": "Q1", "file": 'src/café "x".py', "line": 1}]}, quoted)
+    c.check([i["id"] for i in kept["new_in_diff"]] == ["Q1"], "a git-quoted path (non-ASCII, quotes) is decoded")
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "d.diff").write_text(DIFF)
         r = subprocess.run([sys.executable, __file__, "--diff", str(Path(tmp) / "d.diff")], input=json.dumps(review),

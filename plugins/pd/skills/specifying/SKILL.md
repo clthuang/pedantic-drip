@@ -9,7 +9,7 @@ The Criteria stage (`phase: specify`) removes one unknown: how will anyone know 
 
 ## Steps
 
-1. **Phase entry** per `workflow-transitions`. Work promoted from a brainstorm or rca is created here: `pd-new feature --from <brainstorm or rca> "<title>"` (add `--plan <plan> <slug>` when it fills a roadmap's `planned:` line); then set its `mode` and `risk:` by `/pd:secretary`'s depth rules, with the reason in a `phase` entry.
+1. **Phase entry** per `workflow-transitions`. A feature that doesn't exist yet, promoted work included, is created first through `/pd:create-feature` (`--from <brainstorm or rca>`, or `--plan <plan> <slug>` for a roadmap's `planned:` line), which sets its depth and creates its branch.
 2. **A direct request** first gets Clarify's two questions, through AskUserQuestion: is this the right problem, and what would success look like?
 3. **Write `## Requirements`** in `{pd_artifacts_root}/features/<id>/shape.md` from the PRD, RCA report or request, using `${CLAUDE_PLUGIN_ROOT}/templates/shape.md`. The bar is below. Ask the user only about contradictions and decisions the source can't answer.
 4. **Calvin cycles,** up to three (below).
