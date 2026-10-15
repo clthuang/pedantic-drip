@@ -151,7 +151,9 @@ Not inventory rows, but files that serve only deleted components or the registry
 - **Scripts serving deleted rows:** `plugins/pd/scripts/{doctor.sh,pd_state_diff.py,test_debt_report.py,cleanup_backlog.py,parse_backlog_md.py,compare_backlog_projection.py}`.
 - **Config:** `plugins/pd/hooks/data_file_guards.json`, the `hooks.json` entries of deleted hooks, `plugin.json`'s `mcpServers`.
 - **References:** `plugins/pd/references/codex-routing.md` (§A6: the review call replaces it, T4.3).
-- **Stays, because a kept hook uses it:** `hooks/lib/common.sh` and `hooks/lib/session-start-helpers.sh` (`pre-commit-guard.sh`, `sync-cache.sh`), `hooks/pre-edit-unicode-guard.py`.
+- **Stays, because a kept hook uses it:** `hooks/lib/common.sh` (`pre-commit-guard.sh`, `sync-cache.sh`) and `hooks/pre-edit-unicode-guard.py`. `hooks/lib/session-start-helpers.sh` stays for T4.7's SessionStart hook, minus its registry function `ensure_workspace_uuid`.
+- **Also goes, found while deleting:** `plugins/pd/scripts/setup.sh` (it runs `doctor.sh`'s checks), `plugins/pd/hooks/lib/conftest.py` (it isolates `ENTITY_DB_PATH`), and the root `scripts/` registry tooling: the migration, census, re-key and archive-manifest scripts, their tests and `scripts/dev/`; `scripts/migrate-from-iflow.sh` and `scripts/verbosity-census.sh` (no caller left); `plugins/pd/templates/config.local.md` (only `setup.sh` read it); and the hook tests of deleted code: `repro-broken-pipe.sh`, `check-no-unsafe-writes.sh` with its fixture, and the stale content tests `test-enriched-docs-content.sh` and `test-cc-native-integration.sh` (already failing before T2.1, run by nothing).
+- **Edited in place, not deleted:** `validate.sh` and `scripts/check-doc-drift.sh` lose their rules for deleted things; `plugins/pd/pyproject.toml` drops the eight dependencies only the registry, MCP servers and UI imported, and `pytest-asyncio`.
 
 T2.1 re-checks each of these with `grep` before deleting it; a caller found in a kept file gets the T2.1 marker.
 

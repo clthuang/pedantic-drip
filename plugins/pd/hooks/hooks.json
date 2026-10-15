@@ -15,57 +15,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cleanup-locks.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-secretary-context.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/start-ui-server.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cleanup-stale-versions.sh"
           }
         ]
       }
     ],
     "PreToolUse": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-exit-plan-review.sh"
-          }
-        ]
-      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -76,68 +31,11 @@
         ]
       },
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-push-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/data-file-guard.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-unicode-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/yolo-guard.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "EnterPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-enter-plan.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-exit-plan.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/yolo-stop.sh"
           }
         ]
       }

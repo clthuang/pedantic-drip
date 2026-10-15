@@ -1,6 +1,6 @@
 ---
 name: updating-docs
-description: Documentation sync checklist for plugin component changes, plus the doc-writer dispatch. Use when adding, removing, or renaming a skill, command, agent, hook, or doctor check.
+description: Documentation sync checklist for plugin component changes, plus the doc-writer dispatch. Use when adding, removing, or renaming a skill, command, agent, or hook.
 ---
 
 # Updating Docs
@@ -11,9 +11,7 @@ Adding, removing, or renaming a plugin component means updating each line below 
 - **Repo `README.md`** — skill, agent, and command tables plus their headline counts.
 - **Repo `README_FOR_DEV.md`** — the same tables and counts, plus the hooks table when a hook is added or removed.
 - **Plugin `README.md`** — component-count table and the command and agent tables.
-- **Plugin `skills/workflow-state/SKILL.md`** — the single phase-sequence line, when phase names change.
 - **Plugin `commands/secretary.md`** — the specialist fast-path table, when an agent listed there is renamed.
-- **Repo and plugin `README.md`** — the `/pd:doctor` check-count claims, when a doctor check is added or removed.
 - **Repo `CHANGELOG.md`** — an entry under `## [Unreleased]` for user-visible changes only: new commands, skills, config options, behavior changes. Refactors, tests, and internal cleanups get no entry.
 
 Verify each count by listing the files it claims to describe. Never adjust the previous number by hand.

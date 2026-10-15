@@ -20,7 +20,7 @@ Contract command. Shared mechanics (entry, exit, YOLO, review gate, dispatch hyg
 ```bash
 ./validate.sh
 bash plugins/pd/hooks/tests/test-hooks.sh                                        # dev workspace
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/ plugins/pd/mcp/ plugins/pd/ui/ -q  # dev workspace
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/ -q                        # dev workspace
 ```
 
    Fix every failure on the branch and re-run the battery, including failures this feature did not introduce. Three failed rounds escalate to the user.

@@ -541,3 +541,8 @@ Verdict: READY. Cycle 3 of 3 checked the six findings left by cycle 2 (C4, C5, C
 Q: The inventory's and the guard map's judgment calls (T1.1, T1.2): keep the project decomposition components? Delete `implementing-with-tdd`, `investigation-agent`, `/pd:wrap-up`? Require the design and test-case reviews in `phase-gate.sh`? Build the T2.1 diff now?
 A (user, verbatim): "delete them for now, and we can recreate them more appropriately if the need arises"; "implementing-with-tdd, investigation-agent could be called by the secretary"; "No, as planned (Recommended)"; "Build T2.1 diff now (Recommended)".
 Applied as plan D18: `inventory.md` and §A6 updated (19 of the 24 agents kept). Waves 0 and 1 are committed at `77687148`, `3e5b2166`, `ea883e45` and `7ddd81e2`.
+
+## 2026-10-15 10:30+08:00 decision
+Q: Approve the staged T2.1 deletion diff (355 files; every proof passes except `README.md`'s skill and agent count)? And should that `README.md` line change?
+A (user, verbatim): "Approve and commit (Recommended)"; "Stage only that line (Recommended)".
+Applied: T2.1 committed with only the `README.md` count line staged (27 skills and 24 agents become 23 and 19); the user's other `README.md` edits stay unstaged. `validate.sh` gives 0 errors and `check-doc-drift.sh` exits 0.

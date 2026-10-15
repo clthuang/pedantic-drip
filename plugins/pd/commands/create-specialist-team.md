@@ -86,8 +86,6 @@ AskUserQuestion:
 ```
 Then re-confirm the customized team.
 
-**YOLO override:** If args contain `[YOLO_MODE]`, skip team approval and auto-deploy recommended team.
-
 ### Step 3: Inject Context
 
 For each selected template:
@@ -110,7 +108,7 @@ For each selected template:
    - If found: extract id, slug, lastCompletedPhase, mode; determine next phase
       by calling `get_phase("feature:{id}-{slug}")` (using `id` and `slug` extracted above).
       Parse the JSON response: if `current_phase` is non-null, use it; if null, determine next
-      phase from `last_completed_phase` using the canonical sequence in workflow-state SKILL.md.
+<!-- removed in T2.1: workflow-state skill; rewritten in T4.5i -->
       If MCP unavailable, fall back to `lastCompletedPhase` from `.meta.json` (already extracted).
       Apply the same edge cases: null+null → route to specify, last=finish → complete, no active feature → brainstorm.
      Check which artifacts exist (prd.md, shape.md, plan.md)
@@ -229,5 +227,3 @@ AskUserQuestion:
    If user selects "Deep dive":
      Offer focused follow-up team (existing behavior).
 
-   **YOLO override:** If `[YOLO_MODE]` active, skip AskUserQuestion and directly invoke
-   the recommended phase.

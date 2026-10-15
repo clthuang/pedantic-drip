@@ -14,10 +14,10 @@
 9. **Quality examples** — Quantity, order, and format matter; small tweaks yield up to 90% accuracy improvement [The Prompt Report]
 10. **Instruction placement** — Place key instructions at top AND bottom for agentic tasks [OpenAI GPT-4.1 Guide]
 
-## Component-Specific Patterns
+## Plugin-Specific Patterns
 
 ### Skills
-- **Structure:** Frontmatter → YOLO overrides → Process (numbered steps with bold semantic labels) → Output format → Error handling → Self-check → PROHIBITED section [Codebase analysis]
+- **Structure:** Frontmatter → Process (numbered steps with bold semantic labels) → Output format → Error handling → Self-check → PROHIBITED section [Codebase analysis]
 - **Token budget:** <500 lines, <5000 tokens. Use reference files for overflow. [component-authoring.md]
 - **Progressive disclosure:** SKILL.md = overview/routing, references/ = detailed content loaded on demand [anthropic-best-practices.md]
 - **Description:** Gerund name, third person, includes trigger conditions and key terms [component-authoring.md]

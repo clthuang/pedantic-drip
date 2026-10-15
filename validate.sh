@@ -579,33 +579,6 @@ while IFS= read -r marketplace_json; do
 done < <(find . -path "*/.claude-plugin/marketplace.json" -type f 2>/dev/null)
 echo ""
 
-# Check for stale project-level .mcp.json
-echo "Checking MCP Configuration..."
-if [ -f ".mcp.json" ]; then
-    log_warning ".mcp.json exists at project root — MCP servers should be declared in plugin.json mcpServers instead"
-fi
-
-# Validate mcpServers script references in plugin.json files
-while IFS= read -r plugin_json; do
-    [ -z "$plugin_json" ] && continue
-    local_plugin_dir=$(dirname "$(dirname "$plugin_json")")
-    if jq -e '.mcpServers' "$plugin_json" > /dev/null 2>&1; then
-        for server_name in $(jq -r '.mcpServers | keys[]' "$plugin_json" 2>/dev/null); do
-            local_cmd=$(jq -r ".mcpServers[\"$server_name\"].command" "$plugin_json")
-            # Replace ${CLAUDE_PLUGIN_ROOT} with the plugin's directory
-            local_resolved="${local_cmd//\$\{CLAUDE_PLUGIN_ROOT\}/$local_plugin_dir}"
-            if [ ! -f "$local_resolved" ]; then
-                log_error "$plugin_json: mcpServers.$server_name command not found: $local_resolved"
-            elif [ ! -x "$local_resolved" ]; then
-                log_error "$plugin_json: mcpServers.$server_name command not executable: $local_resolved"
-            else
-                log_success "mcpServers.$server_name: $local_resolved exists and is executable"
-            fi
-        done
-    fi
-done < <(find . -path "*/.claude-plugin/plugin.json" -type f 2>/dev/null)
-echo ""
-
 # Validate no hardcoded plugin paths in component markdown files
 echo "Checking Path Portability..."
 hardcoded_path_errors=0
@@ -712,10 +685,6 @@ err_trap_missing=0
 for hook_script in plugins/pd/hooks/*.sh; do
     [ -f "$hook_script" ] || continue
     basename=$(basename "$hook_script")
-    # Skip non-hook scripts that don't source common.sh
-    case "$basename" in
-        cleanup-locks.sh|cleanup-sandbox.sh) continue ;;
-    esac
     # Check if it sources common.sh and has install_err_trap (or its
     # superset install_session_start_traps from session-start-helpers.sh).
     if grep -q 'source.*common\.sh' "$hook_script" 2>/dev/null; then
@@ -780,84 +749,21 @@ if [ $ADJECTIVE_VIOLATIONS -eq 0 ]; then
 fi
 echo ""
 
-# Validate setup script exists
-echo "Checking Setup Scripts..."
-for script in plugins/pd/scripts/doctor.sh plugins/pd/scripts/setup.sh; do
-    if [ -f "$script" ]; then
-        if [ -x "$script" ]; then
-            log_success "$script exists and is executable"
-        else
-            log_error "$script exists but is not executable"
-        fi
-    else
-        log_warning "$script not found"
-    fi
-done
-echo ""
-
 # --- Hooks.json Registration Contract (feature 104 FR-1 + FR-2) ---
 # Asserts hooks.json keeps the registration shape feature 102 / 104 depend on.
 # Defends against silent hook-misconfiguration regressions.
 echo "Checking Hooks.json Registration Contract..."
-if jq -e '.hooks.Stop | length == 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: Stop array has 1 entry (yolo-stop)"
+# shortcut: 0 or 1 Stop entries while the thin-pd build runs (build-tasks T2.1); T4.12 restores exactly 1 (pd-stop-gate.sh).
+if jq -e '(.hooks.Stop // []) | length <= 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: Stop array has at most 1 entry"
 else
-    log_error "hooks.json: Stop length != 1"
+    log_error "hooks.json: Stop length > 1"
 fi
 if grep -qE 'extract_workarounds|workaround_candidates' plugins/pd/skills/retrospecting/SKILL.md; then
     log_success "retrospecting/SKILL.md references extract_workarounds"
 else
     log_error "retrospecting/SKILL.md missing extract_workarounds reference"
 fi
-echo ""
-
-# --- Codex Reviewer Routing exclusion guard (feature 103) ---
-# Files that reference codex-routing.md AND dispatch pd:security-reviewer MUST
-# include explicit exclusion language. Defends against future regression where
-# codex routing accidentally captures security-reviewer.
-echo "Checking Codex Reviewer Routing exclusion..."
-codex_routing_exclusion_violations=0
-while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    # Skip the reference doc itself.
-    [[ "$f" == "plugins/pd/references/codex-routing.md" ]] && continue
-    # Files that mention codex-routing must either (a) explicitly exclude
-    # security-reviewer when they dispatch it, or (b) explicitly note that
-    # security-reviewer is not dispatched at this phase.
-    if grep -q "subagent_type:.*pd:security-reviewer" "$f" 2>/dev/null; then
-        # Dispatches security-reviewer → MUST contain exclusion language.
-        if ! grep -qE "always.*Task.*pd:security-reviewer|NOT.*pd:security-reviewer|security.*always.*Anthropic|security-reviewer.*always.*standard" "$f"; then
-            log_error "$f: references codex-routing.md AND dispatches pd:security-reviewer but lacks explicit exclusion language"
-            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
-        fi
-    else
-        # Does not dispatch security-reviewer → MUST contain "no security review at this phase" indicator.
-        if ! grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" "$f"; then
-            log_error "$f: references codex-routing.md but lacks 'no security review at this phase' indicator"
-            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
-        fi
-    fi
-done < <(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null)
-
-# FR-2b (feature 105, re-scoped by workflow-rebuild OQ-4 2026-07-25): commands and
-# skills reference codex-routing.md NOWHERE — the preambles were dropped entirely
-# while the toggle is disabled. The reference doc plugins/pd/references/codex-routing.md
-# stays on disk. This check now asserts the reference set is EMPTY; any hit is drift.
-codex_routing_allowlist_violations=0
-if [[ -f "./validate.sh" && -d "./plugins/pd" ]]; then
-    actual_codex_files=$(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
-    if [ -n "$actual_codex_files" ]; then
-        log_error "Codex routing reference found in commands/skills (OQ-4: must be none):"
-        echo "$actual_codex_files" | head -20 | while IFS= read -r line; do log_error "  $line"; done || true
-        codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
-    fi
-else
-    log_error "FR-2b allowlist check requires repo-root cwd (validate.sh and plugins/pd not found in cwd)"
-    codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
-fi
-[ "$codex_routing_exclusion_violations" = "0" ] && log_info "Codex Reviewer Routing exclusions validated"
-
-[ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing references absent from commands/skills (OQ-4)"
 echo ""
 
 # --- hook JSON schema: hookSpecificOutput must include hookEventName (feature 087 RCA) ---

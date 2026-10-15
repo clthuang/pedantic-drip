@@ -30,8 +30,8 @@ Fold the findings into one document. Every claim carries `— Evidence: {URL | f
 Sections in order: Status · Problem Statement · Goals · Success Criteria · User Stories · Use Cases · Edge Cases & Error Handling · Constraints (behavioral, then technical) · Requirements (FR and NFR) · Non-Goals · Research Summary · Strategic Analysis (one subsection per advisor, closing with its evidence quality) · Open Questions · Next Steps.
 
 ## 5. Review, then decide
-Dispatch `pd:prd-reviewer` in fresh context; its return shape lives in the agent file. One pass → at most one fix round → remaining blockers go to the user alongside the decision.
+<!-- removed in T2.1: pd:prd-reviewer; rewritten in T4.5a -->
 
-Then ask what happens next: `/pd:create-feature --prd={path}`, or `/pd:create-project --prd={path}` when the PRD spans three or more entity types, functional areas, or user-facing surfaces — otherwise refine further, or save and stop.
+<!-- removed in T2.1: /pd:create-project; rewritten in T4.5a -->
 
 **Constraints:** this skill writes the PRD and nothing else — no feature directories, no code, no phase commands.

@@ -10,7 +10,7 @@ Triage that selects a mode — not a pipeline. Assess the request, state mode + 
 **Mode signals** (any present → deep is mandatory): security surface, schema or data migration, multi-file blast radius, novel domain, success criteria you cannot state mechanically. Express fits: small diff, known pattern, outcome verifiable by a command. Uncertain → deep.
 
 **Routing:**
-- **Deep** → `/pd:brainstorm` when the idea needs shaping, else `/pd:create-feature` → six-phase pipeline (sequence: workflow-state skill).
+<!-- removed in T2.1: workflow-state skill; rewritten in T4.5i -->
 - **Express** → `/pd:create-feature --express` (inline mini-spec recorded as `mini_spec` event) → `/pd:implement` → `/pd:finish-feature`.
 - **Existing feature named** → ask the engine (`get_phase`) and invoke the next phase command.
 - **Specialist fast-path** (direct, no feature entity):
@@ -23,8 +23,8 @@ Triage that selects a mode — not a pipeline. Assess the request, state mode + 
 | DS analysis / DS code review | `/pd:review-ds-analysis` / `/pd:review-ds-code` |
 | debug / root cause | `pd:systematic-debugging` skill / `/pd:root-cause-analysis` |
 | explore codebase | `pd:codebase-explorer` agent |
-| deepen tests | `pd:test-deepener` agent |
-| docs / backlog / doctor / status | `/pd:generate-docs` `/pd:add-to-backlog` `/pd:doctor` `/pd:show-status` |
+<!-- removed in T2.1: pd:test-deepener; rewritten in T4.5i -->
+<!-- removed in T2.1: /pd:doctor and /pd:show-status; rewritten in T4.5i -->
 
 **Overrides:** `--deep` / `--express` force the mode both directions. Mid-express escalation: stop implement, `record_backward_event(feature_type_id, source_phase="implement", target_phase="specify", reason=<why>)`, then run `/pd:specify` — it reads the `mini_spec` event as its input; no restart penalty.
 

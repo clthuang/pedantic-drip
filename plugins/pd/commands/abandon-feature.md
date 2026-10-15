@@ -15,7 +15,7 @@ Contract command. No phase transition — this ends a feature outside the phase 
 
 **Steps:**
 1. Resolve the feature; confirm once via AskUserQuestion. An already-terminal feature is reported, not re-abandoned.
-2. `update_entity(type_id="feature:{id}-{slug}", status="abandoned")`, then `reproject_meta_json(ref="feature:{id}-{slug}")`. Either error envelope stops the command: surface it and run `/pd:doctor`.
+<!-- removed in T2.1: update_entity and /pd:doctor; rewritten in T4.5i -->
 3. Offer branch cleanup via AskUserQuestion: switch off the branch, then `git branch -D feature/{id}-{slug}` (abandoned branches are unmerged).
 
 **Constraints:** MCP tools are the only writer — `.meta.json` is an engine-owned projection; hand-writing status into it is the defect this command once shipped.
