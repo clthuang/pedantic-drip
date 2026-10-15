@@ -24,7 +24,7 @@ say() { echo "GATE FAIL [$PHASE]: $1"; FAIL=1; }
 
 [ -n "$PHASE" ] && [ -n "$DIR" ] || { echo "usage: phase-gate.sh <phase> <feature-dir> [--express]"; exit 2; }
 [ -d "$DIR" ] || { say "feature dir missing: $DIR"; exit 1; }
-grep -qE '^mode:[[:space:]]*express([[:space:]]|$)' "$DIR/README.md" 2>/dev/null && EXPRESS=1
+grep -qE '^mode:[[:space:]]*["'"'"']?express["'"'"']?([[:space:]]|$)' "$DIR/README.md" 2>/dev/null && EXPRESS=1
 
 need_file() { [ -f "$DIR/$1" ] || say "missing artifact: $1"; }
 need_section() { [ -f "$DIR/$1" ] && grep -q "^## $2" "$DIR/$1" || say "$1 missing section: ## $2"; }
@@ -135,7 +135,10 @@ def verify():
             paths = [str(p).rstrip("/") + "/" for k in ("source_paths", "test_paths", "fixture_paths") for p in pc.as_list(cfg.get(k))]
             paths = paths or [p for p in ("src/", "tests/") if (root / p).is_dir()]
             art = str(cfg.get("artifacts_root")).rstrip("/") + "/"
-            changed = (pc.git(["diff", "--cached", "--name-only", commit, "--"], root) or "").split("\n")
+            # The index, the working tree and untracked files: whatever differs from the QA'd commit.
+            changed = "\n".join(pc.git(a, root) or "" for a in (["diff", "--cached", "--name-only", commit, "--"],
+                                                                ["diff", "--name-only", commit, "--"],
+                                                                ["ls-files", "--others", "--exclude-standard"])).split("\n")
             code = [p for p in changed if p and (any(p.startswith(x) for x in paths) if paths else not p.startswith(art))]
             if code:
                 fail(f"source, test or fixture files changed since the qa commit {commit}; run QA again: " + ", ".join(code[:5]))
@@ -155,6 +158,7 @@ elif phase == "finish":
     triggers = pc.retro_triggers(entries)
     if triggers and not (d / "retro.md").is_file():
         fail("retro.md missing: log.md records a retro trigger (" + ", ".join(triggers) + ")")
+print("LOG_CHECKS_DONE")
 PY
 }
 
@@ -194,7 +198,10 @@ esac
 
 case "$PHASE" in
   specify|express|implement|verify|finish)
-    while IFS= read -r line; do [ -n "$line" ] && say "$line"; done < <(log_checks)
+    # A checker that crashes, or never ran, fails the gate: only its closing line proves it finished.
+    out=$(log_checks); rc=$?
+    while IFS= read -r line; do [ -n "$line" ] && [ "$line" != LOG_CHECKS_DONE ] && say "$line"; done <<< "$out"
+    [ "$rc" -eq 0 ] && [ "${out##*$'\n'}" = LOG_CHECKS_DONE ] || say "the log.md checks did not complete (exit $rc)"
     ;;
 esac
 

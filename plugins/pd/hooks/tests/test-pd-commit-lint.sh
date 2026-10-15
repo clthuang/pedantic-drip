@@ -15,7 +15,7 @@ bad() { FAILED=$((FAILED + 1)); echo "FAIL: $1"; }
 hook_json() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$1" "$2"; }
 
 # An adopted fixture repo with one feature made by pd-new, committed.
-R="$TMP/repo"
+R="$TMP/my repo"
 mkdir -p "$R/.claude"
 ( cd "$R" && git init -q -b main && git config user.email t@t && git config user.name t &&
   git config commit.gpgsign false &&
@@ -30,8 +30,16 @@ err=$(hook_json "git commit -m x" "$R" | bash "$HOOK" 2>&1 >/dev/null); code=$?
 [ "$code" = 2 ] && echo "$err" | grep -q 'finished' && ok || bad "bad staged artifact: exit $code, stderr: $err"
 
 # The same through `cd <repo> && git commit` from elsewhere.
-code=0; hook_json "cd $R && git commit -m x" "$TMP" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+code=0; hook_json "cd \\\"$R\\\" && git commit -m x" "$TMP" | bash "$HOOK" >/dev/null 2>&1 || code=$?
 [ "$code" = 2 ] && ok || bad "cd <repo> && git commit: exit $code"
+
+# Global options before commit, and a quoted -C path with a space.
+code=0; hook_json "git --no-pager -C \\\"$R\\\" commit -m x" "$TMP" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+[ "$code" = 2 ] && ok || bad "git --no-pager -C \"<repo>\" commit: exit $code"
+
+# Quoted prose naming git commit isn't a commit.
+code=0; hook_json "echo \\\"run git commit -m x\\\"" "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+[ "$code" = 0 ] && ok || bad "quoted prose naming git commit: exit $code"
 
 # 2. A clean commit.
 sed -i '' 's/^status: finished$/status: active/' "$README"

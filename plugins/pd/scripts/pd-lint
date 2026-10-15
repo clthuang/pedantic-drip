@@ -205,8 +205,7 @@ class Linter:
 
     def head_part(self, it):
         """The body above `## Log` (a single-file item's history isn't sections)."""
-        m = re.search(r"^## Log[ \t]*$", pc.blank_fences(it["body"]), re.M)
-        return it["body"][:m.start()] if m else it["body"]
+        return pc.split_log(it["body"])[0]
 
     def check_sections(self, it):
         p = it["path"]
@@ -367,6 +366,8 @@ class Linter:
             return
         idx = pc.PHASES.index(fm["phase"])
         gates = list(pc.PHASES[:idx])
+        if fm.get("status") in ("done", "abandoned"):  # its QA held at the time; later source changes don't reopen it
+            gates = [g for g in gates if g != "verify"]
         if fm.get("mode") == "express":  # the mini-spec check replaces specify, design and create-plan
             gates = (["express"] if idx >= pc.PHASES.index("implement") else []) + \
                     [g for g in gates if g not in ("specify", "design", "create-plan")]
@@ -469,6 +470,20 @@ class Linter:
     def check_roadmaps(self):
         feat_slug = {slug_of(it["id"]): it for it in self.items if it["type"] == "feature"}
         owner = {}
+        with_roadmap = {self.rel(it["path"]) for it in self.items
+                        if it["type"] == "plan" and (it["fm"] or {}).get("roadmap") is not None}
+        head_plans = pc.git(["ls-tree", "--name-only", "HEAD", "--", self.rel(self.art / "plans") + "/"],
+                            self.root, check=False) or ""
+        for rel in (x for x in head_plans.split("\n") if x.endswith(".md") and x not in with_roadmap):
+            try:
+                head_rm = (pc.split_frontmatter(pc.git(["show", f"HEAD:{rel}"], self.root))[0] or {}).get("roadmap")
+            except ValueError:
+                continue
+            gone = [slug_of(v) for item in pc.as_list(head_rm) if isinstance(item, dict)
+                    for k, v in item.items() if k in ("feature", "planned", "dropped")]
+            if gone:
+                self.err(self.root / rel, 1, f"HEAD's roadmap items {', '.join(gone)} are gone (plan deleted or roadmap: "
+                                             "removed): items are never deleted; mark them dropped: with a reason")
         for plan in (it for it in self.items if it["type"] == "plan" and (it["fm"] or {}).get("roadmap") is not None):
             p, rm = plan["path"], plan["fm"]["roadmap"]
             if not isinstance(rm, list):
@@ -533,7 +548,8 @@ class Linter:
 
     def branch_feature(self):
         branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], self.root, check=False) or ""
-        return next((it for it in self.items if it["type"] == "feature" and f"feature/{it['id']}" == branch), None)
+        m = re.match(r"^(?:feature|pd)/([^/]+)(?:/task-\d+)?$", branch)
+        return next((it for it in self.items if it["type"] == "feature" and m and it["id"] == m.group(1)), None)
 
     def check_isolation(self, rng):
         src, tests, fixtures = self.paths("source_paths"), self.paths("test_paths"), self.paths("fixture_paths")
@@ -702,11 +718,19 @@ def main(argv):
         return 0
     targets = None
     if args.staged:
-        # shortcut: lints the working-tree content of the staged items, not the index blobs.
-        staged = pc.git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], root) or ""
+        staged = pc.git(["diff", "--cached", "--name-only", "--diff-filter=ACMRD"], root) or ""
         targets = to_targets(root, art, [root / x for x in staged.split("\n") if x])
         if not targets:
             return 0
+        # The lint reads files from the working tree, so a staged item must have no unstaged or
+        # untracked changes: then what it checks is exactly what will be committed.
+        dirty = [t for t in sorted(targets) if any(
+            l[1:2] != " " for l in (pc.git(["status", "--porcelain", "--", str(t)], root) or "").split("\n") if l)]
+        for t in dirty:
+            print(f"pd-lint: ERROR {t.relative_to(root)}:0: unstaged or untracked changes in a staged item: "
+                  "stage them (or stash them) so the lint checks what will be committed")
+        if dirty:
+            return 1
     elif args.paths:
         targets = to_targets(root, art, args.paths)
     lint = Linter(root, targets)
@@ -883,6 +907,14 @@ def cases(code):
         ("--staged lints only staged items", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 handoff\nNext: none.\n"),
                                                         pc.git(["add", F], r)), ["--staged"], "ok", ""),
         ("--staged reports a staged item", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), pc.git(["add", "-A"], r)), ["--staged"], "error", "status: bogus"),
+        ("--staged reads what will be committed", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), pc.git(["add", "-A"], r),
+                                                             rw(nf(r) / "README.md", "status: bogus", "status: active")), ["--staged"], "error", "unstaged or untracked"),
+        ("a pd-new single-file item passes", lambda r: subprocess.run([str(HERE / "pd-new"), "brainstorm", "Ship it"], cwd=r, check=True, capture_output=True), [], "ok", ""),
+        ("a deleted roadmap plan keeps its items", lambda r: (r / P).unlink(), [], "error", "are gone"),
+        ("a removed roadmap: field keeps its items", lambda r: rw(r / P, "roadmap:\n  - feature: features/2026-10-14-parse-input\n  - planned: emit-output\n    after: [parse-input]\n", ""), [], "error", "are gone"),
+        ("a done feature isn't re-verified", lambda r: commit(r, {"src/pkg/parse.py": "def parse(text):\n    return []\n"}), [], "ok", ""),
+        ("isolation on a task branch", lambda r: (pc.git(["checkout", "-q", "-b", "pd/2026-10-14-parse-input/task-1"], r),
+                                                  commit(r, {"src/pkg/io.py": "x = 1\n", "tests/test_io.py": "from pkg.io import x\n"})), ["--isolation", "HEAD~1..HEAD"], "error", "no contract's modules: line"),
         ("a path narrows the run", lambda r: rw(nf(r) / "README.md", "status: active", "status: bogus"), [F], "ok", ""),
         ("isolation: production names tests", lambda r: commit(r, {"src/pkg/parse.py": "from tests.helpers import x\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "production code names tests/"),
         ("isolation: tests under test_paths", lambda r: commit(r, {"src/pkg/test_util.py": "x = 1\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "test file outside test_paths"),

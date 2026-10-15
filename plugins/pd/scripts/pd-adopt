@@ -322,6 +322,12 @@ class Adopt:
         return sorted(p for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
 
     def run(self):
+        for line in (self.git("ls-files", "-s") or "").split("\n"):
+            if line.startswith("120000 "):
+                rel = line.split("\t", 1)[1]
+                if (rel.endswith(".md") or rel in (CFG, ".gitignore") or rel.startswith((self.old + "/", NEW + "/"))) \
+                        and not (self.root / rel).resolve().is_relative_to(self.root.resolve()):
+                    raise Refused(f"{rel} is a symlink out of the repository; adopt would write through it")
         for step in (self.step0, self.step1, self.step2, self.step3, self.step4,
                      self.step5, self.step6, self.step7, self.step8):
             step()
@@ -405,10 +411,11 @@ class Adopt:
         for f in self.old_files:
             if re.fullmatch(rf"{re.escape(self.old)}/backlog[^/]*\.md", f):
                 name = Path(f).name
-                if name == "backlog-archive.md" and not all(
+                if name in ("backlog.md", "backlog-archive.md") and not all(
                         not x.strip() or x.startswith("#") or BACKLOG_LINE.match(x) for x in (self.root / f).read_text().split("\n")):
-                    name = "backlog-archive-legacy.md"  # pd-lint reads backlog-archive.md as §7 lines
-                    self.note(f"step 1: {f} has pre-§7 lines; moved as {NEW}/{name}")
+                    name = name.replace(".md", "-legacy.md")  # pd-lint reads these two names as §7 lines
+                    self.note(f"MAP BY HAND: {f} has pre-§7 lines; moved as {NEW}/{name}"
+                              + ("; add its open items with pd-new backlog" if name == "backlog-legacy.md" else ""))
                 self.git("mv", f, f"{NEW}/{name}")
                 pairs.append((f, f"{NEW}/{name}"))
         self.pairs = pairs
@@ -478,14 +485,15 @@ class Adopt:
                   "phase": self.current_phase(fid, status, meta, ent), "mode": self.mode(meta, ent),
                   "origin": self.origin(fid, meta, ent),
                   "branch": None if status == "done" else (meta or {}).get("branch") or (ent or {}).get("meta", {}).get("branch") or f"feature/{fid}"}
+            if (d / "README.md").exists():
+                if self.git("mv", self.rel(d / "README.md"), self.rel(d / "readme-legacy.md"), check=False) is None:
+                    (d / "README.md").rename(d / "readme-legacy.md")
+                self.note(f"features/{fid}/README.md moved to readme-legacy.md; the new README carries the frontmatter")
             links = [f"- [{f.stem}]({f.name})" for f in sorted(d.glob("*.md")) if not f.name.startswith(".") and f.name not in ("README.md", "log.md", "implementation-log.md")]
             now = f"Legacy feature, adopted by pd-adopt on {self.today}." + (
                 "" if status == "done" else " Convert it to shape.md and plan.md before work on it resumes.")
-            if (d / "README.md").exists():
-                self.note(f"features/{fid}/README.md exists; left alone")
-            else:
-                written.append(self.write(f"{NEW}/features/{fid}/README.md", "---\n" + "".join(
-                    f"{k}: {v}\n" for k, v in fm.items() if v) + f"---\n# {title}\n\n## Now\n\n{now}\n\n## Links\n\n" + "\n".join(links) + "\n"))
+            written.append(self.write(f"{NEW}/features/{fid}/README.md", "---\n" + "".join(
+                f"{k}: {v}\n" for k, v in fm.items() if v) + f"---\n# {title}\n\n## Now\n\n{now}\n\n## Links\n\n" + "\n".join(links) + "\n"))
             if meta is not None:
                 self.remove(mp)
                 metas_read += 1
@@ -558,6 +566,8 @@ class Adopt:
         lines = [f"{k}: {v}" for k, v in add.items() if k not in (fm or {})]
         new = ("---\n" + "\n".join(lines) + "\n---\n" + text) if fm is None else \
             text.replace("---\n", "---\n" + "".join(x + "\n" for x in lines), 1)
+        if fm and "status" in fm and status and status != fm["status"]:  # the frontmatter's first status: line
+            new = re.sub(r"^status:.*$", f"status: {status}", new, count=1, flags=re.M)
         if pc.ID_RE.match(f.stem) and not re.search(r"^## Log[ \t]*$", pc.blank_fences(new), re.M):
             # pd-lint reads a date-form id as a current item: it needs ## Now and a last ## Log
             new = new.rstrip("\n") + f"\n\n## Now\n\nLegacy item, adopted by pd-adopt on {self.today}.\n\n## Log\n"
@@ -897,6 +907,9 @@ def self_test():
         c.check(a1 == {"id": "001-alpha", "type": "feature", "title": "Alpha parser", "status": "done", "phase": "finish",
                        "mode": "standard", "origin": "plans/P001-alpha-evolution.md"} and not list(art.rglob(".meta.json")),
                 f"README frontmatter from .meta.json, and .meta.json deleted: {a1}")
+        c.check((art / "features/003-gamma/readme-legacy.md").read_text() == "# Gamma notes\n\nHand-written.\n"
+                and "](readme-legacy.md)" in (art / "features/003-gamma/README.md").read_text(), "an existing README moves aside, linked")
+        c.check(fm("rca/20260310-stale.md")["status"] == "done", "a single file's recorded status is mapped")
         c.check(fm("features/003-gamma/README.md").get("status") == "done"
                 and fm("features/003-gamma/README.md").get("origin") == "backlog#2026-01-06-gamma-cache", "satisfied maps to done; backlog origin")
         b2, blog = fm("features/002-beta/README.md"), (art / "features/002-beta/log.md").read_text()
@@ -938,7 +951,31 @@ def self_test():
             r = subprocess.run([str(lint)], cwd=repo, capture_output=True, text=True)
             c.check(r.returncode == 0, f"pd-lint exits 0 on the result: {r.stdout[-600:]}{r.stderr[-300:]}")
         else:
+            lint = None
             print("SKIP pd-lint (not built yet)")
+        # A second repository: a config symlinked out of it, then a tracked pre-§7 backlog.md.
+        repo2, reg2 = fx.build(Path(tmp) / "two")
+        ext = Path(tmp) / "shared-config.md"
+        ext.write_text((repo2 / CFG).read_text())
+        (repo2 / CFG).unlink()
+        (repo2 / CFG).symlink_to(ext)
+        pc.git(["commit", "-qam", "symlinked config"], repo2)
+        before = ext.read_text()
+        code, out = call(repo2, "--registry", str(reg2))
+        c.check(code == 1 and "symlink out of the repository" in out and ext.read_text() == before,
+                "a config symlinked out of the repository is refused, and never written")
+        (repo2 / CFG).unlink()
+        (repo2 / CFG).write_text(before)
+        (repo2 / ".gitignore").write_text((repo2 / ".gitignore").read_text().replace("docs/backlog.md\n", ""))
+        (repo2 / "docs/backlog.md").write_text("# Backlog\n\n| ID | Item |\n|---|---|\n| 00042 | flaky gate |\n")
+        pc.git(["add", "-A"], repo2)
+        pc.git(["commit", "-qm", "a tracked pre-§7 backlog"], repo2)
+        code, out = call(repo2, "--apply", "--registry", str(reg2))
+        c.check(code == 0 and (repo2 / NEW / "backlog-legacy.md").is_file() and not (repo2 / NEW / "backlog.md").exists()
+                and "MAP BY HAND: docs/backlog.md has pre-§7 lines" in out, f"a tracked pre-§7 backlog moves aside: {out[-400:]}")
+        if lint:
+            r = subprocess.run([str(lint)], cwd=repo2, capture_output=True, text=True)
+            c.check(r.returncode == 0, f"pd-lint exits 0 after a tracked legacy backlog: {r.stdout[-600:]}")
     return c.done()
 
 

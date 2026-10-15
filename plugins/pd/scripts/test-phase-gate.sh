@@ -137,6 +137,10 @@ echo 'x = 2' > "$r/src/a.py"; commit_all "$r" src-change
 expect 1 "verify fails after a later source change (codex C4)" verify "$r/$F"
 r=$(repo v-tests "$BAT"); qa "$r" pass; echo 'def test(): 1' > "$r/tests/test_a.py"; ( cd "$r" && git add -A )
 expect 1 "verify fails on a staged test change since the qa commit" verify "$r/$F"
+r=$(repo v-wt "$BAT"); qa "$r" pass; echo 'x = 3' > "$r/src/a.py"
+expect 1 "verify fails on an unstaged source change since the qa commit" verify "$r/$F"
+r=$(repo v-new "$BAT"); qa "$r" pass; echo 'y = 1' > "$r/src/b.py"
+expect 1 "verify fails on an untracked source file since the qa commit" verify "$r/$F"
 r=$(repo v-nobat ""); qa "$r" pass
 out=$(bash "$GATE" verify "$r/$F" 2>&1)
 if echo "$out" | grep -q 'set qa_battery in .claude/pd.local.md'; then PASSED=$((PASSED + 1)); else FAILED=$((FAILED + 1)); echo "FAIL: a missing qa_battery says to set it"; fi
@@ -172,6 +176,12 @@ $TASKS")"
 expect 1 "express fails when the task has no command" express "$(feature e-nocmd "${MINI/- command:*xml\`/}")"
 d=$(feature e-impl "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: express/' "$d/README.md"
 expect 0 "implement on mode: express takes its task from shape.md" implement "$d"
+d=$(feature e-quote "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: "express"/' "$d/README.md"
+expect 0 "implement on a quoted mode: \"express\" takes its task from shape.md" implement "$d"
+# A log checker that exits 0 without finishing (a broken import, an empty heredoc) fails the gate.
+mkdir -p "$TMP/broken" && cp "$GATE" "$TMP/broken/" && echo 'import sys; sys.exit(0)' > "$TMP/broken/pd_common.py"
+d=$(feature e-crash "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: express/' "$d/README.md"
+GATE="$TMP/broken/phase-gate.sh" expect 1 "a log checker that never finishes fails the gate" implement "$d"
 expect 1 "implement on an express feature still needs the run line" implement "$(feature e-impl2 "$MINI")" --express
 
 echo "test-phase-gate: $PASSED passed, $FAILED failed"

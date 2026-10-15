@@ -551,3 +551,22 @@ Applied: T2.1 committed with only the `README.md` count line staged (27 skills a
 Q: T3.5's S6 prune: pd-lint partly replaces CLAUDE.md's "Non-vacuity test guard" (its restatement-sweep half); the non-vacuity half is replaced only by Wave 4's red-first merger check. What lands? And review Wave 3 before Wave 4?
 A (user, verbatim): "Prune restatement half now"; "Codex review, then Wave 4 (Recommended)".
 Applied: the guardrail's restatement-sweep sentences shrink to one line pointing at pd-lint's checks; the non-vacuity and verification-trails sentences stay. A Codex review of 35e45296..HEAD's scripts runs before Wave 4.
+
+## 2026-10-15 11:54+08:00 review
+Codex (gpt-6-astra, xhigh) on 35e45296..6d12d835's Wave 3 scripts: changes requested, 15 blockers. Each was checked against the source before fixing; all 15 held. One fix round, each fix with a test that fails on the old code (mutation-checked):
+- R1 pd_common/pd-lint: a single file's `## Log` split took offsets from comment-blanked text; now line-based (`split_log`).
+- R2 pd-lint --staged: a staged item with unstaged or untracked changes is an error, so the lint reads what will be committed; deleted files count as staged.
+- R3 pd-lint: a deleted plan, or a removed `roadmap:` field, still answers for HEAD's roadmap items.
+- R4 phase-gate.sh: a log checker that crashes or never finishes fails the gate (closing-line sentinel and exit status).
+- R5 phase-gate.sh verify: unstaged and untracked source changes since the QA commit count too.
+- R6 pd-lint: a done or abandoned feature isn't re-verified against today's tree.
+- R7 pd_common: only review, qa, decision, capped and backward phase entries close blockers; a same-entry `Rejects:` holds the blocker.
+- R8 pd-proof: duplicate test ids keep the worse result.
+- R9 pd-adopt: refuses a tracked symlink out of the repository on any path it writes.
+- R10 pd-adopt: a single file's recorded status is mapped.
+- R11 pd-adopt: an existing feature README moves to `readme-legacy.md`; the new README carries the frontmatter.
+- R12 pd-adopt: a tracked pre-§7 `backlog.md` moves as `backlog-legacy.md` (MAP BY HAND).
+- R13 pd-lint --isolation: task branches `pd/<id>/task-<n>` name their feature.
+- R14 phase-gate.sh: a quoted `mode: "express"` is express.
+- R15 pd-commit-lint.sh: shell words, not a regex: `git --no-pager commit`, a quoted `-C` path and `cd dir &&` lint; quoted prose doesn't.
+Battery after the round: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-hooks 26/26; validate.sh 0 errors, 0 warnings; pytest 24. No re-review (one pass, one fix round).

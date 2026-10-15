@@ -19,19 +19,21 @@ from pd_common import Checks  # noqa: E402
 
 
 def read_report(path):
-    """{test id: 'pass' | 'fail' | 'error' | 'skip'}, keyed `classname::name`."""
+    """{test id: 'pass' | 'fail' | 'error' | 'skip'}, keyed `classname::name`.
+    Two testcases with one id keep the worse result, so a later pass can't hide a failure."""
     root = ET.parse(path).getroot()
-    results = {}
+    results, rank = {}, ("pass", "skip", "fail", "error")
     for case in root.iter("testcase"):
         tid = f"{case.get('classname', '')}::{case.get('name', '')}"
         if case.find("error") is not None:
-            results[tid] = "error"
+            res = "error"
         elif case.find("failure") is not None:
-            results[tid] = "fail"
+            res = "fail"
         elif case.find("skipped") is not None:
-            results[tid] = "skip"
+            res = "skip"
         else:
-            results[tid] = "pass"
+            res = "pass"
+        results[tid] = max(res, results.get(tid, "pass"), key=rank.index)
     return results
 
 
@@ -115,6 +117,8 @@ def _self_test():
             c.check(not r["ok"] and r["newly_skipped"], f"{shape} head: a newly skipped test fails")
             r = judge("head", write(f"{shape}-headmiss.xml", mk([("a", PASS)])), all_fail)
             c.check(not r["ok"] and r["missing"], f"{shape} head: a test missing since the first commit fails")
+        r = judge("head", write("dup.xml", _pytest([("a", FAIL), ("a", PASS)])), all_fail)
+        c.check(not r["ok"] and r["failures"] == 1, "head: a duplicate id keeps its failure")
         still_skipped = write("first-skip.xml", _pytest([("a", FAIL), ("b", SKIP)]))
         r = judge("head", write("head-skip.xml", _pytest([("a", PASS), ("b", SKIP)])), still_skipped)
         c.check(r["ok"], "head: a test skipped since the first commit is not newly skipped")

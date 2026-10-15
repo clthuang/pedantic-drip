@@ -35,6 +35,8 @@ FILES = {
     "docs/features/003-gamma/spec.md": "# Gamma cache\n",
     "docs/brainstorms/20260101-000000-alpha.prd.md": "# PRD: Alpha\n\nThe idea.\n",
     "docs/rca/20260309-drift.md": "# RCA: drift\n",
+    "docs/rca/20260310-stale.md": "---\ntitle: Stale\nstatus: completed\n---\n# RCA: stale\n",
+    "docs/features/003-gamma/README.md": "# Gamma notes\n\nHand-written.\n",
     "docs/plans/2026-01-28-design.md": "# Design plan\n\nAnnex: [notes](2026-01-28-design/notes.md).\n",
     "docs/plans/2026-01-28-design/notes.md": "notes\n",
     "docs/knowledge-bank/patterns.md": "# Patterns\n",

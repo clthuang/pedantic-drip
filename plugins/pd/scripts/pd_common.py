@@ -214,16 +214,23 @@ def sections(body):
     return result
 
 
+def split_log(text):
+    """(text above a single file's `## Log` heading, the log after it, the log's first line number).
+    Line-based: blank_fences keeps line numbers, not character offsets."""
+    lines = text.split("\n")
+    for i, line in enumerate(blank_fences(text).split("\n")):
+        if re.match(r"^## Log[ \t]*$", line):
+            return "\n".join(lines[:i]), "\n".join(lines[i + 1:]), i + 2
+    return text, "", 1
+
+
 def log_text(item_type, control):
     """The log of an item: log.md beside a feature's README, or a single file's `## Log` section."""
     if item_type == "feature":
         p = Path(control).parent / "log.md"
         return (p.read_text(), 1) if p.is_file() else ("", 1)
-    text = Path(control).read_text()
-    m = re.search(r"^## Log[ \t]*$", blank_fences(text), re.M)
-    if not m:
-        return "", 1
-    return text[m.end():], text[:m.end()].count("\n") + 1
+    _, log, first = split_log(Path(control).read_text())
+    return log, first
 
 
 def parse_log(text, first_line=1):
@@ -290,6 +297,9 @@ def _closes(entry):
     return keys
 
 
+CLOSERS = ("review", "qa", "decision", "capped")
+
+
 def open_blockers(entries):
     """Blockers from review and qa issue lines still open at the end of the log (Part B §11).
     A `Closes:` line in a later entry closes one; a blocker with a proposed rejection (`Rejects:`)
@@ -300,12 +310,14 @@ def open_blockers(entries):
             continue
         legacy = any(l.strip() == "Status: closed (legacy)" for l in e["body"])
         user_decision = e["kind"] == "decision" and any(l.startswith("A (user, verbatim)") for l in e["body"])
-        for key in _closes(e):
-            if key in open_ and (key not in rejected or user_decision):
-                del open_[key]
         for line in e["body"]:
             if line.startswith("Rejects:"):
                 rejected.update(f"{k}@{t}#{i}" for k, t, i in REF_RE.findall(line) if i)
+        # Only these entries may close a blocker (log-entries.md); a forward phase move may not.
+        if e["kind"] in CLOSERS or (e["kind"] == "phase" and e["rest"].endswith("(back)")):
+            for key in _closes(e):
+                if key in open_ and (key not in rejected or user_decision):
+                    del open_[key]
         if e["kind"] in ("review", "qa") and not legacy:
             for line in e["body"]:
                 m = ISSUE_RE.match(line)
@@ -442,6 +454,16 @@ def _self_test():
                     "Closes: review@2026-10-14 11:30+08:00#R3\n"
                     "## 2026-10-14 12:00+08:00 qa\nStatus: closed (legacy)\n- Q1 blocker b.py:1 — v\n")
     ob = open_blockers(blk)
+    sneaky = parse_log("## 2026-10-14 11:30+08:00 review\n- R1 blocker a.py:3 — x\n- R2 blocker a.py:4 — y\n"
+                       "## 2026-10-14 11:40+08:00 note\nCloses: review@2026-10-14 11:30+08:00#R1\n"
+                       "## 2026-10-14 11:45+08:00 phase design -> implement\nCloses: review@2026-10-14 11:30+08:00#R1\n"
+                       "## 2026-10-14 11:50+08:00 review\nRejects: review@2026-10-14 11:30+08:00#R2\n"
+                       "Closes: review@2026-10-14 11:30+08:00#R2\n")
+    c.check(sorted(b["ref"][-2:] for b in open_blockers(sneaky)) == ["R1", "R2"],
+            "a note or a forward phase can't close a blocker; a same-entry rejection doesn't close it")
+    head, log, first = split_log("# T\n<!-- a long\ncomment -->\n## Now\nx\n```\n## Log\n```\n## Log\n## 2026-10-14 11:30+08:00 note\n")
+    c.check(head.endswith("```") and log == "## 2026-10-14 11:30+08:00 note\n" and first == 10,
+            "split_log is line-based, skipping comments and fences")
     c.check([b["ref"][-2:] for b in ob] == ["R2"] and ob[0]["rejection_proposed"],
             "blockers: Closes closes, a rejection needs the user's decision, legacy is closed, warnings aren't blockers")
     asm = parse_log("## 2026-10-14 16:00+08:00 capped verify\nDeferred:\n- A9: not an assumption\n"
