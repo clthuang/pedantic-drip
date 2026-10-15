@@ -88,7 +88,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 ## Installation
 
 ```bash
-/plugin marketplace add .
+/plugin marketplace add clthuang/pedantic-drip
 /plugin install pd@pedantic-drip-marketplace
 ```
 
@@ -98,4 +98,4 @@ Then, once per project, run `/pd:init`. It writes `.claude/pd.local.md` (paths, 
 - **The env cap** `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`: agents can't spawn agents.
 - **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
 
-An old-layout pd project (`docs/features/` with `.meta.json`) runs `/pd:adopt` instead. The budgets in `.claude/pd.local.md`: `workflow_output_cap` (output tokens per workflow run, default 2,000,000), `feature_token_budget` (tokens per feature, unset by default) and `budget_increment`.
+An old-layout pd project (`docs/features/` without `sop: 1` in `.claude/pd.local.md`) runs `/pd:adopt` instead. The budgets in `.claude/pd.local.md`: `workflow_output_cap` (output tokens per workflow run, default 2,000,000), `feature_token_budget` (tokens per feature, unset by default) and `budget_increment`.
