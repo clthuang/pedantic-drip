@@ -1,0 +1,955 @@
+#!/usr/bin/env python3
+"""pd-lint: check pd's committed artifacts against the SOP (plan Part B §9, §5, §6, §7, §7.1, §10).
+
+  pd-lint [<path>…]            every item under the artifacts root, or only the items the paths touch
+  pd-lint --staged             the commit hook's mode: the items `git diff --cached` touches
+  pd-lint --isolation <range>  test isolation over a diff (§9; source/test/fixture paths)
+  pd-lint --risk <range>       risk signals over a diff (references/risk-patterns.md); warns only
+  pd-lint --archive            move ticked backlog lines into backlog-archive.md
+  pd-lint --sweep              list agent_sandbox/ dirs to clean; never deletes
+  pd-lint --self-test
+
+Errors print `pd-lint: ERROR <path>:<line>: <message>` and exit 1; warnings never change the exit.
+Entry shapes: references/log-entries.md. Formats: templates/. Exit checks: phase-gate.sh.
+"""
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import pd_common as pc  # noqa: E402
+
+GATE = HERE / "phase-gate.sh"
+RISK_PATTERNS = HERE.parent / "references" / "risk-patterns.md"
+DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+BACKLOG_RE = re.compile(r"^- \[( |x)\] (\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)$")
+GOAL_RE = re.compile(r"^goal: (\S+) target (\S+) session (\S+)$")
+RUN_RE = re.compile(r"^run in flight: (\S+) session (\S+)(?: \(args: (\S+)\))?$")
+ANSWER_RE = re.compile(r"^A \((user, verbatim|conductor|conductor, on the user's behalf)\): \S")
+COMMIT_RE = re.compile(r"\b(?:Commit|Fixed by): ([0-9a-f]{7,40})\b")
+LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+TEST_NAME_RE = re.compile(r"(^|/)(test_[^/]*\.py|[^/]*_test\.py|[^/]*\.(test|spec)\.[jt]sx?)$")
+FIXTURE_DIR_RE = re.compile(r"(^|/)(fixtures|__fixtures__|testdata)/")
+PY_IMPORT_RE = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import\s+\(?([\w\s,]+)\)?|import\s+([\w.]+(?:\s*,\s*[\w.]+)*))", re.M)
+JS_IMPORT_RE = re.compile(r"""(?:\bfrom\s+|\brequire\(\s*|\bimport\s*\(?\s*)['"](\.{1,2}/[^'"]+)['"]""")
+LANGS = {".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+         ".ts": "typescript", ".tsx": "typescript"}
+LISTS = ("Deferred", "Follow-ups", "Decisions", "Assumptions")
+
+
+def lineno(path, needle):
+    try:
+        for i, line in enumerate(Path(path).read_text().split("\n"), 1):
+            if needle in line:
+                return i
+    except OSError:
+        pass
+    return 1
+
+
+def split_list(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip() and x.strip() != "none"]
+
+
+def slug_of(value):
+    return DATE_PREFIX.sub("", str(value).rstrip("/").split("/")[-1].removesuffix(".md"))
+
+
+class Linter:
+    def __init__(self, root, targets=None):
+        self.root, self.targets = Path(root), targets
+        self.cfg = pc.load_config(self.root)
+        self.art = pc.artifacts_dir(self.root, self.cfg)
+        self.errors, self.commits = 0, []
+        self.items = self.load_items()
+        self.backlog = {}  # backlog id -> its line, from backlog.md and backlog-archive.md (check_backlog)
+
+    # --- output ---------------------------------------------------------------
+    def rel(self, path):
+        try:
+            return str(Path(path).relative_to(self.root))
+        except ValueError:
+            return str(path)
+
+    def shown(self, path):
+        path = Path(path)
+        return self.targets is None or any(path == t or t in path.parents for t in self.targets)
+
+    def err(self, path, line, msg):
+        if self.shown(path):
+            print(f"pd-lint: ERROR {self.rel(path)}:{line}: {msg}")
+            self.errors += 1
+
+    def warn(self, path, line, msg):
+        if self.shown(path):
+            print(f"pd-lint: WARN {self.rel(path)}:{line}: {msg}")
+
+    # --- loading --------------------------------------------------------------
+    def load_items(self):
+        items = []
+        for type_, id_, ctl in pc.find_items(self.art):
+            it = {"type": type_, "id": id_, "path": ctl, "dir": ctl.parent if type_ == "feature" else None,
+                  "fm": None, "body": "", "legacy": not pc.ID_RE.match(id_), "load_error": None}
+            try:
+                it["fm"], it["body"], _ = pc.split_frontmatter(ctl.read_text())
+            except FileNotFoundError:
+                it["load_error"] = "feature directory has no README.md"
+            except ValueError as e:
+                it["load_error"] = f"frontmatter does not parse: {e}"
+            items.append(it)
+        return items
+
+    # --- the whole run ----------------------------------------------------------
+    def run(self):
+        self.check_backlog()
+        self.check_forbidden()
+        seen = {}
+        for it in self.items:
+            fid = (it["fm"] or {}).get("id")
+            if fid:
+                key = (it["type"], fid)
+                if key in seen:
+                    self.err(it["path"], lineno(it["path"], "id:"),
+                             f"duplicate id {fid} in {pc.TYPE_DIRS[it['type']]}/ (also {self.rel(seen[key])})")
+                seen.setdefault(key, it["path"])
+        for it in self.items:
+            if self.shown(it["path"]):
+                self.check_item(it)
+        self.check_roadmaps()
+        self.check_commits()
+
+    def check_item(self, it):
+        if not self.check_frontmatter(it):
+            return
+        self.check_links(it)
+        fm = it["fm"]
+        if it["legacy"]:  # done legacy items are checked only for frontmatter vocabulary, ids and links
+            if it["type"] == "feature" and fm.get("status") != "done":
+                self.warn(it["path"], 1, "legacy feature not done: convert it with /pd:adopt before work on it resumes")
+            return
+        self.check_sections(it)
+        self.check_one_fact(it)
+        self.check_log(it)
+        if it["type"] == "feature":
+            b_ids = self.check_expectations(it)
+            self.check_plan(it, b_ids)
+            self.check_phases(it)
+
+    # --- T3.5a: frontmatter, vocabularies, ids, issue, links, Now, one fact, forbidden, backlog ----
+    def check_frontmatter(self, it):
+        fm, p, t = it["fm"], it["path"], it["type"]
+        if fm is None:
+            self.err(p, 1, it["load_error"] or "no frontmatter (--- … ---)")
+            return False
+        feature = t == "feature"
+        required = ["id", "type", "title", "status"] + (["phase", "mode"] if feature and not it["legacy"] else [])
+        for k in required:
+            if not fm.get(k):
+                self.err(p, 1, f"missing required field: {k}")
+        if fm.get("id") and fm["id"] != it["id"]:
+            self.err(p, lineno(p, "id:"), f"id {fm['id']} does not match its name {it['id']}")
+        if fm.get("type") and fm["type"] != t:
+            self.err(p, lineno(p, "type:"), f"type: {fm['type']}, but it lives in {pc.TYPE_DIRS[t]}/")
+        for key, allowed in (("type", pc.TYPES), ("status", pc.STATUSES), ("phase", pc.PHASES), ("mode", pc.MODES)):
+            v = fm.get(key)
+            if v not in (None, "") and v not in allowed:
+                self.err(p, lineno(p, f"{key}:"), f"{key}: {v} is not one of {', '.join(allowed)}")
+        for r in pc.as_list(fm.get("risk")):
+            if r not in pc.RISKS:
+                self.err(p, lineno(p, "risk:"), f"risk: {r} is not one of {', '.join(pc.RISKS)}")
+        if not feature:
+            for k in ("phase", "mode", "branch", "risk"):
+                if k in fm:
+                    self.err(p, lineno(p, f"{k}:"), f"{k}: is for features only")
+        if "roadmap" in fm and t != "plan":
+            self.err(p, lineno(p, "roadmap:"), "roadmap: is for plans only")
+        if t == "plan" and fm.get("roadmap") is not None and fm.get("status") not in ("draft", "active", "abandoned"):
+            self.err(p, lineno(p, "status:"), "a plan with a roadmap: may not say done; pd computes it from the roadmap")
+        branch = fm.get("branch")
+        if feature and branch:
+            if fm.get("status") == "done":
+                self.err(p, lineno(p, "branch:"), "branch: is removed at done")
+            elif branch != f"feature/{it['id']}":
+                self.err(p, lineno(p, "branch:"), f"branch: must be feature/{it['id']}")
+        issue = fm.get("issue")
+        if issue is not None:
+            if str(self.cfg.get("tracker")) == "none":
+                self.err(p, lineno(p, "issue:"), "issue: is set but tracker is none")
+            elif issue == "pending":
+                self.warn(p, lineno(p, "issue:"), "issue: pending — the user's next command creates the issue")
+            elif not re.match(r"^https?://\S+$", str(issue)):
+                self.err(p, lineno(p, "issue:"), "issue: must be a URL or pending")
+        return True
+
+    def check_links(self, it):
+        p, origin = it["path"], str(it["fm"].get("origin") or "")
+        if origin:
+            if origin.startswith("backlog#"):
+                if origin[len("backlog#"):] not in self.backlog:
+                    self.err(p, lineno(p, "origin:"), f"origin {origin} not found in backlog.md or backlog-archive.md")
+            elif not (self.art / origin).exists():
+                self.err(p, lineno(p, "origin:"), f"origin {origin} does not resolve under {self.rel(self.art)}")
+        for target in LINK_RE.findall(pc.blank_fences(pc.sections(self.head_part(it)).get("Links", ""))):
+            path = target.split("#")[0]
+            if not path or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                continue
+            if not ((p.parent / path).exists() or (self.art / path).exists()):
+                self.err(p, lineno(p, f"]({target})"), f"## Links: {target} does not resolve")
+
+    def head_part(self, it):
+        """The body above `## Log` (a single-file item's history isn't sections)."""
+        m = re.search(r"^## Log[ \t]*$", pc.blank_fences(it["body"]), re.M)
+        return it["body"][:m.start()] if m else it["body"]
+
+    def check_sections(self, it):
+        p = it["path"]
+        names = set(pc.sections(self.head_part(it)))
+        if it["type"] == "feature":
+            if names != {"Now", "Links"}:
+                self.err(p, 1, f"a feature README has exactly ## Now and ## Links (found: {', '.join(sorted(names)) or 'none'})")
+        elif "Now" not in names or not re.search(r"^## Log[ \t]*$", pc.blank_fences(it["body"]), re.M):
+            self.err(p, 1, "a single-file item has ## Now and ends with ## Log")
+        for line in pc.sections(self.head_part(it)).get("Now", "").split("\n"):
+            if line.startswith("goal:"):
+                m = GOAL_RE.match(line.strip())
+                if not m or m.group(2) not in pc.PHASES:
+                    self.err(p, lineno(p, line), "`goal:` line not `goal: <feature id> target <phase> session <session id>`")
+            elif line.startswith("run in flight:") and not RUN_RE.match(line.strip()):
+                self.err(p, lineno(p, line), "`run in flight:` line not `run in flight: <run-name> session <session id>[ (args: <path>)]`")
+
+    def check_one_fact(self, it):
+        """`status:`/`phase:` outside the frontmatter. Restated contract blocks are phase-gate's check."""
+        for f in sorted(it["dir"].glob("*.md")) if it["dir"] else [it["path"]]:
+            text = f.read_text()
+            end = text.find("\n---", 4) if text.startswith("---\n") else -1
+            body_from = text[:end + 4].count("\n") + 1 if end > 0 else 0
+            for i, line in enumerate(pc.blank_fences(text).split("\n"), 1):
+                if i > body_from and re.match(r"^(status|phase):\s", line):
+                    self.err(f, i, f"`{line.split(':')[0]}:` outside the frontmatter: state lives only there")
+
+    def check_forbidden(self):
+        if str(self.cfg.get("sop")) != "1" or not self.art.is_dir():
+            return
+        for f in self.art.rglob("*"):
+            if f.name in (".meta.json", ".review-history.md") or f.name.startswith(".qa-gate"):
+                self.err(f, 1, f"forbidden file under sop: 1 ({f.name}): state is frontmatter, history is log.md")
+
+    def check_backlog(self):
+        for name in ("backlog.md", "backlog-archive.md"):
+            p = self.art / name
+            if not p.is_file():
+                continue
+            lines = p.read_text().rstrip("\n").split("\n")
+            for i, line in enumerate(lines, 1):
+                if not line.strip() or line.startswith("#"):
+                    continue
+                m = BACKLOG_RE.match(line)
+                if not m or (m.group(1) == "x" and not re.match(r"(promoted → |dropped: )\S", m.group(3))):
+                    self.err(p, i, "backlog line not `- [ ] <YYYY-MM-DD-slug> — <title>` (or `- [x] <id> — promoted → …` / `— dropped: <reason>`)")
+                elif m.group(2) in self.backlog:
+                    self.err(p, i, f"duplicate backlog id {m.group(2)}")
+                else:
+                    self.backlog[m.group(2)] = line
+            if name == "backlog.md" and len(lines) > 300:
+                self.warn(p, 301, "backlog.md passes 300 lines: run pd-lint --archive")
+
+    # --- T3.5b: expectations and plans -------------------------------------------
+    def check_expectations(self, it):
+        shape = it["dir"] / "shape.md"
+        if not shape.is_file():
+            return set()
+        ids = []
+        for line in pc.blank_fences(pc.sections(shape.read_text()).get("Requirements", "")).split("\n"):
+            if re.match(r"^B\d+\b", line):
+                m = pc.EXPECTATION_RE.match(line)
+                if not m:
+                    self.err(shape, lineno(shape, line), f"expectation not `B<n>: <input or action> -> <observable outcome>`: {line.strip()}")
+                elif m.group(1) in ids:
+                    self.err(shape, lineno(shape, line), f"duplicate expectation id B{m.group(1)}")
+                else:
+                    ids.append(m.group(1))
+        return set(ids)
+
+    def at_head(self, path):
+        return pc.git(["cat-file", "-e", f"HEAD:{path}"], self.root, check=False) is not None
+
+    def check_plan(self, it, b_ids):
+        d, fm = it["dir"], it["fm"]
+        shape, plan = d / "shape.md", d / "plan.md"
+        phase_i = pc.PHASES.index(fm["phase"]) if fm.get("phase") in pc.PHASES else -1
+        express = fm.get("mode") == "express"
+        if express:
+            if not shape.is_file():
+                return
+            tasks, src = pc.parse_tasks(pc.sections(shape.read_text()).get("Requirements", "")), shape
+        elif plan.is_file():
+            text = plan.read_text()
+            try:
+                pfm = pc.split_frontmatter(text)[0] or {}
+            except ValueError as e:
+                self.err(plan, 1, f"frontmatter does not parse: {e}")
+                pfm = {}
+            tasks, src = pc.parse_tasks(text), plan
+            if phase_i >= pc.PHASES.index("create-plan") and shape.is_file():
+                want = pc.git(["hash-object", str(shape)], self.root)
+                if pfm.get("from_shape") != want:
+                    self.err(plan, lineno(plan, "from_shape:"), f"from_shape is not shape.md's blob {want}: the plan is stale")
+            ts = re.search(r"^### Test strategy[ \t]*$(.*?)(?=^### |\Z)",
+                           pc.sections(shape.read_text()).get("Design", "") if shape.is_file() else "", re.M | re.S)
+            infra_first = bool(tasks) and tasks[0]["fields"].get("proof") == "green-only (infra)"
+            if not (ts and "junit" in ts.group(1).lower()) and not infra_first:
+                self.err(shape, lineno(shape, "### Test strategy"),
+                         "### Test strategy names no JUnit option for the runner (or an infra task must add one first)")
+        else:
+            return
+        cited, earlier = set(), set()
+        for t in tasks:
+            n, f = t["n"], t["fields"]
+            ln = t["line"] if src == plan else lineno(src, f"#### Task {n}:")
+            for key in ("files", "uses", "command", "junit"):
+                if not f.get(key):
+                    self.err(src, ln, f"task {n} has no `- {key}:`")
+            if not t["cases"]:
+                self.err(src, ln, f"task {n} has no test cases")
+            for c in t["cases"]:
+                m = pc.CASE_RE.match(c)
+                if m:
+                    cited |= {b.strip()[1:] for b in m.group(2).split(",")}
+                else:
+                    self.err(src, lineno(src, c), f"task {n}: test case not `- C<n> [B1] (fixture|fake: <x or none>): <case>`: {c.strip()}")
+            cmd, junit = f.get("command", ""), f.get("junit", "")
+            if cmd and not re.fullmatch(r"`[^`]+`", cmd):
+                self.err(src, ln, f"task {n}: the command must be one backticked command")
+            if junit and junit not in cmd:
+                self.err(src, ln, f"task {n}: the command doesn't write its junit path {junit}")
+            proof = f.get("proof")
+            if proof:
+                m = re.fullmatch(r"green-only \((refactor|infra|fixture)\)", proof)
+                if not m:
+                    self.err(src, ln, f"task {n}: proof: green-only needs a reason: refactor, infra or fixture")
+                elif m.group(1) == "refactor":
+                    tests = [w.split("::")[0] for w in cmd.strip("`").split()
+                             if TEST_NAME_RE.search(w.split("::")[0]) or any(w.startswith(x) for x in self.paths("test_paths"))]
+                    if not tests or not all(self.at_head(x) for x in tests):
+                        self.err(src, ln, f"task {n}: a refactor's proving command must run test files that exist at HEAD")
+        for wave in sorted({t["wave"] or 0 for t in tasks}):
+            in_wave = [t for t in tasks if (t["wave"] or 0) == wave]
+            owner = {}
+            for t in (t for t in in_wave if t["parallel_safe"]):
+                files = split_list(t["fields"].get("files"))
+                for fl in files:
+                    if fl in owner:
+                        self.err(src, t["line"] if src == plan else 1,
+                                 f"tasks {owner[fl]} and {t['n']} in wave {wave} are [parallel-safe] but share {fl}")
+                    owner.setdefault(fl, t["n"])
+                for u in split_list(t["fields"].get("uses")):
+                    if u not in files and u not in earlier and not self.at_head(u):
+                        self.err(src, t["line"] if src == plan else 1,
+                                 f"task {t['n']}: uses {u}, which is neither at HEAD nor in this or an earlier wave's files (the wave's base)")
+            earlier |= {fl for t in in_wave for fl in split_list(t["fields"].get("files"))}
+        for b in sorted(b_ids - cited, key=int):
+            self.err(shape, lineno(shape, f"B{b}:"), f"B{b} is not covered by any test case")
+        for b in sorted(cited - b_ids, key=int):
+            self.err(src, lineno(src, f"B{b}"), f"a test case cites B{b}, which shape.md doesn't define")
+        if fm.get("mode") == "small" and len(tasks) > int(self.cfg.get("small_feature_tasks") or 3):
+            self.warn(src, 1, f"a small feature's plan has {len(tasks)} tasks, over small_feature_tasks: record the overrun as a note")
+
+    def check_phases(self, it):
+        fm = it["fm"]
+        if fm.get("phase") not in pc.PHASES:
+            return
+        idx = pc.PHASES.index(fm["phase"])
+        gates = list(pc.PHASES[:idx])
+        if fm.get("mode") == "express":  # the mini-spec check replaces specify, design and create-plan
+            gates = (["express"] if idx >= pc.PHASES.index("implement") else []) + \
+                    [g for g in gates if g not in ("specify", "design", "create-plan")]
+        def gate(g):
+            return g, subprocess.run(["bash", str(GATE), g, str(it["dir"])], capture_output=True, text=True)
+        with ThreadPoolExecutor(6) as pool:  # a done feature re-runs five gates; in parallel they cost about one
+            results = list(pool.map(gate, gates))
+        for g, r in results:
+            if r.returncode != 0:
+                fails = [l.split(": ", 1)[1] for l in r.stdout.splitlines() if l.startswith("GATE FAIL")] or [r.stdout.strip()]
+                for msg in fails:
+                    self.err(it["path"], 1, f"phase-gate {g}: {msg}")
+
+    # --- T3.5d: log.md ----------------------------------------------------------
+    def check_log(self, it):
+        feature = it["type"] == "feature"
+        logp = it["dir"] / "log.md" if feature else it["path"]
+        if feature and not logp.is_file():
+            self.err(it["path"], 1, "a feature has a log.md")
+            return
+        text, first = pc.log_text(it["type"], it["path"])
+        entries = pc.parse_log(text, first)
+        item_rel = f"{pc.TYPE_DIRS[it['type']]}/{it['id']}"
+        seen = set()
+        for e in entries:
+            ln = e["line"]
+            if e["kind"] is None:
+                self.err(logp, ln, f"entry heading not `## YYYY-MM-DD HH:MM±hh:mm <kind>`: {e['heading']}")
+                continue
+            kind = e["kind"]
+            if kind not in pc.ENTRY_KINDS:
+                self.err(logp, ln, f"entry kind {kind} is not one of {', '.join(pc.ENTRY_KINDS)}")
+            if e["ref"] in seen:
+                self.err(logp, ln, f"a second {kind} entry in the same minute needs a -2 suffix")
+            if e["n"]:
+                n = int(e["n"])
+                prev = f"{kind}{'' if n == 2 else '-' + str(n - 1)}@{e['date']} {e['time']}{e['offset']}"
+                if n < 2 or prev not in seen:
+                    self.err(logp, ln, f"suffix -{n} without an earlier {prev}")
+            seen.add(e["ref"])
+            legacy = any(l.strip() == "Status: closed (legacy)" for l in e["body"])
+            if kind == "capped":
+                self.check_capped(logp, e, item_rel)
+            if kind == "decision" and not legacy:
+                answers = [l for l in e["body"] if l.startswith("A ")]
+                if not answers or not all(ANSWER_RE.match(l) for l in answers):
+                    self.err(logp, ln, "a decision's answer line is `A (user, verbatim): …`, `A (conductor): …` "
+                                       "or `A (conductor, on the user's behalf): …`")
+            for i, l in enumerate(e["body"], 1):
+                self.commits += [(logp, ln + i, h) for h in COMMIT_RE.findall(l)]
+        fm = it["fm"]
+        if feature and fm.get("status") == "done":
+            kinds = {e["kind"] for e in entries}
+            if "metrics" not in kinds:
+                self.err(logp, 1, "a done feature needs a metrics entry")
+            triggers = pc.retro_triggers(entries)
+            hard = [t for t in triggers if t != "defect"]
+            has_retro = (it["dir"] / "retro.md").is_file()
+            if hard and not has_retro:
+                self.err(logp, 1, f"retro.md missing: log.md records a retro trigger ({', '.join(hard)})")
+            elif not hard and not has_retro and "note" not in kinds:
+                self.err(logp, 1, "a done feature with no retro trigger needs a note entry from finish")
+            if "defect" in triggers and not has_retro:
+                self.warn(logp, 1, "a defect on a done feature: a retro is owed")
+
+    def check_capped(self, logp, e, item_rel):
+        lines = e["body"]
+        for lab in LISTS:
+            i = next((k for k, l in enumerate(lines) if l.startswith(lab + ":")), None)
+            if i is None:
+                self.err(logp, e["line"], f"capped entry has no `{lab}:` list (write `{lab}: none` if empty)")
+                continue
+            rest, items = lines[i][len(lab) + 1:].strip(), []
+            if rest and rest != "none":
+                self.err(logp, e["line"] + i + 1, f"`{lab}:` is `none` or a list of `- ` items on the lines below")
+            elif not rest:
+                j = i + 1
+                while j < len(lines) and lines[j].startswith("- "):
+                    items.append(lines[j][2:])
+                    j += 1
+                if not items:
+                    self.err(logp, e["line"] + i + 1, f"`{lab}:` is empty: write `{lab}: none`")
+            if lab == "Follow-ups":
+                for item in items:
+                    bid = (item.split() or [""])[0]
+                    line = self.backlog.get(bid, "")
+                    if not any(f"(from: {x})" in line for x in (item_rel, item_rel + ".md")):
+                        self.err(logp, e["line"], f"follow-up {bid} has no backlog.md line with (from: {item_rel})")
+
+    def check_commits(self):
+        if not self.commits:
+            return
+        r = subprocess.run(["git", "cat-file", "--batch-check"], cwd=self.root, capture_output=True, text=True,
+                           input="".join(f"{h}^{{commit}}\n" for _, _, h in self.commits))
+        for (p, ln, h), out in zip(self.commits, r.stdout.splitlines()):
+            if out.endswith("missing") or "ambiguous" in out:
+                self.err(p, ln, f"cited commit {h} does not exist in this repository")
+
+    # --- T3.5c: roadmaps --------------------------------------------------------
+    def check_roadmaps(self):
+        feat_slug = {slug_of(it["id"]): it for it in self.items if it["type"] == "feature"}
+        owner = {}
+        for plan in (it for it in self.items if it["type"] == "plan" and (it["fm"] or {}).get("roadmap") is not None):
+            p, rm = plan["path"], plan["fm"]["roadmap"]
+            if not isinstance(rm, list):
+                self.err(p, lineno(p, "roadmap:"), "roadmap: is a list of feature:, planned: or dropped: items")
+                continue
+            slugs = {}
+            for item in rm:
+                keys = [k for k in ("feature", "planned", "dropped") if isinstance(item, dict) and k in item]
+                if len(keys) != 1:
+                    self.err(p, lineno(p, "roadmap:"), f"roadmap item {item!r} is not one feature:, planned: or dropped:")
+                    continue
+                k, v = keys[0], item[keys[0]]
+                s, ln = slug_of(v), lineno(p, f"{keys[0]}: {v}")
+                if s in slugs:
+                    self.err(p, ln, f"roadmap slug {s} is listed twice")
+                slugs[s] = item
+                if k == "feature":
+                    fid = Path(v).name
+                    if not (self.art / v / "README.md").is_file():
+                        self.err(p, ln, f"roadmap feature {v} does not exist")
+                    if fid in owner and owner[fid] != plan["id"]:
+                        self.err(p, ln, f"feature {v} is in two roadmaps: {owner[fid]} and {plan['id']}")
+                    owner.setdefault(fid, plan["id"])
+                elif k == "planned" and s in feat_slug:
+                    self.err(p, ln, f"planned: {s} already exists as a feature ({feat_slug[s]['id']}): make it a feature: line")
+                elif k == "dropped":
+                    if not item.get("reason"):
+                        self.err(p, ln, f"dropped: {v} needs a reason:")
+                    f = feat_slug.get(s)
+                    if f and (f["fm"] or {}).get("status") != "abandoned":
+                        self.err(p, ln, f"dropped feature {f['id']} must be abandoned first")
+            pending = {s: pc.as_list(item.get("after")) for s, item in slugs.items()}
+            for s, after in pending.items():
+                for a in after:
+                    if a not in slugs:
+                        self.err(p, lineno(p, "after:"), f"{s}: after: {a} names no item in this roadmap")
+            while pending:  # peel off items whose after: items are all placed; what's left is a cycle
+                free = [s for s, after in pending.items() if not any(a in pending for a in after)]
+                if not free:
+                    self.err(p, lineno(p, "after:"), f"roadmap after: has a cycle through {', '.join(sorted(pending))}")
+                    break
+                for s in free:
+                    del pending[s]
+            head = pc.git(["show", f"HEAD:{self.rel(p)}"], self.root, check=False)
+            try:
+                head_rm = (pc.split_frontmatter(head)[0] or {}).get("roadmap") if head else None
+            except ValueError:
+                head_rm = None
+            for item in pc.as_list(head_rm):
+                for k in ("feature", "planned", "dropped"):
+                    if isinstance(item, dict) and k in item and slug_of(item[k]) not in slugs:
+                        self.err(p, lineno(p, "roadmap:"), f"roadmap item {slug_of(item[k])} in HEAD is missing: "
+                                                          "items are never deleted; mark it dropped: with a reason")
+
+    # --- T3.5e: --isolation and --risk ---------------------------------------------
+    def paths(self, key):
+        found = pc.as_list(self.cfg.get(key))
+        if not found and key in ("source_paths", "test_paths"):
+            default = "src/" if key == "source_paths" else "tests/"
+            found = [default] if (self.root / default).is_dir() else []
+        return [str(x).rstrip("/") + "/" for x in found]
+
+    def branch_feature(self):
+        branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], self.root, check=False) or ""
+        return next((it for it in self.items if it["type"] == "feature" and f"feature/{it['id']}" == branch), None)
+
+    def check_isolation(self, rng):
+        src, tests, fixtures = self.paths("source_paths"), self.paths("test_paths"), self.paths("fixture_paths")
+        if not src or not tests:
+            self.warn(self.root, 0, "isolation skipped: no source_paths/test_paths, and no src/ or tests/")
+            return
+        under = lambda f, ps: any(f.startswith(x) for x in ps)
+        feat = self.branch_feature()
+        allowed = None
+        if feat and (feat["dir"] / "shape.md").is_file():
+            design = pc.sections((feat["dir"] / "shape.md").read_text()).get("Design", "")
+            allowed = {m.strip() for line in re.findall(r"^modules:(.*)$", design, re.M) for m in line.split(",") if m.strip()}
+        else:
+            self.warn(self.root, 0, "isolation: no feature/<id> branch with a shape.md; the modules: check is skipped")
+        declared = pc.as_list(self.cfg.get("languages"))
+        for f in filter(None, pc.git(["diff", "--name-only", "--diff-filter=ACMR", rng], self.root).split("\n")):
+            p = self.root / f
+            if TEST_NAME_RE.search(f) and not under(f, tests):
+                self.err(p, 1, "test file outside test_paths")
+            if FIXTURE_DIR_RE.search(f) and not under(f, fixtures):
+                self.err(p, 1, "fixture data outside fixture_paths")
+            lang = LANGS.get(p.suffix)
+            if not p.is_file() or not lang or (declared and lang not in declared):
+                continue
+            text = p.read_text(errors="ignore")
+            if under(f, src):
+                # shortcut: path strings and import lines by regex, not a parser; a path built at runtime slips through.
+                for i, line in enumerate(text.split("\n"), 1):
+                    for x in tests + fixtures:
+                        dotted = re.escape(x.rstrip("/").replace("/", "."))
+                        if re.search(rf"(?<![\w.-]){re.escape(x)}", line) or \
+                                (lang == "python" and re.match(rf"^\s*(from|import)\s+{dotted}(\.|\s|$)", line)):
+                            self.err(p, i, f"production code names {x} (a test or fixture path)")
+            if under(f, tests) and allowed is not None:
+                self.check_test_imports(p, text, src, allowed, lang)
+
+    def check_test_imports(self, p, text, src, allowed, lang):
+        dotted_ok = {re.sub(r"\.py$", "", m[len(s):] if m.startswith(s) else m).replace("/", ".")
+                     for m in allowed for s in src + [""]}
+
+        def prod(name):
+            rel = name.replace(".", "/")
+            return any((self.root / s / (rel + ".py")).is_file() or (self.root / s / rel / "__init__.py").is_file()
+                       or (self.root / (rel + ".py")).is_file() for s in src)
+        for m in PY_IMPORT_RE.finditer(text) if lang == "python" else ():
+            ln = text[:m.start()].count("\n") + 1
+            if m.group(1):
+                base, names = m.group(1), [x.strip() for x in m.group(2).split(",") if x.strip()]
+                cands = [base] + [f"{base}.{x}" for x in names]
+            else:
+                names, cands = [], [x.strip() for x in m.group(3).split(",")]
+            if not any(prod(c) for c in cands):
+                continue  # stdlib, a third-party package or a test helper
+            if not any(c in dotted_ok for c in cands):
+                self.err(p, ln, f"test imports {cands[0]}, which no contract's modules: line names")
+            if any(part.startswith("_") and not part.startswith("__") for c in cands for part in c.split(".")):
+                self.err(p, ln, f"test imports a private name from {cands[0]}")
+        for m in JS_IMPORT_RE.finditer(text) if lang != "python" else ():
+            target = (p.parent / m.group(1)).resolve()
+            try:
+                rel = str(target.relative_to(self.root))
+            except ValueError:
+                continue
+            if any(rel.startswith(s) for s in src) and not any(re.sub(r"\.[jt]sx?$", "", a) == re.sub(r"\.[jt]sx?$", "", rel)
+                                                               for a in allowed):
+                self.err(p, text[:m.start()].count("\n") + 1, f"test imports {rel}, which no contract's modules: line names")
+
+    def check_risk(self, rng):
+        patterns = re.findall(r"^- (security|migration) (path|line): `(.+)`$", RISK_PATTERNS.read_text(), re.M)
+        feat = self.branch_feature()
+        tags = set(pc.as_list(((feat or {}).get("fm") or {}).get("risk")))
+        diff = pc.git(["diff", "-U0", "--diff-filter=ACMR", rng], self.root)
+        added, cur = {}, None
+        for line in diff.split("\n"):
+            if line.startswith("+++ "):
+                cur = line[6:] if line.startswith("+++ b/") else None
+                added.setdefault(cur, [])
+            elif line.startswith("+") and cur:
+                added[cur].append(line[1:])
+        hits = set()
+        for tag, kind, rx in patterns:
+            r = re.compile(rx, re.I)
+            for f, lines in added.items():
+                if f and (r.search(f) if kind == "path" else any(r.search(l) for l in lines)):
+                    hits.add((tag, f))
+        for tag, f in sorted(hits):
+            if tag not in tags:
+                self.warn(self.root / f, 1, f"risk signal ({tag}) and the feature has no risk: [{tag}] tag: "
+                                            "set it, or the user clears it with a decision entry")
+
+
+# --- T3.5f: --archive and --sweep ---------------------------------------------
+def archive(root, art):
+    p, a = art / "backlog.md", art / "backlog-archive.md"
+    lines = p.read_text().split("\n") if p.is_file() else []
+    ticked = [l for l in lines if l.startswith("- [x] ")]
+    if ticked:
+        head = a.read_text() if a.is_file() else "# Backlog archive\n\n"
+        a.write_text(head.rstrip("\n") + "\n" + "\n".join(ticked) + "\n")
+        p.write_text("\n".join(l for l in lines if not l.startswith("- [x] ")))
+    print(f"pd-lint: archived {len(ticked)} ticked line(s) into {a.relative_to(root)}")
+
+
+def sweep(lint):
+    cutoff = date.today() - timedelta(days=30)
+    by_id = {it["id"]: it for it in lint.items}
+    by_slug = {slug_of(it["id"]): it for it in lint.items}
+    done, other = [], []
+    for d in sorted((lint.root / "agent_sandbox").glob("*/*")):
+        if not d.is_dir():
+            continue
+        try:
+            when = date.fromisoformat(d.parent.name)
+        except ValueError:
+            other.append(d)
+            continue
+        if when > cutoff:
+            continue
+        it = by_id.get(d.name) or by_slug.get(slug_of(d.name))
+        (done if it and (it["fm"] or {}).get("status") == "done" else other).append(d)
+    print("pd-lint --sweep (nothing is deleted)")
+    print("Older than 30 days, item done (safe to remove):")
+    print("\n".join(f"  {lint.rel(d)}" for d in done) or "  none")
+    print("Older than 30 days, no done item (for the user to decide):")
+    print("\n".join(f"  {lint.rel(d)}" for d in other) or "  none")
+
+
+def to_targets(root, art, names):
+    targets = set()
+    for n in names:
+        try:
+            parts = Path(n).resolve().relative_to(art.resolve()).parts
+        except ValueError:
+            continue
+        if not parts:
+            targets.add(art)
+        elif parts[0] in ("backlog.md", "backlog-archive.md") or len(parts) == 1:
+            targets.add(art / parts[0])
+        elif parts[0] == "features":
+            targets.add(art / "features" / parts[1])
+        elif parts[0] in ("plans", "brainstorms", "rca"):
+            targets.add(art / parts[0] / (Path(parts[1]).stem + ".md"))
+    return targets
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="pd-lint", description=__doc__.split("\n")[0])
+    ap.add_argument("paths", nargs="*")
+    ap.add_argument("--staged", action="store_true")
+    ap.add_argument("--archive", action="store_true")
+    ap.add_argument("--sweep", action="store_true")
+    ap.add_argument("--isolation", metavar="RANGE")
+    ap.add_argument("--risk", metavar="RANGE")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args(argv)
+    if args.self_test:
+        return self_test()
+    root = pc.repo_root(".")
+    cfg = pc.load_config(root)
+    if pc.is_unadopted(root, cfg):
+        print("pd-lint: not adopted: run /pd:adopt")
+        return 0
+    art = pc.artifacts_dir(root, cfg)
+    if args.archive:
+        archive(root, art)
+        return 0
+    targets = None
+    if args.staged:
+        # shortcut: lints the working-tree content of the staged items, not the index blobs.
+        staged = pc.git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], root) or ""
+        targets = to_targets(root, art, [root / x for x in staged.split("\n") if x])
+        if not targets:
+            return 0
+    elif args.paths:
+        targets = to_targets(root, art, args.paths)
+    lint = Linter(root, targets)
+    if args.sweep:
+        sweep(lint)
+        return 0
+    if args.isolation:
+        lint.check_isolation(args.isolation)
+    elif args.risk:
+        lint.check_risk(args.risk)
+    else:
+        lint.run()
+    return 1 if lint.errors else 0
+
+
+# --- self-test ------------------------------------------------------------------
+ART = "docs/dev_artifacts"
+F = f"{ART}/features/2026-10-14-parse-input"
+P = f"{ART}/plans/2026-10-14-thin-pd.md"
+BL = f"{ART}/backlog.md"
+CFG = ".claude/pd.local.md"
+CONFIG = ("---\nartifacts_root: docs/dev_artifacts\nsop: 1\nsource_paths: [src/]\ntest_paths: [tests/]\n"
+          "fixture_paths: [tests/fixtures/]\nlanguages: [python]\nqa_battery:\n  - python3 -m pytest -q\n---\n")
+README = ("---\nid: 2026-10-14-parse-input\ntype: feature\ntitle: Parse input\nstatus: done\nphase: finish\n"
+          "mode: standard\norigin: backlog#2026-10-10-parse-input\n---\n# Parse input\n\n## Now\n\nDone.\n\n"
+          "## Links\n\n- [log](log.md)\n- [shape](shape.md)\n")
+SHAPE = ("# Shape: Parse input\n\n## Requirements\n\nB1: an empty string -> EmptyInput is raised\n"
+         "B2: \"a,b\" -> [\"a\", \"b\"]\n\n## Design\n\n### Architecture\n\n```mermaid\nflowchart LR\n"
+         "  A[cli] -->|contract: parse| B[parse]\n```\n\n### Contracts\n\n```text\nmodules: src/pkg/parse.py\n"
+         "parse(text: str) -> list[str]\nraises EmptyInput on an empty string\ninvariant: no I/O\n```\n\n"
+         "### Test strategy\n\n- Runner: pytest with --junitxml=PATH.\n- Fixtures live in tests/fixtures/.\n")
+PLAN = ("---\nfrom_shape: {from_shape}\n---\n# Plan: Parse input\n\n## Plan\n\n### Wave 1\n\n"
+        "#### Task 1: parse [parallel-safe]\n- contract: shape.md ## Design, parse\n"
+        "- files: src/pkg/parse.py, tests/test_parse.py\n- uses: none\n"
+        "- command: `python3 -m pytest tests/test_parse.py --junitxml=agent_sandbox/junit/task-1.xml`\n"
+        "- junit: agent_sandbox/junit/task-1.xml\n- test cases:\n"
+        "  - C1 [B1] (fixture: none): given \"\", expect EmptyInput.\n"
+        "  - C2 [B2] (fixture: tests/fixtures/ab.txt): given \"a,b\", expect [\"a\", \"b\"].\n")
+LOG = ("## 2026-10-14 09:00+08:00 decision\nQ: criteria signed off?\nA (user, verbatim): \"Yes.\"\n\n"
+       "## 2026-10-14 14:00+08:00 run implement-tasks — finished\nBudget: feature_token_budget=unset\n"
+       "- task 1: merged, proof pass, cycles 0, branch pd/2026-10-14-parse-input/task-1\n\n"
+       "## 2026-10-14 15:00+08:00 qa\nCommit: {commit}\nRan: `python3 -m pytest -q` -> pass\n\n"
+       "## 2026-10-14 16:00+08:00 metrics\nMode: standard. Tokens: 1000 (source: gate state).\n\n"
+       "## 2026-10-14 16:05+08:00 note\nNo retro trigger.\n")
+ROADMAP = ("---\nid: 2026-10-14-thin-pd\ntype: plan\ntitle: Thin pd\nstatus: active\nroadmap:\n"
+           "  - feature: features/2026-10-14-parse-input\n  - planned: emit-output\n    after: [parse-input]\n"
+           "---\n# Thin pd\n\n## Now\n\nNext: emit-output.\n\n## Links\n\n## Log\n")
+LEGACY = "---\nid: 134-old\ntype: feature\ntitle: Old\nstatus: done\n---\n"
+CAPPED = ("## 2026-10-14 16:10+08:00 capped verify\nDeferred: none\nFollow-ups: none\nDecisions: none\n"
+          "Assumptions: none\n")
+
+
+def build_base(base):
+    pc.make_repo(base)
+    commit(base, {CFG: CONFIG, "src/pkg/parse.py": "def parse(text):\n    return text.split(',')\n",
+                  "tests/test_parse.py": "from pkg.parse import parse\n", "tests/fixtures/ab.txt": "a,b\n"})
+    code = pc.git(["rev-parse", "HEAD"], base)
+    put(base, {f"{F}/README.md": README, f"{F}/shape.md": SHAPE, f"{F}/log.md": LOG.format(commit=code), P: ROADMAP,
+               BL: "# Backlog\n\n- [x] 2026-10-10-parse-input — promoted → features/2026-10-14-parse-input\n"})
+    put(base, {f"{F}/plan.md": PLAN.format(from_shape=pc.git(["hash-object", f"{F}/shape.md"], base))})
+    r = subprocess.run([str(HERE / "pd-new"), "feature", "Load the config"], cwd=base, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    pc.git(["add", "-A"], base)
+    pc.git(["commit", "-q", "-m", "artifacts"], base)
+    pc.git(["checkout", "-q", "-b", "feature/2026-10-14-parse-input"], base)
+    return code
+
+
+def new_feature(r):
+    return next((r / ART / "features").glob("*-" + pc.slugify("Load the config")))
+
+
+def rw(path, old, new):
+    text = path.read_text()
+    assert old in text, (str(path), old)
+    path.write_text(text.replace(old, new, 1))
+
+
+def add(path, text):
+    path.write_text((path.read_text() if path.exists() else "") + text)
+
+
+def put(r, files):
+    for k, v in files.items():
+        (r / k).parent.mkdir(parents=True, exist_ok=True)
+        (r / k).write_text(v)
+
+
+def commit(r, files):
+    put(r, files)
+    pc.git(["add", "-A"], r)
+    pc.git(["commit", "-q", "-m", "change"], r)
+
+
+def cases(code):
+    f = lambda r: r / F
+    nf = lambda r: new_feature(r)
+    rm_entry = lambda kind: lambda r: rw(f(r) / "log.md", re.search(rf"## [^\n]* {kind}\n(?:[^\n]+\n)*\n?", LOG.format(commit=code)).group(0), "")
+    shape_express = "## Requirements\n\nB1: x -> y\n"
+    return [
+        # (label, mutate, args, kind: error|warn|ok|nowarn, substring)
+        ("a clean repository passes", lambda r: None, [], "ok", ""),
+        ("a feature directory has its README", lambda r: (nf(r) / "README.md").unlink(), [], "error", "has no README.md"),
+        ("frontmatter parses", lambda r: rw(f(r) / "README.md", "title: Parse input", "title Parse input"), [], "error", "frontmatter does not parse"),
+        ("required fields", lambda r: rw(f(r) / "README.md", "title: Parse input\n", ""), [], "error", "missing required field: title"),
+        ("id equals name", lambda r: rw(f(r) / "README.md", "id: 2026-10-14-parse-input", "id: 2026-10-14-parse-inputs"), [], "error", "does not match its name"),
+        ("type matches its directory", lambda r: rw(f(r) / "README.md", "type: feature", "type: plan"), [], "error", "but it lives in features/"),
+        ("status vocabulary", lambda r: rw(f(r) / "README.md", "status: done", "status: finished"), [], "error", "status: finished is not one of"),
+        ("phase vocabulary", lambda r: rw(f(r) / "README.md", "phase: finish", "phase: review"), [], "error", "phase: review is not one of"),
+        ("mode vocabulary", lambda r: rw(f(r) / "README.md", "mode: standard", "mode: fast"), [], "error", "mode: fast is not one of"),
+        ("risk vocabulary", lambda r: rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nrisk: [perf]\n"), [], "error", "risk: perf is not one of"),
+        ("features-only fields", lambda r: rw(r / P, "status: active\n", "status: active\nphase: design\n"), [], "error", "is for features only"),
+        ("a roadmap plan may not say done", lambda r: rw(r / P, "status: active", "status: done"), [], "error", "may not say done"),
+        ("branch removed at done", lambda r: rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nbranch: feature/2026-10-14-parse-input\n"), [], "error", "removed at done"),
+        ("ids unique", lambda r: (r / ART / "plans" / "2026-10-14-other.md").write_text(ROADMAP.split("roadmap:")[0] + "---\n# x\n\n## Now\n\n## Log\n"), [], "error", "duplicate id 2026-10-14-thin-pd"),
+        ("issue needs a tracker", lambda r: rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nissue: https://x.test/1\n"), [], "error", "tracker is none"),
+        ("issue is a URL", lambda r: (rw(r / CFG, "sop: 1\n", "sop: 1\ntracker: github\n"), rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nissue: 12\n")), [], "error", "must be a URL or pending"),
+        ("issue pending warns", lambda r: (rw(r / CFG, "sop: 1\n", "sop: 1\ntracker: github\n"), rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nissue: pending\n")), [], "warn", "issue: pending"),
+        ("origin path resolves", lambda r: rw(f(r) / "README.md", "origin: backlog#2026-10-10-parse-input", "origin: brainstorms/2026-10-01-x.md"), [], "error", "does not resolve under"),
+        ("origin backlog# resolves", lambda r: rw(f(r) / "README.md", "backlog#2026-10-10-parse-input", "backlog#2026-10-01-nope"), [], "error", "not found in backlog.md"),
+        ("## Links resolve", lambda r: add(f(r) / "README.md", "- [gone](gone.md)\n"), [], "error", "## Links: gone.md does not resolve"),
+        ("cited commits exist", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 note\nCommit: deadbeef1\n"), [], "error", "cited commit deadbeef1"),
+        ("goal: line format", lambda r: rw(nf(r) / "README.md", "Created by pd-new.", "goal: x target nowhere session s1"), [], "error", "`goal:` line not"),
+        ("run in flight: line format", lambda r: rw(nf(r) / "README.md", "Created by pd-new.", "run in flight: implement-tasks"), [], "error", "`run in flight:` line not"),
+        ("feature README sections", lambda r: add(f(r) / "README.md", "\n## Status\n\nx\n"), [], "error", "exactly ## Now and ## Links"),
+        ("one fact, one place", lambda r: rw(f(r) / "shape.md", "## Design\n", "status: active\n\n## Design\n"), [], "error", "outside the frontmatter"),
+        ("duplicate contract block", lambda r: add(f(r) / "plan.md", "\n```text\n" + SHAPE.split("```text\n")[1].split("```")[0] + "```\n"), [], "error", "duplicate contract block"),
+        ("forbidden files under sop: 1", lambda r: (f(r) / ".meta.json").write_text("{}"), [], "error", "forbidden file"),
+        ("backlog line format", lambda r: add(r / BL, "- [ ] foo bar\n"), [], "error", "backlog line not"),
+        ("ticked backlog lines say promoted or dropped", lambda r: add(r / BL, "- [x] 2026-10-14-foo — done\n"), [], "error", "backlog line not"),
+        ("backlog ids unique", lambda r: add(r / BL, "- [ ] 2026-10-10-parse-input — again\n"), [], "error", "duplicate backlog id"),
+        ("a single-file item ends with ## Log", lambda r: rw(r / P, "\n## Log\n", "\n"), [], "error", "ends with ## Log"),
+        ("branch names the feature", lambda r: rw(nf(r) / "README.md", "branch: feature/", "branch: feat/"), [], "error", "branch: must be feature/"),
+        ("backlog past 300 lines warns", lambda r: add(r / BL, "".join(f"- [ ] 2026-10-14-item-{i} — x\n" for i in range(300))), [], "warn", "run pd-lint --archive"),
+        ("expectation format", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1 empty -> error\n"), [], "error", "expectation not `B<n>:"),
+        ("expectation ids unique", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1: x -> y\nB1: z -> w\n"), [], "error", "duplicate expectation id B1"),
+        ("task fields", lambda r: rw(f(r) / "plan.md", "- uses: none\n", ""), [], "error", "task 1 has no `- uses:`"),
+        ("test case format", lambda r: rw(f(r) / "plan.md", "  - C1 [B1] (fixture: none):", "  - C1 [B1]:"), [], "error", "test case not"),
+        ("the command writes its junit path", lambda r: rw(f(r) / "plan.md", "task-1.xml`", "task-9.xml`"), [], "error", "doesn't write its junit path"),
+        ("test strategy names a JUnit option", lambda r: rw(f(r) / "shape.md", "pytest with --junitxml=PATH.", "pytest."), [], "error", "names no JUnit option"),
+        ("wave base for uses:", lambda r: rw(f(r) / "plan.md", "- uses: none", "- uses: src/pkg/missing.py"), [], "error", "the wave's base"),
+        ("parallel-safe file sets disjoint", lambda r: add(f(r) / "plan.md", "\n#### Task 2: more [parallel-safe]\n- files: src/pkg/parse.py\n"), [], "error", "share src/pkg/parse.py"),
+        ("every expectation covered", lambda r: rw(f(r) / "shape.md", "\n\n## Design", "\nB3: x -> y\n\n## Design"), [], "error", "B3 is not covered"),
+        ("cited expectations exist", lambda r: rw(f(r) / "plan.md", "  - C2 [B2]", "  - C2 [B9]"), [], "error", "cites B9"),
+        ("from_shape staleness", lambda r: rw(f(r) / "plan.md", "from_shape: ", "from_shape: 0"), [], "error", "the plan is stale"),
+        ("green-only needs a reason", lambda r: rw(f(r) / "plan.md", "- junit:", "- proof: green-only (lazy)\n- junit:"), [], "error", "green-only needs a reason"),
+        ("a refactor's tests exist at HEAD", lambda r: (rw(f(r) / "plan.md", "tests/test_parse.py --junitxml", "tests/test_missing.py --junitxml"),
+                                                      rw(f(r) / "plan.md", "- junit:", "- proof: green-only (refactor)\n- junit:")), [], "error", "a refactor's proving command"),
+        ("a small plan over the cap warns", lambda r: (rw(f(r) / "README.md", "mode: standard", "mode: small"), rw(r / CFG, "sop: 1\n", "sop: 1\nsmall_feature_tasks: 0\n")), [], "warn", "small_feature_tasks"),
+        ("express mini-spec", lambda r: (rw(nf(r) / "README.md", "mode: standard", "mode: express"), rw(nf(r) / "README.md", "phase: specify", "phase: verify"),
+                                         (nf(r) / "shape.md").write_text(shape_express)), [], "error", "phase-gate express"),
+        ("roadmap feature exists", lambda r: rw(r / P, "  - planned: emit", "  - feature: features/2026-10-14-nope\n  - planned: emit"), [], "error", "roadmap feature features/2026-10-14-nope does not exist"),
+        ("no feature in two roadmaps", lambda r: (r / ART / "plans" / "2026-10-14-second.md").write_text(ROADMAP.replace("2026-10-14-thin-pd", "2026-10-14-second").replace("emit-output", "other")), [], "error", "is in two roadmaps"),
+        ("after: names a slug", lambda r: rw(r / P, "after: [parse-input]", "after: [nope]"), [], "error", "after: nope names no item"),
+        ("after: has no cycle", lambda r: rw(r / P, "features/2026-10-14-parse-input\n", "features/2026-10-14-parse-input\n    after: [emit-output]\n"), [], "error", "has a cycle"),
+        ("dropped needs a reason", lambda r: rw(r / P, "  - planned: emit", "  - dropped: old-idea\n  - planned: emit"), [], "error", "needs a reason"),
+        ("a dropped feature is abandoned", lambda r: rw(r / P, "  - feature: features/2026-10-14-parse-input\n", "  - dropped: parse-input\n    reason: \"cut\"\n"), [], "error", "must be abandoned first"),
+        ("planned slug already a feature", lambda r: rw(r / P, "  - planned: emit", "  - planned: " + pc.slugify("Load the config") + "\n  - planned: emit"), [], "error", "already exists as a feature"),
+        ("no HEAD roadmap item removed", lambda r: rw(r / P, "  - planned: emit-output\n    after: [parse-input]\n", ""), [], "error", "items are never deleted"),
+        ("entry headings carry the offset", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00 note\nx\n"), [], "error", "entry heading not"),
+        ("entry kinds", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 retro\nx\n"), [], "error", "entry kind retro"),
+        ("same-minute entries take -2", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 note\nx\n\n## 2026-10-14 17:00+08:00 note\ny\n"), [], "error", "same minute"),
+        ("a -n suffix follows its first", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 note-2\nx\n"), [], "error", "without an earlier"),
+        ("capped has its four lists", lambda r: add(f(r) / "log.md", "\n" + CAPPED.replace("Assumptions: none\n", "")), [], "error", "no `Assumptions:` list"),
+        ("each follow-up has a backlog line", lambda r: add(f(r) / "log.md", "\n" + CAPPED.replace("Follow-ups: none", "Follow-ups:\n- 2026-10-14-retry")), [], "error", "follow-up 2026-10-14-retry"),
+        ("decision answer forms", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 decision\nQ: x?\nA: yes\n"), [], "error", "a decision's answer line"),
+        ("a done feature has metrics", rm_entry("metrics"), [], "error", "needs a metrics entry"),
+        ("a retro trigger needs retro.md", lambda r: add(f(r) / "log.md", "\n" + CAPPED), [], "error", "retro.md missing"),
+        ("no trigger needs finish's note", rm_entry("note"), [], "error", "needs a note entry"),
+        ("a defect on a done feature only warns", lambda r: add(f(r) / "log.md", f"\n## 2026-10-20 10:00+08:00 defect\nFixed by: {code}\n"), [], "warn", "a retro is owed"),
+        ("earlier phases' exit checks", rm_entry("decision"), [], "error", "phase-gate specify"),
+        ("a done legacy item is exempt", lambda r: put(r, {f"{ART}/features/134-old/README.md": LEGACY}), [], "ok", ""),
+        ("a legacy feature not done warns", lambda r: put(r, {f"{ART}/features/134-old/README.md": LEGACY.replace("done", "active")}), [], "warn", "/pd:adopt"),
+        ("--staged lints only staged items", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 handoff\nNext: none.\n"),
+                                                        pc.git(["add", F], r)), ["--staged"], "ok", ""),
+        ("--staged reports a staged item", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), pc.git(["add", "-A"], r)), ["--staged"], "error", "status: bogus"),
+        ("a path narrows the run", lambda r: rw(nf(r) / "README.md", "status: active", "status: bogus"), [F], "ok", ""),
+        ("isolation: production names tests", lambda r: commit(r, {"src/pkg/parse.py": "from tests.helpers import x\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "production code names tests/"),
+        ("isolation: tests under test_paths", lambda r: commit(r, {"src/pkg/test_util.py": "x = 1\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "test file outside test_paths"),
+        ("isolation: fixtures under fixture_paths", lambda r: commit(r, {"src/fixtures/data.json": "{}\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "fixture data outside fixture_paths"),
+        ("isolation: tests import contract modules", lambda r: commit(r, {"src/pkg/io.py": "x = 1\n", "tests/test_io.py": "from pkg.io import x\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "no contract's modules: line"),
+        ("isolation: no private imports", lambda r: commit(r, {"tests/test_parse.py": "from pkg.parse import _split\n"}), ["--isolation", "HEAD~1..HEAD"], "error", "private name"),
+        ("isolation: a clean diff passes", lambda r: commit(r, {"tests/test_parse.py": "import json\nfrom pkg.parse import parse\n"}), ["--isolation", "HEAD~1..HEAD"], "ok", ""),
+        ("risk: a signal without its tag warns", lambda r: commit(r, {"src/pkg/api.py": "@app.get('/x')\ndef x():\n    pass\n"}), ["--risk", "HEAD~1..HEAD"], "warn", "risk signal (security)"),
+        ("risk: the tag silences it", lambda r: (rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nrisk: [security]\n"),
+                                                 commit(r, {"src/pkg/api.py": "@app.get('/x')\n"})), ["--risk", "HEAD~1..HEAD"], "nowarn", "risk signal"),
+    ]
+
+
+def run_case(base, tmp, i, case):
+    label, mutate, args, kind, needle = case
+    r = Path(tmp) / f"c{i}"
+    shutil.copytree(base, r, symlinks=True)
+    try:
+        mutate(r)
+    except AssertionError as e:
+        return label, False, f"fixture did not apply: {e}"
+    p = subprocess.run([sys.executable, str(Path(__file__).resolve()), *args], cwd=r, capture_output=True, text=True)
+    out = p.stdout + p.stderr
+    errs = [l for l in out.splitlines() if " ERROR " in l]
+    warns = [l for l in out.splitlines() if " WARN " in l]
+    ok = {"ok": p.returncode == 0 and not errs,
+          "error": p.returncode == 1 and any(needle in l for l in errs),
+          "warn": p.returncode == 0 and not errs and any(needle in l for l in warns),
+          "nowarn": p.returncode == 0 and not errs and not any(needle in l for l in warns)}[kind]
+    return label, ok, out
+
+
+def self_test():
+    c = pc.Checks("pd-lint")
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "base"
+        code = build_base(base)
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(lambda ic: run_case(base, tmp, *ic), enumerate(cases(code))))
+        for label, ok, out in results:
+            c.check(ok, label)
+            if not ok:
+                print("  " + out.strip().replace("\n", "\n  ")[:1500])
+        # --archive moves ticked lines; --sweep lists, by item status, and deletes nothing.
+        r = Path(tmp) / "archive"
+        shutil.copytree(base, r, symlinks=True)
+        subprocess.run([sys.executable, str(Path(__file__).resolve()), "--archive"], cwd=r, capture_output=True)
+        c.check("2026-10-10-parse-input" in (r / ART / "backlog-archive.md").read_text()
+                and "[x]" not in (r / BL).read_text(), "--archive moves ticked lines")
+        for d in ("2020-01-01/parse-input", "2020-01-01/mystery", f"{date.today()}/parse-input"):
+            (r / "agent_sandbox" / d).mkdir(parents=True)
+        out = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--sweep"], cwd=r,
+                             capture_output=True, text=True).stdout
+        done_part, other_part = out.split("no done item")
+        c.check("2020-01-01/parse-input" in done_part and "mystery" in other_part and str(date.today()) not in out
+                and (r / "agent_sandbox" / "2020-01-01" / "mystery").is_dir(), "--sweep lists by item status, deletes nothing")
+        u = pc.make_repo(Path(tmp) / "unadopted")
+        (u / "docs" / "features").mkdir(parents=True)
+        out = subprocess.run([sys.executable, str(Path(__file__).resolve())], cwd=u, capture_output=True, text=True)
+        c.check(out.returncode == 0 and "not adopted: run /pd:adopt" in out.stdout, "an unadopted project is told to adopt")
+    return c.done()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exception:  # a crash exits 3, not 1, so the commit hook reports it instead of blocking the commit
+        import traceback
+        traceback.print_exc()
+        sys.exit(3)
