@@ -223,6 +223,9 @@ validate_hooks_schema() {
                         log_error "$file: $event_name[$j].hooks[$k] type 'command' missing 'command' field"
                     else
                         local cmd=$(jq -r "$hook_path.command" "$file")
+                        local script=${cmd%% *}
+                        script=${script/\$\{CLAUDE_PLUGIN_ROOT\}/$(dirname "$(dirname "$file")")}
+                        [ -f "$script" ] || log_error "$file: $event_name[$j].hooks[$k] command $script does not resolve to a file"
                         if [[ "$cmd" != *'${CLAUDE_PLUGIN_ROOT}'* ]] && [[ "$cmd" == *"/"* ]]; then
                             log_warning "$file: $event_name[$j].hooks[$k] command uses hardcoded path — consider \${CLAUDE_PLUGIN_ROOT} for portability"
                         fi
@@ -800,11 +803,11 @@ echo ""
 # Asserts hooks.json keeps the registration shape feature 102 / 104 depend on.
 # Defends against silent hook-misconfiguration regressions.
 echo "Checking Hooks.json Registration Contract..."
-# shortcut: 0 or 1 Stop entries while the thin-pd build runs (build-tasks T2.1); T4.12 restores exactly 1 (pd-stop-gate.sh).
-if jq -e '(.hooks.Stop // []) | length <= 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: Stop array has at most 1 entry"
+# Exactly one Stop hook, the gate (plan §A5): a second would race it.
+if jq -e '[.hooks.Stop[]?.hooks[]?.command] == ["${CLAUDE_PLUGIN_ROOT}/hooks/pd-stop-gate.sh"]' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: exactly one Stop hook, pd-stop-gate.sh"
 else
-    log_error "hooks.json: Stop length > 1"
+    log_error "hooks.json: the Stop hooks must be exactly pd-stop-gate.sh"
 fi
 echo ""
 

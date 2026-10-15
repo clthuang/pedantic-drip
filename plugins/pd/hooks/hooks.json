@@ -18,6 +18,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cleanup-stale-versions.sh"
           }
         ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-session-start.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -40,6 +49,20 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-unicode-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-agent-write-guard.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-stop-gate.sh"
           }
         ]
       }

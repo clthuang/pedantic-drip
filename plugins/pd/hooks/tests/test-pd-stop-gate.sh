@@ -62,6 +62,10 @@ now "$A" "goal: $FID target finish session S2"
 run "$(hook "$A" S1)"; expect "another session's goal: the stop goes through" 0
 now "$A" "goal: $FID target finish session S1"
 run "$(hook "$A" S1)"; expect "its own goal short of target blocks" 2 "target finish not reached"
+# The same stop through the command hooks.json registers (T4.12), as Claude Code dispatches it.
+REGISTERED=$(jq -r '.hooks.Stop[0].hooks[0].command' "$HERE/../hooks.json")
+ERR=$(hook "$A" S1 | CLAUDE_PLUGIN_ROOT="$(cd "$HERE/../.." && pwd)" bash -c "$REGISTERED" 2>&1 >/dev/null); CODE=$?
+expect "the registered Stop command blocks an unfinished goal" 2 "target finish not reached"
 printf '## 2026-10-15 10:00+08:00 review\n- R1 blocker src/a.py:3 — wrong value\n' >> "$FD/log.md"
 run "$(hook "$A" S1)"; expect "an open blocker blocks" 2 "open blocker review@2026-10-15 10:00+08:00#R1"
 cp "$TMP/log.orig" "$FD/log.md"
