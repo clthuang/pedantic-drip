@@ -54,7 +54,7 @@ Quality is enforced in two tiers: **mechanical gates** on every phase boundary, 
 
 ### Tier 1 — Mechanical gates (zero dispatch)
 
-`scripts/phase-gate.sh <phase> <feature-dir>` runs at each phase boundary and checks artifact existence, required sections, duplicate contract blocks (the restated-contract class), and uncommitted artifacts at implement entry. Failures print one line per problem; fix and re-run.
+`plugins/pd/scripts/phase-gate.sh <phase> <feature-dir>` runs at each phase boundary and checks artifact existence, required sections, duplicate contract blocks (the restated-contract class), and uncommitted artifacts at implement entry. Failures print one line per problem; fix and re-run.
 
 ### Tier 2 — LLM review moments
 

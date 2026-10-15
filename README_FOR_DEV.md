@@ -324,7 +324,7 @@ Each phase command in `plugins/pd/commands/` is a short **contract** — purpose
 
 There is no `spec.md`, no `tasks.md`, and no implementation log. Tasks are derived from `plan.md` at dispatch time by the `implementing` skill, which runs parallel-safe tasks as `implementer` agents in `.pd-worktrees/task-{N}` worktrees and merges them back in plan order.
 
-**Mechanical gates (tier 1).** `scripts/phase-gate.sh <phase> <feature-dir>` runs at every phase boundary with zero dispatch: artifact existence, required sections, duplicate fenced contract blocks across the artifact set, and uncommitted artifacts at implement entry. Each failure prints one line; exit 0 means pass.
+**Mechanical gates (tier 1).** `plugins/pd/scripts/phase-gate.sh <phase> <feature-dir>` runs at every phase boundary with zero dispatch: artifact existence, required sections, duplicate fenced contract blocks across the artifact set, and uncommitted artifacts at implement entry. Each failure prints one line; exit 0 means pass.
 
 **Review moments (tier 2).** Exactly two LLM reviews per deep feature — `pd:design-reviewer` after the design gate, and `pd:code-quality-reviewer` on the full branch diff during implement. Each is one pass plus at most one fix round; still-open blockers escalate to the user rather than looping to a cap. Alongside them, `pd:qa-executor` supplies execution-grounded evidence during implement (runs the suites, drives affected flows, reports without fixing), and `pd:security-reviewer` runs from `/pd:finish-feature` when the branch touches a security surface. Implement carries one circuit breaker for the whole phase: 3 fix cycles total.
 

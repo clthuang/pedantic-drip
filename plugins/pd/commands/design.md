@@ -17,7 +17,7 @@ Contract command. Shared mechanics (entry, exit, YOLO, review gate, dispatch hyg
 1. Engine entry (workflow-transitions) with `target_phase="design"`.
 2. Ground in code: dispatch codebase-explorer for affected-surface mapping; internet-researcher only for external unknowns. Prompts carry pointers, not file dumps.
 3. Write `## Design` into `shape.md` — one shape document; a separate design file is not part of the inventory (FR-11).
-4. Mechanical gate: `bash scripts/phase-gate.sh design {feature-dir}` — must pass before review.
+4. Mechanical gate: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh design {feature-dir}` — must pass before review.
 5. Review moment (1 of 2): dispatch `pd:design-reviewer` (fresh context; return schema lives in the agent file). One pass → at most one fix round → remaining blockers go to the user.
 6. Engine exit (workflow-transitions) with artifacts `[shape.md]`.
 

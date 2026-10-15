@@ -17,7 +17,7 @@ Contract command. Shared mechanics (entry, exit, YOLO, review gate, dispatch hyg
 1. Engine entry (workflow-transitions) with `target_phase="specify"`.
 2. Read the PRD or mini-spec. Ask the user only about contradictions and unstated decisions the source cannot answer.
 3. Write `## Requirements` into `{pd_artifacts_root}/features/{id}-{slug}/shape.md`.
-4. Mechanical gate: `bash scripts/phase-gate.sh specify {feature-dir}`. Each failure line names the missing artifact or section — fix and re-run.
+4. Mechanical gate: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh specify {feature-dir}`. Each failure line names the missing artifact or section — fix and re-run.
 5. Engine exit (workflow-transitions) with artifacts `[shape.md]`.
 
 **Constraints:** no LLM review at this phase — the gate is the whole check. A criterion needing human judgment to score goes back to the user as a question, not into the artifact. No state writes outside MCP tools; no phase-sequence or status-vocabulary restatement.

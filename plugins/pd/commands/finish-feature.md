@@ -27,7 +27,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/ -q                      
 3. Docs sync: `updating-docs` skill.
 4. Security surface touched (auth, secrets, input parsing, permissions, data deletion, dependency bumps): dispatch `pd:security-reviewer` — always a standard Anthropic-model Task. Its findings block the merge until fixed or waived by the user in writing.
 5. Retro before cleanup: the `retrospecting` skill writes `retro.md` while the branch context still exists.
-6. Mechanical gate: `bash scripts/phase-gate.sh finish {feature-dir}`.
+6. Mechanical gate: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh finish {feature-dir}`.
 7. Merge to `{pd_base_branch}` and push. A merge conflict is a hard stop in every mode.
 8. Engine exit (workflow-transitions) with artifacts `[retro.md]` — that call is what marks the entity terminal. `.meta.json` is never hand-edited.
 9. Cleanup: delete the feature branch and any `.pd-worktrees/` leftovers.
