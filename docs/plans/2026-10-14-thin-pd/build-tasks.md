@@ -606,3 +606,8 @@ Codex (gpt-6-astra, xhigh) on 4271f7e0..e3fbcde8, Wave 4: changes requested, 11 
 - W11 pd-review-filter: git-quoted paths dropped in-hunk findings; they are decoded.
 - W10 implement-tasks.js (a mixed wave runs its parallel-safe tasks before its sequential ones): rejected. Rejects: §A4 (plan line 193) pins that order, and the planning checklist requires every task's `uses:` to exist at its wave's base, so no task in a wave depends on another. Open until the user rules.
 Battery after the round: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-init 10, pd-review-filter 5, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-pd-stop-gate 27; test-pd-session-start 29; test-pd-agent-write-guard 22; test-hooks 25/25; test-workflows all passed; pytest 18; validate.sh 0 errors, 0 warnings; doc-drift OK. Size guard: 4,579 of 5,000. No re-review (one pass, one fix round).
+
+## 2026-10-15 15:10+08:00 decision
+Q: Accept the W10 rejection (implement-tasks.js runs a mixed wave's parallel-safe tasks before its sequential ones)? Release thin pd now?
+A (user, verbatim): "For W10, agree with your rejection."; "turn on pd plugin for me, make sure the new code is properly pushed to developemnt and deployed via the deployment script".
+Applied: W10 closes as rejected; the order stays as §A4 pins it. feature/thin-pd-build merges to develop and `scripts/release.sh --ci` releases it ahead of T5.2, so the bake-off runs on the installed plugin. The pd plugin is re-enabled in `~/.claude/settings.json`.
