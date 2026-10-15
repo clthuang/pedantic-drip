@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""pd-proof: judge a proving command's JUnit XML for the merger's check (plan §A4, Part B §12).
+
+  pd-proof first <junit.xml>                         # the task's first (tests-only) commit
+  pd-proof head <junit.xml> [--first <junit.xml>]    # the task's HEAD
+  pd-proof --self-test
+
+Prints one JSON result; exits 0 when ok, 1 when not, 2 on a usage error.
+Reads only the XML, never the test run's console output.
+"""
+import json
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import Checks  # noqa: E402
+
+
+def read_report(path):
+    """{test id: 'pass' | 'fail' | 'error' | 'skip'}, keyed `classname::name`."""
+    root = ET.parse(path).getroot()
+    results = {}
+    for case in root.iter("testcase"):
+        tid = f"{case.get('classname', '')}::{case.get('name', '')}"
+        if case.find("error") is not None:
+            results[tid] = "error"
+        elif case.find("failure") is not None:
+            results[tid] = "fail"
+        elif case.find("skipped") is not None:
+            results[tid] = "skip"
+        else:
+            results[tid] = "pass"
+    return results
+
+
+def judge(mode, path, first_path=None):
+    out = {"mode": mode, "ok": False, "tests": 0, "failures": 0, "errors": 0, "skipped": [],
+           "greens": [], "missing": [], "newly_skipped": [], "reason": ""}
+    try:
+        res = read_report(path)
+        first = read_report(first_path) if first_path else None
+    except (ET.ParseError, OSError) as exc:
+        out["reason"] = f"unreadable report: {exc}"
+        return out
+    out["tests"] = len(res)
+    out["failures"] = sum(v == "fail" for v in res.values())
+    out["errors"] = sum(v == "error" for v in res.values())
+    out["skipped"] = sorted(t for t, v in res.items() if v == "skip")
+    reasons = []
+    if not res:
+        reasons.append("no tests in the report")
+    if out["errors"]:
+        reasons.append(f"{out['errors']} test(s) errored: load or collection errors, not failures")
+    if mode == "first":
+        # A green or skipped test at the first commit is reported for the Verify reviewer, not failed.
+        out["greens"] = sorted(t for t, v in res.items() if v == "pass")
+    else:
+        if out["failures"]:
+            reasons.append(f"{out['failures']} test(s) failed")
+        if first is not None:
+            out["missing"] = sorted(set(first) - set(res))
+            out["newly_skipped"] = sorted(t for t in out["skipped"] if first.get(t) != "skip")
+            if out["missing"]:
+                reasons.append("test(s) present at the first commit are missing")
+            if out["newly_skipped"]:
+                reasons.append("test(s) newly skipped since the first commit")
+    out["ok"] = not reasons
+    out["reason"] = "; ".join(reasons) or "ok"
+    return out
+
+
+# --- self-test ----------------------------------------------------------------
+
+def _pytest(cases):
+    """A pytest-shaped report: <testsuites><testsuite> with classname = dotted module."""
+    body = "".join(f'<testcase classname="tests.test_x" name="{n}">{k}</testcase>' for n, k in cases)
+    return f'<?xml version="1.0"?><testsuites><testsuite name="pytest">{body}</testsuite></testsuites>'
+
+
+def _jest(cases):
+    """A jest-junit-shaped report: a bare <testsuite> root, classname = the describe + test title."""
+    body = "".join(f'<testcase classname="parse {n}" name="parse {n}">{k}</testcase>' for n, k in cases)
+    return f'<testsuite name="jest tests" tests="{len(cases)}">{body}</testsuite>'
+
+
+FAIL, ERR, SKIP, PASS = "<failure message='x'/>", "<error message='x'/>", "<skipped/>", ""
+
+
+def _self_test():
+    c = Checks("pd-proof")
+    with tempfile.TemporaryDirectory() as tmp:
+        def write(name, text):
+            p = Path(tmp) / name
+            p.write_text(text)
+            return str(p)
+
+        for shape, mk in (("pytest", _pytest), ("jest", _jest)):
+            all_fail = write(f"{shape}-first.xml", mk([("a", FAIL), ("b", FAIL)]))
+            r = judge("first", all_fail)
+            c.check(r["ok"] and r["tests"] == 2, f"{shape} first: all failed passes")
+            r = judge("first", write(f"{shape}-err.xml", mk([("a", FAIL), ("b", ERR)])))
+            c.check(not r["ok"] and r["errors"] == 1, f"{shape} first: an error fails")
+            r = judge("first", write(f"{shape}-green.xml", mk([("a", FAIL), ("b", PASS), ("c", SKIP)])))
+            c.check(r["ok"] and len(r["greens"]) == 1 and len(r["skipped"]) == 1,
+                    f"{shape} first: a green and a skipped test are listed, not failed")
+            r = judge("head", write(f"{shape}-head.xml", mk([("a", PASS), ("b", PASS)])), all_fail)
+            c.check(r["ok"], f"{shape} head: all passing passes")
+            r = judge("head", write(f"{shape}-headfail.xml", mk([("a", PASS), ("b", FAIL)])), all_fail)
+            c.check(not r["ok"] and r["failures"] == 1, f"{shape} head: a failure fails")
+            r = judge("head", write(f"{shape}-headerr.xml", mk([("a", PASS), ("b", ERR)])), all_fail)
+            c.check(not r["ok"] and r["errors"] == 1, f"{shape} head: an error fails")
+            r = judge("head", write(f"{shape}-headskip.xml", mk([("a", PASS), ("b", SKIP)])), all_fail)
+            c.check(not r["ok"] and r["newly_skipped"], f"{shape} head: a newly skipped test fails")
+            r = judge("head", write(f"{shape}-headmiss.xml", mk([("a", PASS)])), all_fail)
+            c.check(not r["ok"] and r["missing"], f"{shape} head: a test missing since the first commit fails")
+        still_skipped = write("first-skip.xml", _pytest([("a", FAIL), ("b", SKIP)]))
+        r = judge("head", write("head-skip.xml", _pytest([("a", PASS), ("b", SKIP)])), still_skipped)
+        c.check(r["ok"], "head: a test skipped since the first commit is not newly skipped")
+        r = judge("first", write("empty.xml", "<testsuites></testsuites>"))
+        c.check(not r["ok"] and r["tests"] == 0, "first: tests == 0 fails")
+        r = judge("head", write("empty-head.xml", "<testsuites/>"))
+        c.check(not r["ok"], "head: an empty report fails")
+        r = judge("head", write("bad.xml", "<testsuites><testcase"))
+        c.check(not r["ok"] and "unreadable" in r["reason"], "head: a malformed report fails")
+        r = judge("head", str(Path(tmp) / "absent.xml"))
+        c.check(not r["ok"], "head: a missing report file fails")
+    return c.done()
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return _self_test()
+    if len(argv) == 2 and argv[0] == "first":
+        result = judge("first", argv[1])
+    elif len(argv) in (2, 4) and argv[0] == "head" and (len(argv) == 2 or argv[2] == "--first"):
+        result = judge("head", argv[1], argv[3] if len(argv) == 4 else None)
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    print(json.dumps(result))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

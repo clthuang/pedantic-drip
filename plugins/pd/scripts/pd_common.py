@@ -246,6 +246,95 @@ def parse_log(text, first_line=1):
     return entries
 
 
+EXPECTATION_RE = re.compile(r"^B(\d+): (.+?) -> (.*\S)\s*$")
+TASK_RE = re.compile(r"^#### Task (\d+): (.+?)(\s+\[parallel-safe\])?\s*$")
+FIELD_RE = re.compile(r"^- ([a-z][a-z ]*):(?:\s+(.*))?$")
+CASE_RE = re.compile(r"^\s+- (C\d+) \[(B\d+(?:,\s*B\d+)*)\] \((fixture|fake): ([^)]+)\): (\S.*)$")
+RUN_TASK_RE = re.compile(r"^- task (\d+): merged, proof pass\b")
+
+
+def parse_tasks(text):
+    """Task blocks (plan.md, or express's one block in shape.md): dicts with n, title,
+    parallel_safe, wave, line, fields {name: value}, cases [lines under `- test cases:`]."""
+    tasks, wave, in_cases = [], None, False
+    for i, line in enumerate(blank_fences(text).split("\n"), 1):
+        m = re.match(r"^### Wave (\d+)\b", line)
+        if m:
+            wave, in_cases = int(m.group(1)), False
+            continue
+        m = TASK_RE.match(line)
+        if m:
+            tasks.append({"n": int(m.group(1)), "title": m.group(2), "parallel_safe": bool(m.group(3)),
+                          "wave": wave, "line": i, "fields": {}, "cases": []})
+            in_cases = False
+        elif line.startswith("#"):
+            in_cases = False
+            if tasks and line.startswith(("## ", "### ")):
+                tasks[-1].setdefault("end", i)
+        elif tasks and "end" not in tasks[-1]:
+            m = FIELD_RE.match(line)
+            if m:
+                in_cases = m.group(1) == "test cases"
+                tasks[-1]["fields"][m.group(1)] = (m.group(2) or "").strip()
+            elif in_cases and line.strip():
+                tasks[-1]["cases"].append(line)
+    return tasks
+
+
+def _closes(entry):
+    """Refs named on the entry's `Closes:` lines, as `<ref>#<id>` keys."""
+    keys = []
+    for line in entry["body"]:
+        if line.startswith("Closes:"):
+            keys += [f"{k}@{t}#{i}" for k, t, i in REF_RE.findall(line) if i]
+    return keys
+
+
+def open_blockers(entries):
+    """Blockers from review and qa issue lines still open at the end of the log (Part B §11).
+    A `Closes:` line in a later entry closes one; a blocker with a proposed rejection (`Rejects:`)
+    closes only through a decision answered by the user; `Status: closed (legacy)` closes its own."""
+    open_, rejected = {}, set()
+    for e in entries:
+        if e.get("kind") is None:
+            continue
+        legacy = any(l.strip() == "Status: closed (legacy)" for l in e["body"])
+        user_decision = e["kind"] == "decision" and any(l.startswith("A (user, verbatim)") for l in e["body"])
+        for key in _closes(e):
+            if key in open_ and (key not in rejected or user_decision):
+                del open_[key]
+        for line in e["body"]:
+            if line.startswith("Rejects:"):
+                rejected.update(f"{k}@{t}#{i}" for k, t, i in REF_RE.findall(line) if i)
+        if e["kind"] in ("review", "qa") and not legacy:
+            for line in e["body"]:
+                m = ISSUE_RE.match(line)
+                if m and m.group(2) == "blocker":
+                    key = f"{e['ref']}#{m.group(1)}"
+                    open_[key] = {"ref": key, "file": m.group(3), "line": int(m.group(4)), "claim": m.group(5)}
+    return [dict(b, rejection_proposed=b["ref"] in rejected) for b in open_.values()]
+
+
+def retro_triggers(entries):
+    """The retro triggers a log records (§A8.3 S4, Part B §9): a second backward move,
+    a capped entry, a cost overrun against the original budget, a defect."""
+    found = []
+    backs = [e for e in entries if e.get("kind") == "phase" and e["rest"].endswith("(back)")]
+    if len(backs) >= 2:
+        found.append("second backward move")
+    if any(e.get("kind") == "capped" for e in entries):
+        found.append("capped")
+    if any(e.get("kind") == "defect" for e in entries):
+        found.append("defect")
+    budget = next((m.group(1) for e in entries if e.get("kind") == "run" for l in e["body"]
+                   for m in [re.search(r"\bBudget: feature_token_budget=(\d+|unset)\b", l)] if m), None)
+    tokens = next((int(m.group(1)) for e in reversed(entries) if e.get("kind") == "metrics" for l in e["body"]
+                   for m in [re.search(r"\bTokens: (\d+)\b", l)] if m), None)
+    if budget not in (None, "unset") and tokens is not None and tokens > int(budget):
+        found.append("cost overrun")
+    return found
+
+
 def now_stamp():
     """`YYYY-MM-DD HH:MM±hh:mm`, the local time with its UTC offset."""
     t = datetime.now().astimezone()
@@ -315,6 +404,31 @@ def _self_test():
     c.check(es[0]["line"] == 4 and ISSUE_RE.match(es[0]["body"][0]), "entry line numbers and issue lines")
     c.check(set(sections("## Now\nx\n```\n## Fake\n```\n## Links\ny\n")) == {"Now", "Links"}, "sections skip fences")
     c.check(re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}[+-]\d{2}:\d{2}", now_stamp()) is not None, "now_stamp")
+    plan = ("## Plan\n### Wave 1\n#### Task 1: parse [parallel-safe]\n- files: a.py\n- uses: none\n"
+            "- test cases:\n  - C1 [B1] (fixture: none): x\n### Wave 2\n#### Task 2: io\n- command: `t`\n")
+    ts = parse_tasks(plan)
+    c.check([(t["n"], t["wave"], t["parallel_safe"]) for t in ts] == [(1, 1, True), (2, 2, False)], "tasks and waves")
+    c.check(ts[0]["fields"]["files"] == "a.py" and len(ts[0]["cases"]) == 1 and CASE_RE.match(ts[0]["cases"][0])
+            and "files" not in ts[1]["fields"], "task fields and cases stay in their own block")
+    blk = parse_log("## 2026-10-14 11:30+08:00 review\n- R1 blocker a.py:3 — x\n- R2 blocker a.py:4 — y\n"
+                    "- R3 blocker a.py:5 — z\n- R4 warning a.py:6 — w\n"
+                    "## 2026-10-14 11:40+08:00 qa\nCloses: review@2026-10-14 11:30+08:00#R1\n"
+                    "Rejects: review@2026-10-14 11:30+08:00#R2, review@2026-10-14 11:30+08:00#R3\n"
+                    "## 2026-10-14 11:50+08:00 decision\nA (conductor): reject\n"
+                    "Closes: review@2026-10-14 11:30+08:00#R2\n"
+                    "## 2026-10-14 11:55+08:00 decision\nA (user, verbatim): \"ok\"\n"
+                    "Closes: review@2026-10-14 11:30+08:00#R3\n"
+                    "## 2026-10-14 12:00+08:00 qa\nStatus: closed (legacy)\n- Q1 blocker b.py:1 — v\n")
+    ob = open_blockers(blk)
+    c.check([b["ref"][-2:] for b in ob] == ["R2"] and ob[0]["rejection_proposed"],
+            "blockers: Closes closes, a rejection needs the user's decision, legacy is closed, warnings aren't blockers")
+    trig = parse_log("## 2026-10-14 10:00+08:00 run goal — started\nBudget: feature_token_budget=100\n"
+                     "## 2026-10-14 11:00+08:00 phase verify -> design (back)\n"
+                     "## 2026-10-14 12:00+08:00 phase verify -> design (back)\n"
+                     "## 2026-10-14 13:00+08:00 metrics\nMode: standard. Tokens: 150 (source: x).\n")
+    c.check(retro_triggers(trig) == ["second backward move", "cost overrun"]
+            and retro_triggers(trig[:2] + trig[3:]) == ["cost overrun"]
+            and retro_triggers(parse_log("## 2026-10-14 10:00+08:00 defect\n")) == ["defect"], "retro triggers")
     with tempfile.TemporaryDirectory() as t:
         r = make_repo(Path(t) / "r")
         c.check(load_config(r)["artifacts_root"] == DEFAULT_ARTIFACTS_ROOT, "config defaults without a file")
