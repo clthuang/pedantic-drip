@@ -2,7 +2,7 @@
 # check-doc-drift.sh — assert living docs match the implementation.
 #
 # Three checks (docs accuracy audit, 2026-07):
-#   1. counts     — component/MCP-tool counts computed from the filesystem vs README claims
+#   1. counts     — component counts computed from the filesystem vs README claims
 #   2. hooks      — hooks.json ↔ disk ↔ README_FOR_DEV.md cross-check
 #   3. blocklist  — strings that only ever appear in stale docs must have 0 hits
 #
@@ -25,8 +25,6 @@ docs/technical/architecture.md docs/technical/api-reference.md docs/technical/wo
 commands=$(ls plugins/pd/commands/*.md | wc -l | tr -d ' ')
 agents=$(ls plugins/pd/agents/*.md | wc -l | tr -d ' ')
 skills=$(find plugins/pd/skills -mindepth 1 -maxdepth 1 -type d ! -name lib ! -name tests | wc -l | tr -d ' ')
-entity_tools=$(grep -cF '@mcp.tool()' plugins/pd/mcp/entity_server.py)
-workflow_tools=$(grep -cF '@mcp.tool()' plugins/pd/mcp/workflow_state_server.py)
 
 # Components table in plugins/pd/README.md — label-anchored (Skills and Agents share a numeral).
 table_val() {
@@ -36,15 +34,7 @@ table_val() {
 [ "$(table_val Agents)" = "$agents" ] || fail "plugins/pd/README.md Components table: Agents=$(table_val Agents), filesystem=$agents"
 [ "$(table_val Commands)" = "$commands" ] || fail "plugins/pd/README.md Components table: Commands=$(table_val Commands), filesystem=$commands"
 
-# MCP tool tables — bound each table by its ### subheader; count only backtick-led rows.
-entity_rows=$(awk '/^### Entity Registry Server/,/^### Workflow Engine Server/' plugins/pd/README.md | grep -cE '^\| \`' || true)
-workflow_rows=$(awk '/^### Workflow Engine Server/,/^## /' plugins/pd/README.md | grep -cE '^\| \`' || true)
-[ "$entity_rows" = "$entity_tools" ] || fail "plugins/pd/README.md entity tool table: $entity_rows rows, server has $entity_tools @mcp.tool()"
-[ "$workflow_rows" = "$workflow_tools" ] || fail "plugins/pd/README.md workflow tool table: $workflow_rows rows, server has $workflow_tools @mcp.tool()"
-
 # Digit-prose claims.
-grep -q "exposes $entity_tools tools" plugins/pd/README.md || fail "plugins/pd/README.md prose: expected 'exposes $entity_tools tools' for entity server"
-grep -q "exposes $workflow_tools tools" plugins/pd/README.md || fail "plugins/pd/README.md prose: expected 'exposes $workflow_tools tools' for workflow server"
 grep -q "$skills skills and $agents agents" README.md || fail "README.md prose: expected '$skills skills and $agents agents'"
 
 # --- Check 2: hooks --------------------------------------------------------
@@ -67,7 +57,6 @@ done
 # Every hook script on disk must be registered or whitelisted (utility/worker).
 for f in plugins/pd/hooks/*.sh; do
     b=$(basename "$f")
-    case "$b" in cleanup-sandbox.sh) continue ;; esac
     echo "$registered" | grep -qF "$b" || fail "hook script $b on disk but not registered in hooks.json (whitelist it here if intentional)"
 done
 
@@ -86,5 +75,5 @@ if [ "$DRIFT_ERRORS" -gt 0 ]; then
     echo "doc-drift: $DRIFT_ERRORS issue(s) — docs no longer match the implementation"
     exit 1
 fi
-echo "doc-drift: OK (commands=$commands agents=$agents skills=$skills entity_tools=$entity_tools workflow_tools=$workflow_tools)"
+echo "doc-drift: OK (commands=$commands agents=$agents skills=$skills)"
 exit 0

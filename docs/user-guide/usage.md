@@ -1,15 +1,23 @@
 ---
-last-updated: 2026-07-25T12:00:00Z
-source-feature: 134-workflow-rebuild
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 134-workflow-rebuild -->
 # Usage
+
+## Set a Project Up
+
+```bash
+/pd:init     # a new project: writes .claude/pd.local.md, proposes .claude/settings.json changes
+/pd:adopt    # an old-layout pd project (docs/features/ without `sop: 1`): migrates it once
+```
+
+`/pd:init` proposes `worktree.baseRef: "head"` (task worktrees start from the feature branch), the spawn-depth cap and allow rules for unattended runs. Set `qa_battery` in `.claude/pd.local.md`: Verify needs it.
 
 ## Quick Start
 
-The easiest entry point is `/pd:secretary`. It triages your request into a mode — deep, express, or specialist — states its rationale, and routes:
+`/pd:secretary` triages a request — feature (at a depth), brainstorm, RCA or specialist — states why, and routes:
 
 ```bash
 /pd:secretary "add email validation to the signup form"
@@ -18,91 +26,66 @@ The easiest entry point is `/pd:secretary`. It triages your request into a mode 
 Or start directly:
 
 ```bash
-/pd:brainstorm "your idea here"    # Explore an idea, produce a PRD
-/pd:create-feature "add user auth" # Start a deep feature
-/pd:create-feature --express "fix the off-by-one in pagination"  # Express lane
+/pd:brainstorm "your idea here"                          # Clarify: a PRD in brainstorms/<id>.md
+/pd:root-cause-analysis "the export drops the last row"  # Clarify for a bug: rca/<id>.md
+/pd:create-feature "add user auth"                       # a standard feature and its branch
+/pd:create-feature "fix the pagination off-by-one" --mode express
 ```
 
-## The Deep Workflow
-
-Features move through phases in sequence; the workflow engine validates every transition and owns all state:
+## The Standard Workflow
 
 ```bash
-/pd:specify        # shape.md ## Requirements
-/pd:design         # shape.md ## Design  → design review (1 of 2)
-/pd:create-plan    # plan.md (tasks derive at dispatch time)
-/pd:implement      # code + tests → QA agent + code review (2 of 2)
-/pd:finish-feature # QA battery, retro, merge, cleanup
+/pd:specify        # shape.md ## Requirements: B-numbered expectations, calvin, your sign-off
+/pd:design         # shape.md ## Design: diagram, contracts, test strategy → review call
+/pd:create-plan    # plan.md: task blocks with test cases → test-case review
+/pd:implement      # implement-tasks: one implementer per task, the merger lands each
+/pd:verify         # verify-change: code review beside QA, then fix cycles
+/pd:finish-feature # security review, docs, metrics, retro if owed, merge, cleanup
 ```
 
-Phase boundaries are checked mechanically (`scripts/phase-gate.sh`: artifact existence, required sections, duplicate-contract detection) at zero dispatch cost. LLM review happens at exactly two moments — design review and adversarial code review — each running one pass, at most one fix round, then escalating anything left to you. Security-surface diffs get a conditional third review (`pd:security-reviewer`) at finish.
+Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase>` must pass; every commit runs `pd-lint --staged`.
 
-**`/pd:implement` — parallel task execution:** parallel-safe tasks are dispatched in git worktrees under `.pd-worktrees/` (gitignored); merge conflicts halt with details for manual resolution. The `qa-executor` agent then verifies by RUNNING — suites, end-to-end flows, edge cases — and returns evidence, not opinions.
+- **Small** (`--mode small`): design and plan are written in one sitting and reviewed in one joint call.
+- **Express** (`--mode express`): `shape.md` holds a mini-spec with one task block; `/pd:implement` runs that one task and Verify is lighter.
+- **Backward moves:** a wrong criterion or test case sends the feature back (`phase <from> -> <to> (back)` in `log.md`); merged tasks stay merged.
 
-### Rework
+## Long Runs
 
-Backward moves are engine-recorded: `record_backward_event` captures source, target, and reason, and reviewer notes live on each phase's completed event. Re-entering a phase, the engine's event history is the context — query it via `/pd:show-status` or `get_phase`; there is no injected prose block to maintain.
-
-## The Express Lane
-
-For small, low-uncertainty changes:
-
-```bash
-/pd:create-feature --express "the change, stated as a mini-spec"
-/pd:implement      # mini-spec is the plan; one combined QA+review pass
-/pd:finish-feature
-```
-
-The mini-spec is recorded as a `mini_spec` event (the audit record — no artifact files exist); skipped phases are recorded as `skipped` events. Same entity, same tracking, same finish. If the change turns out bigger than it looked, escalation goes backward to specify with the mini-spec as input — no restart penalty.
+Start a `/goal` run on a feature; the conductor writes `goal: <id> target <phase> session <id>` to the README's `## Now`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `feature_token_budget`.
 
 ## Check Progress
 
 ```bash
-/pd:show-status      # Engine state for active features, brainstorms, backlog
-/pd:list-features    # All features by status
+${CLAUDE_PLUGIN_ROOT}/scripts/pd-status   # items by status and phase, roadmaps, open blockers, retros owed
 ```
 
-## Autonomous Mode (YOLO)
-
-```bash
-/pd:yolo on                                # Enable
-/pd:secretary "add user auth"              # Triage + run end-to-end
-/pd:yolo off                               # Back to manual
-```
-
-One global rule (workflow-transitions skill): auto-select recommended options, propagate the flag into every dispatch, keep going through recoverable errors. Hard stops in every mode: engine transition rejection, merge conflicts, a review gate still failing after its fix round, and safety keywords.
-
-## Project-Level Work
-
-```bash
-/pd:create-project "prd description"   # Decompose a PRD into planned features
-```
+The SessionStart hook prints the active and blocked items, each roadmap's next ready item and the retros owed.
 
 ## Utilities
 
 | Command | What it does |
 |---------|-------------|
-| `/pd:add-to-backlog <idea>` | Capture an idea without starting a feature |
-| `/pd:retrospect` | Run a retrospective on a feature |
-| `/pd:show-lineage` | Display entity relationships |
-| `/pd:doctor` | Check workspace health |
-| `/pd:cleanup-brainstorms` | Archive old brainstorm files |
+| `/pd:add-to-backlog <idea>` | Add a line to `backlog.md` without starting a feature |
+| `/pd:retrospect` | Run a retro on a feature that owes one |
+| `/pd:abandon-feature` | Set a feature to `abandoned` |
+| `/pd:wrap-up` | End a session: commit WIP, write `## Now` and a handoff entry |
 
 ## File Layout
 
-pd creates files under your project's `docs/` directory (configurable via `artifacts_root`):
+pd's artifacts live under `artifacts_root` (default `docs/dev_artifacts/`):
 
 ```
-docs/
-├── brainstorms/           # Brainstorm PRDs
-├── features/{id}-{name}/  # Feature artifacts
-│   ├── prd.md             # Promoted brainstorm (when one existed)
-│   ├── shape.md           # ## Requirements + ## Design (one document)
-│   ├── plan.md            # Ordered tasks with per-task verification
-│   ├── retro.md           # Retrospective (written before cleanup)
-│   └── .meta.json         # READ-ONLY projection of engine state
-└── projects/{id}-{name}/  # Project PRDs and roadmaps
+docs/dev_artifacts/
+├── features/<id>/        # one folder per feature; <id> is YYYY-MM-DD-slug
+│   ├── README.md         # frontmatter (status, phase, mode, branch, risk) and ## Now
+│   ├── log.md            # append-only entries: phase, review, qa, run, decision, …
+│   ├── shape.md          # ## Requirements + ## Design
+│   ├── plan.md           # ## Plan: waves of task blocks
+│   └── retro.md          # only when a retro trigger fired
+├── plans/<id>.md         # a multi-feature plan with its roadmap
+├── brainstorms/<id>.md   # a PRD, with its ## Log
+├── rca/<id>.md           # a root-cause report, with its ## Log
+└── backlog.md            # one line per idea
 ```
 
-Express features have no artifact files — their record is the event stream (mini_spec + skipped events), which `.meta.json` projects. State lives in the entity DB; `.meta.json` is a generated projection — never hand-edit it.
-<!-- AUTO-GENERATED: END -->
+Everything else — progress, next ready items, open blockers — is computed by `pd-status` from these files.

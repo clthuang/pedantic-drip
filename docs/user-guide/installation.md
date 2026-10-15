@@ -1,21 +1,19 @@
 ---
-last-updated: 2026-07-10T00:00:00Z
-source-feature: 078-cc-native-integration
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 # Installation
 
 ## Prerequisites
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| Claude Code | latest | The CLI tool from Anthropic |
-| Python | 3.10+ | Required for plugin hooks and MCP servers. Linux: also install `python3-venv` |
-| git | any | Required |
-
-Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
+| Requirement | Notes |
+|-------------|-------|
+| Claude Code | latest |
+| git | any |
+| Python 3 | pd's scripts are standard-library Python |
+| uv | runs `pd-html.py` (Markdown to HTML) |
 
 ## Install
 
@@ -24,31 +22,22 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 /plugin install pd@pedantic-drip-marketplace
 ```
 
-Core dependencies auto-install on first session.
+## Set a Project Up
 
-## Per-Project Configuration
+Run `/pd:init` once per project. It writes `.claude/pd.local.md` (`artifacts_root`, `base_branch`, `qa_battery`, the test paths and the budgets) and proposes these `.claude/settings.json` entries, as a diff you approve:
 
-Each project can have a `.claude/pd.local.md` file with local settings:
+- **`worktree.baseRef: "head"`:** each task's worktree starts from the feature branch, not the default branch.
+- **`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`:** agents can't spawn agents.
+- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
 
-```markdown
-artifacts_root: docs          # where features/, brainstorms/ live (default: docs)
-base_branch: develop          # merge target branch (default: auto-detected)
-ui_server_enabled: true       # Kanban board auto-start (default: true)
-ui_server_port: 8718          # Kanban board port (default: 8718)
-doctor_schedule: ""           # cron expression for scheduled doctor runs, e.g. "0 */4 * * *" (default: disabled)
-```
+An old-layout pd project (`docs/features/` without `sop: 1` in `.claude/pd.local.md`) runs `/pd:adopt` instead.
 
-When `doctor_schedule` is set, pd emits a CronCreate instruction at session start to schedule `/pd:doctor` on the given interval. Leave empty to disable scheduled checks (the doctor still runs automatically at session start).
+## Check It Works
 
-## Verify Installation
-
-Run the doctor to check workspace health:
+Start a session in the project: the SessionStart summary prints `pd_artifacts_root` and `pd_base_branch`. Then run the status script:
 
 ```bash
-bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
+"$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts | head -1)/pd-status"
 ```
 
-The doctor checks system prerequisites, plugin environment, and project context. It prints OS-specific fix commands for any issues found.
-
-If you see all categories pass, pd is ready to use.
-<!-- AUTO-GENERATED: END -->
+It prints the project's items by status, each plan's progress, open blockers and retros owed.

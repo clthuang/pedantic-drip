@@ -1,0 +1,122 @@
+{
+  "verdict": "NOT READY",
+  "summary": "16 prior findings resolved, 3 remain open, and 2 regressed; one new warning lies inside a supplied diff hunk.\nC4 and C5 still have blocking contract defects. C8, C10 and C14 have incomplete acceptance proofs.\nRead-only review: no files modified, staged or committed; prohibited scripts were not run; the registry database was not opened.",
+  "findings": [
+    {
+      "id": "C1",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:101 assigns retained-consumer changes to T2.1: 'each reference is replaced by a one-line marker'; line 109 explicitly permits those markers in the deletion proof. The zero-reference dependency on T4.5 is removed."
+    },
+    {
+      "id": "C2",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:102 removes plugin.json's 'mcpServers' entries; lines 103–106 assign validation changes, MCP-count removal, obsolete hook-test removal and README-count coordination. Line 111 requires command paths in both manifests to resolve. These address the consumers verified at plugins/pd/.claude-plugin/plugin.json:17, validate.sh:802 and scripts/check-doc-drift.sh:28."
+    },
+    {
+      "id": "C3",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:133 gives T3.2 independent structural proofs; line 139 states compatibility is proved in the consuming scripts' self-tests, 'not here'. T3.2's circular completion dependency is removed. N1 records a separate dependency omission introduced in T3.4."
+    },
+    {
+      "id": "C4",
+      "status": "regressed",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:72 now permits 'Later commits may change anything else' outside source_paths and test_paths. However, line 972 defines fixture_paths separately. With fixtures in fixtures/, a post-QA change to fixtures/input.json leaves the old QA valid under this rule, despite changing test inputs. The retro allowance is fixed, but the broader exemption weakens freshness."
+    },
+    {
+      "id": "C5",
+      "status": "regressed",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:140 promises Write reaches 'only its ledger path', named in the conductor's prompt. Line 865 instead authorizes every path matching 'agent_sandbox/*/*/calvin-cycle-*.md'. That permits another feature's or cycle's ledger, and no mechanism binds the hook to the assigned path. The fixtures at docs/plans/2026-10-14-thin-pd/build-tasks.md:301 do not test a different but pattern-valid ledger."
+    },
+    {
+      "id": "C6",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:1182 explicitly removes the 'old entry-time dirty-tree check' and defines an implement exit check. docs/plans/2026-10-14-thin-pd/build-tasks.md:208 requires a valid staged log.md or README change to pass. The existing entry-only check is confirmed at scripts/phase-gate.sh:69."
+    },
+    {
+      "id": "C7",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:76 uses GUARD_METADATA and states '43 entries'; line 78 replaces the grep with structural extraction. Read-only AST inspection of plugins/pd/hooks/lib/transition_gate/constants.py:113 and :380 confirmed 43 unique keys in each collection and equal key sets."
+    },
+    {
+      "id": "C8",
+      "status": "open",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:47 supplies the feature-directory argument, line 51 pins the comparison revision, and line 214 narrows the obsolete-path scan. However, line 15 says 'proofs call scripts by path, never by bare name', while lines 155 and 178 still prescribe 'pd-new --self-test' and 'pd-lint --self-test'. Five other self-test commands remain bare too; the runnable commands were not swept."
+    },
+    {
+      "id": "C9",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:947 requires HEAD to contain a 'valid, non-empty report' with every baseline test ID preserved. docs/plans/2026-10-14-thin-pd/build-tasks.md:237 specifies both JUnit producers, and line 247 requires empty, malformed and missing-test reports to fail."
+    },
+    {
+      "id": "C10",
+      "status": "open",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:263 adds registry-only recovery. But line 264 claims making the source 'unreadable (chmod 000)' after backup proves every subsequent read uses the copy. chmod does not revoke an already-open connection: an implementation retaining its source SQLite connection can still pass. The proof must also exclude reads through existing source handles, for example through connection/read instrumentation."
+    },
+    {
+      "id": "C11",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:368 assigns registration to T4.12; line 440 requires 'exactly one Stop hook, pd-stop-gate.sh'; line 444 requires a fixture dispatched through the registered command to block an unfinished goal."
+    },
+    {
+      "id": "C12",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:297 and :390 remove hooks.json ownership from T4.2 and T4.7. Line 434 makes T4.12 depend on both and states 'This task alone edits hooks.json in Wave 4'."
+    },
+    {
+      "id": "C13",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:364 requires fresh-session resume after worktree removal, merging the completed task once and running only the remainder; line 365 requires branch reuse and cycle-2 escalation. docs/plans/2026-10-14-thin-pd/build-tasks.md:465 and :466 assign both probes to T5.2."
+    },
+    {
+      "id": "C14",
+      "status": "open",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:278 fixes the storage contract to '~/.claude/pd/gate/<repo key>/<feature id>.json'. However, docs/plans/2026-10-14-thin-pd/build-tasks.md:383 only requires that 'the per-feature total persists in the state file'. T4.6 still lacks the requested fixture using identical feature IDs in two repositories and asserting independent totals and budgets."
+    },
+    {
+      "id": "C15",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:357 enumerates the standard bake-off skills. Lines 358 and 359 separately require a retrospective-trigger probe and logged first-use evidence for brainstorming and root-cause-analysis."
+    },
+    {
+      "id": "C16",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:503 makes S.1 depend on 'T5.2 passing, and the adoption of each repository' and explicitly says it 'doesn't wait for T7.1'. The contradictory archive prerequisite is removed."
+    },
+    {
+      "id": "C17",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd/build-tasks.md:118 includes plugins/pd/workflows in the size measurement and excludes tests and fixtures. docs/plans/2026-10-14-thin-pd-native-design.md:1168 specifies the same three directories and exclusions."
+    },
+    {
+      "id": "C18",
+      "status": "resolved",
+      "evidence": "docs/workflow-canonical.mmd:41 now orders 'CRIT --> R2 --> G2', with the sign-off requirement stated at line 39. Line 117 changes the conductor label to 'launches the fan-out workflows' and 'dispatches single reviewers'."
+    },
+    {
+      "id": "C19",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:315 describes the command preambles as dropped, matching validate.sh:842. Line 435 labels the simplifier as historical and says today's implement has no such step, consistent with the current sequence at plugins/pd/commands/implement.md:14."
+    },
+    {
+      "id": "C20",
+      "status": "resolved",
+      "evidence": "docs/workflow-principles.md:408 identifies the seven observed occurrences, and line 409 now says the rule 'stopped none of them'. This bounds the statement to those occurrences rather than asserting no prevention anywhere, consistent with docs/plans/2026-10-14-thin-pd-native-design.md:386."
+    },
+    {
+      "id": "C21",
+      "status": "resolved",
+      "evidence": "docs/plans/2026-10-14-thin-pd-native-design.md:1190 defines the archive set as 'every ~/.claude/pd/entities/entities.db* file'. docs/plans/2026-10-14-thin-pd/build-tasks.md:495 requires the no-write-bit proof for every file in that set, including backups."
+    }
+  ],
+  "new_in_diff": [
+    {
+      "id": "N1",
+      "severity": "warning",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:160",
+      "claim": "T3.4's new acceptance proof requires T3.5 without declaring that dependency.",
+      "evidence": "The added line requires generated items to 'pass T3.5's frontmatter checks, once T3.5 exists'. T3.4 declares only T3.2 as its dependency at line 153, while line 9 requires every proof to pass before a task is done. Dispatching T3.4 after its declared prerequisites therefore leaves a required check unavailable.",
+      "fix": "Add T3.5 as a prerequisite, or move the compatibility assertion to an integration task that explicitly depends on both T3.4 and T3.5.",
+      "size": "S"
+    }
+  ]
+}

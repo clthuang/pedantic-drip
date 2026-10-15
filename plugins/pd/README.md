@@ -8,10 +8,9 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 | Type | Count |
 |------|-------|
-| Skills | 27 |
-| Agents | 24 |
-| Commands | 31 |
-| MCP Servers | 2 |
+| Skills | 24 |
+| Agents | 21 |
+| Commands | 25 |
 
 ## Commands
 
@@ -19,35 +18,28 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | Command | Description |
 |---------|-------------|
 | `/pd:brainstorm [topic]` | Explore an idea into an evidence-backed PRD |
-| `/pd:create-feature <desc>` | Start building (creates folder + branch); `--express` records an inline mini-spec and jumps to implement |
+| `/pd:create-feature <desc>` | Start building: `pd-new feature` creates the folder and branch; `--mode express` writes a mini-spec and goes to implement |
 
 **Build phases** (run in order):
 | Command | Output |
 |---------|--------|
-| `/pd:specify [--feature=ID]` | `shape.md` — `## Requirements` |
-| `/pd:design` | `shape.md` — `## Design` (+ design review moment) |
-| `/pd:create-plan` | `plan.md` — `## Plan` (ordered tasks; no separate tasks.md) |
-| `/pd:implement` | Code changes (QA execution + code-quality review) |
+| `/pd:specify [--feature=ID]` | `shape.md` — `## Requirements`, calvin, your sign-off |
+| `/pd:design` | `shape.md` — `## Design` (+ the review call) |
+| `/pd:create-plan` | `plan.md` — `## Plan` (task blocks with test cases, + the test-case review) |
+| `/pd:implement` | Code changes: the `implement-tasks` workflow, one task per worktree |
+| `/pd:verify` | The code review beside QA, then fix cycles (`verify-change`) |
 | `/pd:abandon-feature` | Transition a feature to abandoned status |
-| `/pd:finish-feature` | QA battery, docs sync, retro, merge |
-| `/pd:wrap-up` | End the session — commit WIP, report engine state and open items |
+| `/pd:finish-feature` | Security review, docs sync, metrics, retro, merge |
+| `/pd:wrap-up` | End the session — commit WIP, write `## Now` and a handoff entry |
 
 **Anytime:**
 | Command | Purpose |
 |---------|---------|
-| `/pd:show-lineage` | Display entity lineage tree for the current feature branch or a specified entity |
-| `/pd:show-status` | See current feature state |
-| `/pd:list-features` | See all active features |
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
-| `/pd:cleanup-backlog` | Archive fully-closed backlog sections in the entity DB |
-| `/pd:cleanup-brainstorms` | Delete old scratch files |
-| `/pd:test-debt-report` | Aggregate deferred test debt across features and the backlog |
-| `/pd:doctor` | Run 11 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
 | `/pd:sync-cache` | Reload plugin after changes (from the main checkout; a linked worktree publishes nothing) |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
-| `/pd:create-project <prd>` | Create project from PRD with AI-driven decomposition |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:init-ds-project <name>` | Scaffold a new data science project |
 | `/pd:promptimize [file-path or inline text]` | Review a prompt against best practices and return an improved version |
@@ -56,37 +48,23 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
 | `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
-| `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode |
 
 ## Quality Gates
 
-Quality is enforced in two tiers: **mechanical gates** on every phase boundary, and exactly **two LLM review moments** per deep feature.
-
-### Tier 1 — Mechanical gates (zero dispatch)
-
-`scripts/phase-gate.sh <phase> <feature-dir>` runs at each phase boundary and checks artifact existence, required sections, duplicate contract blocks (the restated-contract class), and uncommitted artifacts at implement entry. Failures print one line per problem; fix and re-run.
-
-### Tier 2 — LLM review moments
-
-| Moment | Phase | Agent | Question |
-|--------|-------|-------|----------|
-| 1 of 2 | design | `pd:design-reviewer` | Is the design sound and grounded? |
-| 2 of 2 | implement | `pd:code-quality-reviewer` | Is the branch diff correct and maintainable? |
-
-Per moment: one reviewer pass → at most one fix round → still-open blockers escalate to the user. There is no iterate-to-a-cap loop. Reviewers run in fresh context, cite `file:line`, and own their return schema (defined only in the agent file).
-
-Two dispatches sit outside the review tier:
-
-- `pd:qa-executor` — execution-grounded QA during implement. Runs the test battery and drives affected flows end-to-end, returning commands plus output evidence. It fixes nothing; it reports.
-- `pd:security-reviewer` — dispatched from `/pd:finish-feature` when the branch touches a security surface (auth, secrets, input parsing, permissions, data deletion, dependency bumps). Always an Anthropic-model Task.
-
-**Express mode** (`/pd:create-feature --express`) records an inline mini-spec as a `mini_spec` phase event, skips specify/design/create-plan, and collapses QA and review into a single combined pass during implement.
+- **Exit checks:** `scripts/phase-gate.sh <phase> <feature dir>` checks what each phase must hand down; one line per failure.
+- **Commit checks:** the `pd-commit-lint` hook runs `pd-lint --staged` before every `git commit`; an error blocks it.
+- **The review call** at Contracts, Plan and Verify (`references/review-call.md`): Codex first with one retry, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then you.
+- **The merger** lands each task only if its tests failed at the test commit and pass at HEAD (`scripts/pd-proof`).
+- **QA** (`pd:qa-executor`) runs `qa_battery` beside the code review at Verify; it reports and fixes nothing.
+- **Security review** (`pd:security-reviewer`) runs at finish, on Anthropic models, mandatory for `risk: security`.
+- **Express** (`/pd:create-feature --mode express`) writes a mini-spec and goes straight to implement, with a lighter Verify.
 
 ## Agents
 
 | Agent | Purpose |
 |-------|---------|
 | advisor | Applies strategic/domain advisory lens to brainstorm problems |
+| calvin-runner | Runs the calvin skill on a feature's criteria and writes the ledger to one named path |
 | ds-analysis-reviewer | Reviews data analysis for statistical pitfalls and methodology |
 | code-quality-reviewer | Reviews implementation quality by severity |
 | codebase-explorer | Analyzes codebase for patterns and constraints |
@@ -98,102 +76,14 @@ Two dispatches sit outside the review tier:
 | implementer | Task implementation with TDD and self-review |
 | internet-researcher | Searches web for best practices and standards |
 | investigation-agent | Read-only research before implementation |
+| merger | Checks a task's proof with pd-proof and lands its branch on the feature branch |
 | plan-reviewer | Skeptical plan reviewer for failure modes and TDD compliance |
-| prd-reviewer | Critical review of PRD drafts |
-| project-decomposer | Decomposes project PRD into ordered features with dependencies |
-| project-decomposition-reviewer | Validates project decomposition quality |
 | qa-executor | Execution-grounded QA — runs suites and drives affected flows, returning evidence |
 | ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
 | rca-investigator | Finds all root causes through 6-phase systematic investigation |
-| relevance-verifier | Verifies artifact chain coherence (shape.md → plan.md → code) |
 | retro-facilitator | Runs data-driven AORTA retrospective with full intermediate context |
 | security-reviewer | Reviews implementation for security vulnerabilities |
 | skill-searcher | Finds relevant existing skills |
-| test-deepener | Systematically deepens test coverage with spec-driven adversarial testing |
-
-## MCP Tools
-
-Both MCP servers (entity registry, workflow engine) share a common lifecycle layer (`mcp/server_lifecycle.py`) that manages PID files, parent-PID watchdog, and session-lifetime watchdog. Orphaned server processes from previous sessions are cleaned up at session start.
-
-### Entity Registry Server
-
-The entity registry server (`mcp/entity_server.py`) exposes 20 tools for entity lineage tracking:
-
-| Tool | Purpose |
-|------|---------|
-| `register_entity` | Register a new entity (feature, project, brainstorm) with type and status, identified by `seq`/`slug` (`display_id` for a brainstorm); raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict |
-| `allocate_entity_id` | Atomically allocate the next `{seq:03d}-{slug}` id for an entity type, before any filesystem/DB write |
-| `issue_spawn` | Capture a mid-flight bug or task as a child entity linked to a parent; appends `spawned_child` phase event without modifying parent workflow state |
-| `set_parent` | Set a parent-child relationship between two entities |
-| `get_entity` | Retrieve entity details by type_id |
-| `get_lineage` | Get the full lineage tree for an entity (ancestors and descendants) |
-| `update_entity` | Update entity name, status, or metadata; `archived=true`/`false` archives or un-archives it |
-| `export_lineage_markdown` | Export lineage tree as a markdown file |
-| `export_entities` | Export all entities as structured data |
-| `delete_entity` | Delete an entity by type_id or UUID |
-| `add_entity_tag` | Add a tag to an entity |
-| `get_entity_tags` | Get all tags for an entity |
-| `add_dependency` | Add a dependency relationship between two entities |
-| `remove_dependency` | Remove a dependency relationship |
-| `search_entities` | Search entities by name, type, status, or metadata |
-| `add_okr_alignment` | Align an entity to a key result |
-| `get_okr_alignments` | Get OKR alignments for an entity |
-| `create_key_result` | Create a key result under a project |
-| `update_kr_score` | Update the score for a key result |
-| `list_projects` | List all registered projects |
-
-The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`. If the entity DB is locked at startup, the server starts in degraded mode and stays there: every tool answers "database unavailable (degraded start); restart the MCP server" until it is restarted. Its write tools need the session's workspace. When startup cannot resolve one (a first session in a repository with no `.claude/`), the first write resolves it on demand; if that fails too, the tool answers `workspace_unresolved`, writes nothing, and names the server to restart. The tools that name an existing entity (`set_parent`, `update_entity`, `delete_entity`, `add_entity_tag`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `create_key_result`'s parent and `update_kr_score`) resolve a type_id or ref in that workspace only, so a namesake's entity row in another workspace is never touched. One exception remains until workflow rows are keyed per entity (Phase R): `update_entity(new_project_id=...)` re-attributes the one `workflow_phases` row keyed by that type_id, whichever workspace owns it. A UUID names an entity in any workspace, and a call naming its entities only by UUID needs no workspace, except `create_key_result`, whose new key result registers in the server's workspace.
-
-### Workflow Engine Server
-
-The workflow engine server (`mcp/workflow_state_server.py`) exposes 23 tools for workflow state management:
-
-| Tool | Purpose |
-|------|---------|
-| `get_phase` | Get current workflow phase for a feature |
-| `transition_phase` | Transition a feature to the next workflow phase |
-| `complete_phase` | Mark the current phase as complete; optional `closes=[uuid...]` atomically transitions each referenced issue to its terminal status and writes `entity_relations(kind='fixes')` rows |
-| `record_mini_spec` | Record the express-lane mini-spec as a `mini_spec` event (FR-7) |
-| `get_mini_spec` | Read the latest recorded mini-spec text for a feature |
-| `validate_prerequisites` | Check if prerequisites are met for a target phase |
-| `reproject_meta_json` | Re-render a feature's `.meta.json` from DB state (e.g. after a status change via `update_entity`, since direct writes to it are denied) |
-| `list_features_by_phase` | List all features currently in a given phase |
-| `list_features_by_status` | List all features with a given status |
-| `reconcile_check` | Report drift between a feature's DB state and its `.meta.json` projection (read-only) |
-| `reconcile_frontmatter` | Sync frontmatter metadata across feature artifacts |
-| `reconcile_status` | Workflow and frontmatter drift for this workspace; unhealthy only when a feature's DB state and projection disagree |
-| `init_feature_state` | Initialize workflow state for a new feature |
-| `init_project_state` | Initialize workflow state for a new project |
-| `activate_feature` | Activate a planned feature for development |
-| `init_entity_workflow` | Initialize entity workflow tracking |
-| `transition_entity_phase` | Transition an entity to a new workflow phase |
-| `get_notifications` | Drain pending notifications for the current project |
-| `promote_task` | Promote a task from plan.md to a tracked task entity |
-| `query_ready_tasks` | List task entities ready for execution |
-| `get_progress_view` | Get cross-level progress view for an entity's ancestor chain |
-| `record_backward_event` | Record a backward phase transition event for analytics |
-| `query_phase_analytics` | Query structured phase execution data for analytics |
-
-The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`. Like the entity server, it starts in degraded mode if the workflow state DB is locked, and stays there until it is restarted; its write tools resolve the session's workspace on demand the same way, or answer `workspace_unresolved` and write nothing.
-
-## Setup
-
-After installing, run the setup script to configure the plugin environment:
-
-```bash
-# Check system health (read-only diagnostics)
-bash plugins/pd/scripts/doctor.sh
-
-# Interactive setup (venv, project init)
-bash plugins/pd/scripts/setup.sh
-```
-
-The setup script:
-1. Runs diagnostics to check prerequisites (python3, git, rsync)
-2. Creates/verifies the Python venv with core dependencies
-3. Initializes project directories and config
-
-Run `doctor.sh` anytime to troubleshoot issues — it provides OS-specific fix instructions.
 
 ## Installation
 
@@ -201,3 +91,11 @@ Run `doctor.sh` anytime to troubleshoot issues — it provides OS-specific fix i
 /plugin marketplace add .
 /plugin install pd@pedantic-drip-marketplace
 ```
+
+Then, once per project, run `/pd:init`. It writes `.claude/pd.local.md` (paths, `qa_battery`, the budgets) and proposes, as a diff you approve, these `.claude/settings.json` entries:
+
+- **`worktree.baseRef: "head"`:** without it, each task's worktree starts from the default branch instead of the feature branch.
+- **The env cap** `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`: agents can't spawn agents.
+- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
+
+An old-layout pd project (`docs/features/` with `.meta.json`) runs `/pd:adopt` instead. The budgets in `.claude/pd.local.md`: `workflow_output_cap` (output tokens per workflow run, default 2,000,000), `feature_token_budget` (tokens per feature, unset by default) and `budget_increment`.

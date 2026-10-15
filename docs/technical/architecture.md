@@ -1,293 +1,77 @@
 ---
-last-updated: 2026-07-10T00:00:00Z
-source-feature: 109-polymorphic-taxonomy-and-event
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
-
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 
 # Architecture
 
 ## Overview
 
-Pedantic Drip (pd) is a Claude Code plugin providing a structured feature development workflow. It is not a standalone application — it runs entirely within Claude Code sessions and extends Claude's behavior through commands, skills, agents, and hooks.
-
-The system is organized around a pipeline of workflow phases (brainstorm → specify → design → create-plan → implement → finish). Each phase produces file artifacts. State is persisted across sessions via SQLite-backed MCP servers and JSON files in the feature directory.
+pd is a Claude Code plugin: commands, skills, agents, workflows, hooks and a few stdlib scripts. It runs inside Claude Code sessions; there is no server and no database. A feature's state is committed markdown under `{artifacts_root}` (default `docs/dev_artifacts/`), and everything derived — progress, open blockers, retros owed — is computed from those files on demand.
 
 ## Component Map
 
 ```
 User
  │
- ├── /pd:command              Commands — user-invocable entry points
- │        │                   plugins/pd/commands/{name}.md
- │        │
- │        └── Skill           Skills — multi-step procedural instructions
- │               │            plugins/pd/skills/{name}/SKILL.md
- │               │
- │               └── Agent   Subagents — isolated workers with focused scope
- │                            plugins/pd/agents/{name}.md
+ ├── /pd:<command>            Thin entry points           plugins/pd/commands/{name}.md
+ │        └── Stage skill     The conductor's playbook    plugins/pd/skills/{name}/SKILL.md
+ │               ├── Scripts  Create, check, compute      plugins/pd/scripts/
+ │               └── Workflow Fan-outs, one agent each    plugins/pd/workflows/{name}.js
+ │                      └── Agent                         plugins/pd/agents/{name}.md
  │
- ├── Hooks                    Lifecycle scripts — fire on Claude Code events
- │   plugins/pd/hooks/        (SessionStart, PreToolUse, PostToolUse, Stop)
- │
- ├── MCP: workflow-engine     Phase transition state machine + .meta.json projection
- │   plugins/pd/mcp/          workflow_state_server.py (registered as FastMCP("workflow-engine"))
- │
- └── MCP: entity-registry     Cross-project entity lineage + metadata storage
-     plugins/pd/mcp/          entity_server.py → ~/.claude/pd/entities/entities.db
+ └── Hooks                    SessionStart, PreToolUse, Stop   plugins/pd/hooks/
 ```
 
-## Workflow Phase Sequence
-
-```
-brainstorm → specify → design → create-plan → implement → finish
-```
-
-Each phase transition is guarded by `validateAndSetup` (in `workflow-transitions` skill) and recorded in entity metadata via `complete_phase` MCP. Phase timing, iteration counts, and reviewer notes accumulate in `phase_timing` within entity metadata and are projected to `.meta.json`.
+**The conductor** (the main session) owns every user decision (through AskUserQuestion) and every file write and commit. Workflows and agents return JSON results; the conductor writes `log.md` from them.
 
 ## Key Data Flows
 
-### Feature Lifecycle
+### A phase, start to finish
 
-1. User invokes `/pd:specify` (or any phase command)
-2. `workflow-transitions` skill runs `validateAndSetup`:
-   - Reads `.meta.json` from the feature directory
-   - Validates phase transition legality
-   - Injects phase context (backward travel context, prior phase summaries) if applicable
-3. Phase skill executes, producing or updating artifact files (`spec.md`, `design.md`, etc.)
-4. Reviewer agents are dispatched and may approve or trigger backward travel
-5. `commitAndComplete` in `workflow-transitions` skill:
-   - Calls `complete_phase` MCP (Step 2) — updates engine state and projects `.meta.json`
-   - Constructs phase summary dict (Step 3a) — appends to `phase_summaries` via `update_entity`
-   - Calls `transition_phase` MCP (Step 4) — advances to next phase
+1. `/pd:<phase>` invokes its stage skill.
+2. Phase entry (`workflow-transitions`): resolve the feature, check out `feature/<id>`, read `README.md`, `## Now` and `pd-status`'s open blockers.
+3. The skill writes its artifact (`shape.md` or `plan.md`) and, at Contracts and Plan, makes the review call; each review is a `review` entry in `log.md`.
+4. Exit: `phase-gate.sh <phase> <dir>` passes; `phase:` moves on; a `phase <from> -> <to>` entry is appended; the commit runs `pd-lint --staged` through `pd-commit-lint`.
 
-### .meta.json Projection
+### Execute: `implement-tasks`
 
-`.meta.json` is the on-disk read surface for workflow state. It is always regenerated from authoritative sources by `_project_meta_json()` in `workflow_state_server.py`. It is never written directly by skills or commands.
+1. The conductor derives the args from `plan.md` (waves of task blocks) and writes `run in flight:` to `## Now`.
+2. Each task runs as one `implementer` in a Claude Code worktree (base: the feature branch's HEAD, via `worktree.baseRef: "head"`), committing its tests first on `pd/<id>/task-<n>`.
+3. The `merger` checks the task: the first commit holds only tests and source additions; `pd-proof first` sees every test fail at that commit; `pd-proof head` sees them pass at HEAD; no later commit touches those tests. Then `git merge --no-ff` in plan order, re-running every earlier task's proof and `pd-lint`.
+4. A failed task gets up to three fix cycles (cycles 2 and 3 on opus), reusing its branch.
+5. The conductor appends a `run` entry with one `task <n>: merged, proof pass, …` line per task, which `phase-gate.sh implement` reads.
 
-Authoritative sources:
-- `WorkflowStateEngine` SQLite DB — current phase, last completed phase
-- Entity metadata JSON column in `entities.db` — phase timing, phase summaries, backward travel fields, mode, branch, etc.
+### Verify: `verify-change`
 
-Fields projected to `.meta.json`:
+The review call (Codex, one retry, else `code-quality-reviewer`) runs beside `qa-executor` (the `qa_battery`, `pd-lint --risk`, `pd-lint --isolation`). Open blockers or a failing battery start up to three cycles of a separate fixer and a QA re-run. The conductor writes the `review` and `qa` entries; `phase-gate.sh verify` needs a passing `qa` entry at the current commit.
 
-| Field | Source |
-|-------|--------|
-| `id`, `slug`, `mode`, `branch` | Entity metadata |
-| `status` | Entity status column |
-| `lastCompletedPhase` | WorkflowStateEngine (fallback: entity metadata) |
-| `phases` | `phase_timing` dict in entity metadata |
-| `backward_context` | Entity metadata (feature 073) |
-| `backward_return_target` | Entity metadata (feature 073) |
-| `phase_summaries` | Entity metadata (feature 075) |
+### Goal runs and the Stop gate
 
-### Backward Travel
+`pd-stop-gate.sh` fires on every stop. It charges the session's new token usage to the checked-out feature, then blocks (exit 2) only while `## Now` holds this session's `goal:` line and the goal is unmet (target not reached, open blockers, or `pd-lint` failing). It yields to running background workflows and subagents. At `feature_token_budget`, or with no progress since the last block, it tells the conductor to ask the user.
 
-When a reviewer determines an upstream phase needs rework, it sets `backward_context` in entity metadata via `update_entity`. `validateAndSetup` Step 1b detects backward transitions by checking whether `phases[targetPhase].completed` exists in `.meta.json`. If so, it injects a `## Phase Context` block prepended to the phase prompt.
+State, outside git:
+- `~/.claude/pd/gate/<session id>.json` — the progress snapshot and `calvin_ledger` (the one path `calvin-runner` may write, enforced by `pd-agent-write-guard.sh`).
+- `~/.claude/pd/gate/<repo key>/<feature id>.json` — the running token total and the original budget.
 
 ## Module Interfaces
 
-### workflow_state_server.py
-
-Primary MCP server for workflow state. Key internal functions:
-
-| Function | Responsibility |
-|----------|---------------|
-| `_project_meta_json(db, engine, feature_type_id, feature_dir)` | Regenerates `.meta.json` from DB and engine state; called after every state mutation |
-| `_process_complete_phase(...)` | Writes `phase_timing[phase].{completed, iterations, reviewerNotes}` to entity metadata |
-| `_atomic_json_write(path, data)` | Writes JSON atomically via temp file + rename |
-
-### entity_server.py
-
-Primary MCP server for entity registry. Stores entities (features, projects, brainstorms, backlog items) with parent-child lineage in SQLite.
-
-Key MCP tools used by workflow:
-
-| Tool | Usage |
-|------|-------|
-| `update_entity(type_id, metadata)` | Shallow-merges metadata dict into existing entity metadata |
-| `complete_phase` | Called by `commitAndComplete` Step 2 to record phase completion |
-| `transition_phase` | Called by `commitAndComplete` Step 4 to advance workflow state |
-
-### workflow-transitions/SKILL.md
-
-Shared procedural library included by all phase commands. Two primary functions:
-
-- **`validateAndSetup(phaseName)`** — Phase entry guard: validates prerequisites, detects backward transitions, injects phase context
-- **`commitAndComplete(phaseName, artifacts, iterations, reviewerNotes)`** — Phase exit procedure: records completion, constructs and stores phase summary, advances state
-
-### metadata.py (entity_registry)
-
-Centralizes metadata parsing and schema validation for entity types. `parse_metadata()` always returns `{}` for None/invalid input. `validate_metadata()` is warn-only.
-
-`METADATA_SCHEMAS['feature']` defines expected keys including `phase_summaries: list` (added in feature 075).
-
-## Polymorphic Entity Taxonomy (Feature 109)
-
-Feature 109 replaces the flat `entity_type` string column with a three-column discriminator, moves all state writes through a single event-append helper, and adds atomic promotion.
-
-### Entity Discriminator Columns
-
-The `entities` table no longer carries an `entity_type` column. Entities are identified by three columns added in migration 12:
-
-| Column | Type | Domain | Purpose |
-|--------|------|--------|---------|
-| `type` | TEXT NOT NULL | `workspace`, `work`, `container`, `brainstorm` | Top-level polymorphic discriminator (storage shape) |
-| `kind` | TEXT NOT NULL | per-`type`; e.g., `feature`, `backlog`, `project`, `brainstorm`, `workspace` | Semantic subtype |
-| `lifecycle_class` | TEXT NOT NULL | `feature_flow`, `work_flow`, `container_flow`, `brainstorm_flow`, `none` | State-machine selector (routing deferred to feature 110) |
-
-A composite CHECK constraint enforces valid `(type, kind)` pairs at the schema level. An index `idx_entities_type_kind ON entities(type, kind)` supports polymorphic-query workloads.
-
-The `(workspace_uuid, type_id)` UNIQUE constraint from feature 108 is preserved. `type_id` format is unchanged (`{kind}:{entity_id}`).
-
-**Backfill mapping (migration 12):**
-
-| Legacy `entity_type` | `type` | `kind` | `lifecycle_class` |
-|----------------------|--------|--------|------------------|
-| `feature` | `work` | `feature` | `feature_flow` |
-| `backlog` | `work` | `backlog` | `work_flow` |
-| `brainstorm` | `brainstorm` | `brainstorm` | `brainstorm_flow` |
-| `project` | `container` | `project` | `container_flow` |
-| `workspace` | `workspace` | `workspace` | `none` |
-
-`entities_fts` (FTS5 virtual table) was rebuilt in migration 12 to use `kind` as the search column in place of `entity_type`.
-
-### Migration 12 — Single-Transaction Pattern
-
-`_migration_12_polymorphic_taxonomy_and_events` follows the established migration discipline:
-
-- `PRAGMA foreign_keys = OFF` is set **outside** the transaction.
-- A single `BEGIN IMMEDIATE` transaction wraps all sub-steps: column additions, backfill UPDATEs, CHECK expansion via copy-rename, FTS5 rebuild, `entity_type` column drop, `phase_events` schema changes via copy-rename, trigger drops, index creation, and `schema_version = 12` stamp.
-- `foreign_key_check` runs pre- and post-migration inside the transaction; any violation aborts with rollback.
-- A one-shot rollback function (`_migration_12_..._down`) is registered in `MIGRATIONS_DOWN[12]`, consistent with the feature 108 precedent.
-
-Column-set and trigger-set discovery use `PRAGMA table_info(entities)` and `SELECT name, sql FROM sqlite_master WHERE type='trigger'` at runtime (not hard-coded column lists), protecting against undetected schema drift from prior migrations.
-
-**SQLite version–aware `DROP COLUMN`:** migration 12 issues `ALTER TABLE entities DROP COLUMN entity_type` directly. SQLite 3.35+ supports this natively; if an older SQLite is detected at runtime, the migration falls back to a second copy-rename pass.
-
-### Trigger Enforcement → Python-Layer Enforcement
-
-12 trigger definitions were removed in migration 12:
-
-| Trigger | Prior source-code sites | Reason removed |
-|---------|------------------------|----------------|
-| `enforce_immutable_entity_type` | 6 (lines 136, 254, 655, 1101, 1988, 2414 in `database.py`) | Blocked the F11 `entity_type → kind` backfill UPDATE and F3 `promote_entity` kind rewrite |
-| `enforce_immutable_type_id` | 6 (lines 130, 249, 650, 1096, 1983, 2409 in `database.py`) | Blocked F3 `type_id` prefix rewrite in `promote_entity` |
-
-Immutability of `entities.status` and `workflow_phases.workflow_phase` is now enforced at the **Python layer** via three complementary mechanisms (spec FR-2, TD-1):
-
-1. `EntityDatabase.append_phase_event(...)` is the **only** public method that writes `entities.status` or `workflow_phases.workflow_phase`. All other public methods delegate through it.
-2. A static-grep CI test (`test_no_direct_status_updates`) asserts 0 matches for `UPDATE entities SET status` outside the `append_phase_event` body.
-3. The doctor session-start health check `check_status_write_path` (see doctor section) runs the same grep at session start and warns on violations.
-
-## Phase Summaries (Feature 075)
-
-Feature 075 adds structured phase summary accumulation to the workflow. Each phase completion appends a summary entry to `phase_summaries` in entity metadata. On backward transitions, prior summaries are injected as context.
-
-See `docs/technical/decisions/ADR-001-phase-summaries-append-list.md` for the storage design decision.
-
-### Data Flow
-
-```
-commitAndComplete Step 3 (plain-text Phase Summary output)
-        │
-        ▼
-Step 3a: construct summary dict (7 fields)
-        │
-        ▼
-update_entity(type_id, metadata={"phase_summaries": existing + [new_entry]})
-        │
-        ▼
-entities.db (entity metadata JSON column)
-        │
-        ▼
-_project_meta_json() — projects phase_summaries to .meta.json
-        │
-        ▼
-.meta.json (phase_summaries field visible to validateAndSetup)
-        │
-        ▼
-validateAndSetup Step 1b (backward transition detected)
-        │
-        ▼
-## Phase Context block injected into phase prompt
-```
-
-### Summary Entry Schema
-
-```python
-{
-    "phase": str,                        # e.g., "specify", "design"
-    "timestamp": str,                    # ISO 8601 UTC, e.g., "2026-04-02T08:00:00Z"
-    "outcome": str,                      # e.g., "Approved after 3 iterations."
-    "artifacts_produced": list[str],     # filenames only, e.g., ["spec.md"]
-    "key_decisions": str,                # free-text paragraph of key choices
-    "reviewer_feedback_summary": str,    # brief summary of reviewer feedback
-    "rework_trigger": str | None         # rework provenance, or null if first completion
-}
-```
-
-Constraints: max 2000 chars per entry (serialized JSON). Truncation order: `reviewer_feedback_summary` → `key_decisions` → `artifacts_produced` → `outcome`.
-
-## Implementing Skill — Parallel Dispatch (Feature 078)
-
-`plugins/pd/skills/implementing/SKILL.md` Step 2 uses a three-phase worktree dispatch model replacing the previous serial loop.
-
-### Dispatch Phases
-
-**Phase 1 — Worktree setup:** For each task in the current batch, create an isolated git worktree under `.pd-worktrees/` (gitignored) on a branch named `worktree-{feature_id}-task-{N}` (e.g., `worktree-078-task-3`). Record the feature branch HEAD SHA before any agent dispatch.
-
-**Phase 2 — Parallel agent dispatch:** Dispatch up to `max_concurrent_agents` implementer agents simultaneously. Each agent receives an absolute-path directive prepended to its prompt, restricting all file operations to its worktree directory. Agents must not write to `.meta.json` — the orchestrating skill is the sole writer (see `.meta.json` write isolation invariant).
-
-**Phase 3 — SHA validation, sequential merge, cleanup:** Before merging, verify the feature branch HEAD SHA has not changed (guards against agents writing outside their worktrees). Merge each worktree branch into the feature branch in task order. On success, remove the worktree with `git worktree remove`. On merge conflict, surface the conflict details and halt — re-run `/pd:implement` after resolving to resume from the first un-merged worktree branch.
-
-**Note on `isolation: worktree`:** The inline `isolation: worktree` parameter is silently ignored for plugin-defined `subagent_type` values (CC Issue #33045). pd uses the manual worktree approach as a workaround until this is resolved upstream.
-
-### Fallback Strategy
-
-| Failure | Scope | Behavior |
-|---------|-------|----------|
-| `git worktree add` fails | Per-task | That task dispatches without isolation; other tasks continue in worktrees |
-| Agent commits outside worktree (SHA mismatch detected in Phase 3) | Per-task | Halt; flag for manual review before merging |
-| SQLite BUSY persists beyond `busy_timeout` (15s) | Full batch | Remaining tasks in current and subsequent batches switch to serial dispatch |
-| Merge conflict | Halt | Surface details; user resolves; re-run `/pd:implement` to resume |
-
-**Orphaned worktree cleanup:** The doctor `check_stale_worktrees` check scans `.pd-worktrees/` and cross-references `git worktree list`. Worktrees not associated with an active implementing session are pruned. Also runs at session start via the existing doctor hook.
-
-**Resume on re-entry:** On Step 2 entry, `git worktree list` is scanned for branches matching `worktree-{feature_id}-task-*`. Existing worktrees skip Phase 1 creation and proceed directly to Phase 3 merge.
+- **`scripts/pd_common.py`** — the shared library: config (`load_config`, `artifacts_dir`), items (`find_items`, `split_frontmatter`), logs (`split_log`, `parse_log`, `parse_tasks`) and the computed views (`open_blockers`, `open_assumptions`, `retro_triggers`). Every script imports it; none keeps a cache.
+- **The scripts' CLIs** — [api-reference.md](api-reference.md).
+- **Workflow results** — pinned once in `plugins/pd/references/workflow-results.md`; `test-workflows.mjs` checks each script's result against it.
+- **Log entries** — pinned once in `plugins/pd/references/log-entries.md`; `pd-lint` checks each entry's shape.
 
 ## Hooks
 
-Hooks are shell scripts in `plugins/pd/hooks/` executed by Claude Code at lifecycle points defined in `hooks.json`.
+| Hook | Event | Blocks? |
+|------|-------|---------|
+| `sync-cache`, `cleanup-stale-versions` | SessionStart | no |
+| `pd-session-start` | SessionStart | no — injects the `{pd_*}` values and the project summary |
+| `pre-commit-guard` | PreToolUse Bash | no — warns on `main`/`master` |
+| `pd-commit-lint` | PreToolUse Bash | yes — a `pd-lint --staged` error |
+| `pre-edit-unicode-guard` | PreToolUse Write\|Edit | no — warns |
+| `pd-agent-write-guard` | PreToolUse Write\|Edit | yes — `qa-executor` outside `agent_sandbox/`, `calvin-runner` outside its ledger path |
+| `pd-stop-gate` | Stop | yes — an unmet goal of this session |
 
-Total: 17 hook scripts, 15 registered in `hooks.json` (plus the unregistered `cleanup-sandbox.sh` utility and the `pre-edit-unicode-guard.py` worker module). Subset shown below; see [README_FOR_DEV.md](../../README_FOR_DEV.md) for the complete table.
-
-| Hook | Trigger | Key behavior |
-|------|---------|-------------|
-| `session-start` | SessionStart | Reads active feature `.meta.json`, injects context into session |
-| `data-file-guard` | PreToolUse (Write/Edit) | Config-driven guard blocking unauthorized `.meta.json` and other pd data-file modifications |
-| `pre-commit-guard` | PreToolUse (Bash) | Branch protection, pd directory protection |
-| `pre-push-guard` | PreToolUse (Bash) | Pre-push `.meta.json` consistency validation |
-| `pre-edit-unicode-guard` | PreToolUse (Write/Edit) | Non-blocking warning for risky Unicode codepoints |
-| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind `plan-reviewer` dispatch |
-| `post-enter-plan` / `post-exit-plan` | PostToolUse (EnterPlanMode / ExitPlanMode) | Plan-mode lifecycle |
-| `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries |
-| `yolo-stop` | Stop | Chains to next phase on YOLO stop events |
-| `cleanup-locks` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks and stale cached plugin versions |
-| `inject-secretary-context` | SessionStart | Injects secretary routing context |
-| `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache (from a main checkout; a linked worktree publishes nothing) |
-
-## Agent Categories
-
-Total: 29 agents (verify via `ls plugins/pd/agents/*.md | wc -l`).
-
-| Category | Count | Purpose |
-|----------|-------|---------|
-| Reviewers | 14 | Validate artifacts and gate phase transitions (incl. secretary-reviewer, relevance-verifier) |
-| Workers | 6 | Implement, synthesize, or transform content |
-| Researchers | 5 | Gather context, scan codebase |
-| Advisory | 1 | Domain advisory for brainstorm problems |
-| Orchestration | 3 | Secretary routing, RCA, retro facilitation |
-
-<!-- AUTO-GENERATED: END -->
+Hooks emitting JSON keep `trap '' PIPE` and write through `safe_emit_hook_json` (`hooks/lib/session-start-helpers.sh`).

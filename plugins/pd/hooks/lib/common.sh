@@ -40,13 +40,8 @@ detect_project_root() {
 #     one whose <common dir>/worktrees/<name> is gone, or any worktree under a
 #     failing git or a git older than 2.31 (it prints the --path-format option
 #     it does not know back as a third line).
-# The git call, and what counts as git not answering, are those of
-# entity_registry.project_identity._git_dirs; there,
-# _git_cannot_answer_for_git_file refuses a workspace at the same .git file.
-# The two part ways at a bare repository's worktree: its --git-dir differs
-# from --git-common-dir, so nothing publishes from it (a bare repository has
-# no main checkout), while _repository_root keeps it as its own workspace
-# root.
+# A bare repository's worktree: its --git-dir differs from --git-common-dir,
+# so nothing publishes from it (a bare repository has no main checkout).
 # Usage: may_publish_plugin_cache "$root"
 may_publish_plugin_cache() {
     local root="${1:-$PWD}" dirs git_dir common_dir

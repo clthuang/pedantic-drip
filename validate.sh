@@ -223,6 +223,9 @@ validate_hooks_schema() {
                         log_error "$file: $event_name[$j].hooks[$k] type 'command' missing 'command' field"
                     else
                         local cmd=$(jq -r "$hook_path.command" "$file")
+                        local script=${cmd%% *}
+                        script=${script/\$\{CLAUDE_PLUGIN_ROOT\}/$(dirname "$(dirname "$file")")}
+                        [ -f "$script" ] || log_error "$file: $event_name[$j].hooks[$k] command $script does not resolve to a file"
                         if [[ "$cmd" != *'${CLAUDE_PLUGIN_ROOT}'* ]] && [[ "$cmd" == *"/"* ]]; then
                             log_warning "$file: $event_name[$j].hooks[$k] command uses hardcoded path — consider \${CLAUDE_PLUGIN_ROOT} for portability"
                         fi
@@ -377,6 +380,53 @@ done < <(find . -type f -name "*.md" \( -path "./agents/*" -o -path "./plugins/*
 if [ $agent_count -eq 0 ]; then
     log_info "No agents found"
 fi
+echo ""
+
+# The two agent rules, made mechanical (plan §A3): each role's tools, model and effort.
+# agent_roles_errors <agents dir> prints one line per violation.
+agent_roles_errors() {
+    local dir=$1 spec name role fm tools model effort
+    for spec in design-reviewer:reviewer plan-reviewer:reviewer code-quality-reviewer:reviewer security-reviewer:reviewer \
+                implementer:executor qa-executor:verifier retro-facilitator:verifier merger:merger calvin-runner:calvin; do
+        name=${spec%%:*}; role=${spec#*:}
+        [ -f "$dir/$name.md" ] || { echo "$name.md is missing"; continue; }
+        fm=$(sed -n '2,/^---$/p' "$dir/$name.md")
+        tools=$(echo "$fm" | sed -n 's/^tools:[[:space:]]*//p' | tr -d '[] ' | tr ',' '\n' | sort | paste -s -d, -)
+        model=$(echo "$fm" | sed -n 's/^model:[[:space:]]*//p')
+        effort=$(echo "$fm" | sed -n 's/^effort:[[:space:]]*//p')
+        case $role in
+            reviewer)
+                [ "$tools" = "Glob,Grep,Read" ] || echo "$name: a reviewer's tools are Read, Grep, Glob (has $tools)"
+                [ "$model/$effort" = opus/high ] || echo "$name: a reviewer runs model: opus, effort: high" ;;
+            executor)
+                [ "$model/$effort" = sonnet/medium ] || echo "$name: an executor runs model: sonnet, effort: medium"
+                grep -q '^## Verify before you report' "$dir/$name.md" || echo "$name: an executor keeps its verification paragraph" ;;
+            verifier)
+                [ "$model/$effort" = opus/high ] || echo "$name: QA and the retro run model: opus, effort: high" ;;
+            merger)
+                case ",$tools," in *,Write,*|*,Edit,*) echo "$name: the merger has no Write or Edit" ;; esac ;;
+            calvin)
+                [ "$tools" = "Glob,Read,Skill,Write" ] || echo "$name: calvin-runner's tools are Read, Glob, Skill, Write (has $tools)" ;;
+        esac
+    done
+    return 0
+}
+echo "Validating agent roles..."
+while IFS= read -r line; do [ -n "$line" ] && log_error "agents/$line"; done <<< "$(agent_roles_errors plugins/pd/agents)"
+# The failing fixture: one break per check, so a rule that stops checking fails validation.
+roles_fixture=$(mktemp -d)
+cp plugins/pd/agents/*.md "$roles_fixture"/
+sed -i '' 's/^tools:.*/tools: [Read, Grep, Glob, Bash]/' "$roles_fixture/design-reviewer.md"
+sed -i '' '/^effort:/d' "$roles_fixture/plan-reviewer.md"
+sed -i '' -e 's/^model:.*/model: opus/' -e 's/^## Verify before you report/## Verify/' "$roles_fixture/implementer.md"
+sed -i '' 's/^model:.*/model: sonnet/' "$roles_fixture/qa-executor.md"
+sed -i '' 's/^tools:.*/tools: [Bash, Read, Write]/' "$roles_fixture/merger.md"
+sed -i '' 's/^tools:.*/tools: [Read, Glob, Write]/' "$roles_fixture/calvin-runner.md"
+rm "$roles_fixture/security-reviewer.md"
+fixture_errors=$(agent_roles_errors "$roles_fixture" | grep -c . || true)
+rm -rf "$roles_fixture"
+if [ "$fixture_errors" -eq 8 ]; then log_success "Agent roles valid; the failing fixture fails all 8 checks"
+else log_error "agent-roles rule: the failing fixture raised $fixture_errors of 8 errors"; fi
 echo ""
 
 # Validate commands (commands/*.md - all frontmatter fields are optional per official docs)
@@ -579,33 +629,6 @@ while IFS= read -r marketplace_json; do
 done < <(find . -path "*/.claude-plugin/marketplace.json" -type f 2>/dev/null)
 echo ""
 
-# Check for stale project-level .mcp.json
-echo "Checking MCP Configuration..."
-if [ -f ".mcp.json" ]; then
-    log_warning ".mcp.json exists at project root — MCP servers should be declared in plugin.json mcpServers instead"
-fi
-
-# Validate mcpServers script references in plugin.json files
-while IFS= read -r plugin_json; do
-    [ -z "$plugin_json" ] && continue
-    local_plugin_dir=$(dirname "$(dirname "$plugin_json")")
-    if jq -e '.mcpServers' "$plugin_json" > /dev/null 2>&1; then
-        for server_name in $(jq -r '.mcpServers | keys[]' "$plugin_json" 2>/dev/null); do
-            local_cmd=$(jq -r ".mcpServers[\"$server_name\"].command" "$plugin_json")
-            # Replace ${CLAUDE_PLUGIN_ROOT} with the plugin's directory
-            local_resolved="${local_cmd//\$\{CLAUDE_PLUGIN_ROOT\}/$local_plugin_dir}"
-            if [ ! -f "$local_resolved" ]; then
-                log_error "$plugin_json: mcpServers.$server_name command not found: $local_resolved"
-            elif [ ! -x "$local_resolved" ]; then
-                log_error "$plugin_json: mcpServers.$server_name command not executable: $local_resolved"
-            else
-                log_success "mcpServers.$server_name: $local_resolved exists and is executable"
-            fi
-        done
-    fi
-done < <(find . -path "*/.claude-plugin/plugin.json" -type f 2>/dev/null)
-echo ""
-
 # Validate no hardcoded plugin paths in component markdown files
 echo "Checking Path Portability..."
 hardcoded_path_errors=0
@@ -712,10 +735,6 @@ err_trap_missing=0
 for hook_script in plugins/pd/hooks/*.sh; do
     [ -f "$hook_script" ] || continue
     basename=$(basename "$hook_script")
-    # Skip non-hook scripts that don't source common.sh
-    case "$basename" in
-        cleanup-locks.sh|cleanup-sandbox.sh) continue ;;
-    esac
     # Check if it sources common.sh and has install_err_trap (or its
     # superset install_session_start_traps from session-start-helpers.sh).
     if grep -q 'source.*common\.sh' "$hook_script" 2>/dev/null; then
@@ -730,29 +749,6 @@ if [ $err_trap_missing -eq 0 ]; then
 fi
 echo ""
 
-# Validate entry-point mkdir guards
-echo "Checking Entry-Point mkdir Guards..."
-mkdir_missing=0
-mkdir_checks=(
-    "plugins/pd/skills/brainstorming/SKILL.md:mkdir"
-    "plugins/pd/commands/create-feature.md:mkdir"
-    "plugins/pd/commands/add-to-backlog.md:mkdir"
-    "plugins/pd/skills/root-cause-analysis/SKILL.md:mkdir"
-)
-for check in "${mkdir_checks[@]}"; do
-    file="${check%%:*}"
-    pattern="${check##*:}"
-    if [ -f "$file" ]; then
-        if ! grep -q "$pattern" "$file" 2>/dev/null; then
-            log_error "$file: Missing $pattern guard for directory creation"
-            ((mkdir_missing++)) || true
-        fi
-    fi
-done
-if [ $mkdir_missing -eq 0 ]; then
-    log_success "All entry-point files have mkdir guards"
-fi
-echo ""
 
 
 # Check for subjective adjectives in plugin component files (content-level check)
@@ -780,84 +776,16 @@ if [ $ADJECTIVE_VIOLATIONS -eq 0 ]; then
 fi
 echo ""
 
-# Validate setup script exists
-echo "Checking Setup Scripts..."
-for script in plugins/pd/scripts/doctor.sh plugins/pd/scripts/setup.sh; do
-    if [ -f "$script" ]; then
-        if [ -x "$script" ]; then
-            log_success "$script exists and is executable"
-        else
-            log_error "$script exists but is not executable"
-        fi
-    else
-        log_warning "$script not found"
-    fi
-done
-echo ""
-
 # --- Hooks.json Registration Contract (feature 104 FR-1 + FR-2) ---
 # Asserts hooks.json keeps the registration shape feature 102 / 104 depend on.
 # Defends against silent hook-misconfiguration regressions.
 echo "Checking Hooks.json Registration Contract..."
-if jq -e '.hooks.Stop | length == 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: Stop array has 1 entry (yolo-stop)"
+# Exactly one Stop hook, the gate (plan §A5): a second would race it.
+if jq -e '[.hooks.Stop[]?.hooks[]?.command] == ["${CLAUDE_PLUGIN_ROOT}/hooks/pd-stop-gate.sh"]' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: exactly one Stop hook, pd-stop-gate.sh"
 else
-    log_error "hooks.json: Stop length != 1"
+    log_error "hooks.json: the Stop hooks must be exactly pd-stop-gate.sh"
 fi
-if grep -qE 'extract_workarounds|workaround_candidates' plugins/pd/skills/retrospecting/SKILL.md; then
-    log_success "retrospecting/SKILL.md references extract_workarounds"
-else
-    log_error "retrospecting/SKILL.md missing extract_workarounds reference"
-fi
-echo ""
-
-# --- Codex Reviewer Routing exclusion guard (feature 103) ---
-# Files that reference codex-routing.md AND dispatch pd:security-reviewer MUST
-# include explicit exclusion language. Defends against future regression where
-# codex routing accidentally captures security-reviewer.
-echo "Checking Codex Reviewer Routing exclusion..."
-codex_routing_exclusion_violations=0
-while IFS= read -r f; do
-    [[ -z "$f" ]] && continue
-    # Skip the reference doc itself.
-    [[ "$f" == "plugins/pd/references/codex-routing.md" ]] && continue
-    # Files that mention codex-routing must either (a) explicitly exclude
-    # security-reviewer when they dispatch it, or (b) explicitly note that
-    # security-reviewer is not dispatched at this phase.
-    if grep -q "subagent_type:.*pd:security-reviewer" "$f" 2>/dev/null; then
-        # Dispatches security-reviewer → MUST contain exclusion language.
-        if ! grep -qE "always.*Task.*pd:security-reviewer|NOT.*pd:security-reviewer|security.*always.*Anthropic|security-reviewer.*always.*standard" "$f"; then
-            log_error "$f: references codex-routing.md AND dispatches pd:security-reviewer but lacks explicit exclusion language"
-            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
-        fi
-    else
-        # Does not dispatch security-reviewer → MUST contain "no security review at this phase" indicator.
-        if ! grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" "$f"; then
-            log_error "$f: references codex-routing.md but lacks 'no security review at this phase' indicator"
-            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
-        fi
-    fi
-done < <(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null)
-
-# FR-2b (feature 105, re-scoped by workflow-rebuild OQ-4 2026-07-25): commands and
-# skills reference codex-routing.md NOWHERE — the preambles were dropped entirely
-# while the toggle is disabled. The reference doc plugins/pd/references/codex-routing.md
-# stays on disk. This check now asserts the reference set is EMPTY; any hit is drift.
-codex_routing_allowlist_violations=0
-if [[ -f "./validate.sh" && -d "./plugins/pd" ]]; then
-    actual_codex_files=$(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
-    if [ -n "$actual_codex_files" ]; then
-        log_error "Codex routing reference found in commands/skills (OQ-4: must be none):"
-        echo "$actual_codex_files" | head -20 | while IFS= read -r line; do log_error "  $line"; done || true
-        codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
-    fi
-else
-    log_error "FR-2b allowlist check requires repo-root cwd (validate.sh and plugins/pd not found in cwd)"
-    codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
-fi
-[ "$codex_routing_exclusion_violations" = "0" ] && log_info "Codex Reviewer Routing exclusions validated"
-
-[ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing references absent from commands/skills (OQ-4)"
 echo ""
 
 # --- hook JSON schema: hookSpecificOutput must include hookEventName (feature 087 RCA) ---

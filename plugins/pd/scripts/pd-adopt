@@ -1,0 +1,983 @@
+#!/usr/bin/env python3
+"""pd-adopt: migrate an old-layout pd project to the SOP, once (plan Part B §12 steps 0–8, §13).
+
+  pd-adopt [--registry <path>] [--workspace <uuid>]          dry run: print the plan and the diff; change nothing
+  pd-adopt --apply [--registry <path>] [--workspace <uuid>]  on a new pd-adopt branch, one commit per step
+  pd-adopt --self-test
+
+Run it from the project root. The registry is opened once, read-only (immutable=1), to copy it
+into agent_sandbox/<date>/pd-adopt/; every later read uses the copy (D5).
+"""
+import argparse
+import contextlib
+import io
+import json
+import os
+import posixpath
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from datetime import date, datetime, timezone
+from pathlib import Path
+from urllib.parse import quote
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import pd_common as pc  # noqa: E402
+
+DEFAULT_REGISTRY = Path(os.environ.get("ENTITY_DB_PATH") or "~/.claude/pd/entities/entities.db").expanduser()
+CFG = ".claude/pd.local.md"
+NEW = pc.DEFAULT_ARTIFACTS_ROOT
+MOVED = ("features", "brainstorms", "rca", "plans", "knowledge-bank")
+PLACED = {"user-guide", "dev-guide", "technical", "projects", "dev_artifacts", "_html"}
+RETIRED = re.compile(r"^(yolo_mode|yolo_max_stop_blocks|yolo_usage_\w+|plan_mode_review|max_concurrent_agents|activation_mode):")
+STATUS_MAP = {"completed": "done", "complete": "done", "implemented": "done", "satisfied": "done",
+              "planned": "draft", "preregistered": "draft", "in-progress": "active", "active": "active"}
+OPEN_BACKLOG = {None, "", "open", "triaged"}
+OLD_PHASES = ("brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish")
+TITLE_PREFIX = re.compile(r"^(?:PRD|RCA|Spec(?:ification)?|Design|Plan|Tasks|Roadmap|Feature \d+)\s*[:—-]\s*", re.I)
+LINK_RE = re.compile(r"(\]\()([^)\s]+)")
+TICK_RE = re.compile(r"`([^`\s]+)`")
+BACKLOG_LINE = re.compile(r"^- \[[ x]\] \d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)* — \S")
+PROJECT_NUM = re.compile(r"^P?\d+-")
+
+
+class Refused(Exception):
+    pass
+
+
+# --- the registry: opened through one function, the source once ------------------------
+
+def open_db(path, immutable=False, factory=sqlite3.Connection):
+    """Every SQLite open in pd-adopt goes through here, so the self-test can record them."""
+    return sqlite3.connect(f"file:{quote(str(path))}{'?immutable=1' if immutable else ''}", uri=True, factory=factory)
+
+
+def copy_registry(src, dst):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    source = open_db(src, immutable=True)
+    try:
+        target = open_db(dst)
+        try:
+            source.backup(target)
+            target.execute("PRAGMA journal_mode=DELETE")  # the copy needs no -wal to be read
+        finally:
+            target.close()
+    finally:
+        source.close()
+
+
+def load_registry(path, project_root, workspace):
+    """This workspace's rows from the copy. Columns are discovered, so an older registry reads too."""
+    reg = {"ws": None, "entities": [], "phases": {}, "events": {}}
+    con = open_db(path, immutable=True)
+    con.row_factory = sqlite3.Row
+    try:
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
+        cols = lambda t: {r[1] for r in con.execute(f"PRAGMA table_info({t})")} if t in tables else set()
+        rows = lambda sql, *a: [dict(r) for r in con.execute(sql, a)]
+        pid = None
+        for w in rows("SELECT * FROM workspaces") if "workspaces" in tables else []:
+            root = w.get("project_root")
+            if w["uuid"] == workspace or (not workspace and root and Path(root).resolve() == project_root.resolve()):
+                reg["ws"], pid = w["uuid"], w.get("project_id_legacy")
+        reg["ws"] = reg["ws"] or workspace
+        if not reg["ws"] or "workspace_uuid" not in cols("entities"):
+            return reg
+        for e in rows("SELECT * FROM entities WHERE workspace_uuid = ?", reg["ws"]):
+            if e.get("is_deleted"):
+                continue
+            e["kind"] = e.get("kind") or e.get("entity_type") or e["type_id"].split(":")[0]
+            e["key"] = e["type_id"].split(":", 1)[-1]
+            try:
+                e["meta"] = json.loads(e.get("metadata") or "{}") or {}
+            except ValueError:
+                e["meta"] = {}
+            reg["entities"].append(e)
+        uuids, tids = {e["uuid"] for e in reg["entities"]}, sorted({e["type_id"] for e in reg["entities"]})
+        # workflow_phases is keyed by type_id across workspaces: a row whose uuid is another workspace's is skipped.
+        wps = [w for w in (rows("SELECT * FROM workflow_phases") if "workflow_phases" in tables else [])
+               if not w.get("uuid") or w["uuid"] in uuids]
+        by_tid, by_uuid = {w["type_id"]: w for w in wps}, {w["uuid"]: w for w in wps if w.get("uuid")}
+        for e in reg["entities"]:
+            reg["phases"][e["uuid"]] = by_uuid.get(e["uuid"]) or by_tid.get(e["type_id"])
+        ec = cols("phase_events")
+        if ec and tids:
+            sql = f"SELECT * FROM phase_events WHERE type_id IN ({','.join('?' * len(tids))})"
+            args = list(tids)
+            if pid and "project_id" in ec:
+                sql, args = sql + " AND project_id = ?", args + [pid]
+            for ev in rows(sql + " ORDER BY timestamp, " + ("id" if "id" in ec else "rowid"), *args):
+                reg["events"].setdefault(ev["type_id"], []).append(ev)
+    finally:
+        con.close()
+    return reg
+
+
+# --- small helpers -------------------------------------------------------------------
+
+def map_status(raw):
+    raw = str(raw or "").strip().lower()
+    return STATUS_MAP.get(raw) or (raw if raw in pc.STATUSES else None)
+
+
+def when(value):
+    """An aware datetime from an ISO time or a date (UTC when it names no offset), or None."""
+    try:
+        t = datetime.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def stamp(t):
+    off = int(t.utcoffset().total_seconds() // 60)
+    return f"{t:%Y-%m-%d %H:%M}{'+' if off >= 0 else '-'}{abs(off) // 60:02d}:{abs(off) % 60:02d}"
+
+
+def yq(value):
+    """A frontmatter scalar that pd_common.parse_yaml reads back unchanged."""
+    v = str(value).replace("\n", " ").strip()
+    return f'"{v.replace(chr(34), chr(39))}"' if re.search(r": | #|^[\"'\[{&*!|>%@`-]", v) else v
+
+
+def heading_title(text):
+    m = re.search(r"^# (.+)$", pc.blank_fences(text), re.M)
+    return TITLE_PREFIX.sub("", m.group(1)).strip() if m else None
+
+
+def demote(line):
+    return re.sub(r"^#{1,2}(?=\s|$)", "###", line)
+
+
+def map_path(p, pairs, back=False):
+    for old, new in pairs:
+        a, b = (new, old) if back else (old, new)
+        if p == a or p.startswith(a + "/"):
+            return b + p[len(a):]
+    return p
+
+
+def notes_lines(value):
+    if isinstance(value, str) and value.strip().startswith("{"):
+        with contextlib.suppress(ValueError):
+            value = json.loads(value)
+    if isinstance(value, dict):
+        return [f"- {k}: {v}" for k, v in value.items()]
+    return str(value).split("\n") if value else []
+
+
+def event_entries(events):
+    """log.md entries (time, kind, rest, body) from phase events, the registry's or .meta.json's."""
+    out, prev = [], None
+    for ev in events:
+        t, ph, kind = when(ev.get("timestamp")), ev.get("phase"), ev.get("event_type")
+        if t is None:
+            continue
+        if kind == "started":
+            out.append((t, "phase", f"{prev or 'start'} -> {ph}", []))
+            prev = ph
+        elif kind == "backward":
+            prev = ev.get("backward_target") or "?"
+            out.append((t, "phase", f"{ph} -> {prev} (back)", [f"Reason: {ev.get('backward_reason') or 'not recorded'}"]))
+        elif kind == "completed":
+            its = [f"Iterations: {ev['iterations']}"] if ev.get("iterations") is not None else []
+            out.append((t, "review", f"{ph} — legacy", its + notes_lines(ev.get("reviewer_notes"))))
+        else:
+            out.append((t, "note", f"{kind}{' ' + ph if ph else ''}", notes_lines(ev.get("metadata"))))
+    return out
+
+
+def meta_events(meta):
+    out = []
+    for ph, v in (meta.get("phases") or {}).items():
+        if isinstance(v, dict):
+            if v.get("started"):
+                out.append({"event_type": "started", "phase": ph, "timestamp": v["started"]})
+            if v.get("completed"):
+                out.append({"event_type": "completed", "phase": ph, "timestamp": v["completed"],
+                            "iterations": v.get("iterations"), "reviewer_notes": v.get("reviewerNotes")})
+    return sorted(out, key=lambda e: when(e["timestamp"]) or datetime.min.replace(tzinfo=timezone.utc))
+
+
+def render_log(fid, entries):
+    out = [f"<!-- Append-only history of {fid}. Entry shapes: plugins/pd/references/log-entries.md. "
+           "The entries below were converted from legacy files by pd-adopt. -->", ""]
+    seen = {}
+    for t, kind, rest, body in sorted(entries, key=lambda e: e[0]):
+        s = stamp(t)
+        n = seen[(kind, s)] = seen.get((kind, s), 0) + 1
+        out += [f"## {s} {kind}{'' if n == 1 else f'-{n}'}{' ' + rest.strip() if rest.strip() else ''}",
+                "Status: closed (legacy)", *[demote(line) for line in body], ""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def parse_mermaid(text):
+    """(nodes {key: label} in first-seen order, edges [(a, b)]) from the roadmap's mermaid blocks."""
+    nodes, edges = {}, []
+    for block in re.findall(r"^```mermaid\n(.*?)^```", text, re.M | re.S):
+        for line in block.split("\n"):
+            line = line.strip()
+            if not line or re.match(r"^(graph|flowchart|classDef|class|style|linkStyle|subgraph|end|%%)\b", line):
+                continue
+            keys = []
+            for part in re.split(r"\s*(?:-->|==>|-\.->|---)\s*", line):
+                m = re.fullmatch(r'(?:\|[^|]*\|\s*)?(\w+)(?:\["?([^\]"]*)"?\])?(?::::\w+)?', part)
+                if m:
+                    if m.group(2) or m.group(1) not in nodes:
+                        nodes[m.group(1)] = m.group(2) or nodes.get(m.group(1))
+                    keys.append(m.group(1))
+            edges += list(zip(keys, keys[1:]))
+    return nodes, edges
+
+
+# --- the migration ------------------------------------------------------------------
+
+class Adopt:
+    def __init__(self, root, registry, workspace, project_root):
+        self.root, self.registry, self.workspace, self.project_root = root, registry, workspace, project_root
+        self.today = date.today().isoformat()
+        self.sandbox = root / "agent_sandbox" / self.today / "pd-adopt"
+        self.notes, self.asides, self.pairs = [], [], []
+        self.reg = {"ws": None, "entities": [], "phases": {}, "events": {}}
+        self.backlog_ids, self.metas, self.plan_of, self.groups = {}, {}, {}, []
+        fm = pc.split_frontmatter((root / CFG).read_text())[0] if (root / CFG).is_file() else None
+        self.old = str((fm or {}).get("artifacts_root") or "docs").rstrip("/")
+        self.base = self.git("rev-parse", "HEAD")
+        self.old_files = self.tracked()
+
+    # plumbing
+    def git(self, *args, check=True):
+        return pc.git(list(args), self.root, check)
+
+    def tracked(self, *spec):
+        return [x for x in (self.git("ls-files", "--", *spec) or "").split("\n") if x]
+
+    def known(self):
+        files = set(self.tracked())
+        return files | {str(d) for f in files for d in Path(f).parents if str(d) != "."}
+
+    def rel(self, p):
+        return Path(p).relative_to(self.root).as_posix()
+
+    def note(self, msg):
+        self.notes.append(msg)
+
+    def write(self, rel, text):
+        p = self.root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        return rel
+
+    def commit(self, msg, paths):
+        paths = [p for p in paths if (self.root / p).exists()]
+        if paths:
+            self.git("add", "-A", "--", *paths)
+        if self.git("diff", "--cached", "--quiet", check=False) is None:  # exit 1: something is staged
+            self.git("commit", "-q", "-m", msg)
+
+    def remove(self, p):
+        if self.git("rm", "-q", "--", self.rel(p), check=False) is None:
+            p.unlink()
+
+    def aside(self, p):
+        """Keep an untracked or sidecar file out of the tree without losing it."""
+        dst = self.sandbox / "aside" / self.rel(p)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, dst)
+        self.remove(p)
+        self.asides.append(self.rel(p))
+
+    def file_date(self, p):
+        old = map_path(self.rel(p), self.pairs, back=True)
+        t = when(self.git("log", "-1", "--format=%cI", self.base, "--", old, check=False) or "")
+        return t or datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+
+    def config_lines(self):
+        p = self.root / CFG
+        lines = p.read_text().split("\n") if p.is_file() else []
+        return lines if lines and lines[0] == "---" else ["---", "---", *lines]
+
+    def set_config(self, key, value):
+        lines = self.config_lines()
+        end = lines.index("---", 1)
+        hit = next((i for i in range(1, end) if re.match(rf"^{key}:", lines[i])), None)
+        if hit is None:
+            lines.insert(end, f"{key}: {value}")
+        else:
+            lines[hit] = f"{key}: {value}"
+        self.write(CFG, "\n".join(lines))
+
+    def entity(self, kind, key):
+        return next((e for e in self.reg["entities"] if e["kind"] == kind and e["key"] == key), None)
+
+    def by_uuid(self, uuid):
+        return next((e for e in self.reg["entities"] if e["uuid"] == uuid), None) if uuid else None
+
+    def features(self):
+        d = self.root / NEW / "features"
+        return sorted(p for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
+
+    def run(self):
+        for line in (self.git("ls-files", "-s") or "").split("\n"):
+            if line.startswith("120000 "):
+                rel = line.split("\t", 1)[1]
+                if (rel.endswith(".md") or rel in (CFG, ".gitignore") or rel.startswith((self.old + "/", NEW + "/"))) \
+                        and not (self.root / rel).resolve().is_relative_to(self.root.resolve()):
+                    raise Refused(f"{rel} is a symlink out of the repository; adopt would write through it")
+        for step in (self.step0, self.step1, self.step2, self.step3, self.step4,
+                     self.step5, self.step6, self.step7, self.step8):
+            step()
+        if self.asides:
+            self.note(f"moved aside {len(self.asides)} untracked sidecar files to {self.rel(self.sandbox)}/aside/")
+
+    # step 0: the config, the registry copy, the backlog export
+    def step0(self):
+        keep, dropped = [], []
+        for line in self.config_lines():
+            if RETIRED.match(line):
+                dropped.append(line.split(":")[0])
+                while keep and keep[-1].startswith("#"):  # its description comment goes with it
+                    keep.pop()
+            else:
+                keep.append(line)
+        if dropped:
+            self.write(CFG, "\n".join(keep))
+            self.note(f"step 0: removed the retired fields {', '.join(dropped)}")
+        if self.git("check-ignore", "-q", "agent_sandbox/x", check=False) is None:
+            gi = self.root / ".gitignore"
+            self.write(".gitignore", (gi.read_text().rstrip("\n") + "\n" if gi.is_file() else "") + "agent_sandbox/\n")
+        self.commit("pd-adopt step 0: remove the retired config fields", [CFG, ".gitignore"])
+        if not self.registry.is_file():
+            self.note(f"step 0: no registry at {self.registry}: state comes from .meta.json alone")
+            return
+        wal = Path(f"{self.registry}-wal")
+        if wal.is_file() and wal.stat().st_size:
+            raise Refused(f"{wal} is not empty, and immutable=1 would skip it: "
+                          f"run `sqlite3 {self.registry} 'PRAGMA wal_checkpoint(TRUNCATE)'` first")
+        copy = self.sandbox / "entities.db"
+        copy_registry(self.registry, copy)
+        self.reg = load_registry(copy, self.project_root, self.workspace)
+        self.note(f"step 0: registry copied to {self.rel(copy)}; workspace {self.reg['ws'] or 'not found (pass --workspace)'}: "
+                  f"{len(self.reg['entities'])} rows")
+        self.export_backlog()
+
+    def export_backlog(self):
+        rows = [e for e in self.reg["entities"] if e["kind"] == "backlog"]
+        if not rows:
+            return
+        if f"{self.old}/backlog.md" in self.old_files:
+            self.note(f"step 0: {self.old}/backlog.md is tracked and moves at step 1; {len(rows)} registry backlog rows not exported")
+            return
+        lines, seen = ["# Backlog", ""], set()
+        for e in sorted(rows, key=lambda e: (e.get("created_at") or "", e["type_id"])):
+            title = str(e.get("name") or e["key"]).replace("\n", " ").strip()
+            base = f"{(e.get('created_at') or self.today)[:10]}-{pc.slugify(title) or re.sub(r'[^a-z0-9]+', '-', e['key'].lower()).strip('-')}"
+            bid, n = base, 2
+            while bid in seen:
+                bid, n = f"{base}-{n}", n + 1
+            seen.add(bid)
+            self.backlog_ids[e["uuid"]] = bid
+            status = str(e.get("status") or "").lower()
+            child = next((f for f in self.reg["entities"] if f["kind"] == "feature" and f.get("parent_uuid") == e["uuid"]), None)
+            if status in OPEN_BACKLOG:
+                lines.append(f"- [ ] {bid} — {title}")
+            elif status == "promoted":
+                lines.append(f"- [x] {bid} — promoted → features/{child['key']}" if child else f"- [x] {bid} — promoted: {title}")
+            elif status == "dropped":
+                lines.append(f"- [x] {bid} — dropped: {e['meta'].get('reason') or e['meta'].get('drop_reason') or 'no reason recorded'}")
+            else:
+                lines.append(f"- [x] {bid} — {title} ({status})")
+        self.write(f"{NEW}/backlog.md", "\n".join(lines) + "\n")
+        self.note(f"step 0: exported {len(rows)} backlog rows to {NEW}/backlog.md (committed at step 6)")
+
+    # step 1: move the development artifacts, rewrite links
+    def step1(self):
+        if self.old == NEW:
+            return
+        known, pairs = self.known(), []
+        (self.root / NEW).mkdir(parents=True, exist_ok=True)
+        for d in MOVED:
+            src, dst = f"{self.old}/{d}", f"{NEW}/{d}"
+            if (self.root / src).is_dir():
+                if any(f.startswith(src + "/") for f in self.old_files):
+                    self.git("mv", src, dst)
+                else:
+                    (self.root / src).rename(self.root / dst)
+                pairs.append((src, dst))
+        for f in self.old_files:
+            if re.fullmatch(rf"{re.escape(self.old)}/backlog[^/]*\.md", f):
+                name = Path(f).name
+                if name in ("backlog.md", "backlog-archive.md") and not all(
+                        not x.strip() or x.startswith("#") or BACKLOG_LINE.match(x) for x in (self.root / f).read_text().split("\n")):
+                    name = name.replace(".md", "-legacy.md")  # pd-lint reads these two names as §7 lines
+                    self.note(f"MAP BY HAND: {f} has pre-§7 lines; moved as {NEW}/{name}"
+                              + ("; add its open items with pd-new backlog" if name == "backlog-legacy.md" else ""))
+                self.git("mv", f, f"{NEW}/{name}")
+                pairs.append((f, f"{NEW}/{name}"))
+        self.pairs = pairs
+        changed = self.rewrite_links(pairs, known)
+        self.set_config("artifacts_root", NEW)
+        tiers = {t.strip() for t in str(pc.load_config(self.root).get("doc_tiers") or "").split(",")}
+        for d in sorted(p for p in (self.root / self.old).iterdir() if p.is_dir()) if (self.root / self.old).is_dir() else []:
+            if d.name not in PLACED | tiers and not d.name.startswith("."):
+                self.note(f"UNCLASSIFIED: {self.rel(d)}/ — place it by hand")
+        self.note(f"step 1: moved {', '.join(s for s, _ in pairs)} under {NEW}/; rewrote links in {len(changed)} files")
+        self.commit(f"pd-adopt step 1: move the development artifacts under {NEW}", changed + [CFG])
+
+    def rewrite_text(self, text, old_file, new_file, pairs, known):
+        old_dir, new_dir = posixpath.dirname(old_file), posixpath.dirname(new_file)
+
+        def link(m):
+            path, sep, frag = m.group(2).partition("#")
+            if not path or path.startswith("/") or re.match(r"^[a-z][a-z0-9+.-]*:", path):
+                return m.group(0)
+            src = posixpath.normpath(posixpath.join(old_dir, path))
+            dst = map_path(src, pairs)
+            if src.startswith("..") or src not in known or posixpath.normpath(posixpath.join(new_dir, path)) == dst:
+                return m.group(0)
+            return m.group(1) + posixpath.relpath(dst, new_dir or ".") + ("/" if path.endswith("/") else "") + sep + frag
+
+        def tick(m):
+            p = m.group(1).rstrip("/")
+            q = map_path(p, pairs)
+            return m.group(0) if q == p else f"`{q}{m.group(1)[len(p):]}`"
+        return TICK_RE.sub(tick, LINK_RE.sub(link, text))
+
+    def rewrite_links(self, pairs, known, skip=()):
+        changed = []
+        for f in self.tracked("*.md"):
+            p = self.root / f
+            if f in skip or not p.is_file():
+                continue
+            text = p.read_text(errors="surrogateescape")
+            new = self.rewrite_text(text, map_path(f, pairs, back=True), f, pairs, known)
+            if new != text:
+                p.write_text(new, errors="surrogateescape")
+                changed.append(f)
+        return changed
+
+    # step 2: README frontmatter per feature; frontmatter on single-file items
+    def step2(self):
+        self.project_groups()
+        art, written, metas_read = self.root / NEW, [], 0
+        for d in self.features():
+            fid, mp, meta = d.name, d / ".meta.json", None
+            if mp.is_file():
+                try:
+                    meta = json.loads(mp.read_text())
+                except ValueError:
+                    self.note(f"MAP BY HAND: features/{fid}/.meta.json does not parse; kept")
+            ent = self.entity("feature", fid)
+            self.metas[fid] = meta or {}
+            raw = (meta or {}).get("status") or (ent or {}).get("status")
+            status = map_status(raw)
+            if status is None:
+                self.note(f"MAP BY HAND: features/{fid}: status {raw!r} has no mapping; written as-is" if raw
+                          else f"MAP BY HAND: features/{fid}: no recorded status; none written")
+            title = next((heading_title((d / n).read_text()) for n in ("spec.md", "prd.md", "design.md", "plan.md", "tasks.md")
+                          if (d / n).is_file() and heading_title((d / n).read_text())), None) \
+                or (meta or {}).get("slug", "").replace("-", " ") or (ent or {}).get("name") or fid
+            fm = {"id": fid, "type": "feature", "title": yq(title), "status": status or raw,
+                  "phase": self.current_phase(fid, status, meta, ent), "mode": self.mode(meta, ent),
+                  "origin": self.origin(fid, meta, ent),
+                  "branch": None if status == "done" else (meta or {}).get("branch") or (ent or {}).get("meta", {}).get("branch") or f"feature/{fid}"}
+            if (d / "README.md").exists():
+                if self.git("mv", self.rel(d / "README.md"), self.rel(d / "readme-legacy.md"), check=False) is None:
+                    (d / "README.md").rename(d / "readme-legacy.md")
+                self.note(f"features/{fid}/README.md moved to readme-legacy.md; the new README carries the frontmatter")
+            links = [f"- [{f.stem}]({f.name})" for f in sorted(d.glob("*.md")) if not f.name.startswith(".") and f.name not in ("README.md", "log.md", "implementation-log.md")]
+            now = f"Legacy feature, adopted by pd-adopt on {self.today}." + (
+                "" if status == "done" else " Convert it to shape.md and plan.md before work on it resumes.")
+            written.append(self.write(f"{NEW}/features/{fid}/README.md", "---\n" + "".join(
+                f"{k}: {v}\n" for k, v in fm.items() if v) + f"---\n# {title}\n\n## Now\n\n{now}\n\n## Links\n\n" + "\n".join(links) + "\n"))
+            if meta is not None:
+                self.remove(mp)
+                metas_read += 1
+        for type_, sub in (("brainstorm", "brainstorms"), ("rca", "rca"), ("plan", "plans")):
+            for f in sorted((art / sub).glob("*.md")) if (art / sub).is_dir() else []:
+                if not f.name.startswith(".") and self.single_file(type_, sub, f):
+                    written.append(self.rel(f))
+        self.note(f"step 2: {len(self.features())} feature READMEs; frontmatter on {len(written) - len(self.features())} "
+                  f"single-file items; deleted {metas_read} .meta.json")
+        self.commit("pd-adopt step 2: README frontmatter from .meta.json and the registry", written)
+
+    def current_phase(self, fid, status, meta, ent):
+        if status == "done":
+            return "finish"
+        phase = None
+        if meta:
+            started = [p for p, v in (meta.get("phases") or {}).items() if isinstance(v, dict) and v.get("started") and not v.get("completed")]
+            last = meta.get("lastCompletedPhase")
+            phase = started[-1] if started else OLD_PHASES[OLD_PHASES.index(last) + 1] if last in OLD_PHASES[:-1] else last
+        elif ent:
+            wp = self.reg["phases"].get(ent["uuid"]) or {}
+            evs = [e for e in self.reg["events"].get(ent["type_id"], []) if e.get("event_type") in ("started", "backward")]
+            phase = wp.get("workflow_phase") or (evs and (evs[-1].get("backward_target") or evs[-1].get("phase"))) or None
+        phase = {"create-tasks": "create-plan"}.get(phase, phase)
+        if phase and phase not in pc.PHASES:
+            self.note(f"MAP BY HAND: features/{fid}: phase {phase!r} is not one of {', '.join(pc.PHASES)}; left out")
+            return None
+        return phase
+
+    def mode(self, meta, ent):
+        wp = self.reg["phases"].get((ent or {}).get("uuid")) or {}
+        said = ((meta or {}).get("mode"), wp.get("mode"), (ent or {}).get("meta", {}).get("mode"))
+        return "express" if "express" in said else "standard"
+
+    def origin(self, fid, meta, ent):
+        art, par = self.root / NEW, self.by_uuid((ent or {}).get("parent_uuid"))
+        if par:
+            k = par["kind"]
+            if k == "project" and par["uuid"] in self.plan_of:
+                return f"plans/{self.plan_of[par['uuid']]}.md"
+            if k == "backlog" and par["uuid"] in self.backlog_ids:
+                return f"backlog#{self.backlog_ids[par['uuid']]}"
+            if k == "brainstorm" and par.get("artifact_path") and (art / "brainstorms" / Path(par["artifact_path"]).name).is_file():
+                return f"brainstorms/{Path(par['artifact_path']).name}"
+            if k == "feature" and (art / "features" / par["key"]).is_dir():
+                return f"features/{par['key']}"
+            self.note(f"features/{fid}: parent {par['type_id']} has no path in the new layout; origin left out")
+        src = (meta or {}).get("brainstorm_source")
+        if src and (art / "brainstorms" / Path(src).name).is_file():
+            return f"brainstorms/{Path(src).name}"
+        return None
+
+    def single_file(self, type_, sub, f):
+        """Add id, type, title and status to a legacy single-file item; True when it changed."""
+        text = f.read_text()
+        try:
+            fm, body, _ = pc.split_frontmatter(text)
+        except ValueError as e:
+            self.note(f"MAP BY HAND: {sub}/{f.name}: frontmatter does not parse ({e})")
+            return False
+        ent = next((e for e in self.reg["entities"] if e["kind"] == type_ and Path(e.get("artifact_path") or "").name == f.name), None)
+        raw = (fm or {}).get("status") or (ent or {}).get("status")
+        status = map_status(raw)
+        if raw and not status:
+            self.note(f"MAP BY HAND: {sub}/{f.name}: status {raw!r} has no mapping; written as-is")
+        elif not raw:
+            self.note(f"CHECK: {sub}/{f.name}: no recorded status; written as done")
+        add = {"id": f.stem, "type": type_, "title": yq((fm or {}).get("title") or heading_title(body) or f.stem),
+               "status": status or raw or "done"}
+        lines = [f"{k}: {v}" for k, v in add.items() if k not in (fm or {})]
+        new = ("---\n" + "\n".join(lines) + "\n---\n" + text) if fm is None else \
+            text.replace("---\n", "---\n" + "".join(x + "\n" for x in lines), 1)
+        if fm and "status" in fm and status and status != fm["status"]:  # the frontmatter's first status: line
+            new = re.sub(r"^status:.*$", f"status: {status}", new, count=1, flags=re.M)
+        if pc.ID_RE.match(f.stem) and not re.search(r"^## Log[ \t]*$", pc.blank_fences(new), re.M):
+            # pd-lint reads a date-form id as a current item: it needs ## Now and a last ## Log
+            new = new.rstrip("\n") + f"\n\n## Now\n\nLegacy item, adopted by pd-adopt on {self.today}.\n\n## Log\n"
+        if new != text:
+            f.write_text(new)
+        return new != text
+
+    # step 3: projects/<id>/ into plans/<id>.md
+    def project_groups(self):
+        pdir, groups = self.root / self.old / "projects", {}
+        for d in sorted(p for p in pdir.iterdir() if p.is_dir()) if pdir.is_dir() else []:
+            groups.setdefault(PROJECT_NUM.sub("", d.name), []).append(d.name)
+        for slug, names in groups.items():
+            names.sort(key=lambda n: (-len(self.tracked(f"{self.old}/projects/{n}")), n))
+            ents = [e for e in self.reg["entities"] if e["kind"] == "project" and PROJECT_NUM.sub("", e["key"]) == slug]
+            ents.sort(key=lambda e: e["key"] != names[0])
+            for e in ents:
+                self.plan_of[e["uuid"]] = names[0]
+            self.groups.append((names[0], names, ents))
+
+    def step3(self):
+        known, pairs, written = self.known(), [], []
+        for pid, names, ents in self.groups:
+            plan = f"{NEW}/plans/{pid}.md"
+            if (self.root / plan).exists():
+                raise Refused(f"{plan} exists; rename the project or the plan first")
+            prds, prose, edges, nodes = [], [], [], {}
+            for n in names:
+                d = f"{self.old}/projects/{n}"
+                files = self.tracked(d)
+                pairs += [(f, plan) for f in files] + [(d, plan)]
+                for f in files:
+                    if Path(f).name not in ("prd.md", "roadmap.md"):
+                        self.note(f"step 3: {f} is not prd.md or roadmap.md; removed (it stays in git history)")
+                prd, rm = self.root / d / "prd.md", self.root / d / "roadmap.md"
+                if prd.is_file():
+                    prds.append((f"{d}/prd.md", prd.read_text()))
+                if rm.is_file():
+                    nd, ed = parse_mermaid(rm.read_text())
+                    nodes.update({k: v for k, v in nd.items() if k not in nodes or v})
+                    edges += ed
+                    prose.append((f"{d}/roadmap.md", re.sub(r"^```.*?^```\n?", "", rm.read_text(), flags=re.M | re.S)))
+            title = next((heading_title(t) for _, t in prds + prose if heading_title(t)), None) or (ents[0]["name"] if ents else pid)
+            body = "\n\n".join(self.rewrite_text(re.sub(r"^# .*\n", "", t, count=1, flags=re.M).strip("\n"), src, plan, pairs, known)
+                               for src, t in prds + prose if t.strip())
+            roadmap = self.roadmap(nodes, edges, {e["uuid"] for e in ents})
+            raw = next((e.get("status") for e in ents if e.get("status")), None)
+            status = map_status(raw) or raw
+            if raw and not map_status(raw):
+                self.note(f"MAP BY HAND: plans/{pid}.md: status {raw!r} has no mapping; written as-is")
+            if not status or (roadmap and status == "done"):
+                self.note(f"CHECK: plans/{pid}.md: written {'active' if roadmap else 'done'} "
+                          f"({'a roadmap plan' if roadmap else 'no recorded status'}; recorded: {raw or 'none'})")
+                status = "active" if roadmap else "done"
+            fm = [f"id: {pid}", "type: plan", f"title: {yq(title)}", f"status: {status}"] + (["roadmap:"] + roadmap if roadmap else [])
+            written.append(self.write(plan, "---\n" + "\n".join(fm) + f"\n---\n# {title}\n\n## Now\n\nAdopted from "
+                                      + ", ".join(f"projects/{n}/" for n in names) + f" by pd-adopt on {self.today}."
+                                      + "\n\n## Links\n\n" + (f"## Why\n\n{body}\n\n" if body else "") + "## Log\n"))
+            for n in names:
+                d = self.root / self.old / "projects" / n
+                if self.tracked(self.rel(d)):
+                    self.git("rm", "-r", "-q", "--", self.rel(d))
+                for p in sorted(x for x in d.rglob("*") if x.is_file()) if d.is_dir() else []:
+                    self.aside(p)
+            self.note(f"step 3: projects/{', projects/'.join(names)} -> plans/{pid}.md"
+                      + (f" with a roadmap of {sum(1 for x in roadmap if x.startswith('  - '))}" if roadmap else " (no features: a plain plan)"))
+        pdir = self.root / self.old / "projects"
+        for d in sorted((p for p in pdir.rglob("*") if p.is_dir()), reverse=True) if pdir.is_dir() else []:
+            with contextlib.suppress(OSError):
+                d.rmdir()
+        with contextlib.suppress(OSError):
+            pdir.rmdir()
+        changed = self.rewrite_links(pairs, known, skip=set(written))
+        self.commit("pd-adopt step 3: convert projects into plans with a roadmap", written + changed)
+
+    def roadmap(self, nodes, edges, project_uuids):
+        """`roadmap:` lines: the mermaid order and dependencies, features resolved by the registry's parent links."""
+        children = sorted(e["key"] for e in self.reg["entities"] if e["kind"] == "feature" and e.get("parent_uuid") in project_uuids)
+        dirs = [d.name for d in self.features()]
+
+        def resolve(key):
+            label = nodes.get(key) or (key[1:] + "-" if re.fullmatch(r"F\d+", key) else key)
+            for pool in (children, dirs):
+                hits = [f for f in pool if f == label or f.startswith(label)]
+                if len(hits) == 1:
+                    return hits[0], True
+            return pc.slugify(label) or label.lower(), False
+        order, preds, placed = [], {k: [a for a, b in edges if b == k] for k in nodes}, set()
+        while len(placed) < len(nodes):
+            free = [k for k in nodes if k not in placed and all(a in placed for a in preds[k])] or \
+                [next(k for k in nodes if k not in placed)]  # a cycle: keep first-seen order
+            order.append(free[0])
+            placed.add(free[0])
+        items, slug_of = {}, {}
+        for k in order:
+            slug, is_feature = resolve(k)
+            slug_of[k] = slug
+            if slug not in items:
+                items[slug] = [is_feature, []]
+            items[slug][1] += [slug_of[a] for a in preds[k] if a in slug_of and slug_of[a] != slug and slug_of[a] not in items[slug][1]]
+        for c in children:
+            items.setdefault(c, [True, []])
+        lines = []
+        for slug, (is_feature, after) in items.items():
+            lines.append(f"  - feature: features/{slug}" if is_feature else f"  - planned: {slug}")
+            if after:
+                lines.append(f"    after: [{', '.join(after)}]")
+        return lines
+
+    # step 4: legacy history into log.md
+    def step4(self):
+        written = []
+        for d in self.features():
+            fid, entries = d.name, []
+            ent = self.entity("feature", fid)
+            entries += event_entries((self.reg["events"].get(ent["type_id"]) if ent else None) or meta_events(self.metas.get(fid, {})))
+            rh = d / ".review-history.md"
+            if rh.is_file():
+                t0 = self.file_date(rh)
+                for sec in re.split(r"^## ", rh.read_text(), flags=re.M)[1:]:
+                    head, _, rest = sec.partition("\n")
+                    m = re.search(r"\d{4}-\d{2}-\d{2}", head)
+                    entries.append(((when(m.group(0)) if m else None) or t0, "review", f"legacy — {head.strip()}",
+                                    rest.strip("\n").split("\n")))
+                self.remove(rh)
+            for q in sorted(d.glob(".qa-gate*")):
+                if q.name != ".qa-gate.json":
+                    self.aside(q)  # runtime sidecars (raw logs): kept in agent_sandbox, not converted
+                    continue
+                try:
+                    data = json.loads(q.read_text())
+                except ValueError:
+                    data = {"unparsed": q.read_text()}
+                body = ([f"Verdict: {data['verdict']}"] if isinstance(data, dict) and data.get("verdict") else []) + \
+                    ["```json", *json.dumps(data, indent=2).split("\n"), "```"]
+                t = when(data.get("gate_run_at", "")) if isinstance(data, dict) else None
+                entries.append((t or self.file_date(q), "qa", "legacy .qa-gate.json", body))
+                self.remove(q)
+            il = d / "implementation-log.md"
+            if il.is_file():
+                entries.append((self.file_date(il), "note", "legacy implementation-log.md",
+                                re.sub(r"^# .*\n", "", il.read_text(), count=1).strip("\n").split("\n")))
+                self.remove(il)
+            if not entries:
+                continue
+            log, readme = d / "log.md", d / "README.md"
+            log.write_text((log.read_text().rstrip("\n") + "\n\n" if log.is_file() else "") + render_log(fid, entries))
+            if readme.is_file() and "](log.md)" not in readme.read_text():
+                readme.write_text(readme.read_text().rstrip("\n") + "\n- [log](log.md)\n")
+            written += [self.rel(log), self.rel(readme)]
+        self.note(f"step 4: wrote log.md for {len(written) // 2} features, each entry `Status: closed (legacy)`")
+        self.commit("pd-adopt step 4: legacy review, gate and phase history into log.md", written)
+
+    # step 5: content files stay; list what isn't done
+    def step5(self):
+        for d in self.features():
+            fm = pc.split_frontmatter((d / "README.md").read_text())[0] or {} if (d / "README.md").is_file() else {}
+            if fm.get("status") != "done":
+                self.note(f"NOT DONE: features/{d.name} (status: {fm.get('status')}): convert it to shape.md and plan.md before work resumes")
+
+    def step6(self):
+        self.commit("pd-adopt step 6: commit the backlog", [f"{NEW}/backlog.md"])
+
+    # step 7, pedantic-drip only: the projections' ignore lines go
+    def step7(self):
+        gi = self.root / ".gitignore"
+        lines = gi.read_text().split("\n") if gi.is_file() else []
+        drop = {"**/.meta.json", "docs/backlog.md"}
+        if not drop <= {x.strip() for x in lines}:
+            return
+        untracked = lambda: set((self.git("ls-files", "-o", "--exclude-standard") or "").split("\n")) - {""}
+        before = untracked()
+        gi.write_text("\n".join(x for x in lines if x.strip() not in drop))
+        for rel in sorted(untracked() - before):  # projections the ignore lines hid: kept, out of the tree
+            self.aside(self.root / rel)
+        self.note("step 7: removed the **/.meta.json and docs/backlog.md lines from .gitignore")
+        self.commit("pd-adopt step 7: stop ignoring .meta.json and docs/backlog.md", [".gitignore"])
+
+    def step8(self):
+        self.set_config("sop", "1")
+        self.commit("pd-adopt step 8: sop: 1", [CFG])
+
+
+# --- dry run and apply ----------------------------------------------------------------
+
+def dry_run(root, registry, workspace):
+    """Run every step in a throwaway clone, then print the notes and the diff."""
+    tmp = Path(tempfile.mkdtemp(prefix="pd-adopt-"))
+    try:
+        work = tmp / "repo"
+        pc.git(["clone", "-q", "--shared", str(root), str(work)], tmp)
+        for key, default in (("user.name", "pd-adopt"), ("user.email", "pd-adopt@localhost")):
+            pc.git(["config", key, pc.git(["config", key], root, check=False) or default], work)
+        pc.git(["config", "commit.gpgsign", "false"], work)
+        run = Adopt(work, registry, workspace, root)
+        extra = [f"{run.old}/{d}" for d in MOVED + ("projects",)] + [f"{run.old}/backlog*.md", CFG]
+        for rel in (pc.git(["ls-files", "-o", "--exclude-standard", "-i", "--", *extra], root) or "").split("\n") + \
+                [x for x in [CFG] if (root / x).is_file() and not pc.git(["ls-files", "--", x], root)]:
+            if rel and (root / rel).is_file():
+                (work / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(root / rel, work / rel)
+        run.run()
+        print("pd-adopt: dry run; nothing changed. Apply on a pd-adopt branch with: pd-adopt --apply")
+        print("\n".join(run.notes))
+        print(pc.git(["log", "--format=%s", "--reverse", f"{run.base}..HEAD"], work))
+        print(pc.git(["diff", "-M", "--stat=120", run.base, "HEAD"], work))
+        print(pc.git(["diff", "-M", run.base, "HEAD"], work))
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def apply(root, registry, workspace):
+    if pc.git(["status", "--porcelain"], root):
+        raise Refused("the working tree is not clean: commit or stash first")
+    if pc.git(["rev-parse", "--verify", "-q", "refs/heads/pd-adopt"], root, check=False):
+        raise Refused("a pd-adopt branch exists already")
+    pc.git(["checkout", "-q", "-b", "pd-adopt"], root)
+    run = Adopt(root, registry, workspace, root)
+    run.run()
+    print("\n".join(run.notes))
+    n = pc.git(["rev-list", "--count", f"{run.base}..HEAD"], root)
+    print(f"pd-adopt: {n} commits on branch pd-adopt. Review: git log -p {run.base[:10]}..pd-adopt")
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="pd-adopt", description=__doc__.split("\n")[0])
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    ap.add_argument("--workspace")
+    ap.add_argument("--self-test", action="store_true")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    root = pc.repo_root(".")
+    try:
+        if str(pc.load_config(root).get("sop")) == "1":
+            raise Refused("already adopted (sop: 1)")
+        return (apply if a.apply else dry_run)(root, a.registry.expanduser(), a.workspace)
+    except (Refused, RuntimeError) as e:
+        print(f"pd-adopt: {e}", file=sys.stderr)
+        return 1
+
+
+# --- self-test ------------------------------------------------------------------------
+
+def trace_problems(trace, source, copy):
+    """What breaks the registry rule in a recorded trace of ("open", path, immutable) / ("close", path) / ("step1",)."""
+    out = []
+    opens = [i for i, e in enumerate(trace) if e[0] == "open" and e[1] == source]
+    if len(opens) != 1 or not trace[opens[0]][2]:
+        out.append("the source is not opened exactly once with immutable=1")
+    close = next((i for i, e in enumerate(trace) if e[0] == "close" and e[1] == source), None)
+    step1 = next((i for i, e in enumerate(trace) if e[0] == "step1"), None)
+    if close is None or step1 is None or not (opens and opens[0] < close < step1):
+        out.append("the source is not closed before step 1")
+    if any(e[0] == "open" and e[1] not in (source, copy) for e in trace) or \
+            any(e[0] == "open" and e[1] == source for e in trace[(close or 0) + 1:]):
+        out.append("an open after the backup does not target the copy")
+    return out
+
+
+def self_test():
+    import pd_adopt_fixture as fx
+    c, g = pc.Checks("pd-adopt"), globals()
+
+    def call(repo, *argv):
+        out, old = io.StringIO(), os.getcwd()
+        os.chdir(repo)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                code = main(list(argv))
+        finally:
+            os.chdir(old)
+        return code, out.getvalue()
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, reg = fx.build(tmp)
+        git = lambda *a: pc.git(list(a), repo, check=False)
+        art, head = repo / NEW, git("rev-parse", "HEAD")
+        fm = lambda rel: pc.split_frontmatter((art / rel).read_text())[0]
+        gamma = repo / "docs/features/003-gamma/.meta.json"
+        gamma.write_text(json.dumps({"status": "weird"}))  # ignored: the tree stays clean
+        code, out = call(repo, "--registry", str(reg))
+        c.check(code == 0 and "diff --git" in out and "rename to docs/dev_artifacts/features/001-alpha/plan.md" in out,
+                "the dry run prints the diff")
+        c.check(git("status", "--porcelain") == "" and git("rev-parse", "HEAD") == head and git("branch", "--show-current") == "main",
+                "the dry run changes nothing")
+        c.check("MAP BY HAND: features/003-gamma: status 'weird'" in out, "an unmapped status is listed, not guessed")
+        c.check("UNCLASSIFIED: docs/dev_guides/" in out and "UNCLASSIFIED: docs/user-guide" not in out, "unclassified dirs are flagged")
+        gamma.write_text(fx.IGNORED["docs/features/003-gamma/.meta.json"])
+        (repo / "stray.txt").write_text("x")
+        code, out = call(repo, "--apply", "--registry", str(reg))
+        c.check(code == 1 and "not clean" in out and git("branch", "--show-current") == "main", "apply refuses a dirty tree")
+        (repo / "stray.txt").unlink()
+
+        trace, real_open, real_step1 = [], g["open_db"], Adopt.step1
+
+        def recording_open(path, immutable=False, factory=None):
+            class Recorded(sqlite3.Connection):
+                def close(self):
+                    trace.append(("close", Path(path).resolve()))
+                    super().close()
+            trace.append(("open", Path(path).resolve(), immutable))
+            return real_open(path, immutable, Recorded)
+        g["open_db"], Adopt.step1 = recording_open, lambda self: (trace.append(("step1",)), real_step1(self))[1]
+        try:
+            code, out = call(repo, "--apply", "--registry", str(reg))
+        finally:
+            g["open_db"], Adopt.step1 = real_open, real_step1
+        c.check(code == 0, f"apply exits 0: {out[-400:]}")
+        copy = (repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt" / "entities.db").resolve()
+        c.check(trace_problems(trace, reg.resolve(), copy) == [] and len(trace) >= 5,
+                f"the registry is read only through its copy: {trace_problems(trace, reg.resolve(), copy)}")
+        bad = [("open", reg, True), ("close", reg), ("step1",), ("open", reg, True)]
+        c.check(trace_problems(bad, reg, copy) != [], "a second source open is caught")
+        c.check(trace_problems([("open", reg, False), ("step1",), ("close", reg)], reg, copy) != [],
+                "a writable source open, or one closed after step 1, is caught")
+        c.check(git("branch", "--show-current") == "pd-adopt" and git("status", "--porcelain") == "",
+                "apply works on pd-adopt and leaves a clean tree")
+        subjects = git("log", "--format=%s", f"{head}..HEAD").split("\n")
+        c.check(len(subjects) == 8 and all(s.startswith("pd-adopt step") for s in subjects), f"one commit per step: {subjects}")
+        cfg = (repo / CFG).read_text()
+        c.check(not re.search(r"yolo|plan_mode_review|max_concurrent|activation_mode|autonomous", cfg)
+                and "base_branch: auto" in cfg and f"artifacts_root: {NEW}" in cfg, "the retired fields are removed")
+        c.check(subjects[0].endswith("sop: 1") and git("show", "--name-only", "--format=", "HEAD") == CFG
+                and "sop:" not in (git("show", f"HEAD~1:{CFG}") or "sop:") and "sop: 1" in cfg, "sop: 1 is written last")
+        c.check(not (repo / "docs/features").exists() and (art / "features/001-alpha/spec.md").is_file()
+                and (art / "plans/2026-01-28-design/notes.md").is_file() and (art / "knowledge-bank/patterns.md").is_file(),
+                "the artifacts moved under docs/dev_artifacts/")
+        usage, spec = (repo / "docs/user-guide/usage.md").read_text(), (art / "features/001-alpha/spec.md").read_text()
+        c.check("](../dev_artifacts/features/001-alpha/spec.md)" in usage and "`docs/dev_artifacts/features/001-alpha/plan.md`" in usage
+                and "](../../../user-guide/usage.md)" in spec and "](../002-beta/spec.md)" in spec, "links are rewritten")
+        c.check((art / "backlog-archive-legacy.md").is_file() and not (art / "backlog-archive.md").exists(),
+                "a pre-§7 backlog archive moves aside from pd-lint's name")
+        a1 = fm("features/001-alpha/README.md")
+        c.check(a1 == {"id": "001-alpha", "type": "feature", "title": "Alpha parser", "status": "done", "phase": "finish",
+                       "mode": "standard", "origin": "plans/P001-alpha-evolution.md"} and not list(art.rglob(".meta.json")),
+                f"README frontmatter from .meta.json, and .meta.json deleted: {a1}")
+        c.check((art / "features/003-gamma/readme-legacy.md").read_text() == "# Gamma notes\n\nHand-written.\n"
+                and "](readme-legacy.md)" in (art / "features/003-gamma/README.md").read_text(), "an existing README moves aside, linked")
+        c.check(fm("rca/20260310-stale.md")["status"] == "done", "a single file's recorded status is mapped")
+        c.check(fm("features/003-gamma/README.md").get("status") == "done"
+                and fm("features/003-gamma/README.md").get("origin") == "backlog#2026-01-06-gamma-cache", "satisfied maps to done; backlog origin")
+        b2, blog = fm("features/002-beta/README.md"), (art / "features/002-beta/log.md").read_text()
+        c.check(b2 == {"id": "002-beta", "type": "feature", "title": "Beta io", "status": "active", "phase": "design",
+                       "mode": "standard", "origin": "plans/P001-alpha-evolution.md", "branch": "feature/002-beta"},
+                f"registry-only recovery: state and parent from the registry: {b2}")
+        heads = [e["heading"] for e in pc.parse_log(blog)]
+        c.check(heads == ["## 2026-02-01 09:00+08:00 phase start -> specify", "## 2026-02-01 10:00+08:00 review specify — legacy",
+                          "## 2026-02-02 09:00+08:00 phase specify -> design", "## 2026-02-02 15:40+08:00 phase design -> specify (back)",
+                          "## 2026-02-03 09:00+08:00 phase specify -> design"]
+                and "Reason: contract named no error" in blog and "other workspace" not in blog,
+                f"registry-only recovery: exactly its history, no other workspace's: {heads}")
+        alog = pc.parse_log((art / "features/001-alpha/log.md").read_text())
+        kinds = sorted(e["kind"] for e in alog)
+        c.check(kinds == ["note", "phase", "qa", "review", "review", "review"] and len(alog) == 6
+                and all("Status: closed (legacy)" in e["body"] for e in alog) and pc.open_blockers(alog) == []
+                and not any((art / "features/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log")),
+                f"log.md entries marked closed (legacy), originals removed: {[e['heading'] for e in alog]}")
+        p1 = fm("plans/P001-alpha-evolution.md")
+        ptext = (art / "plans/P001-alpha-evolution.md").read_text()
+        c.check(p1["roadmap"] == [{"feature": "features/001-alpha"}, {"feature": "features/002-beta", "after": ["001-alpha"]}]
+                and p1["status"] == "active" and "Why." in ptext and "Alpha first, then beta." in ptext and "graph TD" not in ptext
+                and not (art / "plans/005-alpha-evolution.md").exists() and not (repo / "docs/projects").exists(),
+                f"projects become plans with a roadmap; duplicates merged: {p1}")
+        c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no features is a plain plan")
+        bl = (art / "backlog.md").read_text()
+        c.check("- [ ] 2026-01-05-flaky-ui-test — Flaky UI test\n" in bl and "- [x] 2026-01-06-gamma-cache — promoted → features/003-gamma\n" in bl
+                and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
+        c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
+                and fm("rca/20260309-drift.md")["status"] == "done", "legacy single-file items get id, type, title and status")
+        gi = (repo / ".gitignore").read_text()
+        c.check("**/.meta.json" not in gi and "docs/backlog.md" not in gi and "agent_sandbox/" in gi
+                and (repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/backlog.md").is_file(),
+                "pedantic-drip's ignore lines go; the hidden projections are kept aside")
+        code, out = call(repo, "--registry", str(reg))
+        c.check(code == 1 and "already adopted" in out, "a second run refuses")
+        lint = HERE / "pd-lint"
+        if lint.is_file() and os.access(lint, os.X_OK):
+            r = subprocess.run([str(lint)], cwd=repo, capture_output=True, text=True)
+            c.check(r.returncode == 0, f"pd-lint exits 0 on the result: {r.stdout[-600:]}{r.stderr[-300:]}")
+        else:
+            lint = None
+            print("SKIP pd-lint (not built yet)")
+        # A second repository: a config symlinked out of it, then a tracked pre-§7 backlog.md.
+        repo2, reg2 = fx.build(Path(tmp) / "two")
+        ext = Path(tmp) / "shared-config.md"
+        ext.write_text((repo2 / CFG).read_text())
+        (repo2 / CFG).unlink()
+        (repo2 / CFG).symlink_to(ext)
+        pc.git(["commit", "-qam", "symlinked config"], repo2)
+        before = ext.read_text()
+        code, out = call(repo2, "--registry", str(reg2))
+        c.check(code == 1 and "symlink out of the repository" in out and ext.read_text() == before,
+                "a config symlinked out of the repository is refused, and never written")
+        (repo2 / CFG).unlink()
+        (repo2 / CFG).write_text(before)
+        (repo2 / ".gitignore").write_text((repo2 / ".gitignore").read_text().replace("docs/backlog.md\n", ""))
+        (repo2 / "docs/backlog.md").write_text("# Backlog\n\n| ID | Item |\n|---|---|\n| 00042 | flaky gate |\n")
+        pc.git(["add", "-A"], repo2)
+        pc.git(["commit", "-qm", "a tracked pre-§7 backlog"], repo2)
+        code, out = call(repo2, "--apply", "--registry", str(reg2))
+        c.check(code == 0 and (repo2 / NEW / "backlog-legacy.md").is_file() and not (repo2 / NEW / "backlog.md").exists()
+                and "MAP BY HAND: docs/backlog.md has pre-§7 lines" in out, f"a tracked pre-§7 backlog moves aside: {out[-400:]}")
+        if lint:
+            r = subprocess.run([str(lint)], cwd=repo2, capture_output=True, text=True)
+            c.check(r.returncode == 0, f"pd-lint exits 0 after a tracked legacy backlog: {r.stdout[-600:]}")
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

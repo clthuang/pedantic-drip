@@ -2,7 +2,8 @@
 name: security-reviewer
 description: Reviews for security vulnerabilities. Use when (1) implement command review phase, (2) user says 'security review', (3) user says 'check for vulnerabilities', (4) user says 'audit security'.
 model: opus
-tools: [Read, Glob, Grep, WebSearch, mcp__context7__resolve-library-id, mcp__context7__query-docs]
+effort: high
+tools: [Read, Grep, Glob]
 color: magenta
 ---
 

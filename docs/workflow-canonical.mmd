@@ -1,0 +1,145 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#555"
+  flowchart:
+    nodeSpacing: 40
+    rankSpacing: 48
+    htmlLabels: true
+    wrappingWidth: 420
+---
+flowchart TD
+
+  %% The canonical pd workflow on Claude Code's native features.
+  %% Source of truth: docs/plans/2026-10-14-thin-pd-native-design.md §A2–§A5 (decisions D7–D16).
+
+  %% ===================== ENTRY =====================
+  subgraph ENTRY ["Work arrives"]
+    direction LR
+    IDEA["<b>Idea</b><br/>no settled problem"]
+    REQ["<b>Feature request</b><br/>intent stated, behaviour implicit"]
+    BUG["<b>Bug</b><br/>something broke"]
+  end
+
+  TRI{{"<b>0 · Triage</b> · /pd:secretary<br/>picks the depth: <b>standard</b> · <b>small</b> (an estimate: ≤ 3 tasks) · <b>express</b><br/>always standard for security, migrations, many files, areas new to the codebase<br/>risk tags: security · migration"}}
+  IDEA --> TRI
+  REQ --> TRI
+  BUG --> TRI
+
+  %% ===================== SPINE =====================
+  CLAR["<b>1 · Clarify</b> &nbsp; <i>a brainstorm or rca item</i><br/>is this the right problem? what would success look like?<br/>research-fanout only when it pays · rca-fanout for every bug<br/><i>kills: the wrong problem</i>"]
+  TRI -- "idea · bug" --> CLAR
+
+  CRIT["<b>2 · Criteria</b> &nbsp; <i>specify</i><br/>shape.md ## Requirements<br/>goals · non-goals · user stories<br/>behaviour expectations B1…Bn, each with an observable outcome<br/><i>kills: what counts as done</i>"]
+  CLAR --> CRIT
+  TRI -- "request" --> CRIT
+
+  G2{{"<b>gate</b> · phase-gate specify (exit)<br/>every expectation: id and observable outcome<br/>your sign-off recorded"}}
+  R2{{"<b>calvin</b> · ≤ 3 review-revise rounds<br/>are the criteria faithful, and enough?<br/><b>you sign off the criteria</b>"}}
+  CRIT --> R2 --> G2
+
+  CON["<b>3 · Contracts</b> &nbsp; <i>design</i><br/>shape.md ## Design<br/><b>architecture diagram</b>: modules · flows · one contract per edge<br/>each contract pinned once · invariants<br/>test strategy: fixture locations · fakes · real resources allowed<br/>documents only: no code yet<br/><i>kills: what crosses each boundary</i>"]
+  G2 --> CON
+
+  G3{{"<b>gate</b> · phase-gate design<br/>diagram and test strategy present · no restated contract"}}
+  R3{{"<b>design review</b> · Codex first · ≤ 3 review-revise cycles<br/>re-review checks only the earlier findings<br/>every edge has a contract, every contract an edge"}}
+  CON --> G3 --> R3
+
+  PLAN["<b>4 · Plan</b> &nbsp; <i>create-plan</i><br/>plan.md: per task · contract · test cases · proving command · file set<br/>test cases in plain words or pseudo code, citing B-ids,<br/>naming their fixture, edges included<br/>from_shape: goes stale when shape.md moves<br/><i>kills: order, and what proves each step</i>"]
+  R3 --> PLAN
+
+  G4{{"<b>gate</b> · pd-lint<br/>every task: test cases, proving command, files<br/>every B-id covered · from_shape: still matches"}}
+  PLAN --> G4
+
+  R4{{"<b>test-case review</b> · Codex first · ≤ 3 review-revise cycles<br/>faithful to the expectations? edges covered?"}}
+  G4 --> R4
+
+  %% ===================== EXECUTE =====================
+  subgraph EXEC ["5 · Execute — implement-tasks workflow &nbsp; (kills: does the code meet each contract?)"]
+    direction LR
+    T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
+    T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
+    T3["sequential tasks · sonnet · own worktree<br/>one at a time, after the parallel ones land<br/>same commit rules"]
+    MRG["<b>merger</b><br/>merges in plan order · per task:<br/>pd-proof · first commit: each test fails as a test,<br/>any already green is named<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
+    T1 --> MRG
+    T2 --> MRG
+    T3 --> MRG
+  end
+  R4 --> T1
+  R4 --> T2
+  R4 --> T3
+
+  %% ===================== VERIFY =====================
+  subgraph VER ["6 · Verify — verify-change workflow &nbsp; (kills: does the whole change hold together?)"]
+    direction LR
+    REV["<b>code review</b> · Codex first · one pass<br/>correctness, criteria, over-engineering<br/>each test asserts its case (case map)"]
+    QA["<b>QA</b> · strongest model<br/>runs the suites, drives the flows<br/>hunts the cases no criterion named<br/>asks what each criterion still allows"]
+    FIX["<b>fixer</b> · ≤ 3 cycles<br/>each cycle judged by re-running the checks<br/>a judgement finding: the finder states the case,<br/>the fixer commits its test first,<br/>the QA re-run checks red, then green"]
+    REV --> FIX
+    QA --> FIX
+  end
+  MRG --> REV
+  MRG --> QA
+
+  FIN["<b>7 · Finish</b> &nbsp; <i>finish</i><br/>security review when tagged risk: security<br/>metrics entry in log.md · retro only on a trigger<br/>lessons become checks · merge to the base branch<br/><i>kills: what this taught</i>"]
+  FIX --> FIN
+  SHIP([Ship])
+  FIN --> SHIP
+
+  %% ===================== SHORTER PATHS =====================
+  SMALL["<b>small</b>: Contracts and Plan<br/>written in one sitting<br/>one review call checks both"]
+  EXP["<b>express</b>: a mini-spec<br/>stands in for stages 2–4<br/>each skip recorded<br/>verify: proof + QA battery"]
+  TRI -. "small" .-> SMALL
+  SMALL -.-> CON
+  TRI -. "express" .-> EXP
+  EXP -.-> T3
+
+  %% ===================== STOPS =====================
+  STOP[/"<b>stop and ask you</b><br/>in the main session · blocked beats guessed<br/>also at the token cap, or no progress: continue or stop?<br/>at a cap, first written down: deferred · follow-ups · decisions · assumptions"/]
+  R2 -. "blockers left after 3 rounds" .-> STOP
+  R3 -. "blockers left after 3 cycles" .-> STOP
+  R4 -. "blockers left after 3 cycles" .-> STOP
+  FIX -. "still failing after 3 cycles" .-> STOP
+  MRG -. "check fails:<br/>fix cycle 1 on sonnet<br/>cycles 2–3 on strongest" .-> T1
+
+  %% ===================== BACKWARD =====================
+  R3 -. "criteria unbuildable" .-> CRIT
+  QA -. "a case no criterion named" .-> CRIT
+  REV -. "the contract was wrong" .-> CON
+  MRG -. "task under-specified,<br/>or a test case wrong" .-> PLAN
+  FIN -. "security blocker" .-> FIX
+
+  %% ===================== RUNTIME =====================
+  subgraph RUN ["How it runs"]
+    direction LR
+    COND["<b>Conductor</b> · main session<br/>asks you · writes the files<br/>launches the fan-out workflows<br/>dispatches single reviewers"]
+    AUTO["<b>Unattended</b><br/>/goal keeps it going<br/>a Stop-hook script decides done<br/>yields while a workflow runs<br/>caps on depth · tokens"]
+    FILES["<b>State</b> · committed files<br/>README.md frontmatter · log.md<br/>shape.md · plan.md · retro.md"]
+    COND ~~~ AUTO ~~~ FILES
+  end
+  SHIP ~~~ RUN
+
+  %% ===================== STYLE =====================
+  classDef stage fill:#eef4fb,stroke:#3c6ea5,stroke-width:2px,color:#12263a
+  classDef verify fill:#e6f0fa,stroke:#1f4e79,stroke-width:3px,color:#0d1f33
+  classDef review fill:#fdf2e3,stroke:#c98a1b,stroke-width:2px,color:#4a3208
+  classDef mech fill:#eaf6ec,stroke:#3f8c4f,stroke-width:2px,color:#123018
+  classDef worker fill:#f4f1f8,stroke:#7a5fa3,stroke-width:1.5px,color:#2b1f3d
+  classDef entry fill:#ffffff,stroke:#888,stroke-width:1.5px,color:#222
+  classDef path fill:#ffffff,stroke:#888,stroke-width:1.5px,stroke-dasharray:5 4,color:#333
+  classDef done fill:#3f8c4f,stroke:#2c6339,stroke-width:2px,color:#ffffff
+  classDef stop fill:#fbeaea,stroke:#a8423f,stroke-width:2px,color:#3d1211
+  classDef run fill:#f7f7f2,stroke:#777,stroke-width:1.5px,color:#222
+
+  class CLAR,CRIT,CON,PLAN,FIN stage
+  class QA verify
+  class R2,R3,R4,REV review
+  class TRI,G2,G3,G4 mech
+  class T1,T2,T3,MRG,FIX worker
+  class IDEA,REQ,BUG entry
+  class SMALL,EXP path
+  class SHIP done
+  class STOP stop
+  class COND,AUTO,FILES run

@@ -388,20 +388,6 @@ test_skill_auto_pass_sets_score_3_and_null_suggestion() {
     fi
 }
 
-# derived_from: spec:AC7 (YOLO mode auto-selects Accept all, skips AskUserQuestion)
-test_cmd_yolo_auto_selects_accept_all() {
-    log_test "promptimize.md YOLO mode auto-selects Accept all and skips AskUserQuestion"
-    if [[ ! -f "$PROMPTIMIZE_CMD" ]]; then log_fail "File not found"; return; fi
-    # Given the YOLO mode handling in the command
-    # When we check for the auto-select behavior
-    # Then it documents auto-selecting Accept all and skipping user interaction
-    if grep -q 'YOLO' "$PROMPTIMIZE_CMD" && grep -qi 'auto-select.*Accept all\|Accept all.*auto' "$PROMPTIMIZE_CMD"; then
-        log_pass
-    else
-        log_fail "Missing YOLO auto-select Accept all documentation"
-    fi
-}
-
 # derived_from: spec:AC8 (staleness warning included in report template)
 test_cmd_report_includes_staleness_warning_template() {
     log_test "promptimize.md report template includes staleness warning block"
@@ -557,13 +543,6 @@ test_cmd_has_tag_validation() {
     log_test "promptimize.md contains tag_validation_failed"
     if [[ ! -f "$PROMPTIMIZE_CMD" ]]; then log_fail "File not found"; return; fi
     if grep -q 'tag_validation_failed' "$PROMPTIMIZE_CMD"; then log_pass; else log_fail "Missing tag_validation_failed"; fi
-}
-
-# derived_from: design:cmd-yolo (promptimize.md contains YOLO mode handling)
-test_cmd_has_yolo_mode_handling() {
-    log_test "promptimize.md contains YOLO mode handling"
-    if [[ ! -f "$PROMPTIMIZE_CMD" ]]; then log_fail "File not found"; return; fi
-    if grep -q 'YOLO_MODE\|YOLO' "$PROMPTIMIZE_CMD"; then log_pass; else log_fail "Missing YOLO mode handling"; fi
 }
 
 # --- refresh-prompt-guidelines.md command ---
@@ -1335,7 +1314,6 @@ main() {
     test_cmd_malformed_tags_degrade_to_two_option_menu
     test_cmd_accept_all_strips_change_tags
     test_skill_auto_pass_sets_score_3_and_null_suggestion
-    test_cmd_yolo_auto_selects_accept_all
     test_cmd_report_includes_staleness_warning_template
     test_cmd_report_includes_over_budget_warning
     test_cmd_drift_detected_disables_accept_some
@@ -1351,7 +1329,6 @@ main() {
     test_cmd_has_score_computation
     test_cmd_has_drift_detection
     test_cmd_has_tag_validation
-    test_cmd_has_yolo_mode_handling
 
     # refresh-prompt-guidelines.md command
     test_refresh_cmd_documents_websearch_fallback

@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""pd-status: the current repository's state, computed from its committed files (plan Part B §11).
+
+  pd-status              # print the state
+  pd-status --self-test
+
+Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and
+next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and
+done features owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
+"""
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import (ID_RE, PHASES, REF_RE, STATUSES, TYPE_DIRS, Checks, artifacts_dir,  # noqa: E402
+                       blank_fences, find_items, is_unadopted, load_config, log_text, make_repo,
+                       open_assumptions, open_blockers, parse_log, repo_root, retro_triggers,
+                       sections, split_frontmatter)
+
+
+def load_items(art):
+    items = []
+    for type_, id_, control in find_items(art):
+        if not control.is_file():
+            continue
+        try:
+            fm, body, _ = split_frontmatter(control.read_text())
+        except ValueError:
+            fm, body = None, control.read_text()
+        now = [l.strip() for l in blank_fences(sections(body).get("Now", "")).split("\n") if l.strip()]
+        items.append({"type": type_, "id": id_, "path": control, "fm": fm or {},
+                      "label": f"{TYPE_DIRS[type_]}/{id_}", "now": now[0] if now else "",
+                      "entries": parse_log(*log_text(type_, control))})
+    return items
+
+
+def slug_of(feature_id):
+    return feature_id[11:] if ID_RE.match(feature_id) else feature_id
+
+
+def roadmap_lines(plan, features):
+    """Progress, next ready item and replan flags (§7.1): computed, never stored."""
+    rows = []  # (slug, state, after)
+    for entry in plan["fm"].get("roadmap") or []:
+        if not isinstance(entry, dict):
+            continue
+        after = entry.get("after") or []
+        after = after if isinstance(after, list) else [after]
+        if "dropped" in entry:
+            rows.append((entry["dropped"], "dropped", after))
+        elif "planned" in entry:
+            rows.append((entry["planned"], "planned", after))
+        elif "feature" in entry:
+            fid = Path(entry["feature"]).name
+            f = features.get(fid)
+            rows.append((slug_of(fid), f["fm"].get("status", "?") if f else "missing", after))
+    finished = {s for s, state, _ in rows if state in ("done", "dropped")}
+    dropped = {s for s, state, _ in rows if state == "dropped"}
+    ready = next((s for s, state, after in rows if s not in finished and all(a in finished for a in after)), None)
+    head = f"{plan['label']}: {len(finished)}/{len(rows)} done"
+    head += "; plan done" if len(finished) == len(rows) else f"; next ready: {ready or 'none'}"
+    lines = [head]
+    for s, state, after in rows:
+        if s not in finished and dropped.intersection(after):
+            lines.append(f"  replan: {s} (after dropped {', '.join(sorted(dropped.intersection(after)))})")
+    return lines
+
+
+def capped_links(entries):
+    refs = {e["ref"] for e in entries if e.get("kind") == "capped"}
+    out = []
+    for e in entries:
+        if e.get("kind") != "decision":
+            continue
+        for line in e["body"]:
+            if line.startswith("answers:"):
+                for kind, stamp, _ in REF_RE.findall(line):
+                    target = f"{kind}@{stamp}"
+                    out.append(f"{e['ref']} answers {target}" + ("" if target in refs else " (no such capped entry)"))
+    return out
+
+
+def report(root):
+    cfg = load_config(root)
+    if is_unadopted(root, cfg):
+        return ("run /pd:adopt: this project still uses the old layout "
+                "(docs/features/ without `sop: 1` in .claude/pd.local.md)")
+    art = artifacts_dir(root, cfg)
+    items = load_items(art)
+    if not items:
+        return f"no items under {art.relative_to(root)}"
+    rank = lambda v, order: order.index(v) if v in order else len(order)
+    items.sort(key=lambda i: (rank(i["fm"].get("status"), STATUSES), rank(i["fm"].get("phase"), PHASES), i["id"]))
+    out = ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} NOW"]
+    for i in items:
+        fm = i["fm"]
+        out.append(f"{fm.get('status') or '?':<10} {fm.get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
+
+    features = {i["id"]: i for i in items if i["type"] == "feature"}
+    blocks = {"Plans": [l for i in items if i["type"] == "plan" and i["fm"].get("roadmap")
+                        for l in roadmap_lines(i, features)]}
+    blocks["Open blockers"] = [
+        f"{i['label']}: {b['ref']} {b['file']}:{b['line']} — {b['claim']}"
+        + ("  [rejection proposed — needs the user's decision]" if b["rejection_proposed"] else "")
+        for i in items for b in open_blockers(i["entries"])]
+    blocks["Cap stops answered"] = [f"{i['label']}: {l}" for i in items for l in capped_links(i["entries"])]
+    blocks["Open assumptions"] = [f"{i['label']}: {a['ref']} — {a['text']}"
+                                  for i in items for a in open_assumptions(i["entries"])]
+    blocks["On-behalf decisions"] = [
+        f"{i['label']}: {e['ref']} — {line}" for i in items for e in i["entries"] if e.get("kind") == "decision"
+        for line in e["body"] if line.startswith("A (conductor, on the user's behalf)")]
+    blocks["Retros owed"] = [
+        f"{i['label']}: {', '.join(t)}" for i in items
+        if i["type"] == "feature" and i["fm"].get("status") == "done"
+        and not (i["path"].parent / "retro.md").is_file()
+        for t in [retro_triggers(i["entries"])] if t]
+    for title, lines in blocks.items():
+        if lines:
+            out += ["", title, *lines]
+    return "\n".join(out)
+
+
+# --- self-test -------------------------------------------------------------------
+
+S = "2026-10-14"
+
+
+def _feature(art, id_, status, phase, now="", log="", retro=False):
+    d = art / "features" / id_
+    d.mkdir(parents=True)
+    (d / "README.md").write_text(f"---\nid: {id_}\ntype: feature\ntitle: {id_}\nstatus: {status}\n"
+                                 f"phase: {phase}\nmode: standard\n---\n# {id_}\n\n## Now\n\n{now}\n\n## Links\n")
+    (d / "log.md").write_text(log)
+    if retro:
+        (d / "retro.md").write_text("# Retro\n")
+
+
+def _self_test():
+    c = Checks("pd-status")
+    with tempfile.TemporaryDirectory() as t:
+        root = make_repo(Path(t) / "r")
+        art = root / "docs" / "dev_artifacts"
+        h = lambda hm, kind: f"## {S} {hm}+08:00 {kind}\n"
+        rv = f"review@{S} 11:00+08:00"
+        beta_log = (
+            h("11:00", "review") + "Verdict: changes requested. Commit: abc1234.\n"
+            + "".join(f"- R{n} blocker src/a.py:{n} — claim {n}\n" for n in range(1, 9)) + "- R9 warning src/a.py:9 — w\n"
+            + h("11:10", "review") + f"Closes: {rv}#R1\n"                                   # a later fix
+            + h("11:20", "decision") + f"Q: defer R2?\nA (conductor): yes\nCloses: {rv}#R2\n"  # a decision
+            + h("11:30", "capped") + f"Deferred: none\nFollow-ups: none\nDecisions: none\n"
+            + "Assumptions:\n- A1: inputs are sorted\n- A2: no negative timeouts\n" + f"Closes: {rv}#R3\n"  # capped
+            + h("11:40", "phase")[:-1] + " verify -> design (back)\n" + f"Reason: x\nCloses: {rv}#R4\n"  # back
+            + h("11:50", "review") + f"Rejects: {rv}#R5, {rv}#R6 — src/a.py:40 already handles it\n"
+            + h("12:00", "decision") + f"A (conductor): reject\nCloses: {rv}#R5\n"           # rejection: not the user
+            + h("12:10", "decision") + f"A (user, verbatim): \"accept\"\nCloses: {rv}#R6\n"   # rejection: the user
+            + h("12:20", "qa") + "Status: closed (legacy)\n- Q1 blocker src/b.py:1 — legacy\n"  # legacy
+            + h("12:30", "review") + f"Closes: capped@{S} 11:30+08:00#A1\n"
+            + h("12:40", "decision") + f"Q: continue past the cap?\nA (user, verbatim): \"go\"\nanswers: capped@{S} 11:30+08:00\n"
+            + h("12:50", "decision") + "Q: pick a port\nA (conductor, on the user's behalf): 8080\n")
+        _feature(art, f"{S}-alpha", "done", "finish", log=h("13:00", "defect") + "Fixed by: abc1234.\n")
+        _feature(art, f"{S}-beta", "active", "implement", now="next: task 2", log=beta_log)
+        _feature(art, f"{S}-kappa", "active", "specify")
+        _feature(art, f"{S}-gamma", "blocked", "design", now="waiting on the API owner")
+        _feature(art, f"{S}-delta", "abandoned", "specify")
+        _feature(art, f"{S}-omega", "done", "finish", log=h("13:00", "capped") + "Deferred: none\n", retro=True)
+        (art / "plans").mkdir()
+        (art / "plans" / f"{S}-road.md").write_text(
+            f"---\nid: {S}-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n"
+            f"  - feature: features/{S}-alpha\n  - planned: zeta\n    after: [eps]\n"
+            f"  - feature: features/{S}-beta\n    after: [alpha]\n"
+            f"  - dropped: delta\n    reason: \"not needed\"\n  - planned: eps\n    after: [delta]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n")
+        out = report(root)
+        rows = [l.split()[3] for l in out.split("\n")[2:9]]
+        c.check(rows == [f"{S}-kappa", f"{S}-beta", f"{S}-road", f"{S}-gamma", f"{S}-alpha", f"{S}-omega", f"{S}-delta"],
+                "items sorted by status then phase")
+        c.check("next: task 2" in out and "waiting on the API owner" in out, "the table shows ## Now's first line")
+        c.check(f"plans/{S}-road: 2/5 done; next ready: beta" in out, "plan progress: dropped counts as done; next ready")
+        c.check("replan: eps (after dropped delta)" in out and "replan: zeta" not in out, "a dropped item's dependents flagged")
+        blockers = [l for l in out.split("\n") if f"{rv}#R" in l and "src/a.py" in l]
+        c.check(not any(f"#R{n} " in l for l in blockers for n in (1, 2, 3, 4)),
+                "blockers closed by a fix, a decision, a capped entry and a backward phase")
+        c.check(any("#R5 " in l and "rejection proposed — needs the user's decision" in l for l in blockers),
+                "a proposed rejection stays open until the user's decision")
+        c.check(not any("#R6 " in l for l in blockers), "a rejection the user accepted closes")
+        c.check(any("#R7 " in l for l in blockers) and "Q1" not in out and "#R9" not in out,
+                "an unclosed blocker is open; legacy and warnings aren't")
+        c.check(f"answers capped@{S} 11:30+08:00" in out and "no such capped entry" not in out, "decision linked to its capped entry")
+        c.check(f"capped@{S} 11:30+08:00#A2 — no negative timeouts" in out and "#A1" not in out, "open assumptions")
+        c.check("A (conductor, on the user's behalf): 8080" in out and "A (conductor): reject" not in out,
+                "on-behalf decisions listed")
+        c.check(f"features/{S}-alpha: defect" in out and f"features/{S}-omega" not in out.split("Retros owed")[-1],
+                "a done feature with a trigger and no retro.md owes a retro")
+        old = make_repo(Path(t) / "old")
+        (old / "docs" / "features" / "001-x").mkdir(parents=True)
+        c.check(report(old).startswith("run /pd:adopt"), "an unadopted project says run /pd:adopt")
+    return c.done()
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return _self_test()
+    if argv:
+        print(__doc__.strip().split("\n\n")[1], file=sys.stderr)
+        return 2
+    print(report(repo_root()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
