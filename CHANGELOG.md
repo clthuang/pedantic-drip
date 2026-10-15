@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The README describes thin pd.** The seven stages, the three depths, `/pd:init` and `/pd:adopt`, the current commands and where state lives, with a simplified workflow diagram; `docs/workflow-canonical.mmd` stays the full reference. `plugins/pd/README.md` now gives the old-layout test as `docs/features/` without `sop: 1`, and adds the marketplace from GitHub.
+
 ## [7.0.0] - 2026-10-15
 
 ### Changed
