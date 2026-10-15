@@ -27,42 +27,49 @@ Claude Code plugin providing a structured feature development workflow—skills,
 
 **Before non-trivial changes:** Pause and ask whether there's a simpler approach. Skip this for obvious, mechanical fixes.
 
-**Plans from any source:** When the user provides a plan (via CC plan mode, pasted in chat, or from a file), always dispatch plan-reviewer before implementing. The PreToolUse ExitPlanMode hook enforces this in CC plan mode; compensate manually for plans pasted in chat or from files.
+**Plans from any source:** When the user provides a plan (via CC plan mode, pasted in chat, or from a file), always dispatch plan-reviewer before implementing. No hook enforces this since thin pd deleted the ExitPlanMode hook (T2.1); do it by hand for every plan.
 
-**Worktree directory:** The `.pd-worktrees/` directory at the project root is used by the implementing skill for parallel task dispatch (worktree isolation workaround for CC Issue #33045). It is gitignored and auto-cleaned after successful merges. Never commit files inside `.pd-worktrees/` or treat them as source of truth — the orchestrating skill merges worktree branches back to the feature branch.
+**Worktree directory:** `implement-tasks` runs each task in a Claude Code worktree under `.claude/worktrees/` (`isolation: 'worktree'`), branched from the feature branch's HEAD by the `worktree.baseRef: "head"` setting. It is gitignored; Claude Code removes clean ones itself. Never commit inside `.claude/worktrees/` or treat it as source of truth — the merger lands each `pd/<id>/task-<n>` branch on the feature branch.
 
-**Worktree includes (`.worktreeinclude`):** Projects that adopt the worktree-parallel implementation pattern and depend on gitignored files (e.g., `.env`, build outputs, local config) at agent-runtime should add a `.worktreeinclude` file at the project root listing those paths. The worktree creation step copies/symlinks listed files into each `.pd-worktrees/task-{N}/` so agents can run tests and builds. If the project's tests don't need any gitignored files, omit `.worktreeinclude` entirely.
+**Worktree includes (`.worktreeinclude`):** Projects whose tests need gitignored files (e.g., `.env`, build outputs, local config) list them in a `.worktreeinclude` at the project root (`.gitignore` syntax); Claude Code copies them into every worktree it creates, subagent worktrees included (code.claude.com/docs/en/worktrees). Omit it when tests need no gitignored files.
 
 ## Behavioral Guardrails
 
-**Review gate protocol (feature 134):** One reviewer pass → at most one fix round → remaining blockers escalate to the user. Never iterate to a cap; a zero-finding confirmatory rerun is an anti-pattern. Two standing review moments per deep feature (design, code) plus the conditional security review at finish.
-*Why:* 3-5 iteration cycles consumed large context/time portions; the rebuilt workflow encodes the one-pass rule in workflow-transitions.
-*Enforced by:* Iteration cap in `implement.md`.
+**Review gate protocol (thin pd):** One reviewer pass → up to three fix cycles against runnable checks → remaining blockers go to the user. Before code, a pass with no blocker ends the stage; a zero-finding confirmatory rerun is an anti-pattern. Review calls at Contracts, Plan and Verify, plus the security review at finish.
+*Why:* 3-5 open-ended iteration cycles consumed large context/time portions (feature 134); thin pd bounds the loop by runnable checks instead (plan §A2).
+*Enforced by:* `verify-change.js`'s three-cycle loop (`test-workflows.mjs`); `workflow-transitions` "Loops and caps".
+*Stays because:* the conductor runs the Contracts and Plan review calls by hand, and no script counts those cycles.
 
 **Reviewer-claim verification:** When a reviewer's finding asserts a specific, checkable fact about existing code ("X writes column Y", "helper Z is unused"), verify it against the source (file:line) BEFORE writing it into a spec/design/plan. Reviewer output is not self-verifying.
 *Why:* Feature 131's spec absorbed a false reviewer claim about `backfill_project_ids` for a full round; only a second independent dispatch caught it.
-*Enforced by:* Convention — cite the verifying file:line in the applied-fix note.
+*Enforced by:* Convention — cite the verifying file:line in the applied-fix note; `verify-change`'s fixer checks findings before acting.
+*Stays because:* whether a claim is true takes reading the code; no check can decide it.
 
 **Non-vacuity test guard:** When a change adds a new/rewritten code path beside an existing tolerate/fallback path, every test targeting the new path must assert a fact true ONLY on that path — "no exception / zero issues" is satisfied by the fallback too. Restatements: a contract lives once, in its `shape.md` code block, and `pd-lint` fails a duplicate contract block or a `status:`/`phase:` line outside frontmatter; prose and docstrings restating a changed contract are still swept by hand. Verification claims must TRAIL their verification, never lead it — not even by one commit message (126's matcher-fix commit claimed a probe not yet run; caught in self-review and run immediately after).
 *Why:* Feature 131 re-flagged vacuous-green in 4 separate review rounds, and a half-swept doc contract cost a handoff blocker.
-*Enforced by:* `pd-lint` (restatements); design/plan reviewer checklists (non-vacuity).
+*Enforced by:* `pd-lint` (restatements); the planning and verifying checklists and the merger's red-first proof (non-vacuity).
+*Stays because:* work in this repo doesn't always run through pd's workflow, and "claims trail verification" has no check.
 
 **Cross-contract collision check:** When a spec pins a grep/scan-based success criterion and a design pins VERBATIM content (code block, mandated comment, no-edit range) whose scope the scan covers, RUN the scan against the pinned content — including its own comments/docstrings/names — before approving either artifact. Internal-soundness review of each contract separately does not catch the pair colliding.
 *Why:* Feature 125 shipped two such collisions past every pre-implementation review layer, one surviving six passes after being pinned: D1's verbatim block carried the SC2-grepped token in its own prose; D7's no-edit range kept a test name the SC2 clause forbade. Both caught only at execution, both preventable by one mechanical grep.
-*Enforced by:* Convention — design/spec reviewer prompts; the implementer flags any residual collision instead of silently resolving it.
+*Enforced by:* Convention; the implementer flags any residual collision instead of silently resolving it.
+*Stays because:* which scan covers which pinned content takes judgment; no checklist line carries it yet.
 
 **Author-restated literals drift across artifacts:** When an artifact restates a literal from an upstream artifact (key names, casing, constants, signatures), verify it against BOTH the immediately-prior artifact AND the live consumer code before trusting it. A spec-correct literal can be silently flipped by design and copied forward through plan/tasks unchallenged. Source-class hierarchy for behavior/shape claims: the WRITER'S TESTS outrank on-disk artifacts (artifacts are downstream projections — possibly reconciler-written); feature 126's spec verified skippedPhases against two on-disk files through three skeptic iterations while the writer's own tests proved a second live shape, forcing the campaign's first backward transition.
 *Why:* Feature 119's payload-key casing was correct in spec, forked to snake_case in design D2, and copied through two more artifacts — caught only by checking the live .meta.json writer.
-*Enforced by:* Reviewer-claim verification practice; task-reviewer checks.
+*Enforced by:* Reviewer-claim verification practice; `pd-lint` catches a duplicated contract block, not a drifted literal.
+*Stays because:* which artifact holds the canonical literal takes judgment.
 
 **Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (phase-event reviewer notes via the engine, `.meta.json`, git; pre-134 features used `.review-history.md`) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
 *Why:* Feature 130's retro briefing carried three source-contradicting figures (an iteration count, a swapped campaign trajectory, a reviewer-breakdown miscount) — the 119 author-restated-literal class, one layer up at the briefing↔artifact boundary. The retro-facilitator caught all three only because it re-derived. Superlative self-labels ("campaign-first", "Nth consecutive") are the same class: before an artifact ships, grep it for EVERY first/only/Nth/consecutive/highest claim and chain-verify each against the prior-retro record — checking one streak is not checking them all (119's battery label, 120's design-gate label, and 126's "first spec-layer self-inflicted" all needed dated corrections; 126's slipped while the battery streak WAS being checked).
 *Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
+*Stays because:* briefings are prose the conductor writes; no check reads them.
 
 **Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `validate.sh`, `release.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
 *Also-why:* Feature 121's specify iter-1 fix pulled the project-creation command in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of the feature's 10 blockers came from that one unchecked scope-widening.
 *Why:* Feature 118's Python-floor bump left the bootstrap and health-check scripts and CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
-*Enforced by:* plan-reviewer checklist line ("shared-config value change … repo-wide consumer sweep").
+*Enforced by:* the `plan-reviewer` agent's line ("A shared-config value change … verified only within the feature's own diff").
+*Stays because:* the planning skill's checklist doesn't carry it, and work here doesn't always run through pd's workflow.
 
 ## Writing Guidelines
 
@@ -146,10 +153,10 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 
 **Agent model tiers:** Every `subagent_type:` dispatch must include `model:` (opus/sonnet/haiku) matching the agent's frontmatter. Verify with: `grep -rn 'subagent_type:' plugins/pd/ | wc -l` and confirm each has a nearby `model:` line.
 
-**Reviewer prompt consistency:** All reviewer dispatch prompts in command files must include explicit JSON return schema blocks (`{approved, issues[], summary}`). Plain prose like "Return assessment with approval status" gets caught late in implement review. Verify with: `grep -n 'Return.*assessment\|Return.*JSON\|Return.*approval' plugins/pd/commands/*.md`
+**Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
-**Project-aware config:** `.claude/pd.local.md` fields (injected at session start once build task T4.7's `pd-session-start.sh` lands):
-- `artifacts_root` (default: `docs`) — root directory for features, brainstorms, projects
+**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh`):
+- `artifacts_root` (default: `docs/dev_artifacts`) — root directory for features, plans, brainstorms, rca and backlog items
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
 
@@ -157,6 +164,4 @@ Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{
 
 **Base branch for this repo is `develop`** — `base_branch: auto` detects `main` from remote HEAD, but all feature branches merge to `develop` (confirmed by git merge history). The release script handles `develop→main`.
 
-**Agent concurrency:** `max_concurrent_agents` in `.claude/pd.local.md` controls max parallel Task dispatches (default: 5). Skills and commands batch accordingly.
-
-**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>` (rewritten for thin pd in build task T4.5i). [docs/backlog-manual.md](docs/backlog-manual.md) is the historical detail annex for pre-134 items.
+**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/backlog-manual.md](docs/backlog-manual.md) is the historical detail annex for pre-134 items.
