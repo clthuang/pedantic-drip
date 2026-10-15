@@ -48,13 +48,25 @@ for src in startup compact; do
   check "adopted ($src): the retro owed" has "$out" "features/2026-10-14-gamma: defect"
   check "adopted ($src): done and abandoned rows left out" lacks "$out" "Dropped by the user."
   check "adopted ($src): no /pd:init offer" lacks "$out" "/pd:init"
+  check "adopted ($src): the {pd_*} values" eval 'has "$out" "pd_artifacts_root: docs/dev_artifacts" && has "$out" "pd_base_branch: main"'
 done
+
+# A configured repo with no items still gets the values; base_branch auto follows origin's HEAD;
+# release_script keeps its spaces.
+C=$(repo "$TMP/configured"); mkdir -p "$C/.claude"
+printf -- '---\nartifacts_root: docs/agent\nbase_branch: auto\nrelease_script: scripts/release.sh --ci\nsop: 1\n---\n' > "$C/.claude/pd.local.md"
+git -C "$C" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+out=$(ctx "$C" compact)
+check "configured, no items: the values, no summary" eval 'has "$out" "pd_artifacts_root: docs/agent" && lacks "$out" "active and blocked"'
+check "base_branch auto: origin's HEAD" has "$out" "pd_base_branch: develop"
+check "release_script keeps its spaces" has "$out" "pd_release_script: scripts/release.sh --ci"
 
 # A git repo with no pd.local.md: one /pd:init line, on startup and resume only.
 N=$(repo "$TMP/new")
 for src in startup resume; do
   out=$(ctx "$N" "$src")
   check "no config ($src): one /pd:init line" [ "$(printf '%s\n' "$out" | grep -c '/pd:init')" = 1 ]
+  check "no config ($src): the default values" has "$out" "pd_artifacts_root: docs/dev_artifacts"
 done
 for src in clear compact; do check "no config ($src): nothing" [ "$(ctx "$N" "$src")" = "<none>" ]; done
 

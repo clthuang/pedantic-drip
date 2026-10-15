@@ -138,7 +138,7 @@ Task({
 ```
 
 **Coordination patterns:**
-- **Parallel fan-out**: Dispatch specialists in batches of `max_concurrent_agents` (from session context, default 5). If team size exceeds the limit, dispatch in waves — wait for each wave to complete before the next.
+- **Parallel fan-out**: Dispatch specialists in batches of 5. If team size exceeds the limit, dispatch in waves — wait for each wave to complete before the next.
 - **Sequential pipeline**: Dispatch first specialist, wait for result, include result in next specialist's context
 
 ### Step 5: Synthesize Results
