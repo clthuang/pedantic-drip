@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-10-15
+
 ### Changed
 
 - **Thin pd: state lives in committed files.** A feature is a folder under `{pd_artifacts_root}` whose `README.md` frontmatter carries its status and phase, with `shape.md`, `plan.md` and an append-only `log.md` beside it. Skills, agents and commands run on Claude Code's native features: plugin workflows, worktree isolation, hooks and `/goal`.
