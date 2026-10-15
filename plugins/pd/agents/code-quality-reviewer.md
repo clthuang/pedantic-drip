@@ -1,8 +1,9 @@
 ---
 name: code-quality-reviewer
 description: Adversarial code review of a branch diff. Use when (1) implement phase review moment, (2) user says 'review code quality', (3) user says 'check implementation quality'.
-model: sonnet
-tools: [Read, Glob, Grep]
+model: opus
+effort: high
+tools: [Read, Grep, Glob]
 color: magenta
 ---
 

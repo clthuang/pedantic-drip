@@ -2,6 +2,7 @@
 name: retro-facilitator
 description: Runs data-driven AORTA retrospective with full intermediate context. Use when (1) retrospecting skill dispatches retro analysis, (2) user says 'run AORTA retro', (3) user says 'analyze feature retrospective'.
 model: opus
+effort: high
 tools: [Read, Glob, Grep]
 color: magenta
 ---

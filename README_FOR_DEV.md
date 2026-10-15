@@ -147,12 +147,12 @@ flowchart TD
     SK --> WORKFLOW
     SK --> AG
 
-    subgraph AG["Agents · 19 subagents"]
+    subgraph AG["Agents · 21 subagents"]
         direction TB
         A1["Reviewers (6)<br/>design, code-quality, plan,<br/>security, ds-*"]
         A2["Workers (5)<br/>implementer, qa-executor,<br/>documentation-writer, generic-worker, ras-synthesizer"]
         A3["Researchers (5)<br/>codebase-explorer,<br/>investigation-agent, ..."]
-        A4["Advisory (1) · Orchestration (2)"]
+        A4["Advisory (1) · Orchestration (4)"]
     end
 
     WORKFLOW -->|"produces"| ART
@@ -276,7 +276,9 @@ Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd
 - `investigation-agent` — Read-only research agent for context gathering
 - `skill-searcher` — Finds relevant existing skills for a given topic
 
-**Orchestration (2):**
+**Orchestration (4):**
+- `merger` — Checks a task's proof with `pd-proof` and lands its branch on the feature branch; no Write or Edit
+- `calvin-runner` — Runs the calvin skill on a feature's criteria; writes only its ledger path
 - `rca-investigator` — Finds all root causes through 6-phase systematic investigation
 - `retro-facilitator` — Runs data-driven AORTA retrospective with full intermediate context
 

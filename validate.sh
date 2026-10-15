@@ -379,6 +379,53 @@ if [ $agent_count -eq 0 ]; then
 fi
 echo ""
 
+# The two agent rules, made mechanical (plan §A3): each role's tools, model and effort.
+# agent_roles_errors <agents dir> prints one line per violation.
+agent_roles_errors() {
+    local dir=$1 spec name role fm tools model effort
+    for spec in design-reviewer:reviewer plan-reviewer:reviewer code-quality-reviewer:reviewer security-reviewer:reviewer \
+                implementer:executor qa-executor:verifier retro-facilitator:verifier merger:merger calvin-runner:calvin; do
+        name=${spec%%:*}; role=${spec#*:}
+        [ -f "$dir/$name.md" ] || { echo "$name.md is missing"; continue; }
+        fm=$(sed -n '2,/^---$/p' "$dir/$name.md")
+        tools=$(echo "$fm" | sed -n 's/^tools:[[:space:]]*//p' | tr -d '[] ' | tr ',' '\n' | sort | paste -s -d, -)
+        model=$(echo "$fm" | sed -n 's/^model:[[:space:]]*//p')
+        effort=$(echo "$fm" | sed -n 's/^effort:[[:space:]]*//p')
+        case $role in
+            reviewer)
+                [ "$tools" = "Glob,Grep,Read" ] || echo "$name: a reviewer's tools are Read, Grep, Glob (has $tools)"
+                [ "$model/$effort" = opus/high ] || echo "$name: a reviewer runs model: opus, effort: high" ;;
+            executor)
+                [ "$model/$effort" = sonnet/medium ] || echo "$name: an executor runs model: sonnet, effort: medium"
+                grep -q '^## Verify before you report' "$dir/$name.md" || echo "$name: an executor keeps its verification paragraph" ;;
+            verifier)
+                [ "$model/$effort" = opus/high ] || echo "$name: QA and the retro run model: opus, effort: high" ;;
+            merger)
+                case ",$tools," in *,Write,*|*,Edit,*) echo "$name: the merger has no Write or Edit" ;; esac ;;
+            calvin)
+                [ "$tools" = "Glob,Read,Skill,Write" ] || echo "$name: calvin-runner's tools are Read, Glob, Skill, Write (has $tools)" ;;
+        esac
+    done
+    return 0
+}
+echo "Validating agent roles..."
+while IFS= read -r line; do [ -n "$line" ] && log_error "agents/$line"; done <<< "$(agent_roles_errors plugins/pd/agents)"
+# The failing fixture: one break per check, so a rule that stops checking fails validation.
+roles_fixture=$(mktemp -d)
+cp plugins/pd/agents/*.md "$roles_fixture"/
+sed -i '' 's/^tools:.*/tools: [Read, Grep, Glob, Bash]/' "$roles_fixture/design-reviewer.md"
+sed -i '' '/^effort:/d' "$roles_fixture/plan-reviewer.md"
+sed -i '' -e 's/^model:.*/model: opus/' -e 's/^## Verify before you report/## Verify/' "$roles_fixture/implementer.md"
+sed -i '' 's/^model:.*/model: sonnet/' "$roles_fixture/qa-executor.md"
+sed -i '' 's/^tools:.*/tools: [Bash, Read, Write]/' "$roles_fixture/merger.md"
+sed -i '' 's/^tools:.*/tools: [Read, Glob, Write]/' "$roles_fixture/calvin-runner.md"
+rm "$roles_fixture/security-reviewer.md"
+fixture_errors=$(agent_roles_errors "$roles_fixture" | grep -c . || true)
+rm -rf "$roles_fixture"
+if [ "$fixture_errors" -eq 8 ]; then log_success "Agent roles valid; the failing fixture fails all 8 checks"
+else log_error "agent-roles rule: the failing fixture raised $fixture_errors of 8 errors"; fi
+echo ""
+
 # Validate commands (commands/*.md - all frontmatter fields are optional per official docs)
 echo "Validating Commands..."
 cmd_count=0

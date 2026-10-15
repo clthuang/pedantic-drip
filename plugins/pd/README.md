@@ -9,7 +9,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | Type | Count |
 |------|-------|
 | Skills | 23 |
-| Agents | 19 |
+| Agents | 21 |
 | Commands | 22 |
 
 ## Commands
@@ -77,6 +77,7 @@ Two dispatches sit outside the review tier:
 | Agent | Purpose |
 |-------|---------|
 | advisor | Applies strategic/domain advisory lens to brainstorm problems |
+| calvin-runner | Runs the calvin skill on a feature's criteria and writes the ledger to one named path |
 | ds-analysis-reviewer | Reviews data analysis for statistical pitfalls and methodology |
 | code-quality-reviewer | Reviews implementation quality by severity |
 | codebase-explorer | Analyzes codebase for patterns and constraints |
@@ -88,6 +89,7 @@ Two dispatches sit outside the review tier:
 | implementer | Task implementation with TDD and self-review |
 | internet-researcher | Searches web for best practices and standards |
 | investigation-agent | Read-only research before implementation |
+| merger | Checks a task's proof with pd-proof and lands its branch on the feature branch |
 | plan-reviewer | Skeptical plan reviewer for failure modes and TDD compliance |
 | qa-executor | Execution-grounded QA — runs suites and drives affected flows, returning evidence |
 | ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
