@@ -164,7 +164,7 @@ flowchart TD
 
     subgraph HOOKS["Hooks · scripts"]
         H1["SessionStart (2)<br/>sync-cache,<br/>cleanup-stale-versions"]
-        H2["PreToolUse (2)<br/>pre-commit-guard,<br/>pre-edit-unicode-guard"]
+        H2["PreToolUse (3)<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard"]
     end
 
     HOOKS -.->|"lifecycle events"| SK
@@ -296,6 +296,7 @@ Hooks execute automatically at lifecycle points.
 | `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache from a main checkout; publishes nothing from a linked worktree |
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions older than the active one |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
+| `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit`; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py` — a worker module invoked by the wrapper, not separately registered.
