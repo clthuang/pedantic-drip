@@ -546,3 +546,8 @@ Applied as plan D18: `inventory.md` and §A6 updated (19 of the 24 agents kept).
 Q: Approve the staged T2.1 deletion diff (355 files; every proof passes except `README.md`'s skill and agent count)? And should that `README.md` line change?
 A (user, verbatim): "Approve and commit (Recommended)"; "Stage only that line (Recommended)".
 Applied: T2.1 committed with only the `README.md` count line staged (27 skills and 24 agents become 23 and 19); the user's other `README.md` edits stay unstaged. `validate.sh` gives 0 errors and `check-doc-drift.sh` exits 0.
+
+## 2026-10-15 11:33+08:00 decision
+Q: T3.5's S6 prune: pd-lint partly replaces CLAUDE.md's "Non-vacuity test guard" (its restatement-sweep half); the non-vacuity half is replaced only by Wave 4's red-first merger check. What lands? And review Wave 3 before Wave 4?
+A (user, verbatim): "Prune restatement half now"; "Codex review, then Wave 4 (Recommended)".
+Applied: the guardrail's restatement-sweep sentences shrink to one line pointing at pd-lint's checks; the non-vacuity and verification-trails sentences stay. A Codex review of 35e45296..HEAD's scripts runs before Wave 4.
