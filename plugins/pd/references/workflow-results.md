@@ -46,6 +46,7 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 ```json
 {
   "review": {"approved": false, "issues": [], "summary": ""},
+  "reviewed_by": "codex (fallback: no)",
   "qa": {"commit": "6ccfa3a5", "ran": [{"command": "", "result": "pass"}], "gaps": [], "issues": []},
   "fixes": [{"issue": "R1", "commit": "9f2c1a7e", "test": "tests/test_parse.py::test_empty_input"}],
   "rejections": [{"issue": "R2", "evidence": "src/pd/io.py:12"}],
@@ -53,6 +54,9 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
   "flakes": []
 }
 ```
+
+- **`reviewed_by`:** who made the review call, as the `review` entry's heading names it: `codex (fallback: no)`, `<Claude reviewer> (fallback: yes)` or `<Claude reviewer> (codex off)`; `null` when no review ran.
+- **A budget stop's unstarted tasks** aren't listed: the conductor derives them from `plan.md` and the `pd/<id>/task-*` branches.
 
 ## `research-fanout` and `rca-fanout`
 

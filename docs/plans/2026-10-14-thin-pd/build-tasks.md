@@ -333,6 +333,7 @@ Size guard (§16 step 4): after Waves 3 and 4, `git diff --numstat <T2.1>..HEAD 
 - **Files:** `plugins/pd/workflows/{implement-tasks,verify-change,research-fanout,rca-fanout}.js`.
 - **Proof, now (static):**
   - **each script parses:** `node --input-type=module --check < <script>` succeeds. If a script's syntax can't be checked that way, list it here, and its runtime proof stands alone;
+    - **Listed (2026-10-15):** all four. A workflow body ends with a top-level `return`, which the runtime wraps and an ES module forbids ("Illegal return statement"). `plugins/pd/workflows/tests/test-workflows.mjs` checks the `meta` block as a module and the body as an async function with `node --check`, then stub-runs each script;
   - **the result fields match:** each script's `schema` names exactly the fields `workflow-results.md` lists for it, compared by a grep diff;
   - **`implement-tasks`** contains the branch rename `pd/<feature id>/task-<n>`, the `budget.spent()` check against `workflow_output_cap`, the `model:` override for cycles 2 and 3, and the worktree removal before a fix cycle. A grep finds each.
 - **Proof, runtime:**
