@@ -66,6 +66,11 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(r2.stopped === 'budget' && s2.calls.length === 3, `implement-tasks: the cap stops the run (${s2.calls.length} agents)`)
   const s3 = stubs(answer), r3 = await run({ ...a, waves: [[t(1, true), t(2, true)]], merged: [1], finished: [{ n: 2, branch: 'pd/f/task-2', head: 'h', first_commit: 'c', case_map: {} }] }, ...s3.args)
   check(!s3.calls.some(c => c.label.startsWith('implement')) && s3.calls[0].label === 'merge:2' && r3.tasks.map(x => x.id).join() === '2', 'implement-tasks: resume skips merged tasks and merges a finished one')
+  const s4 = stubs(answer), g = { ...t(1, false), green_only: 'refactor' }
+  await run({ ...a, waves: [[g]] }, ...s4.args)
+  const [imp, mrg] = ['implement:1', 'merge:1'].map(l => s4.calls.find(c => c.label === l).prompt)
+  check(!imp.includes('Commit the tests first') && imp.includes('green-only (refactor)') && mrg.includes('without --first'),
+    'implement-tasks: a green-only task gets no tests-first rule, and its merge runs pd-proof head without --first')
 }
 // verify-change: codex fails twice, the Claude reviewer finds R1; QA fails; one fixer cycle fixes R1; QA passes.
 {
@@ -86,6 +91,18 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   const r2 = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9, codex: false }, ...s2.args)
   check(r2.cycles === 3 && s2.calls.filter(c => c.label.startsWith('fix')).map(c => c.model || '-').join() === '-,opus,opus' && s2.calls[0].label === 'review:claude',
     'verify-change: toggle off goes straight to Claude; the loop stops at 3 cycles; cycles 2 and 3 run opus')
+  const A = { feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9 }
+  const QA_PASS = issues => ({ commit: 'h', ran: [{ command: 'pytest', result: 'pass' }], gaps: [], issues, flakes: [] })
+  const s3 = stubs(l => l.startsWith('review') ? { approved: true, issues: [], summary: '' } : l.startsWith('qa') ? QA_PASS([{ ...ISS, id: 'Q1' }])
+    : { fixes: [{ issue: 'Q1', commit: 'f1', test: 't::a' }], rejections: [] })
+  const r3 = await run({ ...A, codex: false }, ...s3.args)
+  check(r3.cycles === 3 && r3.qa.issues.some(i => i.id === 'Q1' && i.severity === 'blocker'),
+    `verify-change: a claimed fix doesn't settle a QA blocker the next QA run still reports (cycles ${r3.cycles})`)
+  const s4 = stubs(l => l.startsWith('review') ? null : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
+  const r4 = await run(A, ...s4.args)
+  check(r4.reviewed_by === null && r4.review.issues.map(i => `${i.id}:${i.severity}:${i.file}:${i.line}`).join() === 'R0:blocker:s:1'
+    && r4.cycles === 0 && !s4.calls.some(c => c.label.startsWith('fix')),
+    `verify-change: no usable review: reviewed_by null, an R0 blocker, no fix cycle spent on it (${r4.reviewed_by}, ${r4.cycles})`)
 }
 // research-fanout and rca-fanout.
 {

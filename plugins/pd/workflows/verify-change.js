@@ -61,10 +61,16 @@ const runQa = (run, fixes, last) => call(QA_PROMPT(run, fixes, last),
   { label: `qa:${run}`, phase: run === 1 ? 'Review and QA' : 'Fix', agentType: 'pd:qa-executor', schema: obj({ ...QA.properties, flakes: arr(FLAKE) }) })
 
 let [rv, qa] = await parallel([review, () => runQa(1, [])])
-rv = rv || { approved: false, issues: [], summary: stopped ? 'not run: the workflow cap stopped the run' : 'no usable review: Codex and the Claude reviewer both failed' }
+if (!rv) reviewedBy = null
+// No usable review is itself a blocker (R0, workflow-results.md), so Verify can't pass without one.
+const NO_REVIEW = { id: 'R0', severity: 'blocker', category: 'review', file: args.shape, line: 1, claim: 'no usable review: Codex and the Claude reviewer both failed', evidence: '' }
+rv = rv || { approved: false, issues: stopped ? [] : [NO_REVIEW], summary: stopped ? 'not run: the workflow cap stopped the run' : NO_REVIEW.claim }
 const fixes = [], rejections = [], flakes = [...((qa && qa.flakes) || [])]
-const settled = id => fixes.some(f => f.issue === id) || rejections.some(r => r.issue === id)
-const blockers = () => [...rv.issues, ...((qa && qa.issues) || [])].filter(i => i.severity === 'blocker' && !settled(i.id))
+const fixed = id => fixes.some(f => f.issue === id), rejected = id => rejections.some(r => r.issue === id)
+// The fixer's blockers. QA's latest run is authoritative for its own issues: a claimed fix settles
+// only a review issue. R0 stays out: a fixer can't supply a review.
+const blockers = () => [...rv.issues.filter(i => !fixed(i.id)), ...((qa && qa.issues) || [])]
+  .filter(i => i.severity === 'blocker' && i.id !== 'R0' && !rejected(i.id))
 const qaPasses = () => !!qa && qa.ran.length > 0 && qa.ran.every(r => r.result === 'pass')
 let cycles = 0
 while (!stopped && cycles < 3 && (!qaPasses() || blockers().length)) {  // the bounded loop is the cycle rule (§A4)

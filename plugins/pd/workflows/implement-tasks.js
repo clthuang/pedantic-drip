@@ -45,7 +45,7 @@ const IMPLEMENT = t => `${t.block}
 
 Feature ${args.feature_id}, task ${t.n}. Pointers: ${args.shape} (## Design), ${args.plan} (task ${t.n}).
 You run in your own git worktree. Before your first commit, rename its branch: git branch -m ${branchOf(t)}.
-Commit the tests first: one commit holding only the test files, plus new source files or added signatures that raise; every test fails as a test, with no load errors. Then commit each meaningful step until the proving command passes. Write the minimum code that meets the contract.
+${t.green_only ? `proof: green-only (${t.green_only}): no tests-first commit; the proving command's existing tests prove the task. Commit each meaningful step until it passes.` : 'Commit the tests first: one commit holding only the test files, plus new source files or added signatures that raise; every test fails as a test, with no load errors. Then commit each meaningful step until the proving command passes.'} Write the minimum code that meets the contract.
 Never change a test file after that first commit. If a test is wrong, stop and report error "transcription" (the case is right, its test code is wrong) or "wrong-test" (the case itself is wrong); otherwise error "none".
 Report your branch, HEAD, first commit, worktree path (pwd) and case_map: each test case id mapped to the test that encodes it.`
 const FIX = (t, s, cycle, failure) => `${t.block}
@@ -56,7 +56,7 @@ Why it failed: ${J(failure)}
 ${s.error === 'transcription' ? 'It is a transcription error: rebuild the branch from its base with a corrected tests-first commit, then implement again.' : 'Fix the code only: the tests stay as the first commit left them.'} If the failure shows a test case itself is wrong, stop and report error "wrong-test".
 Report as the first attempt did: branch, HEAD, first commit, worktree path, case_map and error.`
 const MERGE = (t, s, landed) => `Merge task ${t.n} of feature ${args.feature_id} onto the feature branch checked out in this checkout.
-Branch: ${s.branch}. HEAD: ${s.head}. First commit: ${s.first_commit}. Proving command: \`${t.command}\`. JUnit: ${t.junit}.${t.green_only ? ` proof: green-only (${t.green_only}): skip step 2.` : ''}
+Branch: ${s.branch}. HEAD: ${s.head}. First commit: ${s.first_commit}. Proving command: \`${t.command}\`. JUnit: ${t.junit}.${t.green_only ? ` proof: green-only (${t.green_only}): skip steps 1 and 2 and step 3's test-file check; run pd-proof head without --first.` : ''}
 Already merged, whose proofs you re-run after this merge: ${J(landed.map(m => ({ task: m.n, command: m.command, junit: m.junit })))}.
 Report proof.first and proof.head as pd-proof's verdicts ("fail" at the first commit, "pass" at HEAD, or what it said).`
 

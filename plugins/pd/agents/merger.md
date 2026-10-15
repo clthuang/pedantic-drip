@@ -27,6 +27,10 @@ Run each proving command yourself; read only its JUnit XML, through `pd-proof` (
 4. **Merge** onto the feature branch, in plan order (`git merge --no-ff`). On a conflict, abort the merge and report it: never resolve one.
 5. **After the merge:** re-run the proving command of every task merged so far, and `pd-lint`. A break fails the task just merged, naming the proof it broke.
 
+**`proof: green-only`** (a refactor, infra or fixture task): skip step 1, step 2 and step 3's test-file check; at HEAD run `pd-proof head <junit>` without `--first`. Steps 4 and 5 stay.
+
+**A branch already merged** (a resume after a crash, before its result was recorded): the merge is a no-op; run every check anyway and return `merged`.
+
 An unexpected result is re-run once; if the two runs disagree, a third decides, and the result lists it under `flakes`.
 
 ## Result

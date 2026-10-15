@@ -21,13 +21,14 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
 3. **Launch `verify-change`** per `workflow-transitions` "Workflow runs". Its first QA run also runs the risk scan and the isolation check over `<base>..HEAD` (`pd-lint --risk`, `pd-lint --isolation`), once; their errors and unmatched risk signals come back as `qa` issues. Don't run them again.
 4. **Record the result** (`references/workflow-results.md`, `verify-change`) in the shapes of `references/log-entries.md`, then clear `run in flight:` and commit:
    - **`run`:** the launch, with `Agents:`, `Tokens:` and the fix `cycles`;
-   - **`review`:** heading `review verify — <reviewed_by>`; `Verdict:` and the reviewed commit; one issue line per `review.issues` item; one `Rejects: review@<this entry>#<id> — <evidence>` line per rejection;
-   - **`qa`:** `Commit: <qa.commit>`; one `Ran: \`<command>\` -> pass|fail` line per battery command; `Criteria gaps:` from `qa.gaps`; one issue line per `qa.issues` item; one `Fixed: <id> by <commit> — <test>` line per `fixes` item, and a `Closes:` line naming those review issues;
+   - **`review`:** heading `review verify — <reviewed_by, or none>`; `Verdict:` and the reviewed commit; one issue line per `review.issues` item; one `Rejects: review@<this entry>#<id> — <evidence>` line per rejection of an `R` issue;
+   - **`qa`:** `Commit: <qa.commit>`; one `Ran: \`<command>\` -> pass|fail` line per battery command; `Criteria gaps:` from `qa.gaps`; one issue line per `qa.issues` item; one `Rejects: qa@<this entry>#<id> — <evidence>` line per rejection of a `Q` issue; one `Fixed: <id> by <commit> — <test>` line per `fixes` item, and a `Closes:` line naming the fixed review issues (`review@<the review entry>#R<n>`; a `Q` issue QA no longer reports was never logged);
    - **`note`:** one per flake.
 5. **Settle what is still open:**
-   - **Rejections:** put them to the user through AskUserQuestion, at most four per call, blockers first. Each answer is a `decision` entry, `A (user, verbatim)`; an accepted one adds `Closes:` for its issue.
+   - **Rejections:** put them to the user through AskUserQuestion, at most four per call, blockers first. Each answer is a `decision` entry, `A (user, verbatim)`; an accepted one adds `Closes:` for its issue, naming the entry that raised it (`review@…#R<n>` or `qa@…#Q<n>`).
    - **Blockers left after the third cycle, or a failing battery:** a `capped verify` entry (four lists), then ask the user; the answer is a `decision` with `answers: capped@<date> <time>`.
    - **A judgement finding with no testable check:** a hard stop: ask.
+   - **No usable review** (`reviewed_by: null`, an `R0` blocker): a hard stop. Ask through AskUserQuestion: re-run the review call, or waive it, a `decision` entry with `Closes: review@<this entry>#R0`. The open `R0` blocks `phase-gate.sh verify` until then.
 6. **Risk tags.** A risk signal with no matching tag: decide the tag with the user (a `decision` entry), then set `risk:` in the README.
    - **`security`:** the security review at finish becomes mandatory (`finishing-branch`).
    - **`migration`:** re-run this stage with the migration's up and down in the battery.
