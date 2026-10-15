@@ -105,6 +105,22 @@ STATE_A=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json")
 usage 30 0 0 >> "$TMP/t-S1.jsonl"
 run "$(hook "$A" S1)"
 [ "$(tokens "$STATE_A" tokens)" = 200 ] && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: only new usage is charged: $(cat "$STATE_A")"; }
+# A second session holding the feature's lock: this charge waits for it, so neither is lost.
+python3 - "$STATE_A" <<'PY' &
+import fcntl, json, sys, time
+p = sys.argv[1]
+with open(p + ".lock", "w") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    open(p + ".held", "w").close()
+    time.sleep(2)
+    json.dump({"tokens": 1000, "budget": None}, open(p, "w"))
+PY
+HOLDER=$!
+while [ ! -e "$STATE_A.held" ]; do sleep 0.1; done
+usage 30 0 0 >> "$TMP/t-S1.jsonl"
+run "$(hook "$A" S1)"
+wait "$HOLDER"; rm -f "$STATE_A.held"
+[ "$(tokens "$STATE_A" tokens)" = 1030 ] && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: a charge waits for the feature lock: $(cat "$STATE_A")"; }
 python3 -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); d["calvin_ledger"] = "x.md"; json.dump(d, open(p, "w"))' "$HOME/.claude/pd/gate/S1.json"
 run "$(hook "$A" S1)"
 grep -q '"calvin_ledger": "x.md"' "$HOME/.claude/pd/gate/S1.json" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the session state keeps keys it doesn't own"; }
@@ -118,7 +134,7 @@ run "$(hook "$B" S3)"; expect "past feature_token_budget: ask continue or stop" 
 grep -qF 'feature_token_budget=200' <<<"$ERR" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the raise defaults to feature_token_budget"; }
 STATES=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | wc -l | tr -d ' ')
 STATE_B=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | grep -v "^$STATE_A$")
-[ "$STATES" = 2 ] && [ "$(tokens "$STATE_A" tokens)" = 200 ] && [ "$(tokens "$STATE_B" tokens)" = 170 ] && [ "$(tokens "$STATE_B" budget)" = 100 ] \
+[ "$STATES" = 2 ] && [ "$(tokens "$STATE_A" tokens)" = 1030 ] && [ "$(tokens "$STATE_B" tokens)" = 170 ] && [ "$(tokens "$STATE_B" budget)" = 100 ] \
   && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: per-repository state ($STATES files)"; }
 run "$(hook "$A" S1)"; expect "the other repository's budget doesn't apply" 2 "not reached" "budget spent"
 printf '## 2026-10-15 11:00+08:00 decision\nQ: budget spent: continue or stop?\nA (user, verbatim): "continue"\nBudget: feature_token_budget=1000\n' >> "$FB/log.md"

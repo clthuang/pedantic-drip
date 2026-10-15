@@ -33,6 +33,11 @@ expect 2 "QA writing a sibling named agent_sandboxx" qa-executor "$R/agent_sandb
 expect 2 "a namespaced pd:qa-executor writing src/" pd:qa-executor "$R/src/x.py"
 expect 0 "QA from a subdirectory, into the root's agent_sandbox/" qa-executor "$R/agent_sandbox/x.py" s1 "$R/src"
 
+# A symlinked agent_sandbox doesn't move the boundary: writes through it land in src/ and are refused.
+L="$TMP/linked"; mkdir -p "$L/src"; git -C "$L" init -q; ln -s src "$L/agent_sandbox"
+expect 2 "QA writing through an agent_sandbox symlinked to src/" qa-executor "$L/agent_sandbox/x.py" s1 "$L"
+expect 2 "calvin-runner writing its ledger through a symlinked agent_sandbox" calvin-runner "$L/$LEDGER" s1 "$L"
+
 # calvin-runner: exactly the recorded ledger.
 expect 0 "calvin-runner writing its ledger" calvin-runner "$R/$LEDGER"
 expect 0 "calvin-runner writing its ledger by a relative path" calvin-runner "$LEDGER"

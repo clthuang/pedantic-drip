@@ -13,7 +13,7 @@ trap '' PIPE
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 read -r -d '' GATE_PY <<'PY' || true
-import hashlib, json, re, subprocess, sys
+import fcntl, hashlib, json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 scripts = Path(sys.argv[1]).parent / "scripts"
 sys.path.insert(0, str(scripts))
@@ -39,9 +39,10 @@ def load(p):
 
 def save(p, data):
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1))
-    tmp.replace(p)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=p.name + ".")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(json.dumps(data, indent=1))
+    os.replace(tmp, p)
 
 
 def usage(transcript):
@@ -93,10 +94,14 @@ sess["counted"] = max(total, counted)
 branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], root, check=False) or ""
 here = next((f for f in features if branch in (f["fm"].get("branch"), f"feature/{f['id']}")), None)
 if here and delta:
-    fs = load(state(here))
-    fs["tokens"] = int(fs.get("tokens") or 0) + delta
-    fs.setdefault("budget", number(cfg.get("feature_token_budget")))  # the original budget
-    save(state(here), fs)
+    p = state(here)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p.with_name(p.name + ".lock"), "w") as lock:  # sessions on one feature charge it in turn
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        fs = load(p)
+        fs["tokens"] = int(fs.get("tokens") or 0) + delta
+        fs.setdefault("budget", number(cfg.get("feature_token_budget")))  # the original budget
+        save(p, fs)
 
 
 def finish(code, reason=None):

@@ -20,8 +20,9 @@ top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
                      capture_output=True, text=True).stdout.strip() or cwd
 path = (d.get("tool_input") or {}).get("file_path") or ""
 target = os.path.realpath(os.path.join(cwd, path))
+top = os.path.realpath(top)  # the boundaries below stay unresolved: a symlinked sandbox or ledger dir is refused
 if agent == "qa-executor":
-    if not target.startswith(os.path.realpath(os.path.join(top, "agent_sandbox")) + os.sep):
+    if not target.startswith(os.path.join(top, "agent_sandbox") + os.sep):
         print(f"qa-executor may write only under agent_sandbox/, not {path}")
     sys.exit(0)
 sid = d.get("session_id") or ""
@@ -32,7 +33,7 @@ except (OSError, ValueError, AttributeError):
     ledger = None
 if not ledger:
     print("calvin-runner may write only its ledger, and no calvin_ledger is recorded for this session")
-elif target != os.path.realpath(os.path.join(top, ledger)):
+elif target != os.path.normpath(os.path.join(top, ledger)):
     print(f"calvin-runner may write only its ledger {ledger}, not {path}")' 2>/dev/null)
 rc=$?
 if [ "$rc" -ne 0 ]; then
