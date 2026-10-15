@@ -591,3 +591,18 @@ Applied: T4.11 is done, the user having reviewed its diff. A Codex review of Wav
 Q: Which feature for the bake-off (standard mode, modest size, pytest so pd-proof gets JUnit, at least one parallel-safe task pair)?
 A (user, verbatim): "Backlog sweep tool (Recommended)".
 Applied (T5.1): the bake-off feature is a small Python CLI, in a fresh `/pd:init`'d repository, that sorts the 174-row legacy `docs/backlog.md` into keep and archive (rows naming the retired registry, MCP servers, UI or `.meta.json`). Three or four tasks: the row parser and the rules in parallel, then the report and the CLI. Its output feeds T6.1's MAP BY HAND step.
+
+## 2026-10-15 13:40+08:00 review
+Codex (gpt-6-astra, xhigh) on 4271f7e0..e3fbcde8, Wave 4: changes requested, 11 blockers. Each was checked against the source before fixing; 10 held. One fix round, commits `c92d616a`, `23a8c6fa`, `7c768de0`; each code fix has a check that fails with the fix reverted:
+- W1 pd-agent-write-guard.sh: a symlinked agent_sandbox or ledger directory moved the write boundary; the boundaries are no longer resolved.
+- W2 pd-stop-gate.sh: concurrent stops lost token charges; the charge runs under an flock, saves use a unique temp file.
+- W3 verify-change.js: a claimed fix settled a QA blocker QA still reported; QA's latest run decides its own issues.
+- W4 verify-change.js: no usable review looked clean; reviewed_by null and an R0 blocker, a hard stop in verifying.
+- W5 verifying: Q-issue rejections named the review entry; Rejects and Closes name the raising entry.
+- W6 merger.md: green-only needed a first-commit report it never made; head proof without --first, and the implement prompt drops the tests-first rule.
+- W7 implementing: a merged-but-unrecorded task could never pass the implement gate; merged needs a recorded proof line.
+- W8 create-feature: express committed before its mini-spec and the commit lint blocked it; the mini-spec comes first.
+- W9 brainstorming, root-cause-analysis: promotion created no branch; every feature comes through /pd:create-feature.
+- W11 pd-review-filter: git-quoted paths dropped in-hunk findings; they are decoded.
+- W10 implement-tasks.js (a mixed wave runs its parallel-safe tasks before its sequential ones): rejected. Rejects: §A4 (plan line 193) pins that order, and the planning checklist requires every task's `uses:` to exist at its wave's base, so no task in a wave depends on another. Open until the user rules.
+Battery after the round: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-init 10, pd-review-filter 5, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-pd-stop-gate 27; test-pd-session-start 29; test-pd-agent-write-guard 22; test-hooks 25/25; test-workflows all passed; pytest 18; validate.sh 0 errors, 0 warnings; doc-drift OK. Size guard: 4,579 of 5,000. No re-review (one pass, one fix round).
