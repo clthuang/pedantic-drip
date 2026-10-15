@@ -581,3 +581,8 @@ Deviations, each named in its commit:
 Battery: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-adopt 33, pd-new 31, pd-status 13, pd-init 10, pd-review-filter 4, pd-html 10; test-phase-gate 38; test-pd-commit-lint 7; test-pd-stop-gate 26; test-pd-session-start 29; test-pd-agent-write-guard 20; test-hooks 25/25; test-workflows all passed; pytest 18 (the 6 extract_workarounds tests went with the script); validate.sh 0 errors, 0 warnings; doc-drift OK. Size guard: 4,561 of 5,000 added lines.
 Not verified until the T5.2 bake-off: `${CLAUDE_SESSION_ID}` substitution in skills; plugin agent, skill and workflow names with the `pd:` prefix, and plain skill names in `skills:`; subagent hook input carrying `agent_type` and the parent `session_id`; the `background_tasks` status values the Stop gate reads.
 Next: T5.1, the user picks the bake-off feature.
+
+## 2026-10-15 12:30+08:00 decision
+Q: Review Wave 4 before the bake-off? Keep T4.11's CLAUDE.md changes (`ac80ed7e`)? The 11 stale docs and about 19 stale README.md lines? T5.1's bake-off feature?
+A (user, verbatim): "Codex review first (Recommended)"; "Keep"; "Rewrite docs, list README (Recommended)"; "Propose candidates".
+Applied: T4.11 is done, the user having reviewed its diff. A Codex review of Wave 4 runs, with one fix round. The stale docs are rewritten; the README.md lines are listed for the user. Bake-off candidates are proposed from the backlog.
