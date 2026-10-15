@@ -315,6 +315,28 @@ def open_blockers(entries):
     return [dict(b, rejection_proposed=b["ref"] in rejected) for b in open_.values()]
 
 
+def open_assumptions(entries):
+    """A capped entry's `Assumptions:` items (`- A<n>: …`) not closed by a later
+    `Closes: capped@<stamp>#A<n>` (§A2): dicts with ref and text."""
+    open_ = {}
+    for e in entries:
+        if e.get("kind") is None:
+            continue
+        for key in _closes(e):
+            open_.pop(key, None)
+        if e["kind"] == "capped":
+            in_list = False
+            for line in e["body"]:
+                if re.match(r"^[A-Z][\w-]*:", line):  # a list label (Deferred:, Assumptions:, Closes:) starts a new list
+                    in_list = line.startswith("Assumptions:")
+                elif in_list:
+                    m = re.match(r"^- (A\d+): (.+)$", line)
+                    if m:
+                        key = f"{e['ref']}#{m.group(1)}"
+                        open_[key] = {"ref": key, "text": m.group(2)}
+    return list(open_.values())
+
+
 def retro_triggers(entries):
     """The retro triggers a log records (§A8.3 S4, Part B §9): a second backward move,
     a capped entry, a cost overrun against the original budget, a defect."""
@@ -422,6 +444,11 @@ def _self_test():
     ob = open_blockers(blk)
     c.check([b["ref"][-2:] for b in ob] == ["R2"] and ob[0]["rejection_proposed"],
             "blockers: Closes closes, a rejection needs the user's decision, legacy is closed, warnings aren't blockers")
+    asm = parse_log("## 2026-10-14 16:00+08:00 capped verify\nDeferred:\n- A9: not an assumption\n"
+                    "Assumptions:\n- A1: one\n- A2: two\nCloses: review@2026-10-14 11:30+08:00#R4\n- A3: after Closes\n"
+                    "## 2026-10-14 17:00+08:00 review\nCloses: capped@2026-10-14 16:00+08:00#A1\n")
+    c.check([a["ref"][-2:] for a in open_assumptions(asm)] == ["A2"],
+            "assumptions: only the Assumptions list, closed by a later Closes")
     trig = parse_log("## 2026-10-14 10:00+08:00 run goal — started\nBudget: feature_token_budget=100\n"
                      "## 2026-10-14 11:00+08:00 phase verify -> design (back)\n"
                      "## 2026-10-14 12:00+08:00 phase verify -> design (back)\n"
