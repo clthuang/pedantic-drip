@@ -13,6 +13,7 @@ trap '' PIPE
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
 source "${SCRIPT_DIR}/lib/common.sh"
+install_session_start_traps
 
 input=$(cat)
 source=$(printf '%s' "$input" | jq -r '.source // ""' 2>/dev/null)
@@ -30,7 +31,7 @@ adopted=0
 # The skills' {pd_*} values, defaults as in pd_common.py; base_branch auto: origin's HEAD, else main.
 art=$(read_local_md_field "$cfg" artifacts_root docs/dev_artifacts)
 base=$(read_local_md_field "$cfg" base_branch auto)
-[ "$base" = auto ] && base=$(git -C "$top" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+[ "$base" = auto ] && base=$(git -C "$top" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
 vars="pd_artifacts_root: ${art:-docs/dev_artifacts}"$'\n'"pd_base_branch: ${base:-main}"
 release=$(read_local_md_field "$cfg" release_script "" 1)
 [ -n "$release" ] && vars+=$'\n'"pd_release_script: $release"
