@@ -1,120 +1,75 @@
 ---
 name: root-cause-analysis
-description: "Use when user says 'run RCA', 'exhaustive multi-cause investigation', 'find ALL root causes', or runs /root-cause-analysis. Produces formal RCA reports with reproduction, 3+ hypotheses, verification scripts, and causal DAG."
+description: "Clarify playbook for a bug — the rca item, reproduction, 3+ hypotheses, the rca-fanout workflow with its refuters, the causal DAG and the RCA report, then the fix's entry depth. Use when user says 'run RCA', 'exhaustive multi-cause investigation', 'find ALL root causes', or runs /root-cause-analysis."
 ---
 
 # Root Cause Analysis
 
-## Config Variables
-Use these values from session context (injected at session start):
-- `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
+The conductor's playbook for Clarify on a bug (plan §A2, row 1): find ALL contributing causes, not just the first one. Where state lives, workflow runs and the dispatch rules: the workflow-transitions skill.
 
-A structured 6-phase process for finding ALL contributing causes, not just the first one.
+**Clarify has no phase and no `phase-gate.sh` exit check.** The work lives in its rca item; `pd-lint` checks the item at every commit.
 
-## Process Overview
+**Entries this stage writes,** under the item's `## Log` (shapes: `${CLAUDE_PLUGIN_ROOT}/references/log-entries.md`): `decision` (the user's rulings, quoted verbatim), `run` (the rca-fanout run), `note` (an intermittent reproduction, the hand-off).
 
 ```mermaid
 graph LR
-    A[1. CLARIFY] --> B[2. REPRODUCE]
-    B --> C[3. INVESTIGATE]
-    C --> D[4. EXPERIMENT]
-    D --> E[5. ANALYZE]
-    E --> F[6. REPORT]
+    A[1. Create] --> B[2. Clarify] --> C[3. Reproduce] --> D[4. Hypotheses] --> E[5. rca-fanout] --> F[6. Analyze] --> G[7. Report] --> H[8. Decide]
 ```
 
-## Stage 1: CLARIFY
+## 1. Create the item
+`${CLAUDE_PLUGIN_ROOT}/scripts/pd-new rca "<title>"` writes `{pd_artifacts_root}/rca/<YYYY-MM-DD>-<slug>.md`: frontmatter, body, `## Now` and `## Log`. Commit it.
 
-Gather context before investigation begins.
-
-- **Actions:** Ask targeted questions about symptom, timeline, recent changes
-- **Output:** Clear problem statement
-- **Tools:** AskUserQuestion
-
-Questions to ask:
+## 2. Clarify: the user owns the answers
+Ask through AskUserQuestion, one at a time:
 1. What is the exact error or unexpected behavior?
-2. When did this start happening?
+2. When did it start?
 3. What changed recently (code, config, dependencies)?
 4. Is it reproducible or intermittent?
 5. What has already been tried?
 
-## Stage 2: REPRODUCE
+The output is a clear problem statement: the symptom, in the item's body.
 
-Create isolated reproduction in sandbox.
+## 3. Reproduce
+In `agent_sandbox/<YYYY-MM-DD>/rca-<slug>/` (`reproduction/`, `experiments/`, `logs/`), build a minimal reproduction. After three failed attempts, record "intermittent" in a `note` entry with what was tried. Never touch production code.
 
-- **Actions:** Copy relevant code to agent_sandbox/, create minimal reproduction
-- **Output:** Reproduction script OR "intermittent" note if cannot reproduce after 3 attempts
-- **Tools:** Bash (mkdir, cp), Write
+## 4. Hypotheses: at least three
+Apply the 5 Whys ([five-whys-template](references/five-whys-template.md)): trace the error backward through the call stack, search for similar patterns, check recent commits on the related code, compare configuration and environments. With fewer than three genuine causes, list the alternatives considered and why each was set aside.
 
-Sandbox structure:
-```
-agent_sandbox/{YYYYMMDD}/rca-{slug}/
-├── reproduction/    # Minimal reproduction code
-├── experiments/     # Hypothesis verification scripts
-└── logs/           # Captured output
-```
+## 5. The `rca-fanout` workflow: every bug that reaches Clarify
+One `rca-investigator` per hypothesis, then a refuter (`rca-investigator` with a refute brief) per supported cause. Its args, from committed files:
+- `symptom`: the problem statement;
+- `source`: the rca item's path;
+- `hypotheses`: the list from step 4;
+- `workflow_output_cap`: from `.claude/pd.local.md`.
 
-## Stage 3: INVESTIGATE
+Around the run, the workflow-transitions protocol: the `run in flight:` line in the item's `## Now` before launch; after it, a `run` entry with `agents_used` and `tokens`, the line cleared, a commit. Its result is `findings[{claim, evidence, source, verdict}]`, `verdict` being `survived` or `refuted` (`${CLAUDE_PLUGIN_ROOT}/references/workflow-results.md`). An investigator's claim is a claim: re-check the evidence of each surviving cause at file:line, or by re-running its command, before it enters the report.
 
-Apply systematic analysis to generate hypotheses.
+## 6. Analyze
+Identify every surviving cause and the interactions between them; draw the causal DAG ([causal-dag](references/causal-dag.md) has the cause categories and templates). A refuted cause stays in the report, with its refutation.
 
-- **Actions:** Apply 5 Whys methodology, trace causality backward, search codebase
-- **Output:** Hypothesis list (MINIMUM 3 - document considered alternatives if fewer genuine causes)
-- **Tools:** Read, Glob, Grep
-- **Reference:** [5 Whys Template](references/five-whys-template.md)
+## 7. Report, in the item's body
+Per [rca-report-template](references/rca-report-template.md):
+- summary, with dates and status;
+- timeline of events;
+- reproduction steps and result;
+- hypotheses explored, each with its evidence and verdict;
+- experiments conducted;
+- root causes: the primary one and the contributing factors, with the DAG;
+- recommendations: directions, not fixes.
 
-Investigation techniques:
-- Trace the error backward through the call stack
-- Search for similar patterns in codebase
-- Check recent commits affecting related code
-- Review configuration and environment differences
+## 8. Decide the fix's entry depth
+Ask through AskUserQuestion:
+- **Express:** only for one known pattern. The codebase already holds the same change shape, and the mini-spec will cite that example's path (§A2). `${CLAUDE_PLUGIN_ROOT}/scripts/pd-new feature --from rca/<id>.md "<title>" --mode express`, then the specifying skill's express mini-spec.
+- **Criteria:** apply `/pd:secretary`'s depth rules to pick `mode` and any `risk:` tag, then `pd-new feature --from rca/<id>.md "<title>" --mode <mode>`, set `risk:` in its README, and continue with the specifying skill.
+- **No fix now:** `## Now` says why, and the recommendations go to the backlog with `pd-new backlog "<title>"`.
 
-## Stage 4: EXPERIMENT
+Then the rca item takes `status: done` and a `note` entry naming where the fix went; commit.
 
-Test each hypothesis with verification scripts.
+## Behavioral rules
+- **MUST** reproduce before analyzing, or record the failed attempts.
+- **MUST** explore at least three hypothesis paths.
+- **MUST NOT** modify production code: `agent_sandbox/` and the rca item only.
+- **MUST NOT** propose fixes in the report: causes only; the fix is a feature.
 
-- **Actions:** Write verification scripts in sandbox, test each hypothesis
-- **Output:** Evidence for/against each hypothesis
-- **Tools:** Write, Bash, Edit
-
-For each hypothesis:
-1. Design a test that would confirm or refute it
-2. Write the test script in agent_sandbox/
-3. Run and capture results
-4. Document evidence
-
-## Stage 5: ANALYZE
-
-Synthesize findings into root cause determination.
-
-- **Actions:** Identify all contributing causes, check for interaction effects
-- **Output:** Root cause list with evidence
-- **Reference:** [Causal DAG](references/causal-dag.md) for cause categories and DAG templates
-
-## Stage 6: REPORT
-
-Generate formal RCA report and offer workflow handoff.
-
-- **Actions:** Generate RCA report, offer handoff to /create-feature
-- Ensure directory exists: `mkdir -p {pd_artifacts_root}/rca/`
-- **Output:** `{pd_artifacts_root}/rca/{YYYYMMDD}-{HHMMSS}-{slug}.md`
-- **Reference:** [RCA Report Template](references/rca-report-template.md)
-
-Report must include:
-- Summary with dates and status
-- Timeline of events
-- Reproduction steps and result
-- Hypotheses explored with evidence
-- Experiments conducted
-- Root causes (primary + contributing factors)
-- Recommendations
-
-## Behavioral Rules
-
-- **MUST** reproduce before analyzing (or document failed attempts)
-- **MUST** explore at least 3 hypothesis paths
-- **MUST NOT** modify production code (agent_sandbox/ and {pd_artifacts_root}/rca/ only)
-- **MUST NOT** propose fixes (report causes only, fixing is a separate step)
-
-## Related Resources
-
-- [systematic-debugging](../systematic-debugging/SKILL.md) - Iron Law ("NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST"), 3-fix rule
+## Related
+- [systematic-debugging](../systematic-debugging/SKILL.md): the Iron Law ("NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST") and the 3-fix rule.
