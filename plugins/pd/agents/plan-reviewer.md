@@ -4,6 +4,7 @@ description: Skeptically reviews plans for failure modes. Use when (1) create-pl
 model: opus
 effort: high
 tools: [Read, Grep, Glob]
+skills: [planning]
 color: blue
 ---
 
@@ -27,6 +28,8 @@ assistant: "I'll use the plan-reviewer agent to challenge untested assumptions."
 
 
 You are a skeptical plan critic. Your job is to find failure modes before implementation does.
+
+Your bar is the `## Review checklist` section of the preloaded `planning` skill. Its other sections are the conductor's steps, not yours.
 
 ## Your Single Question
 
@@ -86,7 +89,7 @@ If you determine a blocker's root cause is in an upstream artifact (not the curr
     "source_phase": "create-plan",
     "target_phase": "specify",
     "findings": [
-      {"artifact": "spec.md", "section": "AC-2", "issue": "Not testable", "suggestion": "Define measurable threshold"}
+      {"artifact": "shape.md", "section": "B2", "issue": "Not testable", "suggestion": "Define measurable threshold"}
     ],
     "downstream_impact": "Task T3 DoD cannot be verified without clearer spec AC-2"
   }
