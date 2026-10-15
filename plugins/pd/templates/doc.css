@@ -1,0 +1,42 @@
+/* pd's one stylesheet (plugins/pd/references/doc-format.md). pd-html inlines it; hand-written HTML links it. */
+:root {
+  --fg: #1f2328; --bg: #ffffff; --muted: #59636e; --line: #d1d9e0; --zebra: #f6f8fa;
+  --code-bg: #f6f8fa; --link: #0969da;
+  --draft: #59636e; --active: #0969da; --blocked: #bc4c00; --done: #1a7f37; --abandoned: #82071e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6edf3; --bg: #0d1117; --muted: #9198a1; --line: #3d444d; --zebra: #151b23;
+    --code-bg: #151b23; --link: #4493f8;
+    --draft: #9198a1; --active: #4493f8; --blocked: #db6d28; --done: #3fb950; --abandoned: #f85149;
+  }
+}
+html { color: var(--fg); background: var(--bg); }
+body {
+  max-width: 72ch; margin: 2rem auto; padding: 0 1rem;
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+h1, h2, h3, h4 { line-height: 1.25; margin: 1.6em 0 0.6em; }
+h1 { font-size: 2em; } h2 { font-size: 1.5em; border-bottom: 1px solid var(--line); padding-bottom: .3em; }
+h3 { font-size: 1.25em; } h4 { font-size: 1em; }
+a { color: var(--link); }
+code, pre { font: 0.9em/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); }
+code { padding: .1em .3em; border-radius: 4px; }
+pre { padding: 1em; overflow-x: auto; border-radius: 6px; }
+pre code { padding: 0; background: none; }
+blockquote { margin: 1em 0; padding: 0 1em; color: var(--muted); border-left: 4px solid var(--line); }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: .4em .7em; text-align: left; vertical-align: top; }
+tr:nth-child(even) td { background: var(--zebra); }
+details { margin: 1em 0; } summary { cursor: pointer; font-weight: 600; }
+.frontmatter { border: 1px solid var(--line); border-radius: 6px; padding: .6em 1em; margin: 1em 0; font-size: .9em; }
+.frontmatter dt { float: left; clear: left; width: 6em; color: var(--muted); }
+.frontmatter dd { margin-left: 6.5em; }
+.draft { color: var(--draft); } .active { color: var(--active); } .blocked { color: var(--blocked); font-weight: 600; }
+.done { color: var(--done); } .abandoned { color: var(--abandoned); text-decoration: line-through; }
+.mermaid { background: none; text-align: center; }
+@media print {
+  body { max-width: none; margin: 0; font-size: 11pt; }
+  a { color: inherit; text-decoration: underline; }
+  pre, table, blockquote { page-break-inside: avoid; }
+}

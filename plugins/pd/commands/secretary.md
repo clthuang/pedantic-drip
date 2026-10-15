@@ -1,19 +1,28 @@
 ---
-description: Single entry point — triage a request into deep, express, or specialist
-argument-hint: "<request> [--deep|--express]"
+description: Triage a request into a feature, brainstorm, RCA or specialist
+argument-hint: "<request> [--standard|--small|--express]"
 ---
 
 # /pd:secretary
 
-Triage that selects a mode — not a pipeline. Assess the request, state mode + rationale in one short block, route, hand off. Triage never mutates state; the routed command owns entity work.
+Triage: what kind of work this is, and how deep it must go. It creates the item for the way the work arrived, then routes. Files and commits follow the `pd:workflow-transitions` skill.
 
-**Mode signals** (any present → deep is mandatory): security surface, schema or data migration, multi-file blast radius, novel domain, success criteria you cannot state mechanically. Express fits: small diff, known pattern, outcome verifiable by a command. Uncertain → deep.
+**Kind:**
+- **A feature request** → `/pd:create-feature "<title>" --mode <depth>`.
+- **An idea that needs Clarify** (is this the right problem?) → `/pd:brainstorm`.
+- **A bug** → `/pd:root-cause-analysis`. A bug whose cause is already known goes to a feature instead, at express or standard depth.
+- **An existing feature named** → read `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and run its phase's command.
+- **A codebase question triage itself can't answer** → one `pd:investigation-agent` dispatch, then decide.
 
-**Routing:**
-- **Deep** → `/pd:brainstorm` when the idea needs shaping, else `/pd:create-feature` → six-phase pipeline (sequence: workflow-state skill).
-- **Express** → `/pd:create-feature --express` (inline mini-spec recorded as `mini_spec` event) → `/pd:implement` → `/pd:finish-feature`.
-- **Existing feature named** → ask the engine (`get_phase`) and invoke the next phase command.
-- **Specialist fast-path** (direct, no feature entity):
+**Depth, for a feature:**
+- **Standard is mandatory** with any of these: a security surface (tag `risk: security`), a schema or data migration (`risk: migration`), more than `many_files` files (`.claude/pd.local.md`, default 10), an area the codebase has no module or earlier feature for, or criteria that look hard to state as observable outcomes. When unsure, choose standard.
+- **Express:** a small diff on a known pattern, provable by one command. The mini-spec cites the existing example's path.
+- **Small:** an estimate of at most `small_feature_tasks` tasks (default 3), with its reason.
+- **Record each skipped stage** as a `phase triage -> <first stage>` entry with the reason. Small mode's reason goes in that entry too.
+
+**Overrides:** `--standard`, `--small` and `--express` force the depth. A risk tag or a failed express assumption found later is a backward move to the earliest skipped stage at standard depth (`phase <from> -> specify (back)`).
+
+**Specialist fast path** (direct, no feature item):
 
 | Request pattern | Route |
 |---|---|
@@ -23,11 +32,6 @@ Triage that selects a mode — not a pipeline. Assess the request, state mode + 
 | DS analysis / DS code review | `/pd:review-ds-analysis` / `/pd:review-ds-code` |
 | debug / root cause | `pd:systematic-debugging` skill / `/pd:root-cause-analysis` |
 | explore codebase | `pd:codebase-explorer` agent |
-| deepen tests | `pd:test-deepener` agent |
-| docs / backlog / doctor / status | `/pd:generate-docs` `/pd:add-to-backlog` `/pd:doctor` `/pd:show-status` |
+| project state | `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` |
 
-**Overrides:** `--deep` / `--express` force the mode both directions. Mid-express escalation: stop implement, `record_backward_event(feature_type_id, source_phase="implement", target_phase="specify", reason=<why>)`, then run `/pd:specify` — it reads the `mini_spec` event as its input; no restart penalty.
-
-**Output shape:** `Mode: {deep|express|specialist} — {one-line rationale}. Routing to {command}.` Then invoke it, propagating `[YOLO_MODE]` per the global rule (workflow-transitions).
-
-**Component discovery:** installed plugin first — `~/.claude/plugins/cache/*/pd*/*/` glob; fallback `plugins/pd/` (dev workspace).
+**Output:** `Kind: {feature <depth>|brainstorm|rca|specialist} — {one-line rationale}. Routing to {command}.` Then invoke it.

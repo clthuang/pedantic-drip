@@ -58,7 +58,10 @@ EOF
 Located at `hooks/lib/common.sh`:
 
 ### detect_project_root()
-Walks up from PWD to find project root (directory containing `.git` or `docs/features`).
+Walks up from PWD to the nearest `.git` (a directory in a main checkout, a file in a linked worktree); falls back to PWD. So a session in a linked worktree roots at the worktree, not the main checkout. A git submodule's `.git` is a file too, so a session inside a submodule roots at the submodule. An orphaned worktree (its `.git` file names a pruned `.git/worktrees/<name>`) also roots at itself; git cannot answer there, so no workspace resolves for it and `sync-cache` publishes nothing.
+
+### may_publish_plugin_cache()
+Succeeds when `sync-cache.sh` may publish the plugin from a checkout root: a main checkout, or a directory with no `.git` (a `git archive` export). Fails, so nothing is published over the shared cache, in a linked worktree and at a `.git` file git cannot answer for (an orphaned worktree, a failing git, or a git older than 2.31). `test-hooks.sh` skips Tests 13b and 13c where it fails.
 
 ### escape_json()
 Escapes special characters for JSON output: newlines, tabs, quotes, backslashes.

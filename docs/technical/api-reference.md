@@ -1,327 +1,103 @@
 ---
-last-updated: 2026-07-10T00:00:00Z
-source-feature: 109-polymorphic-taxonomy-and-event
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: codebase-analysis -->
-
 # API Reference
 
-Internal contracts for MCP tools and key module interfaces. This document covers the MCP tool signatures used by workflow skills and commands, and the entity metadata contracts consumed by the workflow engine.
+The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usage below is the script's own docstring; every script except `phase-gate.sh` also takes `--self-test`. Skills call them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`.
 
-**Scope note:** this is a selective contracts reference, not a full inventory. The servers expose 19 entity-registry tools and 21 workflow-engine tools — see the tool tables in `plugins/pd/README.md` for the complete list. Sections below marked "EntityDatabase method" document the Python DB layer (`database.py`), which is not exposed over MCP.
-
-## MCP: Workflow Engine Server
-
-**Server:** `plugins/pd/mcp/workflow_state_server.py` (registered as `FastMCP("workflow-engine")`; the file is named `workflow_state_server.py` for legacy reasons but the MCP server name is `workflow-engine`)
-**Bootstrap:** `plugins/pd/mcp/run-workflow-server.sh`
-
-### complete_phase
-
-Records phase completion in entity metadata and re-projects `.meta.json`.
+## pd-new — create an item
 
 ```
-complete_phase(
-    feature_type_id: str | None = None,     # Feature entity type_id, e.g., "feature:097-iso8601-test-pin-v2"
-    phase: str = "",                        # Phase name, e.g., "specify", "design", "implement"
-    iterations: int | None = None,          # Review iteration count (optional)
-    reviewer_notes: str | None = None,      # JSON-serialized array OR null; raw string passed directly
-    ref: str | None = None,                 # Alternative to feature_type_id (UUID or slug-based)
-    closes: list[str] | None = None,        # Issue entity UUIDs to atomically close with this phase
-) -> str
+pd-new <feature|plan|brainstorm|rca> "<title>" [--from <path under the artifacts root | backlog#<id>>]
+       [--mode standard|small|express]                       (--mode: features only)
+pd-new feature --plan <plan id or path> <slug> "<title>"     (fills that roadmap's `planned: <slug>`)
+pd-new backlog "<title>" [--from features/<id>]
 ```
 
-Writes to `phase_timing[phase].{completed, iterations, reviewerNotes}` in entity metadata. Does not write `phase_summaries` — that is handled separately via `update_entity` in `commitAndComplete` Step 3a. Note: `reviewer_notes` is parsed as a JSON blob, not passed as a Python list — callers must pre-serialize. The optional `closes=[uuid...]` atomically transitions each referenced issue entity to its terminal status and writes `entity_relations(kind='fixes')` rows.
+Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOAL_RUN=1`, so a `tracker: github` item records `issue: pending` instead of publishing an issue.
 
-### transition_phase
-
-Advances workflow state to the next phase in the engine.
+## pd-status — the repository's state
 
 ```
-transition_phase(
-    feature_type_id: str | None = None,
-    target_phase: str = "",
-    yolo_active: bool = False,              # When True, validates with YOLO transition rules
-    skipped_phases: str | None = None,      # JSON-serialized list; null means none skipped
-    ref: str | None = None,                 # Alternative to feature_type_id
-) -> str
+pd-status
 ```
 
-### validate_prerequisites
+Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done features owing a retro. Takes no other argument.
 
-Checks artifact prerequisites before entering a phase.
-
-```
-validate_prerequisites(
-    feature_type_id: str | None = None,
-    target_phase: str = "",
-    ref: str | None = None,                 # Alternative to feature_type_id
-) -> {"valid": bool, "missing": list[str], "warnings": list[str]}
-```
-
-### reconcile_check / reconcile_apply
-
-Drift detection and repair between engine state and filesystem artifacts.
+## phase-gate.sh — a phase's exit check
 
 ```
-reconcile_check(feature_type_id: str | None = None) -> {"drifts": list[dict], "status": str}
-reconcile_apply(feature_type_id: str | None = None, dry_run: bool = False) -> {"applied": list[str], "errors": list[str]}
+phase-gate.sh <phase> <feature-dir> [--express]
+  phase ∈ specify|design|create-plan|implement|verify|finish|express
 ```
 
-## MCP: Entity Registry Server
+Checks artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. `express` is the mini-spec check (one task block in `shape.md` `## Requirements`), which replaces specify, design and create-plan for a `mode: express` feature. Exit 0 passes; 1 prints each failure on its own line (`GATE FAIL …`); 2 is a usage error.
 
-**Server:** `plugins/pd/mcp/entity_server.py`
-**Bootstrap:** `plugins/pd/mcp/run-entity-server.sh`
-**Database:** `~/.claude/pd/entities/entities.db`
-
-### register_entity
-
-Raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict — no silent ignore (feature 109, FR-4).
+## pd-lint — the artifact checks
 
 ```
-register_entity(
-    entity_type: str,               # kind, e.g. "feature", "backlog" — combined with entity_id into "{kind}:{entity_id}" (colon separator, not slash)
-    entity_id: str | None = None,
-    name: str = "",
-    artifact_path: str | None = None,
-    status: str | None = None,
-    parent_uuid: str | None = None,
-    metadata: str | dict | None = None,   # dict preferred; auto-coerced to JSON string
-    workspace_uuid: str | None = None,
-    project_id: str | None = None,
-    auto_id: bool = False,
-) -> str                            # entity uuid
+pd-lint [<path>…]            every item under the artifacts root, or only the items the paths touch
+pd-lint --staged             the commit hook's mode: the items `git diff --cached` touches
+pd-lint --isolation <range>  test isolation over a diff (source/test/fixture paths)
+pd-lint --risk <range>       risk signals over a diff (references/risk-patterns.md); warns only
+pd-lint --archive            move ticked backlog lines into backlog-archive.md
+pd-lint --sweep              list agent_sandbox/ dirs to clean; never deletes
 ```
 
-**Exception:** `EntityExistsError(ValueError)` — raised when the `(workspace_uuid, type_id)` pair already exists. Carries `.workspace_uuid` and `.type_id` attributes for caller inspection. Defined in `database.py` (not a separate `exceptions.py`).
+Errors print `pd-lint: ERROR <path>:<line>: <message>` and exit 1; warnings never change the exit.
 
-### upsert_entity — EntityDatabase method (database.py, not an MCP tool)
-
-Idempotent insert-or-status-update. Byte-identical signature to the DB-layer `EntityDatabase.register_entity` (feature 109, FR-4).
+## pd-proof — judge a task's JUnit XML
 
 ```
-EntityDatabase.upsert_entity(
-    entity_type: str,
-    entity_id: str,
-    name: str,
-    *,
-    workspace_uuid: str | None = None,
-    project_id: str | None = None,
-    artifact_path: str | None = None,
-    status: str | None = None,
-    parent_uuid: str | None = None,
-    parent_type_id: str | None = None,
-    metadata: dict | None = None,
-) -> str                    # entity uuid (existing or newly created)
+pd-proof first <junit.xml>                         # the task's first (tests-only) commit
+pd-proof head <junit.xml> [--first <junit.xml>]    # the task's HEAD
 ```
 
-**Semantics (three branches):**
+Prints one JSON result; exits 0 when ok, 1 when not, 2 on a usage error. Reads only the XML, never the console output. The `merger` agent is its caller.
 
-| Branch | Condition | Side effects |
-|--------|-----------|-------------|
-| Insert | No existing `(workspace_uuid, type_id)` row | INSERT + emit `entity_created` phase_event (identical to `register_entity`) |
-| Conflict + status change | Row exists, `status` differs | UPDATE `status` + `updated_at`, emit `entity_status_changed` phase_event with `metadata={"old_status": ..., "new_status": ...}` |
-| Conflict + no status change | Row exists, `status` same or not passed | No-op — no UPDATE, no event emitted, `updated_at` unchanged |
-
-`name`, `parent_uuid`, and `metadata` are **never updated** on the conflict branch. Use `update_entity` for those fields.
-
-### promote_entity — EntityDatabase method (database.py, not an MCP tool)
-
-Atomically promotes an entity to a new kind within the same workspace, rewriting the `type_id` prefix (feature 109, FR-3).
+## pd-review-filter — scope a re-review to the diff
 
 ```
-EntityDatabase.promote_entity(
-    uuid: str,
-    new_kind: str,
-    new_lifecycle_class: str,
-    *,
-    project_id: str | None = None,
-) -> dict                   # updated entity row
+pd-review-filter (--diff <file> | --range <A..B>) [<review.json>]    # the review from the file, or stdin
 ```
 
-**Operation (single transaction):**
+Prints the review JSON with `new_in_diff` cut to the findings whose file:line lies inside a hunk of the diff's new side, and names each dropped finding on stderr. Schema: `references/workflow-results.md`.
 
-1. Pre-flight: read existing row by `uuid`; if the new `type_id` would collide with an existing `(workspace_uuid, new_type_id)` row, raise `PromotionConflictError`.
-2. `UPDATE entities SET kind = ?, lifecycle_class = ?, type_id = ?, updated_at = ?`; the `type_id` prefix is rewritten using first-colon split (`backlog:42` → `feature:42`; subsequent colons in the suffix are preserved verbatim).
-3. Append `entity_promoted` phase_event via `append_phase_event`, keyed on the new `type_id`. Metadata payload: `{"old_kind", "new_kind", "old_lifecycle_class", "new_lifecycle_class", "old_type_id", "new_type_id"}`.
-4. Return updated entity dict.
-
-The `uuid` and `workspace_uuid` are never changed. Dependencies referencing the uuid remain valid.
-
-**Exception:** `PromotionConflictError(ValueError)` — raised on `(workspace_uuid, new_type_id)` collision. Carries `.workspace_uuid`, `.old_type_id`, `.new_type_id`. Defined in `database.py`.
-
-**Allowed transitions:** any `(new_kind, new_lifecycle_class)` pair that satisfies the FR-1 composite CHECK constraint. Business-logic restrictions (e.g., only `backlog → feature`) must be enforced by callers.
-
-### update_entity
-
-Shallow-merges `metadata` dict into existing entity metadata. Pass only the keys to update.
+## pd-init — set a project up
 
 ```
-update_entity(
-    type_id: str,
-    name: str | None,
-    status: str | None,
-    artifact_path: str | None,
-    metadata: dict,         # shallow merge — unspecified keys are preserved
-)
+pd-init [--force]          write .claude/pd.local.md, the artifacts root and three .gitignore lines,
+                           then print the proposed .claude/settings.json diff without applying it
+pd-init --apply-settings   write that proposed settings.json, once the user approved the diff
+pd-init --decline          record this repository in ~/.claude/pd/init-declined ("never ask again")
 ```
 
-**Important:** When updating `phase_summaries`, pass the complete updated list. `update_entity` merges at the top-level key level only; it does not append to lists automatically.
+Refuses an old-layout project (`docs/features/` without `sop: 1`): that one runs `pd-adopt`.
 
-### get_entity
-
-```
-get_entity(type_id: str) -> entity dict or None
-```
-
-### get_lineage
+## pd-adopt — migrate an old-layout project, once
 
 ```
-get_lineage(
-    type_id: str | None = None,
-    direction: str = "up",                  # "up" (ancestors) or "down" (descendants)
-    max_depth: int = 10,                    # Walk depth cap; default 10 levels
-    ref: str | None = None,                 # Alternative to type_id
-) -> str                                    # Formatted tree string, NOT a list
+pd-adopt [--registry <path>] [--workspace <uuid>]          dry run: print the plan and the diff; change nothing
+pd-adopt --apply [--registry <path>] [--workspace <uuid>]  on a new pd-adopt branch, one commit per step
 ```
 
-Returns a human-readable formatted tree, not a structured list. Parse caller-side if structured access is needed.
+Run it from the project root. The old registry is opened once, read-only (`immutable=1`), to copy it into `agent_sandbox/<date>/pd-adopt/`; every later read uses the copy.
 
-### append_phase_event — EntityDatabase method (database.py, not an MCP tool)
-
-Sole write path for `entities.status` and `workflow_phases.workflow_phase` mutations (feature 109, FR-2 Path A). Returns the event uuid.
+## pd-html.py — markdown to HTML
 
 ```
-EntityDatabase.append_phase_event(
-    *,                              # keyword-only
-    type_id: str,
-    project_id: str,
-    event_type: str,                # see domain table below
-    timestamp: str | None = None,
-    phase: str | None = None,       # required for workflow event types
-    iterations: int | None = None,
-    reviewer_notes: str | None = None,
-    backward_reason: str | None = None,
-    backward_target: str | None = None,
-    metadata: dict | None = None,   # event-specific JSON payload
-) -> str                            # event uuid
+uv run pd-html.py <file.md | dir> [--open]
+uv run pd-html.py --all [--open]
 ```
 
-**Event type domain (expanded from 4 → 7 values in feature 109):**
+Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it.
 
-| `event_type` | `phase` | `metadata` | Projection target |
-|-------------|---------|-----------|------------------|
-| `started` | required | NULL | `workflow_phases.workflow_phase` |
-| `completed` | required | NULL | `workflow_phases.workflow_phase` |
-| `skipped` | required | NULL | `workflow_phases.workflow_phase` |
-| `backward` | required (target phase) | NULL | `workflow_phases.workflow_phase` |
-| `entity_created` | NULL | optional (creation context) | `entities.status` |
-| `entity_status_changed` | NULL | **required** `{"old_status": ..., "new_status": ...}` | `entities.status` |
-| `entity_promoted` | NULL | **required** `{"old_kind", "new_kind", "old_lifecycle_class", "new_lifecycle_class", "old_type_id", "new_type_id"}` | `entities.status` |
+## Shared formats
 
-**Operation order (single transaction):** INSERT phase_events row → UPDATE `entities.status` (entity_* event types only) → UPDATE `workflow_phases.workflow_phase` (workflow event types only). If any UPDATE step raises, the transaction rolls back and the event row is also discarded.
-
-Passing params that are invalid for the given `event_type` (e.g., `iterations=1` with `event_type='entity_created'`) raises `ValueError`.
-
-## phase_events Schema (Feature 109)
-
-Migration 12 extends the `phase_events` table via copy-rename:
-
-| Column | Change | Notes |
-|--------|--------|-------|
-| `event_type` CHECK | Expanded 4 → 7 values | Adds `entity_created`, `entity_status_changed`, `entity_promoted` |
-| `phase` | Relaxed `NOT NULL` → NULL-able | New entity event types have no meaningful `phase` value |
-| `metadata` | **New column** `TEXT` (JSON), NULL-able | Event-specific payload; required for `entity_status_changed` and `entity_promoted` |
-| `workspace_uuid` | **New column** `TEXT`, NULL-able | Workspace scope for entity events; NULL for workflow phase events |
-
-Existing rows (`started`, `completed`, `skipped`, `backward`) remain valid after the migration — legacy data is preserved unchanged (append-only event log).
-
-## Entity Metadata Contracts
-
-Entity metadata is stored as a JSON string in the `metadata` column of `entities.db`. The `feature` entity type uses the following schema (defined in `metadata.py:METADATA_SCHEMAS['feature']`):
-
-| Key | Type | Written by | Read by |
-|-----|------|-----------|---------|
-| `id` | str | create-feature command | _project_meta_json |
-| `slug` | str | create-feature command | _project_meta_json |
-| `mode` | str | create-feature command | _project_meta_json |
-| `branch` | str | workflow-transitions skill | _project_meta_json |
-| `phase_timing` | dict | _process_complete_phase | _project_meta_json, validateAndSetup |
-| `last_completed_phase` | str | workflow engine | _project_meta_json (fallback) |
-| `skipped_phases` | list | validateAndSetup | _project_meta_json |
-| `brainstorm_source` | str | create-feature command | _project_meta_json |
-| `backlog_source` | str | create-feature command | _project_meta_json |
-| `depends_on_features` | list | create-feature command | implement skill |
-| `project_id` | str | create-feature command | implement skill |
-| `phase_summaries` | list | commitAndComplete Step 3a (feature 075) | validateAndSetup Step 1b, _project_meta_json |
-| `backward_context` | dict | handleReviewerResponse (feature 073) | validateAndSetup Step 1b, _project_meta_json |
-| `backward_return_target` | str | handleReviewerResponse (feature 073) | validateAndSetup, _project_meta_json |
-| `backward_history` | list | handleReviewerResponse (feature 073) | audit only — NOT projected to .meta.json |
-
-Unknown keys produce validation warnings from `validate_metadata()` but never block writes.
-
-## .meta.json Contract
-
-`.meta.json` is the read surface for feature state in the current session. It is regenerated by `_project_meta_json()` after every state mutation. Skills and commands must not write to it directly.
-
-### Field Reference
-
-```json
-{
-  "id": "075-phase-context-accumulation",
-  "slug": "phase-context-accumulation",
-  "mode": "standard",
-  "status": "active",
-  "created": "2026-04-02T00:00:00Z",
-  "branch": "feature/075-phase-context-accumulation",
-  "lastCompletedPhase": "design",
-  "phases": {
-    "specify": {
-      "started": "2026-04-02T08:00:00Z",
-      "completed": "2026-04-02T09:00:00Z",
-      "iterations": 3,
-      "reviewerNotes": ["Reviewer note text"]
-    }
-  },
-  "backward_context": {
-    "source_phase": "design",
-    "findings": [
-      {
-        "artifact": "spec.md",
-        "section": "AC-3",
-        "issue": "Gap in acceptance criteria",
-        "suggestion": "Add edge case for empty input"
-      }
-    ],
-    "downstream_impact": "Design assumptions may be invalid."
-  },
-  "backward_return_target": "design",
-  "phase_summaries": [
-    {
-      "phase": "specify",
-      "timestamp": "2026-04-02T09:00:00Z",
-      "outcome": "Approved after 3 iterations.",
-      "artifacts_produced": ["spec.md"],
-      "key_decisions": "Chose append-list storage over keyed dict for rework history preservation.",
-      "reviewer_feedback_summary": "Reviewer requested tighter AC scoping in first iteration.",
-      "rework_trigger": null
-    }
-  ]
-}
-```
-
-### Backward Transition Detection
-
-Skills detect backward transitions by checking `.meta.json`:
-
-```python
-def is_backward_transition(phase_name: str, meta_json: dict) -> bool:
-    phase_timing = meta_json.get("phases", {})
-    target_phase_timing = phase_timing.get(phase_name, {})
-    return "completed" in target_phase_timing
-```
-
-Note: `.meta.json` projects `phase_timing` as `phases` (see `_project_meta_json` line 377). Detection reads from `.meta.json`, hence uses the `phases` key.
-
-<!-- AUTO-GENERATED: END -->
+- **Log entries:** `plugins/pd/references/log-entries.md`.
+- **Workflow results and the review schema:** `plugins/pd/references/workflow-results.md`.
+- **The review call:** `plugins/pd/references/review-call.md`.
+- **`.claude/pd.local.md` fields:** written by `pd-init`; defaults in `pd_common.py`.

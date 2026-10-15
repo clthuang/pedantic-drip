@@ -1,72 +1,43 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
-source-feature: 078-cc-native-integration
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
-
 # Workflow Artifacts
 
-Index of file artifacts produced by the pd workflow and their feature-level documentation.
+Index of the files the pd workflow commits. Templates: `plugins/pd/templates/`. Entry shapes: `plugins/pd/references/log-entries.md`.
 
-## Per-Feature Artifact Directory
+## Per-Feature Directory
 
-Each feature has a directory under `docs/features/{feature-id}/` containing:
+`{artifacts_root}/features/<id>/`, where `<id>` is `YYYY-MM-DD-slug` (made by `pd-new feature`):
 
-| File | Produced by | Purpose |
-|------|------------|---------|
-| `.meta.json` | `_project_meta_json()` | Machine-readable workflow state; regenerated on every phase transition |
-| `prd.md` | brainstorm skill | Problem statement, strategic analysis, proposed solution |
-| `spec.md` | specifying skill | Acceptance criteria, scope, API contracts |
-| `design.md` | designing skill | Architecture, component map, interfaces, technical decisions |
-| `plan.md` | planning skill | Ordered implementation plan with dependencies |
-| `tasks.md` | breaking-down-tasks skill | Atomic task list with dependency graph |
-| `implementation-log.md` | implementer agent (or direct-orchestrator per feature 096 retro Tune #2) | Per-task decisions, deviations, concerns, T0 baselines, tooling-friction notes (deleted after retro per finish-feature Step 6b) |
-| `retro.md` | retrospecting skill | AORTA retrospective findings (plain markdown reflection); folds `.qa-gate-low-findings.md` and `.qa-gate.log` sidecars per Step 2c (FR-7b) |
-| `qa-override.md` | finish-feature Step 5b (manual) | Required when QA gate produces HIGH findings; ≥50-char user-authored rationale unblocks merge (feature 094) |
-| `.qa-gate.log` / `.qa-gate.json` / `.qa-gate-low-findings.md` | finish-feature Step 5b (transient sidecars, gitignored) | Per-reviewer audit log + idempotency cache (head_sha) + LOW-finding deferral; folded into retro.md by retrospecting skill |
+| File | Written by | Holds |
+|------|-----------|-------|
+| `README.md` | `pd-new`, then every stage | Frontmatter (`id`, `type`, `title`, `status`, `phase`, `mode`, `origin`, `branch`, `risk`, `issue`) and `## Now`, overwritten, never appended |
+| `log.md` | every stage | Append-only entries: `decision`, `phase`, `review`, `qa`, `gate`, `run`, `handoff`, `replan`, `metrics`, `defect`, `note`, `capped` |
+| `shape.md` | specify (`## Requirements`), design (`## Design`) | B-numbered expectations; then the architecture diagram, contracts pinned once, decisions, risks and test strategy. Express: a mini-spec with one task block |
+| `plan.md` | create-plan | `## Plan`: waves of task blocks, each with its contract, files, proving command, JUnit path and test cases |
+| `retro.md` | retrospecting (finish) | Only when `log.md` records a retro trigger |
 
-## .meta.json Schema
+## Other Items
 
-The `.meta.json` file is the primary read surface for a feature's workflow state. It is always regenerated from authoritative sources (entity DB + workflow engine) and must never be written directly. See `docs/technical/api-reference.md` for the full field reference.
+| Path | Made by | Holds |
+|------|---------|-------|
+| `plans/<id>.md` | `pd-new plan` | A multi-feature plan and its `roadmap:` |
+| `brainstorms/<id>.md` | `pd-new brainstorm` | A PRD, with its `## Log` |
+| `rca/<id>.md` | `pd-new rca` | A root-cause report, with its `## Log` |
+| `backlog.md` | `pd-new backlog` | One line per idea; `pd-lint --archive` moves ticked lines to `backlog-archive.md` |
 
-Notable schema fields added since the source feature (078):
-- `phase_summaries` (array) — per workflow-transitions skill Step 3a; one entry per completed phase with key decisions, artifacts, reviewer notes
-- `backward_context` (object) — populated when a reviewer triggers backward travel; contains the referral message and target phase
-- `backward_return_target` (string) — phase to return to after rework completes
-- `backward_history` (array) — historical record of all backward transitions for the feature
+## Checks
 
-## Technical Documentation
+- **`phase-gate.sh <phase> <feature dir> [--express]`** — what each phase hands down: artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. Zero dispatch.
+- **`pd-lint`** — the artifact rules, run on staged items by the commit hook; it re-runs the gates for every phase a feature has passed.
 
-| Document | Purpose |
-|----------|---------|
-| `docs/technical/architecture.md` | Component map, data flow, module interfaces |
-| `docs/technical/api-reference.md` | Internal API contracts (MCP tools, metadata schemas) |
-| `docs/technical/workflow-artifacts.md` | This file — artifact index |
-| `docs/technical/decisions/` | Architecture Decision Records |
+## Generated, Never Committed
 
-## ADRs
+- `docs/_html/` — `pd-html.py` renders.
+- `agent_sandbox/` — QA output, JUnit files, scratch work.
+- `.claude/worktrees/` — task worktrees.
 
-| ADR | Title | Status |
-|-----|-------|--------|
-| [ADR-001](decisions/ADR-001-phase-summaries-append-list.md) | Phase Summaries Append-List Storage | Accepted |
-| [ADR-002](decisions/ADR-002-update-entity-for-summary-storage.md) | update_entity for Summary Storage | Accepted |
-| [ADR-003](decisions/ADR-003-backward-transition-detection-via-completed-timestamp.md) | Backward Transition Detection via Completed Timestamp | Accepted |
-| [ADR-004](decisions/ADR-004-parallel-worktree-dispatch.md) | Parallel Worktree Dispatch for Implementing Skill | Accepted |
-| [ADR-005](decisions/ADR-005-two-tier-worktree-fallback.md) | Two-Tier Fallback Strategy for Worktree Dispatch | Accepted |
-| [ADR-006](decisions/ADR-006-security-review-integration-via-natural-language.md) | Security Review Integration via Natural Language Instruction | Accepted |
-
-## Feature Artifacts Index
-
-Recent feature artifacts (latest features):
-
-| Feature | Status | Artifacts | Notes |
-|---------|--------|----------|-------|
-| [094-pre-release-qa-gate](../features/094-pre-release-qa-gate/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md | Introduced finish-feature Step 5b adversarial QA gate (4 reviewers parallel). |
-| [095-test-hardening-iso8601](../features/095-test-hardening-iso8601/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md | Test hardening sweep: source-pin tests for `_ISO8601_Z_PATTERN`. First production exercise of feature 094 QA gate. |
-| [096-iso8601-pattern-relocation](../features/096-iso8601-pattern-relocation/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md, implementation-log.md | Relocated `_ISO8601_Z_PATTERN` to `_config_utils.py`. Closed recursive test-hardening cycle. SECOND QA gate exercise. |
-| [097-iso8601-test-pin-v2](../features/097-iso8601-test-pin-v2/) | Completed | spec.md, design.md, plan.md, tasks.md, retro.md, implementation-log.md, qa-override.md | TestIso8601PatternSourcePins v2 refactor (8 sub-items + bonus identity-pin). THIRD QA gate exercise; HIGH findings overridden as recursive test-hardening per anti-pattern. |
-| [098-tier-doc-frontmatter-sweep](../features/098-tier-doc-frontmatter-sweep/) | In progress | (this audit) | Tier-doc frontmatter drift sweep using parallel audit subagents. |
-
-<!-- AUTO-GENERATED: END -->
+Features from before thin pd keep their original layouts until `/pd:adopt` migrates the project.

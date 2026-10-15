@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # SessionStart hook: sync plugin source files to cache directory
 # Ensures Claude Code always uses the latest plugin code
+#
+# Publishes only from a main checkout. In a linked worktree it publishes
+# nothing, so no worktree overwrites the shared cache with its branch's
+# plugin; its edits reach the cache once they reach the main checkout. Nor
+# does it publish at a .git file git cannot answer for (an orphaned worktree,
+# a failing git, a git older than 2.31). A directory with no .git (a git
+# archive export) publishes as before. common.sh's may_publish_plugin_cache
+# decides.
 
 set -euo pipefail
 
@@ -11,6 +19,11 @@ install_err_trap
 # Find the source project root
 SOURCE_ROOT="$(detect_project_root)"
 SOURCE_PLUGIN="${SOURCE_ROOT}/plugins/pd"
+
+if ! may_publish_plugin_cache "$SOURCE_ROOT"; then
+    echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}'
+    exit 0
+fi
 
 # Detect installed plugin path dynamically from installed_plugins.json
 INSTALLED_PLUGINS="$HOME/.claude/plugins/installed_plugins.json"
@@ -27,10 +40,16 @@ if [[ -z "$CACHE_PLUGIN" ]]; then
     exit 0
 fi
 
-# Sync pd plugin
-if [[ -d "${SOURCE_PLUGIN}" && -f "${SOURCE_PLUGIN}/.claude-plugin/plugin.json" ]]; then
-    rsync -a --delete --exclude='.venv' "${SOURCE_PLUGIN}/" "${CACHE_PLUGIN}/" 2>/dev/null || true
+# Only a checkout holding pd's plugin publishes, the plugin and the
+# marketplace.json beside it: another plugin repository's marketplace.json
+# must not replace pd's.
+if [[ ! -d "${SOURCE_PLUGIN}" || ! -f "${SOURCE_PLUGIN}/.claude-plugin/plugin.json" ]]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}'
+    exit 0
 fi
+
+# Sync pd plugin
+rsync -a --delete --exclude='.venv' "${SOURCE_PLUGIN}/" "${CACHE_PLUGIN}/" 2>/dev/null || true
 
 # Also sync marketplace.json to marketplace cache
 # Derive marketplace name from CACHE_PLUGIN: .../cache/<marketplace>/pd/<version>

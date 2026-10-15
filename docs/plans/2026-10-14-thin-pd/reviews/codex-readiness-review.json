@@ -1,0 +1,216 @@
+{
+  "verdict": "NOT READY",
+  "summary": "The independent agent and source audit found blocking dependency and contract contradictions.\nInventory work can start, but Waves 2–3 require changes to their acceptance criteria before execution.\nThe stated 27 skills, 31 commands, 24 agents and 16 hook scripts match the checkout.\nNo files were modified, staged or committed; neither prohibited test script was run; the registry database was not opened.",
+  "issues": [
+    {
+      "id": "C1",
+      "severity": "blocker",
+      "category": "readiness",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:102 + docs/plans/2026-10-14-thin-pd/build-tasks.md:325 + plugins/pd/skills/brainstorming/SKILL.md:33 + plugins/pd/skills/workflow-transitions/SKILL.md:28",
+      "claim": "The deletion task cannot satisfy its zero-reference proof before the later tasks that rewrite retained consumers.",
+      "evidence": "T2.1 requires no references to deleted components. Retained brainstorming dispatches 'pd:prd-reviewer'; workflow-transitions invokes 'hooks/lib/entity_registry/frontmatter_inject.py'. T4.5 performs their rewrite but depends transitively on T2.1.",
+      "fix": "Keep immediate deletion, but move the minimum retained-consumer changes into T2.1. Leave the full playbook rewrites in T4.5.",
+      "size": "M"
+    },
+    {
+      "id": "C2",
+      "severity": "blocker",
+      "category": "missing",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:91 + docs/plans/2026-10-14-thin-pd/build-tasks.md:103 + plugins/pd/.claude-plugin/plugin.json:17 + validate.sh:597 + validate.sh:802 + scripts/check-doc-drift.sh:28",
+      "claim": "T2.1 omits manifest and validation changes necessary for its required validation pass.",
+      "evidence": "plugin.json registers both MCP launch scripts that T2.1 deletes; validate.sh rejects missing registered commands. It also requires exactly one Stop registration, while T2.1 removes yolo-stop before its replacement exists. check-doc-drift.sh unconditionally reads the deleted MCP server files. These files are absent from T2.1's scope.",
+      "fix": "Include plugin.json, affected validation rules, doc-drift checks and obsolete hook tests in the deletion task. Define validation appropriate to the intermediate build state and coordinate the README count update that check-doc-drift.sh:48 requires.",
+      "size": "M"
+    },
+    {
+      "id": "C3",
+      "severity": "blocker",
+      "category": "readiness",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:9 + docs/plans/2026-10-14-thin-pd/build-tasks.md:130 + docs/plans/2026-10-14-thin-pd/build-tasks.md:144 + docs/plans/2026-10-14-thin-pd/build-tasks.md:162",
+      "claim": "T3.2 has a circular completion dependency.",
+      "evidence": "'A task is done only when its proof passes.' T3.2's proof requires T3.4 and T3.5 self-tests, but both tasks depend on T3.2.",
+      "fix": "Give T3.2 an independent template-structure proof. Put template compatibility assertions in T3.4 and T3.5, or in a subsequent integration task.",
+      "size": "S"
+    },
+    {
+      "id": "C4",
+      "severity": "blocker",
+      "category": "inconsistency",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:71 + docs/plans/2026-10-14-thin-pd-native-design.md:72 + docs/plans/2026-10-14-thin-pd-native-design.md:725 + docs/plans/2026-10-14-thin-pd/build-tasks.md:198",
+      "claim": "Verify's freshness rule forbids artifacts that Finish must create.",
+      "evidence": "After the QA commit, the design permits changes 'only [to] log.md and the README'. Finish creates retro.md and potentially lesson checks or skill edits. pd-lint reruns Verify's gate during Finish. T3.6 instead tests the weaker condition 'no source or test change since'.",
+      "fix": "Define one freshness rule: explicitly permit Finish artifacts such as retro.md and require renewed QA for executable changes. Add a passing retrospective-only fixture and failing source/test-change fixtures.",
+      "size": "S"
+    },
+    {
+      "id": "C5",
+      "severity": "blocker",
+      "category": "missing",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:139 + docs/plans/2026-10-14-thin-pd-native-design.md:861 + docs/plans/2026-10-14-thin-pd/build-tasks.md:288 + docs/plans/2026-10-14-thin-pd/reviews/calvin-applied-2.md:116",
+      "claim": "The Calvin write guard has no specified ledger path or mechanism for discovering it.",
+      "evidence": "The design restricts Write to 'its ledger path'; the task tests inside/outside that path without defining it. The earlier application ledger explicitly flags 'no section names that path', and the current design still does not resolve it.",
+      "fix": "Specify the per-item/per-cycle ledger location and how the hook obtains the authorized path. Use the same contract in the conductor, agent and guard fixtures.",
+      "size": "S"
+    },
+    {
+      "id": "C6",
+      "severity": "warning",
+      "category": "missing",
+      "location": "scripts/phase-gate.sh:69 + docs/plans/2026-10-14-thin-pd-native-design.md:725 + docs/plans/2026-10-14-thin-pd-native-design.md:860 + docs/plans/2026-10-14-thin-pd/build-tasks.md:194",
+      "claim": "The phase-gate migration does not address the existing implement-entry dirty-tree check, which conflicts with repeated exit checks at commit time.",
+      "evidence": "The current implement branch fails when git status reports uncommitted Markdown artifacts. The new pd-lint reruns every earlier phase gate during commits in Verify and Finish, when staged README/log changes are expected. T3.6's proof list omits implement entirely.",
+      "fix": "Specify implement's new exit-check behavior and remove or relocate the entry-only dirty-tree check. Add a fixture proving a valid staged log/README update can commit in Verify and Finish.",
+      "size": "S"
+    },
+    {
+      "id": "C7",
+      "severity": "warning",
+      "category": "repo-claim",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:76 + docs/plans/2026-10-14-thin-pd-native-design.md:515 + plugins/pd/hooks/lib/transition_gate/constants.py:113 + plugins/pd/hooks/lib/transition_gate/constants.py:380",
+      "claim": "T1.2's claimed 60 guards and its extraction proof are wrong; the design's 43 is supported by the source.",
+      "evidence": "AST inspection found 43 entries in both GUARD_METADATA and EXPECTED_GUARD_IDS. The task's exact grep pipeline returns 181 lines because filenames remain attached and tests/comments are included; test_gate.py:719 even contributes the deliberately unknown G-99.",
+      "fix": "Extract the authoritative guard keys structurally, assert uniqueness and map those 43 guards. Inventory hook-targeted guards separately if desired.",
+      "size": "S"
+    },
+    {
+      "id": "C8",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:47 + docs/plans/2026-10-14-thin-pd/build-tasks.md:50 + docs/plans/2026-10-14-thin-pd/build-tasks.md:146 + docs/plans/2026-10-14-thin-pd/build-tasks.md:203 + scripts/phase-gate.sh:23 + scripts/phase-gate.sh:51",
+      "claim": "Several advertised runnable proofs are incomplete or cannot distinguish success from failure.",
+      "evidence": "T0.2 omits the required feature-directory argument and does not specify the Requirements section needed by its passing design fixture. 'Specify unchanged' can compare two usage failures. Later proofs invoke bare pd-new/pd-lint names without a PATH setup. T3.6's old-path grep also matches the new 'plugins/pd/scripts/phase-gate.sh' path and the task document itself.",
+      "fix": "Provide complete commands, fixture setup, exact exit expectations and explicit script paths. Pin the pre-change comparison revision. Replace the path grep with a scoped, boundary-aware search for obsolete invocations.",
+      "size": "S"
+    },
+    {
+      "id": "C9",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:943 + docs/plans/2026-10-14-thin-pd/build-tasks.md:226 + docs/plans/2026-10-14-thin-pd/build-tasks.md:232",
+      "claim": "pd-proof's HEAD contract allows vacuous success from an empty or truncated report.",
+      "evidence": "'tests > 0' is required only at the first commit. HEAD requires no failures/errors and no newly skipped tests. An empty report has neither, and a missing test is not necessarily represented as skipped.",
+      "fix": "Require a valid, nonempty HEAD report and preservation of the baseline test identities. Add empty, malformed and missing-case fixtures for both supported JUnit producers.",
+      "size": "S"
+    },
+    {
+      "id": "C10",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:241 + docs/plans/2026-10-14-thin-pd/build-tasks.md:245 + docs/plans/2026-10-14-thin-pd/build-tasks.md:251 + docs/plans/2026-10-14-thin-pd-native-design.md:995 + docs/plans/2026-10-14-thin-pd-native-design.md:1002",
+      "claim": "The migration proof misses registry-only recovery and does not prove conversion reads the backup.",
+      "evidence": "The fixture supplies .meta.json and checks frontmatter derived from it, while the design requires registry recovery when metadata files are absent. An unchanged chmod-444 source database also passes when the implementation reads that source directly throughout conversion.",
+      "fix": "Add a feature whose status, phase and parent exist only in the fixture registry. Assert its exact migrated state/history. After backup, deny source access or instrument database-open paths and prove conversion uses only the copy.",
+      "size": "M"
+    },
+    {
+      "id": "C11",
+      "severity": "warning",
+      "category": "missing",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:96 + docs/plans/2026-10-14-thin-pd/build-tasks.md:348 + docs/plans/2026-10-14-thin-pd-native-design.md:224 + plugins/pd/hooks/hooks.json:135",
+      "claim": "No task explicitly registers the replacement Stop gate.",
+      "evidence": "T2.1 removes the old YOLO hook entries. T4.6 creates pd-stop-gate.sh and its test, but omits hooks.json; unlike T4.2 and T4.7, it does not claim a registration change. Direct script fixtures can pass while the installed plugin never invokes the gate.",
+      "fix": "Assign the Stop registration to T4.6 or a shared registration task. Test that hooks.json resolves to the new script and that a hook-dispatched fixture blocks an unfinished goal.",
+      "size": "S"
+    },
+    {
+      "id": "C12",
+      "severity": "warning",
+      "category": "inconsistency",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:17 + docs/plans/2026-10-14-thin-pd/build-tasks.md:281 + docs/plans/2026-10-14-thin-pd/build-tasks.md:284 + docs/plans/2026-10-14-thin-pd/build-tasks.md:369 + docs/plans/2026-10-14-thin-pd/build-tasks.md:372",
+      "claim": "Two parallel-safe tasks edit the same file.",
+      "evidence": "The marker promises disjoint file sets. T4.2 and T4.7 both carry it and both edit hooks.json, with no dependency serializing them.",
+      "fix": "Serialize registration changes or give one subsequent task ownership of hooks.json.",
+      "size": "S"
+    },
+    {
+      "id": "C13",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:849 + docs/plans/2026-10-14-thin-pd/build-tasks.md:315 + docs/plans/2026-10-14-thin-pd/build-tasks.md:320 + docs/plans/2026-10-14-thin-pd-native-design.md:346",
+      "claim": "Fresh-session recovery and failed-attempt branch reuse have no required behavioral proof.",
+      "evidence": "The design promises discovery and validation of previous task branches, followed by dispatch of only remaining tasks. T4.4 checks syntax and strings, then cites A7 items that do not require an interrupted run, fresh-session resume or actual escalation cycle. Those checks can pass without working recovery.",
+      "fix": "Add a probe with one completed task and one interrupted task, remove disposable worktrees, resume in a fresh session and assert merge-once/remaining-only behavior. Provoke failed checks to verify branch reuse and model escalation.",
+      "size": "M"
+    },
+    {
+      "id": "C14",
+      "severity": "warning",
+      "category": "inconsistency",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:277 + docs/plans/2026-10-14-thin-pd-native-design.md:657 + docs/plans/2026-10-14-thin-pd-native-design.md:665 + docs/plans/2026-10-14-thin-pd/build-tasks.md:365",
+      "claim": "Repository-local feature IDs are used as globally unique budget-accounting keys.",
+      "evidence": "IDs are generated locally and collision checks are checkout-local, but usage persists at '~/.claude/pd/gate/<feature id>.json'. Two repositories can legitimately create the same dated slug and therefore share a usage/budget file.",
+      "fix": "Namespace persistent gate state by repository identity and feature ID. Add a fixture with identical feature IDs in two repositories.",
+      "size": "S"
+    },
+    {
+      "id": "C15",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:327 + docs/plans/2026-10-14-thin-pd/build-tasks.md:343 + docs/plans/2026-10-14-thin-pd-native-design.md:72 + docs/plans/2026-10-14-thin-pd-native-design.md:1184",
+      "claim": "The bake-off cannot establish the promised coverage of every phase skill.",
+      "evidence": "T4.5 includes root-cause-analysis and retrospecting, then says the bake-off feature passes through 'every skill'. The rollout explicitly defers RCA/research fan-outs to first real use, and retrospective execution requires a trigger.",
+      "fix": "List the skills covered by the standard bake-off. Assign conditional skills explicit trigger probes or separately tracked first-use acceptance evidence.",
+      "size": "S"
+    },
+    {
+      "id": "C16",
+      "severity": "warning",
+      "category": "readiness",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:455 + docs/plans/2026-10-14-thin-pd/build-tasks.md:465",
+      "claim": "The five-feature success test has contradictory start conditions.",
+      "evidence": "S.1 depends on T7.1 but says it may run while Wave 6 is ongoing. T7.1 requires all four Wave 6 adoptions to be complete.",
+      "fix": "Depend on the passing bake-off and adoption of each participating repository, or remove the permission to start during Wave 6.",
+      "size": "S"
+    },
+    {
+      "id": "C17",
+      "severity": "warning",
+      "category": "proof",
+      "location": "docs/plans/2026-10-14-thin-pd/build-tasks.md:111 + docs/plans/2026-10-14-thin-pd/build-tasks.md:314 + docs/plans/2026-10-14-thin-pd-native-design.md:1164",
+      "claim": "The size guard excludes the four workflow scripts.",
+      "evidence": "The rollout caps new script growth across core and Part A. The task's measurement includes only plugins/pd/scripts and plugins/pd/hooks, while T4.4 creates the orchestration scripts under plugins/pd/workflows.",
+      "fix": "Include workflows in the measured paths and state explicitly whether fixtures and tests count toward the threshold.",
+      "size": "S"
+    },
+    {
+      "id": "C18",
+      "severity": "warning",
+      "category": "inconsistency",
+      "location": "docs/workflow-canonical.mmd:39 + docs/workflow-canonical.mmd:41 + docs/workflow-canonical.mmd:117 + docs/plans/2026-10-14-thin-pd-native-design.md:67 + docs/plans/2026-10-14-thin-pd-native-design.md:209",
+      "claim": "The canonical diagram puts the Criteria exit gate before its required sign-off and overstates workflow usage.",
+      "evidence": "The diagram draws CRIT -> G2 -> R2, with sign-off in R2, while the design requires the sign-off entry for G2 to pass. Its conductor label says 'launches one workflow per stage', while the design explicitly makes review one agent call rather than a workflow.",
+      "fix": "Place the final Criteria gate after Calvin/sign-off, or distinguish a preliminary format check from the exit gate. Change the conductor label to launching workflows only for the specified fan-outs.",
+      "size": "S"
+    },
+    {
+      "id": "C19",
+      "severity": "note",
+      "category": "repo-claim",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:314 + docs/plans/2026-10-14-thin-pd-native-design.md:431 + validate.sh:842 + plugins/pd/commands/implement.md:14",
+      "claim": "Two descriptions of current behavior are stale.",
+      "evidence": "The design describes 'Codex routing in each command's preamble' and says today's simplifier edits the finished change. validate.sh says those preambles 'were dropped entirely'; the current implement command lists execution, QA, review and a circuit breaker, with no simplifier step.",
+      "fix": "Describe these as historical behavior or update the current-state comparison to the checked-out implementation.",
+      "size": "S"
+    },
+    {
+      "id": "C20",
+      "severity": "note",
+      "category": "inconsistency",
+      "location": "docs/workflow-principles.md:408 + docs/plans/2026-10-14-thin-pd-native-design.md:382 + docs/plans/2026-10-14-thin-pd/reviews/calvin-applied-2.md:112",
+      "claim": "The essay retains the prevention claim that the design explicitly corrected.",
+      "evidence": "The essay says the written rule 'prevented none'. The design says 'whether the rules prevented others can't be seen'. The application ledger already identified this unswept restatement.",
+      "fix": "Use the design's evidence-bounded wording in the essay.",
+      "size": "S"
+    },
+    {
+      "id": "C21",
+      "severity": "note",
+      "category": "missing",
+      "location": "docs/plans/2026-10-14-thin-pd-native-design.md:1186 + docs/plans/2026-10-14-thin-pd/build-tasks.md:455 + docs/plans/2026-10-14-thin-pd/build-tasks.md:457",
+      "claim": "The archive task omits the backups required by the rollout.",
+      "evidence": "The design archives 'entities.db and its backups' read-only. T7.1 describes changing and checking only the live entities.db file.",
+      "fix": "Define the backup archive set and require the read-only permission proof for every included file.",
+      "size": "S"
+    }
+  ]
+}

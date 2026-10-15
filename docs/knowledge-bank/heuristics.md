@@ -666,7 +666,7 @@ Before writing any entity registry or reconciliation code, read ENTITY_MACHINES 
 
 ### Heuristic: Test code respects same encapsulation as production
 Test code must respect the same encapsulation boundaries as production code. If a wrapper exists (e.g., db.query_dependencies()), tests use the wrapper; they don't reach into db._conn even for 'just a test'.
-- Source: feature/078-cc-native-integration (test-sqlite-concurrency.sh accessed db._conn)
+- Source: feature/078-cc-native-integration (its SQLite concurrency spike script accessed db._conn; the script was deleted 2026-09-26)
 - Confidence: high
 - Last observed: Feature #078
 - Observation count: 1

@@ -1,8 +1,9 @@
 ---
 name: qa-executor
 description: Execution-grounded QA — runs suites and drives affected flows, returning evidence. Use when the implement phase reaches its QA moment or the user says 'QA this'.
-model: sonnet
-tools: [Bash, Read, Glob, Grep]
+model: opus
+effort: high
+tools: [Bash, Read, Write, Glob, Grep]
 color: green
 ---
 

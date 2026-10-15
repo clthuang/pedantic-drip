@@ -75,9 +75,7 @@ Then STOP.
 
 **2d. Present file selection:**
 
-If `[YOLO_MODE]` is active, auto-select the first match (skip AskUserQuestion for file selection).
-
-Otherwise, present matching files for user selection:
+Present matching files for user selection:
 
 ```
 AskUserQuestion:
@@ -346,9 +344,8 @@ Display the assembled report.
 - If `overall_score == 100` AND zero ChangeBlocks from Step 6a: display "All dimensions passed -- no improvements needed." STOP.
 - If `overall_score == 100` BUT ChangeBlocks exist: display warning "Warning: Score is 100 but change blocks were found -- this may indicate a grading error." Then proceed to the approval menu with standard option-gating below.
 - If `overall_score < 100` BUT zero ChangeBlocks: display the report with note: "Note: Dimensions scored partial/fail but no changes were generated." STOP.
-- If `[YOLO_MODE]` is active: auto-select "Accept all" and proceed directly to the Accept all handler. Skip AskUserQuestion. (For inline mode, this displays the improved prompt instead of writing.)
 
-**8b. Present approval menu (non-YOLO):**
+**8b. Present approval menu:**
 
 Determine which options to present:
 
@@ -477,6 +474,5 @@ Display "No changes applied." If `input_mode == "inline"`, delete the temp file 
 
 ## PROHIBITED
 
-- NEVER write improvements without user approval via AskUserQuestion (Step 8). Exception: YOLO mode auto-selects Accept all.
-- NEVER skip the approval step in non-YOLO mode.
+- NEVER write improvements without user approval via AskUserQuestion (Step 8).
 - NEVER present Accept some when `tag_validation_failed` or `drift_detected` is true.

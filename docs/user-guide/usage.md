@@ -1,143 +1,91 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
-source-feature: 078-cc-native-integration
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 # Usage
+
+## Set a Project Up
+
+```bash
+/pd:init     # a new project: writes .claude/pd.local.md, proposes .claude/settings.json changes
+/pd:adopt    # an old-layout pd project (docs/features/ without `sop: 1`): migrates it once
+```
+
+`/pd:init` proposes `worktree.baseRef: "head"` (task worktrees start from the feature branch), the spawn-depth cap and allow rules for unattended runs. Set `qa_battery` in `.claude/pd.local.md`: Verify needs it.
 
 ## Quick Start
 
-The easiest entry point is `/pd:secretary`. Describe what you want to do and it routes to the right workflow automatically:
+`/pd:secretary` triages a request — feature (at a depth), brainstorm, RCA or specialist — states why, and routes:
 
 ```bash
 /pd:secretary "add email validation to the signup form"
 ```
 
-Or start a phase directly:
+Or start directly:
 
 ```bash
-/pd:brainstorm "your idea here"    # Explore an idea, produce a PRD
-/pd:create-feature "add user auth" # Skip brainstorming, start a feature directly
+/pd:brainstorm "your idea here"                          # Clarify: a PRD in brainstorms/<id>.md
+/pd:root-cause-analysis "the export drops the last row"  # Clarify for a bug: rca/<id>.md
+/pd:create-feature "add user auth"                       # a standard feature and its branch
+/pd:create-feature "fix the pagination off-by-one" --mode express
 ```
 
-## The Feature Workflow
-
-Features move through phases in sequence. After creating a feature, advance phase by phase:
+## The Standard Workflow
 
 ```bash
-/pd:specify        # Write requirements (spec.md)
-/pd:design         # Define architecture (design.md)
-/pd:create-plan    # Plan implementation (plan.md + tasks.md)
-/pd:implement      # Write code with TDD
-/pd:finish-feature # Merge, retrospective, branch cleanup
+/pd:specify        # shape.md ## Requirements: B-numbered expectations, calvin, your sign-off
+/pd:design         # shape.md ## Design: diagram, contracts, test strategy → review call
+/pd:create-plan    # plan.md: task blocks with test cases → test-case review
+/pd:implement      # implement-tasks: one implementer per task, the merger lands each
+/pd:verify         # verify-change: code review beside QA, then fix cycles
+/pd:finish-feature # security review, docs, metrics, retro if owed, merge, cleanup
 ```
 
-Each phase runs a reviewer before closing. If the reviewer finds issues, it sends the feature back with referral notes.
+Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase>` must pass; every commit runs `pd-lint --staged`.
 
-**`/pd:implement` — parallel task execution:** Tasks are dispatched in parallel using git worktrees (created under `.pd-worktrees/`, gitignored). If worktree creation fails for a specific task, that task runs without isolation. If SQLite contention is detected, remaining tasks fall back to serial execution. Merge conflicts halt the process and surface details for manual resolution.
+- **Small** (`--mode small`): design and plan are written in one sitting and reviewed in one joint call.
+- **Express** (`--mode express`): `shape.md` holds a mini-spec with one task block; `/pd:implement` runs that one task and Verify is lighter.
+- **Backward moves:** a wrong criterion or test case sends the feature back (`phase <from> -> <to> (back)` in `log.md`); merged tasks stay merged.
 
-**`/pd:finish-feature` — security review:** After pre-merge checks pass, pd runs `/security-review` if the command is available in `.claude/commands/`. Critical or high-severity findings block the merge. If the command is not installed, this step is skipped with a warning.
+## Long Runs
 
-### Phase Context on Rework
+Start a `/goal` run on a feature; the conductor writes `goal: <id> target <phase> session <id>` to the README's `## Now`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `feature_token_budget`.
 
-When a reviewer sends a feature backward, pd automatically injects a `## Phase Context` block at the start of the re-entered phase. This block contains:
-
-- **Reviewer Referral** — the specific issues flagged by the reviewer that triggered rework
-- **Prior Phase Summaries** — key decisions, artifacts produced, and reviewer notes from earlier passes through each phase (up to the 2 most recent per phase)
-
-This means re-entering a phase is never a blank slate. Prior decisions are visible so you don't re-litigate resolved issues.
-
-Example of what gets injected:
-
-```markdown
-## Phase Context
-### Reviewer Referral
-**Source phase:** design
-- [spec.md > AC-3] Gap in acceptance criteria — add edge case for empty input
-
-### Prior Phase Summaries
-**specify** (2026-04-02T08:00:00Z): Specification complete (3 iterations).
-  Key decisions: Chose append-list storage over keyed dict for rework history.
-  Artifacts: spec.md
-```
-
-## Common Workflows
-
-### Explore Before Building
+## Check Progress
 
 ```bash
-/pd:brainstorm "topic or problem"
-# Review the PRD produced, then:
-/pd:create-feature "feature description"
+${CLAUDE_PLUGIN_ROOT}/scripts/pd-status   # items by status and phase, roadmaps, open blockers, retros owed
 ```
 
-### Build Directly
-
-```bash
-/pd:create-feature "add user auth"
-/pd:specify
-/pd:design
-/pd:create-plan
-/pd:implement
-/pd:finish-feature
-```
-
-### Check Progress
-
-```bash
-/pd:show-status      # Current phase and feature state
-/pd:list-features    # All active features and branches
-```
-
-## Autonomous Mode (YOLO)
-
-To run the workflow without manual confirmation at each phase gate:
-
-```bash
-/pd:yolo on                                    # Enable YOLO mode
-/pd:secretary orchestrate "add user auth"      # Build end-to-end
-/pd:secretary continue                         # Resume from last phase
-/pd:yolo off                                   # Return to manual mode
-```
-
-Quality reviewers still run in YOLO mode. Autonomous operation pauses automatically on review failures, merge conflicts, or missing prerequisites.
-
-## Project-Level Work
-
-For larger initiatives with multiple features:
-
-```bash
-/pd:create-project "prd description"   # AI decomposes PRD into features
-```
+The SessionStart hook prints the active and blocked items, each roadmap's next ready item and the retros owed.
 
 ## Utilities
 
 | Command | What it does |
 |---------|-------------|
-| `/pd:add-to-backlog <idea>` | Capture an idea without starting a feature |
-| `/pd:retrospect` | Run a retrospective on a completed feature |
-| `/pd:show-lineage` | Display entity relationships for the current feature |
-| `/pd:doctor` | Check workspace health |
-| `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
+| `/pd:add-to-backlog <idea>` | Add a line to `backlog.md` without starting a feature |
+| `/pd:retrospect` | Run a retro on a feature that owes one |
+| `/pd:abandon-feature` | Set a feature to `abandoned` |
+| `/pd:wrap-up` | End a session: commit WIP, write `## Now` and a handoff entry |
 
 ## File Layout
 
-pd creates files under your project's `docs/` directory (configurable via `artifacts_root`):
+pd's artifacts live under `artifacts_root` (default `docs/dev_artifacts/`):
 
 ```
-docs/
-├── brainstorms/           # Brainstorm PRDs
-├── features/{id}-{name}/  # Feature artifacts
-│   ├── spec.md
-│   ├── design.md
-│   ├── plan.md
-│   ├── tasks.md
-│   └── .meta.json         # Phase state and summaries
-├── projects/{id}-{name}/  # Project PRDs and roadmaps
-└── retrospectives/        # Retrospective outputs (retro.md per feature)
+docs/dev_artifacts/
+├── features/<id>/        # one folder per feature; <id> is YYYY-MM-DD-slug
+│   ├── README.md         # frontmatter (status, phase, mode, branch, risk) and ## Now
+│   ├── log.md            # append-only entries: phase, review, qa, run, decision, …
+│   ├── shape.md          # ## Requirements + ## Design
+│   ├── plan.md           # ## Plan: waves of task blocks
+│   └── retro.md          # only when a retro trigger fired
+├── plans/<id>.md         # a multi-feature plan with its roadmap
+├── brainstorms/<id>.md   # a PRD, with its ## Log
+├── rca/<id>.md           # a root-cause report, with its ## Log
+└── backlog.md            # one line per idea
 ```
 
-The `.meta.json` file tracks phase state and stores accumulated phase summaries. These summaries are what pd injects as context when a phase is re-entered during rework.
-<!-- AUTO-GENERATED: END -->
+Everything else — progress, next ready items, open blockers — is computed by `pd-status` from these files.

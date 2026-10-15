@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-10-15
+
+### Changed
+
+- **Thin pd: state lives in committed files.** A feature is a folder under `{pd_artifacts_root}` whose `README.md` frontmatter carries its status and phase, with `shape.md`, `plan.md` and an append-only `log.md` beside it. Skills, agents and commands run on Claude Code's native features: plugin workflows, worktree isolation, hooks and `/goal`.
+- **The stages run as workflows.** `implement-tasks` (one implementer per plan task, each in its own worktree, landed by the `merger` after a `pd-proof` check, with up to three fix cycles), `verify-change` (the review call beside QA, then up to three fix cycles), `research-fanout` and `rca-fanout`.
+
+### Added
+
+- **Scripts** (stdlib Python, each with `--self-test`): `pd-lint` (the artifact checker, and the commit hook's `--staged` mode), `pd-proof` (tests-first proof from JUnit XML), `pd-new`, `pd-status`, `pd-init`, `pd-adopt` (migrates an old-layout project, dry run by default), `pd-review-filter` and `pd-html`.
+- **Hooks:** `pd-session-start` (status, and the `{pd_*}` values), `pd-stop-gate` (token charging and the `/goal` gate), `pd-commit-lint` and `pd-agent-write-guard`.
+- **Commands:** `/pd:init` and `/pd:adopt`.
+
+### Removed
+
+- **The entity registry** (`entities.db`) and every MCP server, the engine, the UI server and Kanban board, YOLO mode, `/pd:doctor`, `.meta.json` state files, and the skills, agents, commands and hooks that served them. An old-layout project (`docs/features/` without `sop: 1`) is told to run `/pd:adopt`; until then `pd-lint` leaves it alone.
+
 ## [6.0.0] - 2026-07-25
 
 ### Removed

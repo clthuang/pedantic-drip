@@ -45,10 +45,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HOOKS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PLUGIN_ROOT="$(cd "${HOOKS_DIR}/.." && pwd)"
 
-# Plugin venv Python: used for any JSON / structured assertions (mirrors
-# test-sqlite-concurrency.sh + test-workflow-regression.sh). Git mechanics
-# are driven by the git CLI directly; Python is here only for precise
-# assertions on structured data if a test needs it.
+# Plugin venv Python: used for any JSON / structured assertions. Git
+# mechanics are driven by the git CLI directly; Python is here only for
+# precise assertions on structured data if a test needs it.
 PLUGIN_VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
 if [[ -x "$PLUGIN_VENV_PYTHON" ]]; then
     PD_PYTHON="$PLUGIN_VENV_PYTHON"
@@ -83,7 +82,7 @@ cleanup() {
     # Best-effort teardown: force-remove any worktrees git still knows about,
     # prune dangling entries, then nuke the temp dir. Cleanup must never
     # fail the script (trap on EXIT INT TERM HUP).
-    if [[ -d "$REPO_DIR/.git" ]]; then
+    if [[ -e "$REPO_DIR/.git" ]]; then
         # Use `git worktree list --porcelain` to discover EVERY worktree the
         # repo thinks it owns — including ones a test added but didn't push
         # into WORKTREE_DIRS (e.g., an add that succeeded unexpectedly).
@@ -129,7 +128,7 @@ setup_repo() {
 # Called at the top of every test to guarantee hermetic state. Skipped if
 # setup_repo hasn't run yet (defensive — main() orders things correctly).
 reset_repo_state() {
-    [[ -d "$REPO_DIR/.git" ]] || return 0
+    [[ -e "$REPO_DIR/.git" ]] || return 0
 
     # Force-checkout main (any dangling branch work from a prior test).
     git -C "$REPO_DIR" checkout --quiet --force main 2>/dev/null || true

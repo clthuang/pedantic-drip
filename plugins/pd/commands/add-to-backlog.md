@@ -1,18 +1,12 @@
 ---
-description: Capture an ad-hoc idea, todo, or fix in the backlog
-argument-hint: "<description>"
+description: Capture an idea, todo or fix as one line in the backlog
+argument-hint: "<description> [--from features/<id>]"
 ---
 
 # /pd:add-to-backlog
 
-**Deliberate dual write.** The entity DB is the intended home; `{pd_artifacts_root}/backlog-manual.md` is a git-tracked mirror kept only while backlog #060 (registrations silently lost) is unverified. Both writes run every time. When #060 closes, delete the mirror step — do not weaken it.
+One line in `{pd_artifacts_root}/backlog.md`, with a `YYYY-MM-DD-slug` id.
 
-**Steps:**
-1. No description argument → print `Usage: /pd:add-to-backlog <description>` and stop.
-2. `mkdir -p {pd_artifacts_root}`.
-3. `register_entity(entity_type="backlog", auto_id=true, name="{description truncated at a word boundary before char 80}", status="open", metadata={"description": "{full description}"})`. Error envelope → surface it verbatim and stop.
-4. `init_entity_workflow(type_id="backlog:{entity_id}", workflow_phase="open", kanban_column="backlog")`. Failure warns; it does not undo step 3.
-5. Append one bullet under `## Open` in the mirror: `- **#{entity_id} — {description}** *(added {ISO-8601 date})*`.
-6. Report `Added to backlog: #{entity_id} — {description}`.
-
-**Constraints:** never Write `{pd_artifacts_root}/backlog.md` — the MCP server regenerates it from the DB, and `data-file-guard.sh` denies direct edits.
+1. No description: print `Usage: /pd:add-to-backlog <description>` and stop.
+2. Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-new backlog $ARGUMENTS`. A refusal is reported verbatim and stops the command.
+3. Commit `backlog.md` (`backlog: <title>`), and report the new line.

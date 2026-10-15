@@ -15,81 +15,31 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cleanup-locks.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-secretary-context.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/start-ui-server.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cleanup-stale-versions.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-session-start.sh"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-exit-plan-review.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-commit-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
+          },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-push-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/data-file-guard.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-commit-lint.sh"
           }
         ]
       },
@@ -99,35 +49,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-unicode-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": ".*",
-        "hooks": [
+          },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/yolo-guard.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "EnterPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-enter-plan.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-exit-plan.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-agent-write-guard.sh"
           }
         ]
       }
@@ -137,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/yolo-stop.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-stop-gate.sh"
           }
         ]
       }

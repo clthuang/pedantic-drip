@@ -1,135 +1,59 @@
 ---
-last-updated: 2026-04-02T10:30:00Z
-source-feature: 075-phase-context-accumulation
+last-updated: 2026-10-15T12:00:00Z
+source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
-
-<!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
 
 # Contributing
 
-How to work on pedantic-drip: branching model, commit conventions, PR process, and CI expectations.
+How to work on pedantic-drip: branching model, commit conventions, merging and releasing.
 
 ## Branch Model
-
-This repository uses a git-flow model:
 
 | Branch | Purpose |
 |--------|---------|
 | `main` | Stable releases only (tagged versions) |
 | `develop` | Integration branch — all feature work merges here |
-| `feature/*` | Feature branches, created by the pd workflow |
+| `feature/<id>` | Feature branches; `<id>` is the feature's `YYYY-MM-DD-slug` |
+| `pd/<id>/task-<n>` | One plan task's branch inside `implement-tasks`; the merger lands it on `feature/<id>` |
 
-**Always merge to `develop`, never directly to `main`.** The release script handles `develop → main` promotion with tagging.
+**Always merge to `develop`, never directly to `main`.** The release script promotes `develop → main`.
 
 ## Starting a Feature
 
-The pd workflow creates and manages feature branches automatically:
-
 ```
-/pd:create-feature <name>
+/pd:create-feature "<title>"
 ```
 
-This creates `feature/{id}-{slug}`, registers the entity, initializes workflow state, and checks out the branch. Manual branch creation is discouraged — use the workflow so `.meta.json` and the entity registry stay consistent.
+`pd-new feature` creates `docs/dev_artifacts/features/<id>/` with `README.md` and `log.md`; the command then branches `feature/<id>` from the base branch and commits the item.
 
 ## Commit Conventions
 
-Use conventional commits. The release script calculates the version bump from code change volume, not commit message prefixes — but conventional commits keep the log readable:
+Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`; `BREAKING CHANGE:` in the body). The release script sizes the version bump from code change volume, not from the prefixes. Inside a pd workflow, phase commits are `<phase>: <summary>`.
 
-| Prefix | Use for |
-|--------|---------|
-| `feat:` | New user-visible behavior |
-| `fix:` | Bug fixes |
-| `refactor:` | Internal restructuring without behavior change |
-| `test:` | Adding or updating tests |
-| `docs:` | Documentation only |
-| `chore:` | Tooling, CI, dependency updates |
-| `BREAKING CHANGE:` | In the commit body, for incompatible changes |
+> pd is private tooling with no external users — no backward compatibility. Delete old code; don't keep shims.
 
-> pd is private tooling with no external users — there is no backward compatibility requirement. Delete old code; do not maintain shims.
+## Checks Before Committing
 
-## Running Validation Before Committing
-
-```bash
-./validate.sh
-```
-
-The `pre-commit-guard` hook warns when committing to protected branches (`main`/`master`) and reminds about running tests. It does not block commits to `develop` or feature branches.
+- **`./validate.sh`** — component validation; 0 errors expected.
+- **`pd-commit-lint`** (PreToolUse hook) — runs `pd-lint --staged` before a `git commit` in an adopted project; an error blocks the commit. Fix it, never bypass it.
+- **`pre-commit-guard`** — warns on commits to `main`/`master`.
 
 ## Finishing a Feature
-
-When implementation is complete and tests pass:
 
 ```
 /pd:finish-feature
 ```
 
-This runs the retrospective (producing a `retro.md` reflection), commits remaining artifacts, and merges the feature branch to `develop`. Do not manually delete the feature branch before the retrospective runs — the retro reads `implementation-log.md` which lives on the branch.
+It runs the security review, docs, the `metrics` entry and the retro check, then merges to `develop` and cleans up the branches. A retro, when one is owed, runs before cleanup: the branches are its input.
 
 ## PR Process
 
-For solo development the standard flow is `/pd:finish-feature` with the direct-merge option. For collaborative changes or significant refactors, open a PR against `develop`:
+Solo work merges through `/pd:finish-feature`. For collaborative changes, push the feature branch, open a PR against `develop`, run `./validate.sh`, and merge after review.
 
-1. Push your feature branch
-2. Open a PR targeting `develop`
-3. Run `./validate.sh` locally and confirm it passes
-4. Merge after review — squash merge is acceptable
+## Releasing
 
-## Release Process
-
-Releases are triggered from `develop` once enough changes have accumulated:
-
-**Option 1 — GitHub Actions (recommended):**
-
-```bash
-# Dry run first to verify what would happen
-gh workflow run release.yml --ref develop -f dry_run=true
-
-# Real release
-gh workflow run release.yml --ref develop -f dry_run=false
-```
-
-**Option 2 — Local:**
-
-```bash
-# Must be on develop with a clean working tree
-./scripts/release.sh
-```
-
-### Version Bump Logic
-
-The release script calculates the bump automatically from code change volume since the last tag:
-
-| Change % of total codebase | Bump |
-|----------------------------|------|
-| ≤ 3% | Patch (1.0.0 → 1.0.1) |
-| 3–10% | Minor (1.0.0 → 1.1.0) |
-| > 10% | Major (1.0.0 → 2.0.0) |
-
-Use `BUMP_OVERRIDE=patch|minor|major` to force a specific bump type.
-
-### What the Release Script Does
-
-1. Validates preconditions (on `develop`, clean working tree, has remote origin)
-2. Calculates version from code change percentage since last tag
-3. Strips `-dev` suffix from `plugin.json` and `marketplace.json`
-4. Promotes `CHANGELOG.md` `[Unreleased]` section to the new version
-5. Commits on `develop`, pushes
-6. Merges `develop → main` (no-ff), tags, pushes
-7. Bumps `develop` to next `-dev` version
-
-**Preconditions:** Clean working tree (git stash first if needed) and at least one entry under `[Unreleased]` in `CHANGELOG.md`.
-
-## CI Expectations
-
-The GitHub Actions release workflow validates the same conditions as `./validate.sh`. There is no separate CI pipeline for feature branches — local validation is the gate before merging.
+See [README_FOR_DEV.md](../../README_FOR_DEV.md) ("Release Process", "Version Bump Logic"). In short: `bash scripts/release.sh --ci` on a clean `develop` with entries under `[Unreleased]` in `CHANGELOG.md`; `BUMP_OVERRIDE=patch|minor|major` forces the bump.
 
 ## Adding Components
 
-All new plugin components go in `plugins/pd/`. After adding, removing, or renaming a skill, agent, command, or hook, update the component count tables and reference tables in:
-
-- `README.md` and `README_FOR_DEV.md`
-- `plugins/pd/README.md`
-
-See the [Component Authoring Guide](/docs/dev_guides/component-authoring.md) for templates and naming conventions.
-
-<!-- AUTO-GENERATED: END -->
+New plugin components go in `plugins/pd/`. After adding, removing or renaming a skill, agent, command or hook, update the count and reference tables in `README.md`, `README_FOR_DEV.md` and `plugins/pd/README.md`; `scripts/check-doc-drift.sh` checks them. See the [Component Authoring Guide](../dev_guides/component-authoring.md).

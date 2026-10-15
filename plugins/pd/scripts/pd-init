@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""pd-init: set a project up for pd (plan Part B §12, "A new project").
+
+  pd-init [--force]          write .claude/pd.local.md, the artifacts root and three .gitignore lines,
+                             then print the proposed .claude/settings.json diff without applying it
+  pd-init --apply-settings   write that proposed settings.json, once the user approved the diff
+  pd-init --decline          record this repository in ~/.claude/pd/init-declined ("never ask again")
+  pd-init --self-test
+"""
+import argparse, contextlib, difflib, io, json, os, runpy, shutil, sys, tempfile  # noqa: E401
+from datetime import date
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import pd_common as pc  # noqa: E402
+
+IGNORES = ("agent_sandbox/", ".claude/worktrees/", "docs/_html/")
+LANGS = runpy.run_path(str(HERE / "pd-lint"))["LANGS"]  # the extensions pd-lint's isolation checks read
+
+
+def render_config(root):
+    """Every §12 field; the paths, languages and qa_battery are proposals the user confirms."""
+    files = (pc.git(["ls-files", "--cached", "--others", "--exclude-standard"], root) or "").split("\n")
+    langs = sorted({LANGS[Path(f).suffix] for f in files if Path(f).suffix in LANGS})
+    flow = lambda items: "[" + ", ".join(items) + "]"
+    dirs = lambda d: [d + "/"] if (root / d).is_dir() else []
+    battery = ["uv run pytest -q"] if (root / "pyproject.toml").is_file() else \
+        ["npm test"] if (root / "package.json").is_file() else []
+    return "\n".join([
+        "---", f"artifacts_root: {pc.DEFAULT_ARTIFACTS_ROOT}", "base_branch: auto", "release_script:",
+        "doc_tiers: user-guide,dev-guide,technical", "small_feature_tasks: 3", "many_files: 10",
+        f"source_paths: {flow(dirs('src'))}", f"test_paths: {flow(dirs('tests'))}",
+        f"fixture_paths: {flow(dirs('tests/fixtures'))}", f"languages: {flow(langs)}",
+        "qa_battery:" + "".join(f"\n  - {c}" for c in battery) if battery else "qa_battery: []",
+        "workflow_output_cap: 2000000", "feature_token_budget:  # unset: no per-feature cap",
+        "budget_increment:  # defaults to feature_token_budget", "tracker: none", "sop: 1", "---",
+        "# pd config", "", f"Written by /pd:init on {date.today()}; reviewed like any config (plan Part B §12).", ""])
+
+
+def settings(root):
+    """(path, current, proposed): worktree.baseRef, the spawn-depth cap and the allow rules (§A5 cap 2, §A6, §A7.8)."""
+    path = root / ".claude" / "settings.json"
+    cur = json.loads(path.read_text()) if path.is_file() else {}
+    new = json.loads(json.dumps(cur))
+    new.setdefault("worktree", {})["baseRef"] = "head"
+    new.setdefault("env", {}).setdefault("CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH", "1")
+    allow = new.setdefault("permissions", {}).setdefault("allow", [])
+    battery = pc.as_list(pc.load_config(root).get("qa_battery"))
+    for rule in ["Bash(git merge:*)", "Bash(git worktree:*)", *(f"Bash({c.split(' -')[0].strip()}:*)" for c in battery)]:
+        if rule not in allow:
+            allow.append(rule)
+    return path, cur, new
+
+
+def init(root, force):
+    cfg = root / ".claude" / "pd.local.md"
+    if pc.is_unadopted(root, pc.load_config(root)):
+        sys.exit("pd-init: an old-layout pd project (docs/features/ without sop: 1): run /pd:adopt instead")
+    if cfg.exists() and not force:
+        sys.exit(f"pd-init: {cfg.relative_to(root)} exists; pass --force to rewrite it")
+    cfg.parent.mkdir(exist_ok=True)
+    cfg.write_text(render_config(root))
+    backlog = root / pc.DEFAULT_ARTIFACTS_ROOT / "backlog.md"
+    backlog.parent.mkdir(parents=True, exist_ok=True)
+    if not backlog.exists():
+        backlog.write_text("# Backlog\n")
+    gi = root / ".gitignore"
+    text = gi.read_text() if gi.is_file() else ""
+    missing = [x for x in IGNORES if x not in text.splitlines()]
+    if missing:
+        gi.write_text(text + ("\n" if text and not text.endswith("\n") else "") + "\n".join(missing) + "\n")
+    print(f"wrote {cfg.relative_to(root)} (confirm source_paths, test_paths, fixture_paths, languages and qa_battery) "
+          f"and {pc.DEFAULT_ARTIFACTS_ROOT}/backlog.md; .gitignore gained: {', '.join(missing) or 'nothing'}")
+    if "github.com" in (pc.git(["remote", "get-url", "origin"], root, check=False) or ""):
+        print("tracker: origin is on GitHub; tracker: github is available once `gh auth status` passes")
+    path, cur, new = settings(root)
+    diff = list(difflib.unified_diff(json.dumps(cur, indent=2).split("\n"), json.dumps(new, indent=2).split("\n"),
+                                     "a/.claude/settings.json", "b/.claude/settings.json", lineterm=""))
+    print("proposed settings (not applied; pd-init --apply-settings writes it):\n" + ("\n".join(diff) or "nothing to change"))
+    if not shutil.which("uv"):
+        print("MISSING: uv is not installed; pd-html needs it (https://docs.astral.sh/uv/)")
+    home = Path.home() / ".claude"
+    if not ((home / "skills/calvin/SKILL.md").is_file() or any(home.glob("plugins/cache/*/*/*/skills/calvin/SKILL.md"))):
+        print("MISSING: the calvin skill is not installed; calvin-runner runs it at Criteria")
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="pd-init", description=__doc__.split("\n")[0])
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--apply-settings", action="store_true")
+    ap.add_argument("--decline", action="store_true")
+    ap.add_argument("--self-test", action="store_true")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    root = pc.repo_root(".")
+    if pc.git(["rev-parse", "--git-dir"], root, check=False) is None:
+        sys.exit("pd-init: not inside a git repository")
+    if a.decline:  # keyed by origin, so a move or a fresh clone stays declined (§12)
+        key = pc.git(["remote", "get-url", "origin"], root, check=False) or str(root)
+        f = Path.home() / ".claude" / "pd" / "init-declined"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if key not in (f.read_text().split("\n") if f.is_file() else []):
+            with f.open("a") as fh:
+                fh.write(key + "\n")
+        print(f"pd-init: recorded {key} in {f}")
+    elif a.apply_settings:
+        path, _, new = settings(root)
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(new, indent=2) + "\n")
+        print(f"pd-init: wrote {path.relative_to(root)}")
+    else:
+        init(root, a.force)
+    return 0
+
+
+def self_test():
+    c = pc.Checks("pd-init")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp, env = Path(tmp), {k: os.environ.get(k) for k in ("HOME", "PATH")}
+        home, bin_ = tmp / "home", tmp / "bin"
+        home.mkdir(), bin_.mkdir()
+        (bin_ / "git").symlink_to(shutil.which("git"))
+        os.environ.update(HOME=str(home), PATH=str(bin_))  # no uv on PATH, no calvin under HOME
+
+        def run(repo, *argv):
+            out, old = io.StringIO(), os.getcwd()
+            os.chdir(repo)
+            with contextlib.redirect_stdout(out):
+                try:
+                    code = main(list(argv))
+                except SystemExit as e:  # a refusal: sys.exit(<message>)
+                    code, _ = 1, print(e.code)
+                finally:
+                    os.chdir(old)
+            return code, out.getvalue()
+        try:
+            repo = pc.make_repo(tmp / "repo")
+            for f, text in {"src/a.py": "x = 1\n", "tests/fixtures/d.json": "{}\n", "pyproject.toml": "[project]\n",
+                            ".gitignore": "node_modules/\nagent_sandbox/"}.items():
+                (repo / f).parent.mkdir(parents=True, exist_ok=True)
+                (repo / f).write_text(text)
+            code, out = run(repo)
+            fm = pc.split_frontmatter((repo / ".claude/pd.local.md").read_text())[0]
+            fields = {"artifacts_root", "base_branch", "release_script", "doc_tiers", "small_feature_tasks", "many_files",
+                      "source_paths", "test_paths", "fixture_paths", "languages", "qa_battery", "workflow_output_cap",
+                      "feature_token_budget", "budget_increment", "tracker", "sop"}
+            c.check(code == 0 and set(fm) == fields, f"pd.local.md has every §12 field: {sorted(set(fm) ^ fields)}")
+            c.check(fm["source_paths"] == ["src/"] and fm["test_paths"] == ["tests/"] and fm["fixture_paths"] == ["tests/fixtures/"]
+                    and fm["languages"] == ["python"] and fm["qa_battery"] == ["uv run pytest -q"] and str(fm["sop"]) == "1",
+                    f"paths, languages and qa_battery proposed from the layout: {fm}")
+            gi = (repo / ".gitignore").read_text().split("\n")
+            c.check(gi.count("agent_sandbox/") == 1 and ".claude/worktrees/" in gi and "docs/_html/" in gi and "node_modules/" in gi,
+                    f"the three .gitignore lines, once each: {gi}")
+            c.check(all(f'+{x}' in out.replace(" ", "") for x in ('"baseRef":"head"', '"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH":"1"',
+                                                                  '"Bash(gitmerge:*)"', '"Bash(uvrunpytest:*)"'))
+                    and not (repo / ".claude/settings.json").exists(), "the settings diff is printed, not applied")
+            c.check("MISSING: uv" in out and "MISSING: the calvin skill" in out, "a missing uv and calvin skill are reported")
+            code, out = run(repo)
+            c.check(code == 1 and "--force" in out, "an existing pd.local.md is not overwritten")
+            (home / ".claude/skills/calvin").mkdir(parents=True)
+            (home / ".claude/skills/calvin/SKILL.md").write_text("x")
+            (bin_ / "uv").write_text("#!/bin/sh\n")
+            (bin_ / "uv").chmod(0o755)
+            code, out = run(repo, "--force")
+            c.check(code == 0 and "MISSING" not in out, "an installed uv and calvin skill aren't reported")
+            run(repo, "--apply-settings")
+            s = json.loads((repo / ".claude/settings.json").read_text())
+            c.check(s["worktree"] == {"baseRef": "head"} and "Bash(git worktree:*)" in s["permissions"]["allow"],
+                    "--apply-settings writes the approved settings")
+            run(repo, "--decline")
+            run(repo, "--decline")
+            c.check((home / ".claude/pd/init-declined").read_text() == f"{repo.resolve()}\n", "--decline records the repository once")
+            old = pc.make_repo(tmp / "old")
+            (old / "docs/features").mkdir(parents=True)
+            code, out = run(old)
+            c.check(code == 1 and "/pd:adopt" in out and not (old / ".claude/pd.local.md").exists(), "an old-layout project is sent to /pd:adopt")
+        finally:
+            os.environ.update({k: v for k, v in env.items() if v is not None})
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

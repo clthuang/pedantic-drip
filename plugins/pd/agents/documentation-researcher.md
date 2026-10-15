@@ -258,8 +258,8 @@ Return structured JSON:
   "drift_detected": [
     {
       "type": "command",
-      "name": "yolo",
-      "description": "Toggle YOLO autonomous mode",
+      "name": "promptimize",
+      "description": "Review a prompt against best practices and return an improved version",
       "status": "missing_from_readme",
       "readme": "README.md",
       "tier": "user-guide"

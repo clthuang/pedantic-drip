@@ -1,14 +1,16 @@
-# Backlog (manual register)
+# Backlog (historical archive)
 
-Durable, git-tracked MANUAL backlog. Distinct from `docs/backlog.md` (the
-gitignored DB projection, `.gitignore:69`) because the entity-DB backlog
-write path is silently lossy — see #060. This file is the source of truth
-until #060 is diagnosed / the P004 cutover (feature 132) restores a
-reliable DB path; entries then migrate into the DB and this file retires.
+RETIRED as source of truth 2026-07-25 (feature 134): #060 closed
+(write path regression-pinned durable), every open item registered as a
+backlog entity, and `docs/backlog.md` (gitignored DB projection) is live
+again. This file remains as the long-form detail annex for pre-134 items —
+entities reference it via `metadata.source`. New items go DB-only via
+`/pd:add-to-backlog`.
 
 ## Open
 
-- **#054 — Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
+- **#054 — CLOSED 2026-07-25** — (a)/(b) decided at 132 (backfill re-minted all 552 uuids; UNIQUE(workspace_uuid, type_id) is the identity contract); (c) delivered by feature 134: create-project.md uses `allocate_entity_id(entity_type="project", ...)`, allocator guard removed at 132 D6.9. Original entry:
+  **Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
   At cutover, decide: (a) what replaces the dropped-UNIQUE reliance on human-readable
   fields (v17 consumers that leaned on uniqueness must be enumerated); (b) whether
   mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered;
@@ -42,7 +44,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   workaround: omit the param entirely; guard G-23 self-detects skipped phases and
   emits a soft warn (verified during 121's specify transition). Fix both params together.
 
-- **#057 — Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
+- **#057 — DELIVERED by feature 134** — self-signaling classes are warnings, not blockers (code-quality-reviewer independence rules + workflow-transitions review gate). Original entry:
+  **Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
   4 of 9 artifact-phase blockers were self-signaling (collection ImportError,
   missing-default TypeError — would fail loudly at the next task's own Verify step);
   5 were silent (dead code, dropped coverage, contradicted contract). Both consume
@@ -50,7 +53,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   to WARNING; BLOCKER reserved for ship-undetected classes. Confidence: medium
   (single-feature sample).
 
-- **#058 — Skip confirmatory phase-gate second rounds when round-1's fix is a small quoted diff** *(source: feature 129 retro Tune 5; owner: workflow-rebuild track)*
+- **#058 — SUPERSEDED by feature 134** — the one-pass + one-fix-round protocol has no confirmatory second rounds at all; mechanical gates replaced per-phase reviewer dispatches. Original entry:
+  **Skip confirmatory phase-gate second rounds when round-1's fix is a small quoted diff** *(source: feature 129 retro Tune 5; owner: workflow-rebuild track)*
   18 reviewer/gate dispatches on 129; the only pure zero-finding rerun was design's
   second phase-gate round reconfirming an already-closed blocker. Proposal: allow the
   orchestrator to close a phase gate without a second dispatch when round-1's sole
@@ -59,7 +63,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   in 1 round — proposal untested there; weak n=2 signal that the DESIGN gate
   specifically is the lowest-yield dispatch.
 
-- **#059 — Stabilize TestMigration11ConcurrentRunners fork-race flake** *(source: feature 129 QA gate T1, MED)*
+- **#059 — CLOSED 2026-07-25 (feature 134)** — root cause was the WAL mode-switch returning SQLITE_BUSY without consulting the busy handler; explicit retry in _set_pragmas; 12/12 stress runs (was ~40% failing on the 134 branch, ~5% develop). Original entry:
+  **Stabilize TestMigration11ConcurrentRunners fork-race flake** *(source: feature 129 QA gate T1, MED)*
   `test_database.py` `test_migration_11_concurrent_runners`: pre-existing flake
   (develop ~5% isolated-rerun fail) measurably worse on the 129 branch (12/19 targeted
   stress reruns; `database is locked` from the forked child's `PRAGMA journal_mode=WAL`
@@ -82,7 +87,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   #055 (acknowledged-but-lost writes). Diagnose before trusting ANY backlog
   registration; this file is the interim source of truth.
 
-- **#062 — schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
+- **#062 — CLOSED 2026-07-25 (feature 134)** — stamp sites upsert; `max(V2_MIGRATIONS) == V2_SCHEMA_VERSION` asserted at import; version-bump re-bootstrap covered by the v2 migration tests. Original entry:
+  **schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
   Bumping V2_SCHEMA_VERSION and re-bootstrapping keeps the stale recorded version
   while new DDL applies — silent mismatch. When 132's migration story lands: ON
   CONFLICT DO UPDATE (or read-compare-write) + a version-bump re-bootstrap test.
@@ -221,10 +227,10 @@ Failed ONCE under full-suite load in an orchestrator verification run at 139ac40
 **Source:** feature 132 battery-r1, implementation reviewer (2026-07-16). **Type:** design follow-through, v1-retirement track, MED.
 Two coupled forward-looking facts the 132 battery pinned for the eventual v2-READ cutover (reads today stay on v1 columns per 132's Scope model, so neither is a 132 gap):
 1. **The execution axis is backfill-only post-cutover.** No live dual-write writer targets `axis='execution'` (`_v2_classify_phase_event` routes everything to pipeline/lifecycle; the one-time `status_backfilled` synthesis is the axis's sole producer) — so `entity_axis_state`'s execution rows FREEZE at backfilled values while live status truth continues on `entities.status` (v1). Fine while reads are v1; the v2-read cutover MUST add an execution-axis live writer (natural home: the update_entity/append_phase_event funnel) or the board would render stale statuses.
-2. **The 5+1 vendored `_kanban_column_for`/`_PHASE_TO_KANBAN` producer replicas** (engine, feature_lifecycle, reconciliation, backfill, workflow_state_server + rebuild_tool's frozen copy) should consolidate when reads move to stored `execution_status` — at that point producers stop needing a mapping at all (adjudicated acceptable at 132: all sites are producers, parity-pinned by test_constants.py; see .review-history.md task-4/battery records).
+2. **The 5+1 vendored `_kanban_column_for`/`_PHASE_TO_KANBAN` producer replicas** (engine, feature_lifecycle, reconciliation, backfill, workflow_state_server + rebuild_tool's frozen copy) should consolidate when reads move to stored `execution_status` — at that point producers stop needing a mapping at all (adjudicated acceptable at 132: all sites are producers, parity-pinned by test_constants.py; see .review-history.md task-4/battery records). **Update 2026-09-26:** engine.py's copy is deleted (design W5.7 in docs/plans/2026-09-25-release-c-followups-design.md; its only caller, the .meta.json hydration, went in W1.5), so 4+1 remain.
 Related: [[#081]], [[#082]] (same v1-retirement decision window).
 
-## #085 — v1→v2 cutover pre-pass: the real census is dirty (dress-rehearsal blocker)
+## #085 — CLOSED 2026-07-25: cutover executed (pre-pass cleaned 127 rows, parity 552→552, checksum matched rehearsal; entities.db.v1-readonly archived, window to 2026-08-24)
 **Source:** feature 132 QA gate lane A (2026-07-16), first tool run against a copy of the real census. **Type:** cutover runbook, v1-retirement track, HIGH (blocks the actual cutover, NOT the 132 merge — the tool's fail-closed pre-import vocab diff is doing its job).
 Lane A's dress rehearsal: machinery green end-to-end (staging build, counts parity EXACT 552→552 per kind×workspace on a cleaned copy, byte-identical idempotent re-runs, dual-write incl. the battery-fix rollback verified on real data, immutability guards hold) — but the RAW census aborts the pre-import vocab diff with zero writes: **127 out-of-vocab feature `phase` rows across 41 features**: (a) 54 rows `phase='create-tasks'` (retired 7-phase-era name, mostly source='backfill'); (b) 73 rows where a JSON phase-list was written ONE-ROW-PER-CHARACTER (`phase='['`, `'"'`, `'d'`, …) on 'skipped' events for feature:011-tier-action-protocol (14) + feature:013-discord-identify-budget (59) — historical corruption, writer root-caused and guard-fixed at [[#086]]. Pre-pass required before cutover: (1) one-off cleaning SQL with its own verification (map create-tasks → a sanctioned phase or delete-with-record; delete the 73 char rows); (2) review the 16 tolerated hygiene anomalies the cleaned-run report lists (2 empty-id normalized, 11 orphan phase_events, 3 orphan workflow_phases); (3) **stop ALL sessions/MCP servers first** — lane A observed 4+ live pd MCP PIDs holding the DB open read-write with the WAL actively growing; the swap's checkpoint+rename must not race live writers (the tool's marker warns, the runbook must enforce); (4) re-run tool → verify report parity → --swap; (5) also review workspaces-table cardinality (2,185 rows for 7 logical workspaces — m11-era mapping residue worth a look, not a blocker).
 **Progress (2026-07-25):** pre-pass SQL persisted at `scripts/dev/cutover-prepass.sql` (remap create-tasks→create-plan + delete char rows, both with full-row records), operator runbook at `docs/dev_guides/cutover-runbook.md`. Rehearsal on a fresh live copy: raw abort reproduced exactly (create-tasks + 23 corruption chars); post-prepass 0 residual, 54+73=127 recorded; two clean runs 552→552 parity per kind×workspace with byte-identical checksums. Remaining: the LIVE execution — operator-run from a plain terminal with all writers stopped (runbook §1). New data points: workspaces 2,329 (+144 in 9 days — the m11-era writer is still live, investigate before v1 retirement); orphan phase_events 11→13 same window.
@@ -237,7 +243,7 @@ Root cause: `_process_transition_phase` (workflow_state_server.py) parsed the MC
 **Source:** feature 133 test-deepener (2026-07-16), surfaced while probing SC1 fault-control alternatives; echoed by the 133 implementation battery. **Type:** error-handling hygiene, LOW-MED.
 `check_missed_cascade` (doctor/checks.py, ~:453 region post-133) wraps its scan in a bare `except sqlite3.Error` that returns a clean/empty result — a DB with a corrupt or absent `entity_relations` table yields a FALSE ALL-CLEAR instead of a loud failure. Contradicts the repo standard ("do not silently swallow database exceptions", CLAUDE.md SQLite guidance) and the 128 fail-loud posture. Pre-existing (shipped at 124), NOT a 133 regression — 133 deliberately left retained checks byte-untouched. Candidate fix: convert the swallow to a failed CheckResult naming the exception (the runner's per-check isolation already contains crashes), one red-first test. Related: [[#080]] (same check's producer window).
 
-- **#086 — Fresh-file concurrent bootstrap races the v1 migration chain** *(source: feature 134 qa-mig3 probe, 2026-07-25)*
+- **#088 — Fresh-file concurrent bootstrap races the v1 migration chain** *(source: feature 134 qa-mig3 probe, 2026-07-25; renumbered from a #086 collision)*
   Two processes opening a NOT-YET-EXISTING entities.db simultaneously fail 7/8
   (unguarded v1 chain replay: "no such column: entity_type", "foreign key
   mismatch"). Verified pre-existing on develop (identical 7/8); MIGRATIONS[20]/[21]
