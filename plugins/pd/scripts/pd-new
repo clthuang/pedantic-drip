@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""pd-new: create a pd item with a local date-slug id (plan Part B §4.1, §4.2, §7, §7.1).
+
+  pd-new <feature|plan|brainstorm|rca> "<title>" [--from <path under the artifacts root | backlog#<id>>]
+         [--mode standard|small|express]                       (--mode: features only)
+  pd-new feature --plan <plan id or path> <slug> "<title>"     (fills that roadmap's `planned: <slug>`)
+  pd-new backlog "<title>" [--from features/<id>]
+  pd-new --self-test
+
+Goal runs: a conductor running pd-new inside a /goal run sets PD_GOAL_RUN=1, so a
+`tracker: github` item records `issue: pending` instead of publishing an issue (§4.2).
+"""
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import (ID_RE, TYPE_DIRS, Checks, artifacts_dir, load_config,  # noqa: E402
+                       make_repo, repo_root, slugify, split_frontmatter)
+
+TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+class Refused(Exception):
+    pass
+
+
+def yaml_value(value):
+    # Quote what the frontmatter's YAML subset would misread: a ` #` comment, a leading [ or quote.
+    if re.search(r"\s#|^[\[\"'{-]|^\s|\s$", value):
+        return '"' + value.replace('"', "'") + '"'
+    return value
+
+
+def render(text, values, single_file=False):
+    """Fill {{placeholders}}; a line whose placeholder is empty is dropped (optional fields)."""
+    out, fences = [], 0
+    for line in text.split("\n"):
+        if line == "---":
+            fences += 1
+        in_fm = fences == 1 and line != "---"
+        if in_fm:
+            if single_file and "# features only" in line:
+                continue
+            line = re.sub(r"\s+#.*$", "", line)
+        names = re.findall(r"\{\{(\w+)\}\}", line)
+        if names and not all(values.get(n) for n in names):
+            continue
+        for n in names:
+            line = line.replace("{{%s}}" % n, yaml_value(values[n]) if in_fm else values[n])
+        if single_file and line == "- [log](log.md)":
+            continue
+        if single_file and line.startswith("<!--"):
+            line = line.replace("log.md", "## Log")  # a single-file item keeps its history under ## Log
+        out.append(line)
+    return "\n".join(out) + ("\n## Log\n" if single_file else "")
+
+
+def make_issue(cfg, item_type, title, rel):
+    """(issue value, note for ## Now). Only features and plans get issues (§4.2)."""
+    if cfg.get("tracker") != "github" or item_type not in ("feature", "plan"):
+        return "", ""
+    if os.environ.get("PD_GOAL_RUN") == "1":
+        return "pending", ""
+    try:
+        r = subprocess.run(["gh", "issue", "create", "--title", title, "--body", f"{title} — {rel}"],
+                           capture_output=True, text=True, timeout=60)
+        url = (r.stdout.strip().split("\n") or [""])[-1]
+        if r.returncode == 0 and url.startswith("http"):
+            return url, ""
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "", "No issue yet: `gh issue create` failed (offline?). Create it, then set `issue:`."
+
+
+def find_plan(art, ref):
+    for p in (Path(ref), art / ref, art / "plans" / f"{ref}.md", art / "plans" / ref):
+        if p.is_file():
+            return p
+    raise Refused(f"no plan found for {ref!r}")
+
+
+def fill_planned(plan, slug, feature_id):
+    """The plan's text with its `planned: <slug>` line turned into a `feature:` line."""
+    text = plan.read_text()
+    end = text.index("\n---", 4) if text.startswith("---\n") else 0
+    new_fm, n = re.subn(rf"^(\s*)- planned:\s*{re.escape(slug)}[ \t]*(#.*)?$",
+                        rf"\1- feature: features/{feature_id}", text[:end], flags=re.M)
+    if n != 1:
+        raise Refused(f"{plan.name} has no roadmap line `planned: {slug}`")
+    return new_fm + text[end:]
+
+
+def tick_backlog(art, backlog_id, pointer):
+    """backlog.md's text with the open line for backlog_id ticked as promoted."""
+    path = art / "backlog.md"
+    text = path.read_text() if path.is_file() else ""
+    new, n = re.subn(rf"^- \[ \] {re.escape(backlog_id)} — .*$",
+                     f"- [x] {backlog_id} — promoted → {pointer}", text, flags=re.M)
+    if n != 1:
+        raise Refused(f"no open backlog line {backlog_id} in {path}")
+    return path, new
+
+
+def add_backlog(art, title, origin):
+    backlog_id = f"{date.today():%Y-%m-%d}-{slugify(title)}"
+    path = art / "backlog.md"
+    text = path.read_text() if path.is_file() else "# Backlog\n\n"
+    archive = art / "backlog-archive.md"
+    if re.search(rf"^- \[[ x]\] {re.escape(backlog_id)} ", text + (archive.read_text() if archive.is_file() else ""), re.M):
+        raise Refused(f"backlog id {backlog_id} already exists")
+    line = f"- [ ] {backlog_id} — {title}" + (f" (from: {origin})" if origin else "")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text.rstrip("\n") + "\n" + line + "\n")
+    return path
+
+
+def create(root, item_type, title, origin=None, mode=None, plan_slug=None):
+    cfg = load_config(root)
+    art = artifacts_dir(root, cfg)
+    if item_type == "backlog":
+        return add_backlog(art, title, origin)
+    if mode and item_type != "feature":
+        raise Refused("--mode applies to features only")
+    plan, slug = (plan_slug or (None, None))
+    slug = slug or slugify(title)
+    if not SLUG_RE.match(slug):
+        raise Refused(f"bad slug {slug!r} (lowercase words joined by hyphens)")
+    item_id = f"{date.today():%Y-%m-%d}-{slug}"
+    base = art / TYPE_DIRS[item_type]
+    target = base / item_id if item_type == "feature" else base / f"{item_id}.md"
+    rel = f"{TYPE_DIRS[item_type]}/{item_id}" + ("" if item_type == "feature" else ".md")
+    if target.exists():
+        raise Refused(f"{rel} already exists (same day, same slug)")
+    # Validate every edit before writing anything.
+    plan_edit = (find_plan(art, plan), None) if plan else None
+    if plan_edit:
+        plan_edit = (plan_edit[0], fill_planned(plan_edit[0], slug, item_id))
+    backlog_edit = None
+    if origin and origin.startswith("backlog#"):
+        backlog_edit = tick_backlog(art, origin[len("backlog#"):], rel)
+    elif origin and not (art / origin).exists():
+        raise Refused(f"--from {origin} does not exist under {art}")
+    issue, note = make_issue(cfg, item_type, title, f"{art.relative_to(root)}/{rel}")
+    feature = item_type == "feature"
+    mode = mode or "standard"
+    values = {"id": item_id, "type": item_type, "title": title, "status": "active",
+              "phase": ("implement" if mode == "express" else "specify") if feature else "",
+              "mode": mode if feature else "", "branch": f"feature/{item_id}" if feature else "",
+              "origin": origin or "", "risk": "", "issue": issue,
+              "now": "Created by pd-new." + (f" {note}" if note else "")}
+    readme = render((TEMPLATES / "README.md").read_text(), values, single_file=not feature)
+    if feature:
+        target.mkdir(parents=True)
+        (target / "README.md").write_text(readme)
+        (target / "log.md").write_text(render((TEMPLATES / "log.md").read_text(), values))
+    else:
+        base.mkdir(parents=True, exist_ok=True)
+        target.write_text(readme)
+    if plan_edit:
+        plan_edit[0].write_text(plan_edit[1])
+    if backlog_edit:
+        backlog_edit[0].write_text(backlog_edit[1])
+    return target
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    ap = argparse.ArgumentParser(prog="pd-new", description=__doc__.split("\n")[0])
+    ap.add_argument("type", choices=("feature", "plan", "brainstorm", "rca", "backlog"))
+    ap.add_argument("title")
+    ap.add_argument("--from", dest="origin")
+    ap.add_argument("--mode", choices=("standard", "small", "express"))
+    ap.add_argument("--plan", nargs=2, metavar=("PLAN", "SLUG"))
+    a = ap.parse_args(argv)
+    if a.plan and a.type != "feature":
+        ap.error("--plan applies to features only")
+    root = repo_root()
+    try:
+        path = create(root, a.type, a.title, a.origin, a.mode, a.plan)
+    except Refused as e:
+        print(f"pd-new: refused: {e}", file=sys.stderr)
+        return 1
+    print(path.relative_to(root))
+    return 0
+
+
+def self_test():
+    c = Checks("pd-new")
+    today = f"{date.today():%Y-%m-%d}"
+    with tempfile.TemporaryDirectory() as t:
+        repo = make_repo(Path(t) / "repo")
+        art = repo / "docs" / "dev_artifacts"
+        stub = Path(t) / "bin"
+        stub.mkdir()
+        gh_log = Path(t) / "gh-args"
+        (stub / "gh").write_text(f'#!/bin/sh\necho "$@" > "{gh_log}"\n'
+                                 '[ -n "$GH_FAIL" ] && exit 1\necho https://github.com/o/r/issues/7\n')
+        (stub / "gh").chmod(0o755)
+        env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"}
+        env.pop("PD_GOAL_RUN", None)
+
+        def run(*args, **extra):
+            return subprocess.run([sys.executable, __file__, *args], cwd=repo, capture_output=True,
+                                  text=True, env={**env, **extra})
+
+        def fm(path):
+            return split_frontmatter(path.read_text())[0]
+
+        # ids and slugify
+        r = run("feature", "A Quick Fix of the Flaky UI PID File Test")
+        fid = f"{today}-quick-fix-flaky-ui-pid"
+        fdir = art / "features" / fid
+        c.check(r.returncode == 0 and fdir.is_dir(), f"feature created at features/{fid} ({r.stderr.strip()})")
+        c.check(ID_RE.match(fid) is not None and fdir.name.startswith(today), "id is YYYY-MM-DD-<slug>")
+        # collisions
+        before = (fdir / "README.md").read_text()
+        r = run("feature", "A quick fix of the flaky UI PID file test")
+        c.check(r.returncode == 1 and "refused" in r.stderr and (fdir / "README.md").read_text() == before,
+                "same-day same-slug refused")
+        # the four item types
+        f = fm(fdir / "README.md")
+        c.check(f["id"] == fid and f["type"] == "feature" and f["status"] == "active", "feature frontmatter")
+        c.check(f["phase"] == "specify" and f["mode"] == "standard" and f["branch"] == f"feature/{fid}",
+                "feature phase, mode and branch")
+        text = (fdir / "README.md").read_text()
+        c.check("{{" not in text and "# features only" not in text and "origin" not in f and "issue" not in f,
+                "placeholders filled, comments stripped, empty optional fields dropped")
+        c.check("## Now" in text and "## Links" in text and (fdir / "log.md").is_file(), "feature README and log.md")
+        for kind, title in (("brainstorm", "Better onboarding"), ("rca", "Crash #12: empty input"),
+                            ("plan", "Thin pd")):
+            r = run(kind, title)
+            p = art / TYPE_DIRS[kind] / f"{today}-{slugify(title)}.md"
+            c.check(r.returncode == 0 and p.is_file(), f"{kind} is one file ({r.stderr.strip()})")
+            if p.is_file():
+                f, body, _ = split_frontmatter(p.read_text())
+                c.check(f["id"] == p.stem and f["type"] == kind and f["title"] == title,
+                        f"{kind} frontmatter, title round-trips")
+                c.check(not {"phase", "mode", "branch"} & set(f), f"{kind} has no feature-only fields")
+                c.check("## Now" in body and body.rstrip().endswith("## Log") and "log.md" not in body,
+                        f"{kind} has ## Now and a final ## Log")
+        r = run("feature", "Express fix", "--mode", "express")
+        c.check(fm(art / "features" / f"{today}-express-fix" / "README.md")["phase"] == "implement",
+                "an express feature starts at implement")
+        # --from sets origin
+        bs = f"brainstorms/{today}-better-onboarding.md"
+        r = run("feature", "Onboarding wizard", "--from", bs)
+        c.check(r.returncode == 0 and fm(art / "features" / f"{today}-onboarding-wizard" / "README.md")["origin"] == bs,
+                "--from sets origin")
+        c.check(run("feature", "Ghost", "--from", "brainstorms/nope.md").returncode == 1, "--from must exist")
+        # --plan turns the planned line into a feature line
+        plan = art / "plans" / "2026-01-01-roadmap.md"
+        plan.write_text("---\nid: 2026-01-01-roadmap\ntype: plan\ntitle: R\nstatus: active\nroadmap:\n"
+                        "  - planned: pd-lint\n  - planned: pd-adopt   # later\n    after: [pd-lint]\n---\n# R\n")
+        r = run("feature", "--plan", "2026-01-01-roadmap", "pd-adopt", "Adopt old projects")
+        road = fm(plan)["roadmap"]
+        c.check(r.returncode == 0 and (art / "features" / f"{today}-pd-adopt").is_dir(), "--plan creates <date>-<slug>")
+        c.check(road == [{"planned": "pd-lint"}, {"feature": f"features/{today}-pd-adopt", "after": ["pd-lint"]}],
+                "--plan turns the planned line into a feature line, keeping after:")
+        c.check(run("feature", "--plan", "2026-01-01-roadmap", "nosuch", "X").returncode == 1,
+                "--plan refuses a slug with no planned line")
+        # pd-new backlog, and promoting from it
+        r = run("backlog", "Flaky UI PID test", "--from", f"features/{fid}")
+        bl = (art / "backlog.md").read_text()
+        bid = f"{today}-flaky-ui-pid-test"
+        c.check(r.returncode == 0 and re.search(
+            rf"^- \[ \] {bid} — Flaky UI PID test \(from: features/{fid}\)$", bl, re.M) is not None,
+            "backlog line well-formed")
+        r = run("feature", "Fix flaky PID test", "--from", f"backlog#{bid}")
+        pid = f"{today}-fix-flaky-pid-test"
+        c.check(f"- [x] {bid} — promoted → features/{pid}" in (art / "backlog.md").read_text()
+                and fm(art / "features" / pid / "README.md")["origin"] == f"backlog#{bid}",
+                "--from backlog#<id> ticks the line and sets origin")
+        # tracker: github
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "pd.local.md").write_text("---\ntracker: github\n---\n")
+        r = run("feature", "Goal run item", PD_GOAL_RUN="1")
+        c.check(fm(art / "features" / f"{today}-goal-run-item" / "README.md").get("issue") == "pending"
+                and not gh_log.exists(), "inside a goal run: issue: pending, gh not called")
+        r = run("plan", "Tracked plan")
+        c.check(fm(art / "plans" / f"{today}-tracked-plan.md").get("issue") == "https://github.com/o/r/issues/7"
+                and gh_log.read_text().startswith("issue create --title Tracked plan"),
+                "outside a goal run: gh issue create, its URL written")
+        gh_log.unlink()
+        run("brainstorm", "Untracked idea")
+        c.check(not gh_log.exists(), "brainstorms get no issue")
+        run("feature", "Offline item", GH_FAIL="1")
+        p = art / "features" / f"{today}-offline-item" / "README.md"
+        c.check("issue" not in fm(p) and "No issue yet" in p.read_text(), "gh failing: no issue:, a note in ## Now")
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
