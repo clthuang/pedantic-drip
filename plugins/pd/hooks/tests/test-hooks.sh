@@ -364,6 +364,32 @@ test_err_trap_produces_json() {
     fi
 }
 
+# Test: cleanup-stale-versions keeps a version a live session runs from
+test_cleanup_keeps_versions_in_use() {
+    log_test "cleanup-stale-versions removes stale versions but keeps one marked in use by a live process"
+
+    local tmpdir cache dead_pid
+    tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
+    cache="$tmpdir/.claude/plugins/cache/pedantic-drip-marketplace/pd"
+    mkdir -p "$cache/7.0.0/.in_use" "$cache/7.0.1" "$cache/7.0.2/.in_use" "$cache/7.0.3"
+    sleep 0 & dead_pid=$!; wait "$dead_pid" || true
+    echo '{}' > "$cache/7.0.0/.in_use/$dead_pid"
+    echo '{}' > "$cache/7.0.2/.in_use/$$"
+    echo '{"plugins":{"pd@pedantic-drip-marketplace":[{"version":"7.0.3"}]}}' \
+        > "$tmpdir/.claude/plugins/installed_plugins.json"
+
+    HOME="$tmpdir" bash "${HOOKS_DIR}/cleanup-stale-versions.sh" 2>/dev/null || true
+
+    local left
+    left=$(cd "$cache" && ls | tr '\n' ' ')
+    if [[ "$left" == "7.0.2 7.0.3 " ]]; then
+        log_pass
+    else
+        log_fail "expected '7.0.2 7.0.3 ' left, got '$left'"
+    fi
+    rm -rf "$tmpdir"
+}
+
 # === Path Portability Tests ===
 
 # Helper: find plugin component dir (relative to PROJECT_ROOT)
@@ -519,6 +545,7 @@ main() {
     echo ""
 
     test_err_trap_produces_json
+    test_cleanup_keeps_versions_in_use
 
     echo ""
     echo "--- Path Portability Tests ---"

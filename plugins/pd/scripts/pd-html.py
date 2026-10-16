@@ -20,8 +20,8 @@ from pathlib import Path
 from markdown_it import MarkdownIt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (Checks, artifacts_dir, find_items, load_config, make_repo,  # noqa: E402
-                       repo_root, split_frontmatter)
+from pd_common import (EXPECTATION_RE, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
+                       make_repo, repo_root, split_frontmatter)
 
 CSS = Path(__file__).resolve().parent.parent / "templates" / "doc.css"
 MERMAID_JS = ('<script type="module">import mermaid from '
@@ -50,6 +50,36 @@ def _md():
     md.renderer.rules["fence"] = fence
     md.add_render_rule("link_open", link_open)
     return md
+
+
+def _expectation(line, md):
+    """One `B<n>: <input> -> <outcome>` line as a card. Splits at the first ` -> ` outside a code span."""
+    m = EXPECTATION_RE.match(line)
+    rest = line[m.end(1) + 2:].rstrip()
+    parts = rest.split(" -> ")
+    cut = next((i for i in range(1, len(parts)) if " -> ".join(parts[:i]).count("`") % 2 == 0), 1)
+    given, outcome = " -> ".join(parts[:cut]), " -> ".join(parts[cut:])
+    return (f'<div class="expectation" id="B{m.group(1)}"><span class="id">B{m.group(1)}</span>'
+            f'<div class="given">{md.renderInline(given)}</div>'
+            f'<div class="outcome">{md.renderInline(outcome)}</div></div>')
+
+
+def expectation_blocks(body, md):
+    """Markdown joins consecutive lines into one paragraph, so a run of expectation lines would read as
+    one wall of text: each run becomes a raw HTML block of cards instead. Fenced code is left alone."""
+    out, run, fence = [], [], None
+    for line in body.split("\n") + [""]:
+        if fence is None and EXPECTATION_RE.match(line):
+            run.append(_expectation(line, md))
+            continue
+        if run:
+            out += ["", f'<div class="expectations">{"".join(run)}</div>', ""]
+            run = []
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker and (fence is None or marker.group(1).startswith(fence)):
+            fence = marker.group(1)[:3] if fence is None else None
+        out.append(line)
+    return "\n".join(out[:-1])
 
 
 def _cell(text, cls=None):
@@ -110,7 +140,8 @@ def render(src, root):
     content = frontmatter_box(fm)
     if fm.get("roadmap"):
         content += "<h2>Roadmap</h2>\n" + roadmap_table(fm["roadmap"], src.resolve().parent.parent)
-    content += _md().render(body, env)
+    md = _md()
+    content += md.render(expectation_blocks(body, md), env)
     heading = re.search(r"^# (.+)$", body, re.M)
     title = html.escape(str(fm.get("title") or (heading.group(1) if heading else src.stem)))
     page = (f'<!doctype html>\n<html><head><meta charset="utf-8">'
@@ -165,6 +196,17 @@ def self_test():
         c.check('<pre class="mermaid">flowchart LR' in page and "mermaid.esm.min.mjs" in page
                 and "language-mermaid" not in page, "mermaid block left for mermaid.js")
         c.check("mermaid.esm" not in render(art / "plans" / "plain.md", root).read_text(), "no mermaid script without a block")
+        shape = art / "features" / "2026-10-15-a" / "shape.md"
+        shape.write_text("# S\n\n**Apply**\n\nB1: `a -> b` on the file -> exit 0; prints `x -> y`\n"
+                         "B2: no args -> usage, exit 2\n\nAfter.\n\n```\nB3: in a fence -> stays code\n```\n")
+        page = render(shape, root).read_text()
+        c.check(page.count('<div class="expectation"') == 2 and 'id="B1"' in page and 'id="B2"' in page,
+                "consecutive expectation lines become one card each, not one paragraph")
+        c.check('<div class="given"><code>a -&gt; b</code> on the file</div>' in page
+                and '<div class="outcome">exit 0; prints <code>x -&gt; y</code></div>' in page,
+                "an expectation splits at the first arrow outside a code span; inline markdown renders")
+        c.check("<p>After.</p>" in page and "B3: in a fence -&gt; stays code" in page and 'id="B3"' not in page,
+                "text after the run is a paragraph again; a fenced expectation stays code")
     return c.done()
 
 

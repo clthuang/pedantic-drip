@@ -13,7 +13,7 @@ The Criteria stage (`phase: specify`) removes one unknown: how will anyone know 
 2. **A direct request** first gets Clarify's two questions, through AskUserQuestion: is this the right problem, and what would success look like?
 3. **Write `## Requirements`** in `{pd_artifacts_root}/features/<id>/shape.md` from the PRD, RCA report or request, using `${CLAUDE_PLUGIN_ROOT}/templates/shape.md`. The bar is below. Ask the user only about contradictions and decisions the source can't answer.
 4. **Calvin cycles,** up to three (below).
-5. **Sign-off:** ask through AskUserQuestion whether the criteria are signed off, showing the expectations. Write the answer as a `decision` entry: `Q: criteria signed off?` and `A (user, verbatim): "<quote>"`. This is a hard stop in every mode: never answered on the user's behalf. A criterion nobody can state as an observable outcome is a hard stop too.
+5. **Sign-off:** ask through AskUserQuestion whether the criteria are signed off, showing the expectations (past half a terminal, `shape.md` opens in the browser per `workflow-transitions`). Write the answer as a `decision` entry: `Q: criteria signed off?` and `A (user, verbatim): "<quote>"`. This is a hard stop in every mode: never answered on the user's behalf. A criterion nobody can state as an observable outcome is a hard stop too.
 6. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh specify <feature dir>` (the expectations' format, and the user's sign-off). Then phase exit per `workflow-transitions` (`phase specify -> design`).
 
 **Entries this stage writes:** `review` (one per calvin cycle), `decision` (the sign-off, and each user ruling), `capped` (at the cap), `phase`.

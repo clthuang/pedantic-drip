@@ -297,7 +297,7 @@ Hooks execute automatically at lifecycle points.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions older than the active one |
+| `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions other than the active one, except one a running session still uses (Claude Code's `.in_use/<pid>` marker) |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit`; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |

@@ -616,3 +616,8 @@ Applied: W10 closes as rejected; the order stays as §A4 pins it. feature/thin-p
 Q: Release the README rewrite, and give the next steps for verification?
 A (user, verbatim): "release and give me the next step guides for verification".
 Applied: v7.0.1 released (main `a856980c`, tag `v7.0.1`, develop `7.0.1-dev`); CI green; the installed plugin updated to 7.0.1. `bake-off.md` holds T5.2's run guide and its results table, every row pending.
+
+## 2026-10-16 decision
+Q: The installed pd reads `7.0.1-dev`; install from GitHub directly instead?
+A (user, verbatim): "shouldn't we change to install the plugin from the github repo directly?"; then, asked how: "Delete sync-cache (Recommended)".
+Applied: pd already installs from GitHub; `sync-cache.sh` overwrote it with the main checkout's branch at every session start. The hook, its script, `/pd:sync-cache` and `may_publish_plugin_cache` are deleted (`2c32a99b`); local testing uses `claude --plugin-dir plugins/pd`. v7.0.2 released through the Actions release workflow (main `c4a44909`, tag `v7.0.2`, develop `7.0.2-dev`); CI green; the installed cache matches tag `v7.0.2` file for file.
