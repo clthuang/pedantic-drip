@@ -62,6 +62,7 @@ Before reporting, review with fresh eyes:
 - Did I avoid overbuilding (YAGNI)?
 - Did I only build what was requested?
 - Did I follow existing patterns?
+- Did I add compatibility code (an alias, a kept old name, a dual path) the task's contract doesn't ask for? Move every caller instead.
 
 **Testing:**
 - Do tests verify behavior (not just mock behavior)?

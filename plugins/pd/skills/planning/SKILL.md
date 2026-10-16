@@ -51,3 +51,5 @@ Add `- proof: green-only (refactor|infra|fixture)` only for a task whose tests c
 - **Dispatchable tasks:** each has its contract pointer, file set, `uses:`, and a proving command that writes its `junit:` path; a task no command can prove is split or sharpened.
 - **Order:** waves in dependency order; a task's `uses:` modules exist at its wave's base. `[parallel-safe]` only when the task's file set is disjoint from every other parallel task in its wave, and it is big enough for running in parallel to pay.
 - **`green-only` is earned:** the reason is `refactor` (existing tests prove it), `infra` or `fixture`, and true of the task.
+
+A blocker is an item above that the plan fails, or a `B<n>`, edge case or must-not with no faithful case, shown by the case, task or `B<n>` at fault. A "what if" that names none of these is a note. Every finding cites file:line.

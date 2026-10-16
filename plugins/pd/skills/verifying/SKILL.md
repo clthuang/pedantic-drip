@@ -47,8 +47,8 @@ The code review's bar, over the whole branch diff (`<base>..HEAD`), not one task
 - **Each mapped test asserts its case's stated outcome,** not a weaker one: check every `case_map` entry at file:line. A test that would also pass on a fallback or no-op path proves nothing. Tests already green at their first commit (`greens`) get a closer look.
 - **The contracts hold:** signatures, errors and invariants match `shape.md` `### Contracts`; no test imports a module outside a contract's `modules:` line, or a private name.
 - **Integration seams:** what crosses tasks (shared types, call order, config, error propagation) works end to end, since each task was proven alone.
-- **Minimum code:** no abstraction, option, wrapper or "for later" code the contract doesn't need. Over-engineering is a finding.
+- **Minimum code:** no abstraction, option, wrapper or "for later" code the contract doesn't need. Over-engineering is a finding, and so is compatibility code (an alias, a kept old name, a dual path) with no external consumer in evidence.
 - **Safety:** input validated at trust boundaries, no data loss on error paths, no secret in code or logs.
 - **The executors' reports are claims, not evidence:** check each at file:line before relying on it.
 
-A blocker is wrong behaviour a user would hit, or a criterion with no test that would catch its breaking. Style and preference are notes. Every finding cites file:line.
+A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or code no contract asks for, compatibility code included: a removal, fixed by deleting it. Style and preference are notes. Every finding cites file:line.
