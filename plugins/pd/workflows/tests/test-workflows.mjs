@@ -86,6 +86,8 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(keys(r) === keys({ ...every, ...verify }) && keys(r) === keys(globalThis.__RESULT.properties), `verify-change: result fields equal: ${keys(r)}`)
   check(keys(r.qa) === keys(verify.qa) && keys(r.review) === keys(verify.review) && keys(r.fixes[0]) === keys(verify.fixes[0]), 'verify-change: qa, review and fixes fields equal')
   check(s.calls.map(c => c.label).join() === 'review:codex,qa:1,review:codex:retry,review:claude,fix:1,qa:2' && r.cycles === 1, `verify-change: codex, one retry, the Claude fallback, one cycle: ${s.calls.map(c => c.label)}`)
+  check(s.calls.find(c => c.label === 'fix:1').prompt.includes('A removal finding (code no contract asks for') && s.calls.find(c => c.label === 'qa:2').prompt.includes('a fix with an empty test is a removal'),
+    'verify-change: a removal finding is fixed by deleting code with no new test, and QA checks the deletion')
   check(s.calls[0].agentType === 'codex:codex-rescue' && s.calls[3].agentType === 'pd:code-quality-reviewer' && phasesOk(meta, s.calls), 'verify-change: agent types and phases')
   const s2 = stubs(l => l.startsWith('review') ? { approved: false, issues: [ISS], summary: '' } : l.startsWith('fix') ? { fixes: [], rejections: [] } : (qaRuns = 0, answer('qa')))
   const r2 = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9, codex: false }, ...s2.args)
