@@ -83,5 +83,5 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 }
 ```
 
-- **Issue fields:** `id severity category file line claim evidence`. `severity` is `blocker`, `warning` or `note`.
+- **Issue fields:** `id severity category file line claim evidence`. `severity` is `blocker`, `warning` or `note`. `approved` is true only with no blocker.
 - **A scoped re-review** returns `{"findings": [{"id", "status": "resolved | open | regressed", "evidence"}], "new_in_diff": [<issues>]}`. The conductor drops any new finding whose file and line fall outside the diff's hunks.

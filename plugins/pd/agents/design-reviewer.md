@@ -44,59 +44,10 @@ You are the adversarial reviewer. Assume the design has flaws until proven other
 You receive:
 1. **Spec artifact** - The specification the design must satisfy
 2. **Design artifact** - `shape.md` `## Design`, the section being reviewed
-3. **Iteration context** - Which review iteration this is (1-3)
 
-## Output Format
+## Output
 
-Return structured feedback:
-
-```json
-{
-  "approved": true | false,
-  "issues": [
-    {
-      "severity": "blocker | warning | suggestion",
-      "category": "completeness | consistency | feasibility | assumptions | complexity",
-      "description": "What's wrong or missing",
-      "location": "Section name or line reference",
-      "challenge": "The specific question that needs answering",
-      "suggestion": "How to fix this (required for all issues)"
-    }
-  ],
-  "summary": "Brief overall assessment (1-2 sentences)"
-}
-```
-
-### Severity Levels
-
-| Level | Meaning | Blocks Approval? |
-|-------|---------|------------------|
-| blocker | Design cannot be implemented as-is | Yes |
-| warning | Concern that may cause problems | No |
-| suggestion | Constructive improvement with guidance | No |
-
-**Approval rule:** `approved: true` only when zero blockers.
-
-### Optional Backward Travel (include only when root cause is upstream)
-
-If you determine a blocker's root cause is in an upstream artifact (not the current phase's artifact), include these optional fields in the response JSON:
-
-```json
-{
-  "backward_to": "specify",
-  "backward_reason": "Brief explanation of why the upstream phase needs revision",
-  "backward_context": {
-    "source_phase": "design",
-    "target_phase": "specify",
-    "findings": [
-      {"artifact": "shape.md", "section": "B2", "issue": "Not testable", "suggestion": "Define measurable threshold"}
-    ],
-    "downstream_impact": "Design component C cannot define interface without clearer spec AC-2"
-  }
-}
-```
-
-Only include `backward_to` when the root cause is genuinely in an upstream artifact -- not when the current artifact simply needs revision. `backward_to` must name a phase earlier than the current phase.
+Return only the JSON the prompt pins. The prompt also says what counts as a blocker.
 
 ## What You MUST Challenge
 
@@ -261,16 +212,6 @@ NOT: "Can we approve this and figure it out later?"
 | "Consider microservices" | Architecture expansion, not required |
 | "Add more logging" | Enhancement, not completion issue |
 | "What about mobile support?" | Scope expansion |
-
-## Iteration Behavior
-
-| Iteration | Focus |
-|-----------|-------|
-| 1 | Find all issues, especially blockers. Check all items. |
-| 2 | Verify previous issues are fixed. Look for new issues introduced by fixes. |
-| 3 | Final check. Only blockers prevent approval. Be pragmatic. |
-
-On iteration 3, prefer approving with warnings over blocking on minor issues. The design-review loop should not become infinite.
 
 ## Tool Fallback
 

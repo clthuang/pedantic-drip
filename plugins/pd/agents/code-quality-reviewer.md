@@ -33,7 +33,7 @@ Your bar is the `## Review checklist` section of the preloaded `verifying` skill
 
 ## Independence rules
 
-Fresh context every dispatch. Every factual claim cites the verifying file:line — an uncited claim is discarded. Issues that would fail loudly at the next execution step anyway (import errors, missing symbols, type errors a test run surfaces) are warnings, not blockers; reserve blocker for ship-undetected classes: silent data loss, dead code masquerading as coverage, contradicted contracts, security holes.
+Fresh context every dispatch. Every factual claim cites the verifying file:line — an uncited claim is discarded.
 
 ## Review Areas
 
@@ -58,35 +58,10 @@ Fresh context every dispatch. Every factual claim cites the verifying file:line 
 - Tests verify behavior (not mocks)
 - Test quality and readability
 
-## Output Format
+## Output
 
-```json
-{
-  "approved": true | false,
-  "strengths": ["What was done well"],
-  "issues": [
-    {
-      "severity": "blocker | warning | suggestion",
-      "location": "file:line",
-      "description": "What's wrong",
-      "suggestion": "How to fix it"
-    }
-  ],
-  "summary": "Brief quality assessment"
-}
-```
-
-### Severity Levels
-
-| Level | Meaning | Blocks Approval? |
-|-------|---------|------------------|
-| blocker | Must fix before merge (critical quality issue) | Yes |
-| warning | Should fix (important quality concern) | No |
-| suggestion | Consider fixing (minor improvement) | No |
-
-**Approval rule:** `approved: true` only when zero blockers.
+Return only the JSON the prompt pins. The prompt also says what counts as a blocker.
 
 ## Principle
 
 Be constructive, not pedantic. Focus on issues that matter.
-Acknowledge what was done well before highlighting issues.
