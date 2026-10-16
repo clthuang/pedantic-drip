@@ -45,12 +45,24 @@ PYEOF
 # better to skip cleanup than to accidentally delete the active one.
 [[ -n "$active_version" ]] || exit 0
 
+# Claude Code marks a version dir a session runs from with .in_use/<pid>.
+# Deleting it would pull the scripts and hooks out from under that session.
+in_use_by_live_session() {
+    local marker
+    for marker in "$1".in_use/*; do
+        [[ -f "$marker" ]] || continue
+        # shortcut: a reused PID keeps a stale dir until the next session start, the safe direction.
+        kill -0 "$(basename "$marker")" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 # Enumerate version dirs; delete anything not matching active.
 deleted=0
 for dir in "$CACHE_DIR"/*/; do
     [[ -d "$dir" ]] || continue
     version=$(basename "$dir")
-    if [[ "$version" != "$active_version" ]]; then
+    if [[ "$version" != "$active_version" ]] && ! in_use_by_live_session "$dir"; then
         # Safety: only delete dirs that look like semver (X.Y.Z),
         # so we never wipe non-version directories that may have
         # been placed here by other tooling.

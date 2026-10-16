@@ -35,6 +35,12 @@ details { margin: 1em 0; } summary { cursor: pointer; font-weight: 600; }
 .draft { color: var(--draft); } .active { color: var(--active); } .blocked { color: var(--blocked); font-weight: 600; }
 .done { color: var(--done); } .abandoned { color: var(--abandoned); text-decoration: line-through; }
 .mermaid { background: none; text-align: center; }
+.expectations { margin: .8em 0 1.4em; border-top: 1px solid var(--line); }
+.expectation { display: grid; grid-template-columns: 3.2em 1fr; column-gap: .8em; padding: .55em 0; border-bottom: 1px solid var(--line); }
+.expectation .id { grid-row: span 2; font: 600 .85em/1.9 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+.expectation .outcome { color: var(--muted); }
+.expectation .outcome::before { content: "→ "; color: var(--link); font-weight: 600; }
+.expectation:target { background: var(--zebra); }
 @media print {
   body { max-width: none; margin: 0; font-size: 11pt; }
   a { color: inherit; text-decoration: underline; }

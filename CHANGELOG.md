@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Long content opens in the browser.** When the user must read more than about half a terminal (20 lines) to answer a question, such as a long `shape.md` at the criteria sign-off, the conductor renders it with `pd-html.py --open` and keeps the question's preview to a summary; the terminal cuts longer previews. Shorter content stays in the question (`workflow-transitions`).
+- **`pd-html` renders expectations as cards.** A run of `B<n>: <input> -> <outcome>` lines was one paragraph, since Markdown joins consecutive lines; each now renders as its own card, with the id, the input and the outcome on separate lines, anchored as `#B<n>`.
+
+### Fixed
+
+- **`cleanup-stale-versions` no longer deletes a version a running session uses.** It skips a cached version whose `.in_use/<pid>` marker names a live process, so updating pd while another session runs no longer removes that session's hooks and scripts.
+
 ## [7.0.2] - 2026-10-16
 
 ### Removed

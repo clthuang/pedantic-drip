@@ -141,7 +141,7 @@ CC does not garbage-collect pre-fix cached plugin versions when a new release la
 1. Start a new Claude Code session (don't resume).
 2. Delete stale caches: `rm -rf ~/.claude/plugins/cache/pedantic-drip-marketplace/pd/X.Y.Z/` for each non-active version.
 
-The `cleanup-stale-versions.sh` SessionStart hook (feature 087) automates this — it reads `installed_plugins.json` and removes any cached version that doesn't match the active one.
+The `cleanup-stale-versions.sh` SessionStart hook (feature 087) automates this — it reads `installed_plugins.json` and removes any cached version that doesn't match the active one, except a version whose `.in_use/<pid>` marker (written by Claude Code) names a live process: deleting it would pull the hooks and scripts out from under that session.
 
 ### Enforcement
 
