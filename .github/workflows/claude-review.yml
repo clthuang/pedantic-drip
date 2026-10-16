@@ -38,6 +38,11 @@ jobs:
             echo "::notice::No review: add the CLAUDE_CODE_OAUTH_TOKEN repository secret (claude setup-token)."
             exit 0
           fi
+          # A token copied off a wrapped terminal line picks up line breaks; log its shape, never its value.
+          token=$(printf %s "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')
+          echo "token: ${#token} chars; $(( ${#CLAUDE_CODE_OAUTH_TOKEN} - ${#token} )) whitespace removed"
+          case "$token" in sk-ant-oat01-*) ;; *) echo "::warning::the token doesn't start with sk-ant-oat01-, as claude setup-token's do" ;; esac
+          export CLAUDE_CODE_OAUTH_TOKEN="$token"
           npm install -g @anthropic-ai/claude-code@2.1.301
           claude -p "$PROMPT" --model claude-opus-5-5 --max-turns 40 \
             --allowedTools "Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*)" < /dev/null > review.md || { cat review.md; exit 1; }
