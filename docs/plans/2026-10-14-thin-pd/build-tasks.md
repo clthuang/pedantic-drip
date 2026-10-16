@@ -621,3 +621,8 @@ Applied: v7.0.1 released (main `a856980c`, tag `v7.0.1`, develop `7.0.1-dev`); C
 Q: The installed pd reads `7.0.1-dev`; install from GitHub directly instead?
 A (user, verbatim): "shouldn't we change to install the plugin from the github repo directly?"; then, asked how: "Delete sync-cache (Recommended)".
 Applied: pd already installs from GitHub; `sync-cache.sh` overwrote it with the main checkout's branch at every session start. The hook, its script, `/pd:sync-cache` and `may_publish_plugin_cache` are deleted (`2c32a99b`); local testing uses `claude --plugin-dir plugins/pd`. v7.0.2 released through the Actions release workflow (main `c4a44909`, tag `v7.0.2`, develop `7.0.2-dev`); CI green; the installed cache matches tag `v7.0.2` file for file.
+
+## 2026-10-16 decision
+Q: The bake-off's criteria sign-off preview was cut ("13 lines hidden"), and `shape.html`'s expectations read as walls of text. What should pd do?
+A (user, verbatim): "pd-html at every approval (Recommended)"; then: "I don't need HTML preview at every approval point. That's overkill. Only for large context approval. I.e. anything that cannot be displayed within half of the terminal window should be re-rendered in HTML to user friendliness"; and "We need to improve the MD -> HTML readability conversion".
+Applied (`e8948aaf`, v7.0.3): `workflow-transitions` opens content past about 20 lines in the browser with `pd-html --open` and keeps the preview to a summary; `pd-html` renders each `B<n>:` expectation as a card; `cleanup-stale-versions` skips a cached version a live session still uses (`.in_use/<pid>`), so the release didn't pull 7.0.2 from under the running bake-off. Released (main tag `v7.0.3`, develop `7.0.3-dev`); CI green; the installed cache matches the tag.
