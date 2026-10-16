@@ -8,3 +8,8 @@ pd's documentation clause (plan Part B §3.1). The `updating-docs` skill and eve
    - **Standalone pages:** the stylesheet is inlined. Mermaid diagrams load mermaid.js from a CDN; offline they show as code.
 3. **Hand-written HTML is the exception,** for content markdown can't express (a laid-out dashboard, an interactive page). It lives in `docs/` beside its topic, is committed, and links `doc.css` by relative path, using only its classes: no inline styles and no `<style>` blocks of its own.
 4. **Generated HTML is never committed and never edited.** The `.md` is the one source: delete a render and regenerate it.
+5. **Write markdown that renders as written.** `pd-html` warns on the first two as it renders, naming the line.
+   - **Code holding a backtick** (a regex, a shell command): wrap it in a longer backtick run, as in ``` `` grep 'a `b`' f `` ```, or put it in a fenced block. A backslash doesn't escape a backtick inside a code span.
+   - **A `|` in a table cell:** write it as `\|`, even inside backticks, or the cell splits.
+   - **Several code examples:** a fenced block, one per line, never joined into one line of code spans.
+   - **Placeholders** such as `<path>` go in backticks. A bare one parses as an HTML tag: `pd-html` shows it as text, and other renderers drop it.

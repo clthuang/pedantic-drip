@@ -11,6 +11,7 @@ The first live run of thin pd: one real feature, built through every stage on th
 - **A headless smoke session** (`claude -p`, plan mode, session `96f90855-7820-48d1-b7b9-724abba0c111`) in that repository:
   - received `pd_artifacts_root: docs/dev_artifacts` and `pd_base_branch: main` from the session-start hook;
   - listed 25 commands, 24 skills, the 4 workflows (`pd:implement-tasks`, `pd:verify-change`, `pd:research-fanout`, `pd:rca-fanout`) and 21 agents, every name with the `pd:` prefix.
+- **v7.0.3 landed mid-run** (during the criteria sign-off): content past half a terminal opens in the browser, expectations render as cards, and `cleanup-stale-versions` spares a version a live session uses. A session started before it keeps running 7.0.2 until resumed.
 - **What it found:** Claude Code ignores the repository's `permissions.allow` entries until the workspace is trusted. Check 8 depends on those rules, so accept the trust dialog the first time you open Claude Code there.
 
 ## Before you start
