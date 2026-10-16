@@ -68,8 +68,8 @@ Claude Code plugin providing a structured feature development workflow—skills,
 **Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `validate.sh`, `release.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
 *Also-why:* Feature 121's specify iter-1 fix pulled the project-creation command in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of the feature's 10 blockers came from that one unchecked scope-widening.
 *Why:* Feature 118's Python-floor bump left the bootstrap and health-check scripts and CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
-*Enforced by:* the `plan-reviewer` agent's line ("A shared-config value change … verified only within the feature's own diff").
-*Stays because:* the planning skill's checklist doesn't carry it, and work here doesn't always run through pd's workflow.
+*Enforced by:* `planning`'s review checklist ("Shared config"), which the Plan review applies.
+*Stays because:* the scope pull-in half has no checklist line, and work here doesn't always run through pd's workflow.
 
 ## Writing Guidelines
 

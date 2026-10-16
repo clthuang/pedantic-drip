@@ -98,6 +98,12 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   const r3 = await run({ ...A, codex: false }, ...s3.args)
   check(r3.cycles === 3 && r3.qa.issues.some(i => i.id === 'Q1' && i.severity === 'blocker'),
     `verify-change: a claimed fix doesn't settle a QA blocker the next QA run still reports (cycles ${r3.cycles})`)
+  const REM = { ...ISS, file: 'src/legacy.js', line: 42, claim: 'alias with no external consumer' }
+  const s5 = stubs(l => l.startsWith('review') ? { approved: false, issues: [REM], summary: '' } : l.startsWith('fix') ? { fixes: [{ issue: 'R1', commit: 'd1', test: '' }], rejections: [] } : QA_PASS([]))
+  const r5 = await run({ ...A, codex: false }, ...s5.args), qa2 = (s5.calls.find(c => c.label === 'qa:2') || { prompt: '' }).prompt
+  check(r5.cycles === 1 && s5.calls.find(c => c.label === 'fix:1').prompt.includes('no new test, and its test is empty')
+    && qa2.includes('"file":"src/legacy.js","line":42') && qa2.includes('for a removal (empty test), its commit deletes the code at its finding'),
+    'verify-change: a removal fix (empty test) reaches QA with its finding\'s file:line, for QA to check the deletion')
   const s4 = stubs(l => l.startsWith('review') ? null : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
   const r4 = await run(A, ...s4.args)
   check(r4.reviewed_by === null && r4.review.issues.map(i => `${i.id}:${i.severity}:${i.file}:${i.line}`).join() === 'R0:blocker:s:1'

@@ -12,6 +12,7 @@ The first live run of thin pd: one real feature, built through every stage on th
   - received `pd_artifacts_root: docs/dev_artifacts` and `pd_base_branch: main` from the session-start hook;
   - listed 25 commands, 24 skills, the 4 workflows (`pd:implement-tasks`, `pd:verify-change`, `pd:research-fanout`, `pd:rca-fanout`) and 21 agents, every name with the `pd:` prefix.
 - **v7.0.3 landed mid-run** (during the criteria sign-off): content past half a terminal opens in the browser, expectations render as cards, and `cleanup-stale-versions` spares a version a live session uses. A session started before it keeps running 7.0.2 until resumed.
+- **v7.0.4 landed mid-run** (after the criteria sign-off): `pd-html` shows `<placeholders>` as text and warns, naming the line, on markdown that renders garbled, such as this run's `shape.md:54`. Resume the session (`claude -r`) to pick it up.
 - **What it found:** Claude Code ignores the repository's `permissions.allow` entries until the workspace is trusted. Check 8 depends on those rules, so accept the trust dialog the first time you open Claude Code there.
 
 ## Before you start
@@ -50,7 +51,7 @@ Then follow each stage, answering its questions. Watch for these:
 
 | Stage | Command | What to watch |
 |-------|---------|---------------|
-| Criteria | `/pd:specify` | calvin runs as `calvin-runner` and writes its ledger under `agent_sandbox/<date>/<feature id>/`. If the ledger appears, the write hook let it through, which shows the subagent's hook input carried the parent `session_id` and `agent_type` (check 2) |
+| Criteria | `/pd:specify` | calvin runs as `calvin-runner` and writes its ledger under `agent_sandbox/<date>/<feature id>/`. The ledger appearing proves little: the write guard lets every write through when `agent_type` is missing, so check 2's hook input needs the refusal probe in its row |
 | Contracts | `/pd:design` | the review call: Codex first (your CLAUDE.md enables it), else the Claude fallback; one `review` entry in `log.md` |
 | Plan | `/pd:create-plan` | at least one `[parallel-safe]` pair (the row parser and the rules), then the report and the CLI; each task has a proving command writing JUnit |
 | Execute | `/pd:implement` | one worktree per task, each starting from the feature branch's HEAD; branches `pd/<id>/task-<n>`; the merger's proof lines in a `run` entry (checks 1 and 7) |
@@ -96,7 +97,7 @@ Fill in each row during the run.
 | # | Check | Result | Evidence |
 |---|-------|--------|----------|
 | 1 | A task's worktree starts from the feature branch's HEAD, and the merger merges its commits | pending | |
-| 2 | A plugin agent's `tools`, `model`, `effort` and `skills` apply through `agentType`; a subagent's hook input carries the parent `session_id` | pending | |
+| 2 | A plugin agent's `tools`, `model`, `effort` and `skills` apply through `agentType`; a subagent's hook input carries the parent `session_id` | pass, except `skills`: still to see | Criteria, session `fd57286f`: both `pd:calvin-runner` agents ran on `claude-opus-5-5` at effort `high` (frontmatter `opus`, `high`; the parent ran at `xhigh`) and used only `Skill`, `Read` and `Write` of their four tools. Hook input: a probe (scratch repo, `claude -p --session-id`, a gate file naming `agent_sandbox/ok.md`) had `pd:calvin-runner` write `ok.md`, allowed, then `bad.md`, refused with "calvin-runner may write only its ledger agent_sandbox/ok.md": only a hook input carrying `agent_type` and the parent's `session_id` reaches that message. Only the Claude fallback reviewers carry `skills:` (design-, plan- and code-quality-reviewer), so with Codex enabled it may stay unseen |
 | 3 | A pinned reviewer model gets the 1M-token window as a subagent | pending | |
 | 4 | A `/goal` run stops at a hard stop | pending | |
 | 5 | The task list is available | pending | |
@@ -118,8 +119,8 @@ Fill in each row during the run.
 | Item | Result | Evidence |
 |------|--------|----------|
 | `${CLAUDE_SESSION_ID}` substitution in skills (the `goal:` line in `## Now`) | pending | |
-| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | partial: every name is listed with the prefix; dispatch by name still to see | smoke session `96f90855` |
-| Subagent hook input carries `agent_type` and the parent `session_id` | pending | |
+| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | partial: agents dispatch by prefixed name; workflows and `skills:` still to see | smoke session `96f90855` lists every name with the prefix; session `fd57286f` dispatched `agentType: pd:calvin-runner` twice |
+| Subagent hook input carries `agent_type` and the parent `session_id` | pass | the write-guard refusal probe in check 2's row |
 | The `background_tasks` status values the Stop gate reads | pending | |
 
 ### Probes

@@ -48,7 +48,7 @@ For `mode: express` (a small diff on a known pattern, provable by one command), 
 
 **Goals, non-goals and user stories** give the expectations their context.
 
-**Scope boundaries, both sides.** What gets built, and the out-of-scope items a reader would otherwise assume are included. YAGNI applies to both lists.
+**Scope boundaries, both sides.** What gets built, and the out-of-scope items a reader would otherwise assume are included. YAGNI applies to both lists. A criterion that keeps old behaviour working (compatibility) cites its evidence of external consumers: a published package, API or CLI, a route called from outside the repository, a file format other tools read, or a named consumer outside the repository; without it, it's out of scope, and callers inside the repository move with the change.
 
 **Edge cases, named, not gestured at.** Invalid input, absent or empty state, concurrent access, and the failure mode of each external dependency, each with its expected behavior, as an expectation where it is observable. Complex branching goes in a truth table instead of a linear list.
 

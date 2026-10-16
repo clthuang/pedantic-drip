@@ -28,7 +28,7 @@ One agent call, not a workflow (plan §A4, D14). The conductor makes it at Contr
 
 Both are pinned in `references/workflow-results.md` ("The review call"); this file doesn't restate them.
 - **The full review:** `{approved, issues[], summary}`, every issue in the pinned issue fields.
-- **The scoped re-review** (Verify, after a fix cycle): it receives the prior findings and the diff since the reviewed commit, and returns `{findings[], new_in_diff[]}`.
+- **The scoped re-review** (after a fix cycle, at any stage): it receives the prior findings and the diff since the reviewed commit, and returns `{findings[], new_in_diff[]}`.
 
 ## After the call
 

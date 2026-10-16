@@ -112,6 +112,7 @@ To install the released version:
 |------|---------|
 | `scripts/release.sh` | Release automation script |
 | `.github/workflows/release.yml` | CI release workflow |
+| `.github/workflows/claude-review.yml` | Claude Code reviews each push to develop (not `docs/`) and comments on the commit; needs the `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
 | `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |
 

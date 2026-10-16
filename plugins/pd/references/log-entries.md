@@ -47,7 +47,7 @@ Rejects: review@2026-10-13 10:05+08:00#R3 — src/pd/io.py:12 already closes the
 ```
 
 ### qa
-One QA battery run: the commit it ran against, one `Ran:` line per `qa_battery` command, what passing each criterion would still allow, issue lines, a `Rejects:` line per proposed rejection of its own `Q` issues, and in Verify one `Fixed: <id> by <commit> — <test>` line per fix, with a `Closes:` line naming the fixed review issues. Every `Rejects:` and `Closes:` ref names the entry that raised the issue.
+One QA battery run: the commit it ran against, one `Ran:` line per `qa_battery` command, what passing each criterion would still allow, issue lines, a `Rejects:` line per proposed rejection of its own `Q` issues, and in Verify one `Fixed: <id> by <commit> — <test, or "removal">` line per fix, with a `Closes:` line naming the fixed review issues. Every `Rejects:` and `Closes:` ref names the entry that raised the issue.
 
 ```markdown
 ## 2026-10-14 12:30+08:00 qa

@@ -55,7 +55,7 @@ const QA_PROMPT = (run, fixes, last) => `QA run ${run} of feature ${args.feature
 Run each qa_battery command and report it as one ran line, with the commit you ran against: ${J(args.qa_battery)}
 List under gaps what passing each criterion in ${args.shape} would still allow. Drive the flows that cross tasks.
 ${run === 1 ? `Run once, over the branch diff: pd-lint --risk ${args.base}..HEAD and pd-lint --isolation ${args.base}..HEAD; each error or unmatched risk signal is an issue.`
-    : `Check each fix's new test is red on its test commit and green after: ${J(fixes)}. The last run: ${J(last)}. Keep the ids of issues still open; number new ones after them.`}
+    : `Check each fix: its new test is red on its test commit and green after, or, for a removal (empty test), its commit deletes the code at its finding's file:line. A fix that doesn't hold is a blocker: ${J(fixes)}. The last run: ${J(last)}. Keep the ids of issues still open; number new ones after them.`}
 Issue ids Q1, Q2, …; severity blocker, warning or note. List tests whose re-runs disagreed under flakes.`
 const runQa = (run, fixes, last) => call(QA_PROMPT(run, fixes, last),
   { label: `qa:${run}`, phase: run === 1 ? 'Review and QA' : 'Fix', agentType: 'pd:qa-executor', schema: obj({ ...QA.properties, flakes: arr(FLAKE) }) })
@@ -76,11 +76,12 @@ let cycles = 0
 while (!stopped && cycles < 3 && (!qaPasses() || blockers().length)) {  // the bounded loop is the cycle rule (§A4)
   cycles++
   const f = await call(`You are the fixer for feature ${args.feature_id}, a separate instance: you didn't write this code. Work on the feature branch in this checkout.
-Findings are claims: check each against the source before acting. Fix a real one with a test that fails before the fix: commit the test, then the fix. For a wrong one, propose a rejection with file:line evidence instead.
+Findings are claims: check each against the source before acting. Fix a real one with a test that fails before the fix: commit the test, then the fix. A removal finding (code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it) is fixed by deleting that code and any contract element asking for it: no new test, and its test is empty. For a wrong one, propose a rejection with file:line evidence instead.
 Open blockers: ${J(blockers())}
 QA's last run: ${J(qa)}`, { label: `fix:${cycles}`, phase: 'Fix', agentType: 'pd:implementer', schema: FIXED, ...(cycles >= 2 && { model: 'opus' }) })
   if (f) { fixes.push(...f.fixes); rejections.push(...f.rejections) }
-  const again = await runQa(cycles + 1, (f && f.fixes) || [], qa)
+  const withFindings = ((f && f.fixes) || []).map(x => ({ ...x, finding: rv.issues.find(i => i.id === x.issue) }))
+  const again = await runQa(cycles + 1, withFindings, qa)
   if (again) { qa = again; flakes.push(...(again.flakes || [])) }
 }
 const { flakes: _, ...qaResult } = qa || { commit: '', ran: [], gaps: [], issues: [] }

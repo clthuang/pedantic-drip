@@ -1,0 +1,50 @@
+name: Claude review
+
+# Reviews each push to develop with Claude Code and posts the review as a comment on the pushed commit.
+# claude-code-action rejects push events ("Unsupported event type: push"), so this runs the CLI itself.
+# Release pushes use GITHUB_TOKEN, so they never trigger it. Auth: the CLAUDE_CODE_OAUTH_TOKEN secret,
+# made with `claude setup-token`.
+on:
+  push:
+    branches: [develop]
+    paths-ignore: ['docs/**']
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write  # commit comments
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review the pushed commits
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PROMPT: |
+            Review the commits just pushed to develop: ${{ github.event.before }}..${{ github.sha }}.
+            Run `git log --oneline` and `git diff` on that range, and read the surrounding code as needed.
+            Follow CLAUDE.md. Report only defects that matter: bugs, regressions, security problems, missing
+            or vacuous tests, and docs the change left contradicting the code. Check each finding against the
+            code before you report it. Do not edit files.
+            Output markdown only: a `### Claude review` heading, then one bullet per finding, most severe first:
+            `**blocker|warning|note** path:line — the defect — an input or scenario that fails`.
+            If nothing survives checking, write `No findings.` under the heading.
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::notice::No review: add the CLAUDE_CODE_OAUTH_TOKEN repository secret (claude setup-token)."
+            exit 0
+          fi
+          # A token copied off a wrapped terminal line picks up line breaks; log its shape, never its value.
+          token=$(printf %s "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')
+          echo "token: ${#token} chars; $(( ${#CLAUDE_CODE_OAUTH_TOKEN} - ${#token} )) whitespace removed"
+          case "$token" in sk-ant-oat01-*) ;; *) echo "::warning::the token doesn't start with sk-ant-oat01-, as claude setup-token's do" ;; esac
+          export CLAUDE_CODE_OAUTH_TOKEN="$token"
+          npm install -g @anthropic-ai/claude-code@2.1.301
+          claude -p "$PROMPT" --model claude-opus-5-5 --max-turns 40 \
+            --allowedTools "Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*)" < /dev/null > review.md || { cat review.md; exit 1; }
+          cat review.md >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" -F body=@review.md > /dev/null

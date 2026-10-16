@@ -22,7 +22,7 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
 4. **Record the result** (`references/workflow-results.md`, `verify-change`) in the shapes of `references/log-entries.md`, then clear `run in flight:` and commit:
    - **`run`:** the launch, with `Agents:`, `Tokens:` and the fix `cycles`;
    - **`review`:** heading `review verify — <reviewed_by, or none>`; `Verdict:` and the reviewed commit; one issue line per `review.issues` item; one `Rejects: review@<this entry>#<id> — <evidence>` line per rejection of an `R` issue;
-   - **`qa`:** `Commit: <qa.commit>`; one `` Ran: `<command>` -> pass|fail `` line per battery command; `Criteria gaps:` from `qa.gaps`; one issue line per `qa.issues` item; one `Rejects: qa@<this entry>#<id> — <evidence>` line per rejection of a `Q` issue; one `Fixed: <id> by <commit> — <test>` line per `fixes` item, and a `Closes:` line naming the fixed review issues (`review@<the review entry>#R<n>`; a `Q` issue QA no longer reports was never logged);
+   - **`qa`:** `Commit: <qa.commit>`; one `` Ran: `<command>` -> pass|fail `` line per battery command; `Criteria gaps:` from `qa.gaps`; one issue line per `qa.issues` item; one `Rejects: qa@<this entry>#<id> — <evidence>` line per rejection of a `Q` issue; one `Fixed: <id> by <commit> — <test, or "removal">` line per `fixes` item, and a `Closes:` line naming the fixed review issues (`review@<the review entry>#R<n>`; a `Q` issue QA no longer reports was never logged);
    - **`note`:** one per flake.
 5. **Settle what is still open:**
    - **Rejections:** put them to the user through AskUserQuestion, at most four per call, blockers first. Each answer is a `decision` entry, `A (user, verbatim)`; an accepted one adds `Closes:` for its issue, naming the entry that raised it (`review@…#R<n>` or `qa@…#Q<n>`).
@@ -47,8 +47,8 @@ The code review's bar, over the whole branch diff (`<base>..HEAD`), not one task
 - **Each mapped test asserts its case's stated outcome,** not a weaker one: check every `case_map` entry at file:line. A test that would also pass on a fallback or no-op path proves nothing. Tests already green at their first commit (`greens`) get a closer look.
 - **The contracts hold:** signatures, errors and invariants match `shape.md` `### Contracts`; no test imports a module outside a contract's `modules:` line, or a private name.
 - **Integration seams:** what crosses tasks (shared types, call order, config, error propagation) works end to end, since each task was proven alone.
-- **Minimum code:** no abstraction, option, wrapper or "for later" code the contract doesn't need. Over-engineering is a finding.
+- **Minimum code:** no abstraction, option, wrapper or "for later" code the contract doesn't need. Over-engineering is a finding, and so is compatibility code (an alias, a kept old name, a dual path) with no external consumer in evidence.
 - **Safety:** input validated at trust boundaries, no data loss on error paths, no secret in code or logs.
 - **The executors' reports are claims, not evidence:** check each at file:line before relying on it.
 
-A blocker is wrong behaviour a user would hit, or a criterion with no test that would catch its breaking. Style and preference are notes. Every finding cites file:line.
+A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or a removal: code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it, fixed by deleting it and any contract element asking for it. Style and preference are notes. Every finding cites file:line.
