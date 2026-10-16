@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.3] - 2026-10-16
+
 ### Changed
 
 - **Long content opens in the browser.** When the user must read more than about half a terminal (20 lines) to answer a question, such as a long `shape.md` at the criteria sign-off, the conductor renders it with `pd-html.py --open` and keeps the question's preview to a summary; the terminal cuts longer previews. Shorter content stays in the question (`workflow-transitions`).
