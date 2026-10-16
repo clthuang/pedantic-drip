@@ -51,4 +51,4 @@ The code review's bar, over the whole branch diff (`<base>..HEAD`), not one task
 - **Safety:** input validated at trust boundaries, no data loss on error paths, no secret in code or logs.
 - **The executors' reports are claims, not evidence:** check each at file:line before relying on it.
 
-A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or code no contract asks for, compatibility code included: a removal, fixed by deleting it. Style and preference are notes. Every finding cites file:line.
+A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or a removal: code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it, fixed by deleting it and any contract element asking for it. Style and preference are notes. Every finding cites file:line.

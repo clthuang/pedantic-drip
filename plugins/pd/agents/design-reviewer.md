@@ -83,6 +83,8 @@ NOT: "Can we approve this and figure it out later?"
 
 ## Error Cases
 
+The rows after the first apply to a pd review, which has both artifacts.
+
 | Situation | Response |
 |-----------|----------|
 | Empty design artifact | `approved: false`, blocker: "Design artifact is empty" |

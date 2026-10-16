@@ -57,7 +57,7 @@ Your preloaded skill's checklist ends with what counts as a blocker. Put claims 
 - Suggest new features ("you should also add...")
 - Expand requirements ("consider adding...")
 - Add nice-to-haves ("what about...?")
-- Question what the criteria ask for: that is the user's call. Whether each contract element is needed is the checklist's ("Nothing unrequested"), so do ask that.
+- Question what the approved criteria and contracts ask for. A task no contract points to still fails the checklist ("Dispatchable tasks").
 
 **QUICK APPROVAL IS FORBIDDEN.** You must never:
 
@@ -82,6 +82,8 @@ NOT: "Can we approve this and figure it out later?"
 | "What about mobile support?" | Scope expansion |
 
 ## Error Cases
+
+The rows after the first apply to a pd review, which has both artifacts.
 
 | Situation | Response |
 |-----------|----------|
