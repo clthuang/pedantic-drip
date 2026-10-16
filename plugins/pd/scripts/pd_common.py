@@ -202,75 +202,6 @@ def blank_fences(text):
     return "\n".join(out)
 
 
-_BLOCK_START = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\|)")
-
-
-def code_spans(block):
-    """CommonMark's code spans in one block: (content start, content end) offsets, and the offsets of
-    backtick runs nothing closes. A run of n backticks closes at the next run of exactly n; a backslash
-    escapes a backtick only outside a span."""
-    spans, unpaired, i = [], [], 0
-    while i < len(block):
-        if block[i] == "\\":
-            i += 2
-            continue
-        if block[i] != "`":
-            i += 1
-            continue
-        n = len(re.match(r"`+", block[i:]).group())
-        close = re.compile(r"(?<!`)`{%d}(?!`)" % n).search(block, i + n)
-        if close:
-            spans.append((i + n, close.start()))
-            i = close.end()
-        else:
-            unpaired.append(i)
-            i += n
-    return spans, unpaired
-
-
-def _odd_quotes(span, quote):
-    if not span.strip(quote + " "):
-        return False  # the span shows the quote character itself
-    return (re.sub(r"(?<=\w)'(?=\w)", "", span) if quote == "'" else span).count(quote) % 2 == 1
-
-
-def markdown_hazards(text):
-    """Markdown that renders as something its author didn't write: (line, message) pairs. Fenced code
-    and comments are skipped. Each check names a mistake that garbles the page, such as a regex or
-    command holding a backtick, written inside a single-backtick code span."""
-    found, block, start = [], [], 1
-    lines = blank_fences(text).split("\n")
-
-    def check(block, start):
-        text = "\n".join(block)
-        spans, unpaired = code_spans(text)
-        line_of = lambda offset: start + text.count("\n", 0, offset)  # noqa: E731
-        for offset in unpaired:
-            found.append((line_of(offset), "unpaired backtick: a code span is never closed or was cut short; "
-                          "wrap code holding backticks in a longer run (``like `this` one``) or a fenced block"))
-        for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
-            # the backticked word sits flush between the halves: '`.meta.json`', not `"` and `"`
-            if line_of(a1) == line_of(a2) and not re.search(r"\s", text[b1 + 1:a2 - 1]) and any(
-                    _odd_quotes(text[a1:b1], q) and _odd_quotes(text[a2:b2], q) for q in "'\""):
-                found.append((line_of(a1), "a quoted string holding a backtick split one code span in two; "
-                              "wrap it in a longer backtick run (`` `x` ``) or a fenced block"))
-        if text.lstrip().startswith("|"):
-            for a, b in spans:
-                if re.search(r"(?<!\\)\|", text[a:b]):
-                    found.append((line_of(a), "a `|` in a table cell splits the cell, even inside backticks; "
-                                  "write it as `\\|`"))
-
-    for n, line in enumerate(lines + [""], 1):
-        if block and (not line.strip() or _BLOCK_START.match(line)):
-            check(block, start)
-            block = []
-        if line.strip():
-            if not block:
-                start = n
-            block.append(line)
-    return sorted(set(found))
-
-
 def sections(body):
     """`## Name` -> its text, fences and comments ignored for finding headings."""
     plain, raw = blank_fences(body).split("\n"), body.split("\n")
@@ -553,15 +484,6 @@ def _self_test():
         (r / ".claude").mkdir()
         (r / ".claude" / "pd.local.md").write_text("---\nartifacts_root: docs\nsop: 1\n---\n")
         c.check(load_config(r)["artifacts_root"] == "docs" and not is_unadopted(r, load_config(r)), "config file")
-    # The bake-off's shape.md line 54: '`.meta.json`' inside a single-backtick span split it in two.
-    split = "x\n\n`>>> f(r'(?!\\w)', 'UI', re.I)` · `>>> re.search(r'\\.meta', '`.meta.json`', re.I)) → True`\n"
-    c.check(markdown_hazards(split) == [(3, markdown_hazards(split)[0][1])]
-            and "split one code span" in markdown_hazards(split)[0][1], "a backtick inside a quoted string is caught")
-    clean = ("A `\\` at line end, `don't`, `'` and `\"`, ``a `b` c``, `x`/`y`.\n\n"
-             "- item with `a\ncontinued` span\n\n```\nlone ` in a fence\n```\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
-    c.check(markdown_hazards(clean) == [], "well-formed spans, escapes, fences and escaped table pipes pass")
-    c.check([m for _, m in markdown_hazards("one `open span\n")] and markdown_hazards("one `open span\n")[0][0] == 1
-            and "table cell" in markdown_hazards("| `a|b` | c |\n")[0][1], "an unpaired backtick and a table-cell pipe")
     return c.done()
 
 

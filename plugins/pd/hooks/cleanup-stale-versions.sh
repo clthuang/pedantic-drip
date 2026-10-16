@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cleanup-stale-versions.sh — delete cached pd plugin versions older
-# than the currently-active one.
+# cleanup-stale-versions.sh — delete cached pd plugin versions other
+# than the currently-active one, except one a live session still uses.
 #
 # Feature 087: prevents long-running CC sessions from picking up buggy
 # pre-fix hook scripts from stale cached installs. Idempotent + fast:

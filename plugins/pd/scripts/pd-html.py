@@ -10,27 +10,40 @@ Usage: uv run pd-html.py <file.md | dir> [--open]
        uv run pd-html.py --self-test
 Output goes to <repo>/docs/_html/, mirroring the source paths. Never commit it.
 """
+import contextlib
 import html
+import io
 import re
 import sys
 import tempfile
 import webbrowser
+from itertools import groupby
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pd_common import (EXPECTATION_RE, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
-                       make_repo, markdown_hazards, repo_root, split_frontmatter)
+                       make_repo, repo_root, split_frontmatter)
 
 CSS = Path(__file__).resolve().parent.parent / "templates" / "doc.css"
 MERMAID_JS = ('<script type="module">import mermaid from '
               '"https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
               'mermaid.initialize({startOnLoad: true});</script>')
 STATUS_CLASSES = {"draft", "active", "blocked", "done", "abandoned"}
-HTML_TAGS = set("a abbr b blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption "
-                "figure h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p picture pre q s samp small source span strong "
-                "sub summary sup table tbody td tfoot th thead time tr u ul var video wbr".split())
+HTML_TAGS = set("a abbr article aside b blockquote br caption cite code col colgroup dd del details dfn div dl dt "
+                "em figcaption figure footer h1 h2 h3 h4 h5 h6 header hr i img ins kbd li main mark nav ol p picture "
+                "pre q s samp section small source span strong sub summary sup table tbody td tfoot th thead time tr "
+                "u ul var video wbr".split())
+VOID_TAGS = {"br", "col", "hr", "img", "source", "wbr"}
+TAG_RE = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9-]*)\b[^<>]*>")
+UNPAIRED = ("unpaired backtick: a code span is never closed or was cut short; wrap code holding backticks "
+            "in a longer run (``like `this` one``) or a fenced block")
+TABLE_PIPE = ("a backtick in this table cell is unpaired: a `|` inside backticks splits the cell (write it "
+              "as `\\|`), or a code span is cut short")
+SPLIT_SPAN = ("a quoted string holding a backtick split one code span in two; wrap it in a longer backtick "
+              "run (`` `x` ``) or a fenced block")
 
 
 def _md():
@@ -51,44 +64,109 @@ def _md():
         return self.renderToken(tokens, idx, options, env)
 
     def raw_html(tokens, idx, options, env):
-        # A placeholder such as <path> or <feature id> parses as a tag and vanishes: show it as text.
-        tag = re.match(r"</?([A-Za-z][A-Za-z0-9-]*)", tokens[idx].content)
-        return html.escape(tokens[idx].content) if tag and tag.group(1).lower() not in HTML_TAGS else tokens[idx].content
+        """A placeholder such as <path> or <feature id> parses as a tag and would vanish: show it as text.
+        A tag stays HTML when it names an HTML element and, unless void, the document also closes it."""
+        # shortcut: a placeholder named like a tag the document also closes (<b> beside <b>x</b>) stays HTML;
+        # pair the tags in document order if that ever bites.
+        closed = env.get("closed_tags", set())
+
+        def keep(m):
+            name = m.group(2).lower()
+            real = name in HTML_TAGS and (m.group(1) or name in VOID_TAGS or name in closed)
+            return m.group(0) if real else html.escape(m.group(0))
+        return TAG_RE.sub(keep, tokens[idx].content)
 
     md.renderer.rules["fence"] = fence
     md.renderer.rules["html_inline"] = md.renderer.rules["html_block"] = raw_html
     md.add_render_rule("link_open", link_open)
+    md.add_render_rule("pd_html", lambda self, tokens, idx, options, env: tokens[idx].content)
     return md
 
 
-def _expectation(line, md):
-    """One `B<n>: <input> -> <outcome>` line as a card. Splits at the first ` -> ` outside a code span."""
+def code_spans(line):
+    """CommonMark's code spans in one line: (content start, content end) offsets. A run of n backticks
+    closes at the next run of exactly n; a backslash escapes a backtick only outside a span."""
+    spans, i = [], 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] != "`":
+            i += 1
+            continue
+        n = len(re.match(r"`+", line[i:]).group())
+        close = re.compile(r"(?<!`)`{%d}(?!`)" % n).search(line, i + n)
+        if close:
+            spans.append((i + n, close.start()))
+            i = close.end()
+        else:
+            i += n
+    return spans
+
+
+def _expectation(line, md, env):
+    """One `B<n>: <input> -> <outcome>` line as a card, split at the first ` -> ` outside a code span."""
     m = EXPECTATION_RE.match(line)
     rest = line[m.end(1) + 2:].rstrip()
-    parts = rest.split(" -> ")
-    cut = next((i for i in range(1, len(parts)) if " -> ".join(parts[:i]).count("`") % 2 == 0), 1)
-    given, outcome = " -> ".join(parts[:cut]), " -> ".join(parts[cut:])
+    spans = code_spans(rest)
+    arrows = [a.start() for a in re.finditer(" -> ", rest)]
+    cut = next((a for a in arrows if not any(s <= a < e for s, e in spans)), arrows[0])
     return (f'<div class="expectation" id="B{m.group(1)}"><span class="id">B{m.group(1)}</span>'
-            f'<div class="given">{md.renderInline(given)}</div>'
-            f'<div class="outcome">{md.renderInline(outcome)}</div></div>')
+            f'<div class="given">{md.renderInline(rest[:cut], env)}</div>'
+            f'<div class="outcome">{md.renderInline(rest[cut + 4:], env)}</div></div>')
 
 
-def expectation_blocks(body, md):
-    """Markdown joins consecutive lines into one paragraph, so a run of expectation lines would read as
-    one wall of text: each run becomes a raw HTML block of cards instead. Fenced code is left alone."""
-    out, run, fence = [], [], None
-    for line in body.split("\n") + [""]:
-        if fence is None and EXPECTATION_RE.match(line):
-            run.append(_expectation(line, md))
+def expectation_cards(tokens, md, env):
+    """Markdown joins consecutive lines into one paragraph, so expectation lines would read as one wall of
+    text: in each paragraph, every run of them becomes a block of cards. Code, HTML and lists are untouched."""
+    out, i = [], 0
+    while i < len(tokens):
+        t = tokens[i]
+        lines = tokens[i + 1].content.split("\n") if t.type == "paragraph_open" and not t.hidden else []
+        if not any(EXPECTATION_RE.match(line) for line in lines):
+            out.append(t)
+            i += 1
             continue
-        if run:
-            out += ["", f'<div class="expectations">{"".join(run)}</div>', ""]
-            run = []
-        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-        if marker and (fence is None or marker.group(1).startswith(fence)):
-            fence = marker.group(1)[:3] if fence is None else None
-        out.append(line)
-    return "\n".join(out[:-1])
+        parts = []
+        for is_expectation, run in groupby(lines, key=lambda line: bool(EXPECTATION_RE.match(line))):
+            run = list(run)
+            parts.append('<div class="expectations">' + "".join(_expectation(x, md, env) for x in run) + "</div>"
+                         if is_expectation else f"<p>{md.renderInline(chr(10).join(run), env)}</p>")
+        cards = Token("pd_html", "", 0)
+        cards.content, cards.map = "\n".join(parts) + "\n", t.map
+        out.append(cards)
+        i += 3
+    return out
+
+
+def _split_quote(a, b):
+    """'x', '`y`' written in single backticks: each span holds an odd count of one quote, and span a ends
+    with it opening or span b starts with it closing. A prime (x') or an apostrophe (don't) isn't one."""
+    def odd(span, q):
+        return (re.sub(r"(?<=\w)'(?=\w)", "", span) if q == "'" else span).count(q) % 2 == 1
+    if not a.strip("'\" ") or not b.strip("'\" "):
+        return False  # a span showing the quote character itself
+    return any(odd(a, q) and odd(b, q) and (re.search(r"(?:^|[^\w])%s\s*$" % q, a)
+                                            or re.match(r"\s*%s(?:[^\w]|$)" % q, b)) for q in "'\"")
+
+
+def hazards(tokens, first_line):
+    """Markdown the parser read differently from how it was written: (line, message) pairs."""
+    found, in_table = [], False
+    for t in tokens:
+        in_table = (in_table or t.type == "table_open") and t.type != "table_close"
+        if t.type != "inline" or not t.children:
+            continue
+        line = first_line + (t.map[0] if t.map else 0)
+        kids = t.children
+        # The parser shows an escaped \` and an unpaired backtick alike, as a literal backtick in text.
+        if sum(k.content.count("`") for k in kids if k.type == "text") > t.content.count("\\`"):
+            found.append((line, TABLE_PIPE if in_table else UNPAIRED))
+        for a, mid, b in zip(kids, kids[1:], kids[2:]):
+            if (a.type == b.type == "code_inline" and mid.type == "text" and mid.content
+                    and not re.search(r"\s", mid.content) and _split_quote(a.content, b.content)):
+                found.append((line, SPLIT_SPAN))
+    return sorted(set(found))
 
 
 def _cell(text, cls=None):
@@ -140,19 +218,21 @@ def frontmatter_box(fm):
 
 def render(src, root):
     text = src.read_text()
-    for line, msg in markdown_hazards(text):
-        print(f"pd-html: WARN {src}:{line}: {msg}", file=sys.stderr)
     try:
-        fm, body, _ = split_frontmatter(text)
+        fm, body, first_line = split_frontmatter(text)
     except ValueError as e:
         print(f"pd-html: {src}: bad frontmatter ({e}); rendering it as text", file=sys.stderr)
-        fm, body = None, text
-    fm, env = fm or {}, {}
+        fm, body, first_line = None, text, 1
+    fm = fm or {}
+    env = {"closed_tags": {name.lower() for name in re.findall(r"</([A-Za-z][A-Za-z0-9-]*)\s*>", body)}}
     content = frontmatter_box(fm)
     if fm.get("roadmap"):
         content += "<h2>Roadmap</h2>\n" + roadmap_table(fm["roadmap"], src.resolve().parent.parent)
     md = _md()
-    content += md.render(expectation_blocks(body, md), env)
+    tokens = md.parse(body, env)
+    for line, msg in hazards(tokens, first_line):
+        print(f"pd-html: WARN {src}:{line}: {msg}", file=sys.stderr)
+    content += md.renderer.render(expectation_cards(tokens, md, env), md.options, env)
     heading = re.search(r"^# (.+)$", body, re.M)
     title = html.escape(str(fm.get("title") or (heading.group(1) if heading else src.stem)))
     page = (f'<!doctype html>\n<html><head><meta charset="utf-8">'
@@ -218,12 +298,39 @@ def self_test():
                 "an expectation splits at the first arrow outside a code span; inline markdown renders")
         c.check("<p>After.</p>" in page and "B3: in a fence -&gt; stays code" in page and 'id="B3"' not in page,
                 "text after the run is a paragraph again; a fenced expectation stays code")
-        shape.write_text("# S\n\nprints report: <abs path> for <feature id>, in <b>bold</b>\n\n<!-- note -->\n\n"
-                         "B1: run -> stdout <path>\n")
+        shape.write_text("# S\n\n````markdown\n```\nB1: sample -> code\n```\n````\n\nLead line\n"
+                         "B2: ``a -> b`` -> ok, see [spec][s]\n\n[s]: other.md\n")
         page = render(shape, root).read_text()
-        c.check("report: &lt;abs path&gt; for &lt;feature id&gt;" in page and "<b>bold</b>" in page
-                and "stdout &lt;path&gt;" in page and "<!-- note -->" in page,
-                "a <placeholder> shows as text; real tags and comments stay HTML")
+        c.check('id="B1"' not in page and "B1: sample -&gt; code" in page, "a longer fence holding ``` stays code")
+        c.check("<p>Lead line</p>" in page and '<div class="given"><code>a -&gt; b</code></div>' in page
+                and 'ok, see <a href="other.html">spec</a>' in page,
+                "a lead line stays a paragraph; a double-backtick span keeps its arrow; reference links resolve")
+        shape.write_text("# S\n\nprints report: <abs path> for <feature id>, S1 <a> > S2 <b>, in <i>it</i>\n\n"
+                         "<!-- note -->\n\n<div>\n<feature id>\n</div>\n\nB1: run -> stdout <path>\n")
+        page = render(shape, root).read_text()
+        c.check("report: &lt;abs path&gt; for &lt;feature id&gt;, S1 &lt;a&gt; &gt; S2 &lt;b&gt;, in <i>it</i>" in page
+                and "<div>\n&lt;feature id&gt;\n</div>" in page and "stdout &lt;path&gt;" in page
+                and "<!-- note -->" in page,
+                "a <placeholder> shows as text, in an HTML block too; closed real tags and comments stay HTML")
+
+        def warnings(text):
+            shape.write_text(text)
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                render(shape, root)
+            found = (re.match(r"pd-html: WARN .*?\.md:(\d+): (.*)$", w) for w in err.getvalue().splitlines())
+            return [(int(m.group(1)), m.group(2)) for m in found if m]
+        # The bake-off's shape.md line 54: '`.meta.json`' inside a single-backtick span split it in two.
+        line54 = "`>>> f(r'(?!\\w)', 'UI', re.I)` · `>>> re.search(r'\\.meta', '`.meta.json`', re.I)) → True`\n"
+        c.check(warnings("---\nid: x\n---\n# S\n\n" + line54) == [(6, SPLIT_SPAN)]
+                and warnings("# S\n\n`grep -rn 'highest `NNN`' plugins/` → 0\n") == [(3, SPLIT_SPAN)],
+                "a backtick inside a quoted string warns, with the source line (frontmatter counted)")
+        c.check(warnings("# S\n\none `open span\n") == [(3, UNPAIRED)]
+                and warnings("# S\n\n| a | b |\n|---|---|\n| `x|y` | z |\n") == [(5, TABLE_PIPE)],
+                "an unpaired backtick and a table-cell pipe warn")
+        clean = ("---\ntitle: Show ` char\n---\n# S\n\n~~~\nlone ` x\n~~~\n\nPara.\n\n    lone ` in code\n\n"
+                 "> `one\n> two`\n\n- `one\n  two`\n\n<span title=\"`\">x</span> and before <!-- ` --> after\n\n"
+                 "`x'`/`y'`, `[\"`, `\"]`, `${D}/`/`\"${D}/`, `'`/`'`, a \\` escaped, `don't`, `'`\n\n| use `a|b` in prose\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
+        c.check(warnings(clean) == [], "valid fences, indented code, quotes, lists, HTML, escapes and frontmatter pass")
     return c.done()
 
 

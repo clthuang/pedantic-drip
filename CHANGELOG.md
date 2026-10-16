@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Markdown that renders garbled is caught.** `pd-lint` fails a commit, and `pd-html` warns, on an unpaired backtick, on a quoted string whose inner backtick split a code span in two (a regex or shell command written in single backticks), and on a `|` inside a table cell's code span, which splits the cell. The shared check is `pd_common.markdown_hazards`; `references/doc-format.md` gives the authoring rules.
+- **`pd-html` warns on markdown that renders garbled,** naming the line: an unpaired backtick, a quoted string whose inner backtick split a code span in two (a regex or shell command in single backticks), and a backtick left unpaired in a table cell, usually a `|` inside backticks. It reads the CommonMark parser's tokens, so fences, indented code, HTML, lists and frontmatter don't raise false alarms. The conductor fixes each warning before showing a page; `references/doc-format.md` gives the authoring rules.
 
 ### Fixed
 
-- **`pd-html` shows placeholders.** A bare `<path>` or `<feature id>` parsed as an HTML tag and vanished from the page; tags that aren't HTML elements now render as text.
+- **`pd-html` shows placeholders.** A bare `<path>` or `<feature id>` parsed as an HTML tag and vanished from the page. A tag now stays HTML only when it names a common HTML element (`pd-html`'s list) and, unless void, the document closes it; anything else renders as text, in HTML blocks too.
+- **`pd-html` expectation cards** are built from the parser's paragraphs: a longer fence holding a `B<n>:` line stays code, a double-backtick span keeps its arrow, a lead line stays a paragraph, and reference links resolve.
+- **`cleanup-stale-versions`'s header** said it deleted older versions; it deletes every version but the active one and those in use. `scripts/rename-to-pd.sh` no longer names the deleted sync-cache hook.
 - **Two garbled code spans in pd's own docs** (`references/risk-patterns.md`, `skills/verifying/SKILL.md`) used a backslash to escape a backtick inside a code span.
 
 ## [7.0.3] - 2026-10-16
