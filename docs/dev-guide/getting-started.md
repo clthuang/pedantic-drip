@@ -33,13 +33,13 @@ Inside Claude Code, from the repository root:
 /plugin install pd@pedantic-drip-marketplace
 ```
 
-After changing any file under `plugins/pd/`, sync the cache from the main checkout:
+To try plugin changes, start a session with this checkout's plugin in place of the installed one, for that session only:
 
-```
-/pd:sync-cache
+```bash
+claude --plugin-dir plugins/pd
 ```
 
-Only a main checkout publishes the plugin cache, or a directory with no `.git` (a `git archive` export). A linked worktree publishes nothing; its plugin edits reach the cache once they reach the main checkout.
+The installed copy changes only through a release (`scripts/release.sh`), which Claude Code picks up from GitHub.
 
 ## Project Configuration
 

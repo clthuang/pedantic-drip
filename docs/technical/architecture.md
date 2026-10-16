@@ -66,7 +66,7 @@ State, outside git:
 
 | Hook | Event | Blocks? |
 |------|-------|---------|
-| `sync-cache`, `cleanup-stale-versions` | SessionStart | no |
+| `cleanup-stale-versions` | SessionStart | no |
 | `pd-session-start` | SessionStart | no — injects the `{pd_*}` values and the project summary |
 | `pre-commit-guard` | PreToolUse Bash | no — warns on `main`/`master` |
 | `pd-commit-lint` | PreToolUse Bash | yes — a `pd-lint --staged` error |

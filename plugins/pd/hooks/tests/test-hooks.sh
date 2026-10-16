@@ -200,137 +200,6 @@ test_pre_commit_guard_from_subdirectory() {
     cd "${PROJECT_ROOT}"
 }
 
-# Test 12: sync-cache.sh produces valid JSON
-test_sync_cache_json() {
-    log_test "sync-cache.sh produces valid JSON"
-
-    cd "${PROJECT_ROOT}"
-    local output
-    output=$("${HOOKS_DIR}/sync-cache.sh" 2>/dev/null)
-
-    if echo "$output" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
-        log_pass
-    else
-        log_fail "Invalid JSON output"
-    fi
-}
-
-# Test 13: sync-cache.sh handles missing source gracefully
-test_sync_cache_missing_source() {
-    log_test "sync-cache.sh handles missing source gracefully"
-
-    # Run from a temp directory where no source plugin exists
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    cd "$tmpdir"
-
-    local output exit_code=0
-    output=$("${HOOKS_DIR}/sync-cache.sh" 2>/dev/null) || exit_code=$?
-
-    # Should still produce valid JSON and exit 0
-    if [[ $exit_code -eq 0 ]] && echo "$output" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
-        log_pass
-    else
-        log_fail "Should handle missing source gracefully (exit=$exit_code)"
-    fi
-
-    cd "${PROJECT_ROOT}"
-    rm -rf "$tmpdir"
-}
-
-# Tests 13b and 13c expect sync-cache.sh to publish from the checkout the
-# suite runs in. sync-cache.sh publishes only where common.sh's
-# may_publish_plugin_cache allows (a main checkout, or no .git), so run from
-# anywhere else (a linked worktree) they skip, saying so.
-skip_where_sync_cache_publishes_nothing() {
-    source "${HOOKS_DIR}/lib/common.sh"
-    if ! may_publish_plugin_cache "$PROJECT_ROOT"; then
-        log_skip "run from a linked worktree, where sync-cache.sh publishes nothing"
-        return 0
-    fi
-    return 1
-}
-
-# Test 13b: sync-cache.sh detects pd install under any marketplace name
-# (regression guard for the my-local-plugins hardcode bug)
-test_sync_cache_detects_arbitrary_marketplace() {
-    log_test "sync-cache.sh detects pd install under non-my-local-plugins marketplace"
-    if skip_where_sync_cache_publishes_nothing; then return; fi
-
-    local tmpdir cache_dir
-    tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
-    cache_dir="$tmpdir/.claude/plugins/cache/test-marketplace/pd/9.9.9"
-    mkdir -p "$cache_dir/.claude-plugin"
-    mkdir -p "$tmpdir/.claude/plugins/marketplaces/test-marketplace/.claude-plugin"
-
-    # Pre-populate cache plugin.json with stale content to detect overwrite
-    echo '{"name":"stale-marker"}' > "$cache_dir/.claude-plugin/plugin.json"
-
-    # Inject fake installed_plugins.json with non-my-local-plugins marketplace
-    cat > "$tmpdir/.claude/plugins/installed_plugins.json" <<EOF
-{
-  "version": 1,
-  "plugins": {
-    "pd@test-marketplace": [
-      {"scope":"user","installPath":"$cache_dir","version":"9.9.9"}
-    ]
-  }
-}
-EOF
-
-    local exit_code=0
-    HOME="$tmpdir" "${HOOKS_DIR}/sync-cache.sh" >/dev/null 2>&1 || exit_code=$?
-
-    # Cache plugin.json should now match source (rsync overwrote stale content)
-    local source_plugin_json="${HOOKS_DIR}/../.claude-plugin/plugin.json"
-    if [[ $exit_code -eq 0 ]] && cmp -s "$source_plugin_json" "$cache_dir/.claude-plugin/plugin.json"; then
-        log_pass
-    else
-        log_fail "expected sync to test-marketplace cache (exit=$exit_code, files differ)"
-    fi
-
-    rm -rf "$tmpdir"
-}
-
-# Test 13c: marketplace.json target derives from installPath, not hardcode
-test_sync_cache_marketplace_json_target_derives() {
-    log_test "sync-cache.sh derives marketplace.json target from installPath"
-    if skip_where_sync_cache_publishes_nothing; then return; fi
-
-    local tmpdir cache_dir mkt_cache_dir mkt_cache
-    tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
-    cache_dir="$tmpdir/.claude/plugins/cache/derived-mkt/pd/1.0.0"
-    mkt_cache_dir="$tmpdir/.claude/plugins/marketplaces/derived-mkt/.claude-plugin"
-    mkt_cache="$mkt_cache_dir/marketplace.json"
-    mkdir -p "$cache_dir/.claude-plugin"
-    mkdir -p "$mkt_cache_dir"
-
-    # Pre-populate target with stale content
-    echo '{"stale":true}' > "$mkt_cache"
-
-    cat > "$tmpdir/.claude/plugins/installed_plugins.json" <<EOF
-{
-  "plugins": {
-    "pd@derived-mkt": [
-      {"scope":"user","installPath":"$cache_dir","version":"1.0.0"}
-    ]
-  }
-}
-EOF
-
-    local exit_code=0
-    HOME="$tmpdir" "${HOOKS_DIR}/sync-cache.sh" >/dev/null 2>&1 || exit_code=$?
-
-    local source_mkt="${PROJECT_ROOT}/.claude-plugin/marketplace.json"
-    if [[ $exit_code -eq 0 ]] && [[ -f "$source_mkt" ]] && cmp -s "$source_mkt" "$mkt_cache"; then
-        log_pass
-    else
-        log_fail "expected marketplace.json synced to derived-mkt path (exit=$exit_code)"
-    fi
-
-    rm -rf "$tmpdir"
-}
-
 # Feature 094: pre-release adversarial QA gate anti-drift assertions
 
 test_finish_feature_contract_present() {
@@ -495,28 +364,6 @@ test_err_trap_produces_json() {
     fi
 }
 
-# Test: sync-cache handles rsync failure gracefully
-test_sync_cache_handles_rsync_failure() {
-    log_test "sync-cache handles rsync failure gracefully"
-
-    # Run from temp dir where source dirs don't exist
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    cd "$tmpdir"
-
-    local output exit_code=0
-    output=$("${HOOKS_DIR}/sync-cache.sh" 2>/dev/null) || exit_code=$?
-
-    if [[ $exit_code -eq 0 ]] && echo "$output" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
-        log_pass
-    else
-        log_fail "Should handle gracefully (exit=$exit_code)"
-    fi
-
-    cd "${PROJECT_ROOT}"
-    rm -rf "$tmpdir"
-}
-
 # === Path Portability Tests ===
 
 # Helper: find plugin component dir (relative to PROJECT_ROOT)
@@ -589,10 +436,10 @@ test_no_hardcoded_plugin_paths_in_skills() {
 }
 
 test_no_hardcoded_plugin_paths_in_commands() {
-    log_test "No hardcoded plugins/pd/ in command .md files (non-fallback, excluding sync-cache)"
+    log_test "No hardcoded plugins/pd/ in command .md files (non-fallback)"
 
     local violations
-    violations=$(_count_hardcoded_paths "${PLUGIN_COMP_DIR}/commands" "*.md" "sync-cache.md")
+    violations=$(_count_hardcoded_paths "${PLUGIN_COMP_DIR}/commands" "*.md")
 
     if [[ $violations -eq 0 ]]; then
         log_pass
@@ -655,10 +502,6 @@ main() {
     test_pre_commit_guard_allows_non_git
     test_pre_commit_guard_warns_main
     test_pre_commit_guard_from_subdirectory
-    test_sync_cache_json
-    test_sync_cache_missing_source
-    test_sync_cache_detects_arbitrary_marketplace
-    test_sync_cache_marketplace_json_target_derives
     test_finish_feature_contract_present
     test_finish_feature_under_600_lines
     test_bash_version_capture_script_emits_three_sections
@@ -676,7 +519,6 @@ main() {
     echo ""
 
     test_err_trap_produces_json
-    test_sync_cache_handles_rsync_failure
 
     echo ""
     echo "--- Path Portability Tests ---"

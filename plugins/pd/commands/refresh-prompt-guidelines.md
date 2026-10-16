@@ -111,6 +111,6 @@ Output:
 **Cache persistence warning:** If the resolved path points to a cache location (`~/.claude/plugins/cache/`), display prominently:
 
 ```
-Warning: Guidelines written to the plugin cache will be overwritten by sync-cache or plugin updates.
+Warning: Guidelines written to the plugin cache will be overwritten by plugin updates.
 To persist, copy updates to the dev workspace source under skills/promptimize/references/prompt-guidelines.md.
 ```

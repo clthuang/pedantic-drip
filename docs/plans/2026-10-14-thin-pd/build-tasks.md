@@ -611,3 +611,8 @@ Battery after the round: self-tests pd_common 24, pd-lint 90, pd-proof 22, pd-ad
 Q: Accept the W10 rejection (implement-tasks.js runs a mixed wave's parallel-safe tasks before its sequential ones)? Release thin pd now?
 A (user, verbatim): "For W10, agree with your rejection."; "turn on pd plugin for me, make sure the new code is properly pushed to developemnt and deployed via the deployment script".
 Applied: W10 closes as rejected; the order stays as §A4 pins it. feature/thin-pd-build merges to develop and `scripts/release.sh --ci` releases it ahead of T5.2, so the bake-off runs on the installed plugin. The pd plugin is re-enabled in `~/.claude/settings.json`.
+
+## 2026-10-16 decision
+Q: Release the README rewrite, and give the next steps for verification?
+A (user, verbatim): "release and give me the next step guides for verification".
+Applied: v7.0.1 released (main `a856980c`, tag `v7.0.1`, develop `7.0.1-dev`); CI green; the installed plugin updated to 7.0.1. `bake-off.md` holds T5.2's run guide and its results table, every row pending.

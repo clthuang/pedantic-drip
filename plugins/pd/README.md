@@ -10,7 +10,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 |------|-------|
 | Skills | 24 |
 | Agents | 21 |
-| Commands | 25 |
+| Commands | 24 |
 
 ## Commands
 
@@ -37,7 +37,6 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 |---------|---------|
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
-| `/pd:sync-cache` | Reload plugin after changes (from the main checkout; a linked worktree publishes nothing) |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
