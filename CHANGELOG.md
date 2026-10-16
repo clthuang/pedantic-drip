@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Markdown that renders garbled is caught.** `pd-lint` fails a commit, and `pd-html` warns, on an unpaired backtick, on a quoted string whose inner backtick split a code span in two (a regex or shell command written in single backticks), and on a `|` inside a table cell's code span, which splits the cell. The shared check is `pd_common.markdown_hazards`; `references/doc-format.md` gives the authoring rules.
+
+### Fixed
+
+- **`pd-html` shows placeholders.** A bare `<path>` or `<feature id>` parsed as an HTML tag and vanished from the page; tags that aren't HTML elements now render as text.
+- **Two garbled code spans in pd's own docs** (`references/risk-patterns.md`, `skills/verifying/SKILL.md`) used a backslash to escape a backtick inside a code span.
+
 ## [7.0.3] - 2026-10-16
 
 ### Changed

@@ -21,13 +21,16 @@ from markdown_it import MarkdownIt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pd_common import (EXPECTATION_RE, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
-                       make_repo, repo_root, split_frontmatter)
+                       make_repo, markdown_hazards, repo_root, split_frontmatter)
 
 CSS = Path(__file__).resolve().parent.parent / "templates" / "doc.css"
 MERMAID_JS = ('<script type="module">import mermaid from '
               '"https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
               'mermaid.initialize({startOnLoad: true});</script>')
 STATUS_CLASSES = {"draft", "active", "blocked", "done", "abandoned"}
+HTML_TAGS = set("a abbr b blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption "
+                "figure h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p picture pre q s samp small source span strong "
+                "sub summary sup table tbody td tfoot th thead time tr u ul var video wbr".split())
 
 
 def _md():
@@ -47,7 +50,13 @@ def _md():
             tokens[idx].attrSet("href", re.sub(r"\.md(?=$|#)", ".html", href))
         return self.renderToken(tokens, idx, options, env)
 
+    def raw_html(tokens, idx, options, env):
+        # A placeholder such as <path> or <feature id> parses as a tag and vanishes: show it as text.
+        tag = re.match(r"</?([A-Za-z][A-Za-z0-9-]*)", tokens[idx].content)
+        return html.escape(tokens[idx].content) if tag and tag.group(1).lower() not in HTML_TAGS else tokens[idx].content
+
     md.renderer.rules["fence"] = fence
+    md.renderer.rules["html_inline"] = md.renderer.rules["html_block"] = raw_html
     md.add_render_rule("link_open", link_open)
     return md
 
@@ -131,6 +140,8 @@ def frontmatter_box(fm):
 
 def render(src, root):
     text = src.read_text()
+    for line, msg in markdown_hazards(text):
+        print(f"pd-html: WARN {src}:{line}: {msg}", file=sys.stderr)
     try:
         fm, body, _ = split_frontmatter(text)
     except ValueError as e:
@@ -207,6 +218,12 @@ def self_test():
                 "an expectation splits at the first arrow outside a code span; inline markdown renders")
         c.check("<p>After.</p>" in page and "B3: in a fence -&gt; stays code" in page and 'id="B3"' not in page,
                 "text after the run is a paragraph again; a fenced expectation stays code")
+        shape.write_text("# S\n\nprints report: <abs path> for <feature id>, in <b>bold</b>\n\n<!-- note -->\n\n"
+                         "B1: run -> stdout <path>\n")
+        page = render(shape, root).read_text()
+        c.check("report: &lt;abs path&gt; for &lt;feature id&gt;" in page and "<b>bold</b>" in page
+                and "stdout &lt;path&gt;" in page and "<!-- note -->" in page,
+                "a <placeholder> shows as text; real tags and comments stay HTML")
     return c.done()
 
 

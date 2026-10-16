@@ -136,6 +136,7 @@ class Linter:
             return
         self.check_sections(it)
         self.check_one_fact(it)
+        self.check_markdown(it)
         self.check_log(it)
         if it["type"] == "feature":
             b_ids = self.check_expectations(it)
@@ -232,6 +233,12 @@ class Linter:
             for i, line in enumerate(pc.blank_fences(text).split("\n"), 1):
                 if i > body_from and re.match(r"^(status|phase):\s", line):
                     self.err(f, i, f"`{line.split(':')[0]}:` outside the frontmatter: state lives only there")
+
+    def check_markdown(self, it):
+        """Markdown that renders as something its author didn't write (pd_common.markdown_hazards)."""
+        for f in sorted(it["dir"].glob("*.md")) if it["dir"] else [it["path"]]:
+            for line, msg in pc.markdown_hazards(f.read_text()):
+                self.err(f, line, msg)
 
     def check_forbidden(self):
         if str(self.cfg.get("sop")) != "1" or not self.art.is_dir():
@@ -866,6 +873,7 @@ def cases(code):
         ("branch names the feature", lambda r: rw(nf(r) / "README.md", "branch: feature/", "branch: feat/"), [], "error", "branch: must be feature/"),
         ("backlog past 300 lines warns", lambda r: add(r / BL, "".join(f"- [ ] 2026-10-14-item-{i} — x\n" for i in range(300))), [], "warn", "run pd-lint --archive"),
         ("expectation format", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1 empty -> error\n"), [], "error", "expectation not `B<n>:"),
+        ("markdown that renders garbled", lambda r: add(f(r) / "shape.md", "\nRun `grep 'a `b`' f` first.\n"), [], "error", "split one code span"),
         ("expectation ids unique", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1: x -> y\nB1: z -> w\n"), [], "error", "duplicate expectation id B1"),
         ("task fields", lambda r: rw(f(r) / "plan.md", "- uses: none\n", ""), [], "error", "task 1 has no `- uses:`"),
         ("test case format", lambda r: rw(f(r) / "plan.md", "  - C1 [B1] (fixture: none):", "  - C1 [B1]:"), [], "error", "test case not"),
