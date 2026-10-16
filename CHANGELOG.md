@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.2] - 2026-10-16
+
 ### Removed
 
 - **`sync-cache`: the SessionStart hook, its script and `/pd:sync-cache`.** A session started in this repository's main checkout copied the checked-out branch's plugin over the installed copy, so the installed pd stopped being the GitHub release. The installed copy now changes only through a release. To try local changes, run `claude --plugin-dir plugins/pd`, which loads this checkout's plugin in place of the installed one for that session. `common.sh` loses `may_publish_plugin_cache`, and the hook tests no longer publish into the plugin cache under `$HOME`.
