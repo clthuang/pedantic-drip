@@ -4,13 +4,21 @@ The first live run of thin pd: one real feature, built through every stage on th
 
 **If a check fails,** the rollout stops there. Revise the plan section it rests on, calvin it, and decide (§A7). T6.1 (adopting pedantic-drip) waits until every check passes and every question has an answer.
 
+## Done already (2026-10-16)
+
+- **The main checkout is on develop.** `sync-cache.sh` copies the checked-out branch's plugin into the installed cache whenever a session starts there. The unstaged `README.md` edits were saved to `agent_sandbox/2026-10-16/readme-unstaged-edits/README.md.patch` first.
+- **Steps 1 and 2 below are done:** `~/projects/pd-bakeoff-backlog-sweep` exists. Its scaffold is commit `4574f97`; `pd-init` (7.0.1, run as a script) is commit `62185ec`, with the settings diff applied and `test_paths: [tests/]`, `fixture_paths: [fixtures/]` set by hand. `pd-lint` exits 0 and `pd-status` prints "no items".
+- **A headless smoke session** (`claude -p`, plan mode, session `96f90855-7820-48d1-b7b9-724abba0c111`) in that repository:
+  - received `pd_artifacts_root: docs/dev_artifacts` and `pd_base_branch: main` from the session-start hook;
+  - listed 25 commands, 24 skills, the 4 workflows (`pd:implement-tasks`, `pd:verify-change`, `pd:research-fanout`, `pd:rca-fanout`) and 21 agents, every name with the `pd:` prefix.
+- **What it found:** Claude Code ignores the repository's `permissions.allow` entries until the workspace is trusted. Check 8 depends on those rules, so accept the trust dialog the first time you open Claude Code there.
+
 ## Before you start
 
 1. **Restart Claude Code**, so v7.0.1 loads. In a session, `/plugin` lists `pd` at 7.0.1.
-2. **Move the main checkout to develop:** `cd ~/projects/pedantic-drip && git checkout develop`. Your unstaged `README.md` edits block the switch; the new README covers them, so discard them (`git checkout -- README.md`) or stash them first. This matters because `sync-cache.sh` copies the checked-out branch's plugin into the installed cache whenever a session starts there.
-3. **Leave the other pd repos alone.** fractorg, project_illium, illium-golive and cast-below still use the old layout. pd's hooks only suggest `/pd:adopt` there, and nothing adopts them before T6.
+2. **Leave the other pd repos alone.** fractorg, project_illium, illium-golive and cast-below still use the old layout. pd's hooks only suggest `/pd:adopt` there, and nothing adopts them before T6.
 
-## Step 1: make the bake-off repository
+## Step 1: make the bake-off repository (done)
 
 The feature is the backlog sweep tool (T5.1): a small Python CLI that sorts the legacy `docs/backlog.md` (a table of about 170 rows) into keep and archive. Archive means a row names the retired registry, MCP servers, UI or `.meta.json`. Its output feeds T6.1's MAP BY HAND step.
 
@@ -23,14 +31,13 @@ git add -A && git commit -m "scaffold: uv project and the legacy backlog fixture
 claude
 ```
 
-## Step 2: set the project up
+## Step 2: set the project up (done, except trust)
 
-In the new session:
-1. **Run `/pd:init`.**
-   - **The proposals:** check that `qa_battery` runs pytest with JUnit output (for example `uv run pytest --junitxml=…`), since `pd-proof` reads only JUnit XML.
-   - **The settings diff:** choose "Apply". It adds `worktree.baseRef: "head"`, the spawn-depth cap and the allow rules. Check 1 and check 8 depend on it.
-2. **Commit** the files `/pd:init` lists.
-3. **Note the task tools:** see whether the session offers `TaskCreate`/`TaskList` (check 5). This session (Opus 5.5, 2026-10-16) listed them as deferred tools, without `CLAUDE_CODE_ENABLE_TODO_TOOLS`.
+`pd-init` wrote the config (`qa_battery: uv run pytest -q`) and applied the settings: `worktree.baseRef: "head"`, the spawn-depth cap and the allow rules for `git merge`, `git worktree` and `uv run pytest`. QA reads only exit codes; `pd-proof` reads the JUnit file each plan task's proving command writes.
+
+When you open Claude Code there:
+1. **Accept the trust dialog**, or the allow rules stay ignored.
+2. **Note the task tools:** see whether the session offers `TaskCreate`/`TaskList` (check 5). The build session (Opus 5.5, 2026-10-16) listed them as deferred tools, without `CLAUDE_CODE_ENABLE_TODO_TOOLS`.
 
 ## Step 3: run the feature through every stage
 
@@ -110,7 +117,7 @@ Fill in each row during the run.
 | Item | Result | Evidence |
 |------|--------|----------|
 | `${CLAUDE_SESSION_ID}` substitution in skills (the `goal:` line in `## Now`) | pending | |
-| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | pending | |
+| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | partial: every name is listed with the prefix; dispatch by name still to see | smoke session `96f90855` |
 | Subagent hook input carries `agent_type` and the parent `session_id` | pending | |
 | The `background_tasks` status values the Stop gate reads | pending | |
 
