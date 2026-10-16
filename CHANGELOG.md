@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The design checklist asks for nothing unrequested and for evidence behind every risk.** Every contract element traces to a `B<n>`, an edge case or must-not, an evidenced risk row, or a cited constraint; a new module names the existing one it couldn't extend. Risks are written as if the feature had failed, and a risk without evidence (file:line, a documentation URL, a reproduced failure, or an input that breaks a `B<n>`) is a note, never code.
-- **Contracts and Plan reviews have a blocker bar:** a failed checklist item or an undelivered `B<n>`, shown by a named input or the element at fault. A "what if" naming neither is a note. Verify keeps its own bar.
+- **Each stage's checklist ends with its blocker bar:** at Contracts and Plan, a failed checklist item or an undelivered `B<n>`, shown by a named input or the element at fault; a "what if" naming neither is a note. Verify's bar adds code no contract asks for, a removal. The bar travels with the checklist, so a reviewer dispatched directly applies it too.
+- **No backward compatibility without external consumers.** A compatibility criterion, contract element or code path (an alias, a deprecated field, a dual read or write, a shim, a version flag) needs evidence of a public endpoint with external consumers; otherwise the old path goes and its callers move. Stated in specifying, designing, the implementer and verifying.
+- **Verify fixes a removal finding by deleting code, with no new test;** QA checks the deletion. Plan §A2 designed this path, but `verify-change` never had it.
 
 ### Fixed
 
-- **The fallback reviewers return the pinned schema.** `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` each defined a private output format, a `suggestion` severity and their own blocker rule; they now return the JSON the prompt pins. Their unread `backward_to` fields and iteration rules are gone, and `workflow-results.md` states that `approved` needs no blocker.
+- **The fallback reviewers return the pinned schema.** `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` each defined a private output format, a `suggestion` severity and their own blocker rule; they now return the JSON the prompt pins, or the review call's schema from `workflow-results.md` when dispatched directly. `design-reviewer` and `plan-reviewer` also lose private checklists that conflicted with the stage checklists (a mandatory Prior Art Research section, Why-this-item rules). Their unread `backward_to` fields and iteration rules are gone, and `workflow-results.md` states that `approved` needs no blocker.
 
 - **`pd-html` no longer warns on a backtick between `<code>`, `<kbd>` or `<samp>` tags,** where it is meant literally.
 - **`pd-html` reads tags by CommonMark's own grammar** (markdown-it's), so a stray quote in an unquoted attribute can't carry later markup through unescaped.
