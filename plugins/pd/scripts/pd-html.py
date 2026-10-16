@@ -37,7 +37,7 @@ HTML_TAGS = set("a abbr article aside b blockquote br caption cite code col colg
                 "pre q s samp section small source span strong sub summary sup table tbody td tfoot th thead time tr "
                 "u ul var video wbr".split())
 VOID_TAGS = {"br", "col", "hr", "img", "source", "wbr"}
-TAG_RE = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9-]*)\b[^<>]*>")
+TAG_RE = re.compile(r"""<(/?)([A-Za-z][A-Za-z0-9-]*)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>|<(?=/?[A-Za-z])""")
 UNPAIRED = ("unpaired backtick: a code span is never closed or was cut short; wrap code holding backticks "
             "in a longer run (``like `this` one``) or a fenced block")
 TABLE_PIPE = ("a backtick in this table cell is unpaired: a `|` inside backticks splits the cell (write it "
@@ -47,7 +47,9 @@ SPLIT_SPAN = ("a quoted string holding a backtick split one code span in two; wr
 
 
 def _md():
-    md = MarkdownIt("commonmark").enable(["table", "strikethrough"])
+    # Without text_join, escapes and entities stay text_special tokens: hazards() tells them from source text.
+    md = MarkdownIt("commonmark").enable(["table", "strikethrough"]).disable("text_join")
+    md.renderer.rules["text_special"] = md.renderer.rules["text"]
     default_fence = md.renderer.rules["fence"]
 
     def fence(tokens, idx, options, env):
@@ -71,6 +73,8 @@ def _md():
         closed = env.get("closed_tags", set())
 
         def keep(m):
+            if m.group(2) is None:
+                return "&lt;"  # a "<name" that never forms a whole tag
             name = m.group(2).lower()
             real = name in HTML_TAGS and (m.group(1) or name in VOID_TAGS or name in closed)
             return m.group(0) if real else html.escape(m.group(0))
@@ -84,7 +88,7 @@ def _md():
 
 
 def code_spans(line):
-    """CommonMark's code spans in one line: (content start, content end) offsets. A run of n backticks
+    """CommonMark's code spans in a string: (content start, content end) offsets. A run of n backticks
     closes at the next run of exactly n; a backslash escapes a backtick only outside a span."""
     spans, i = [], 0
     while i < len(line):
@@ -122,8 +126,10 @@ def expectation_cards(tokens, md, env):
     out, i = [], 0
     while i < len(tokens):
         t = tokens[i]
-        lines = tokens[i + 1].content.split("\n") if t.type == "paragraph_open" and not t.hidden else []
-        if not any(EXPECTATION_RE.match(line) for line in lines):
+        src = tokens[i + 1].content if t.type == "paragraph_open" and not t.hidden else ""
+        lines = src.split("\n")
+        # A code span across lines would be cut apart: such a paragraph stays whole.
+        if not any(EXPECTATION_RE.match(line) for line in lines) or any("\n" in src[s:e] for s, e in code_spans(src)):
             out.append(t)
             i += 1
             continue
@@ -158,14 +164,15 @@ def hazards(tokens, first_line):
         if t.type != "inline" or not t.children:
             continue
         line = first_line + (t.map[0] if t.map else 0)
-        kids = t.children
-        # The parser shows an escaped \` and an unpaired backtick alike, as a literal backtick in text.
-        if sum(k.content.count("`") for k in kids if k.type == "text") > t.content.count("\\`"):
-            found.append((line, TABLE_PIPE if in_table else UNPAIRED))
-        for a, mid, b in zip(kids, kids[1:], kids[2:]):
-            if (a.type == b.type == "code_inline" and mid.type == "text" and mid.content
-                    and not re.search(r"\s", mid.content) and _split_quote(a.content, b.content)):
+        kids = t.children + [Token("text", "", 0)] * 2
+        for k, mid, b in zip(kids, kids[1:], kids[2:]):
+            if k.type == "text" and "`" in k.content:  # a backtick no code span took
+                found.append((line, TABLE_PIPE if in_table else UNPAIRED))
+            if (k.type == b.type == "code_inline" and mid.type == "text" and mid.content
+                    and not re.search(r"\s", mid.content) and _split_quote(k.content, b.content)):
                 found.append((line, SPLIT_SPAN))
+            # shortcut: a code span across lines loses its line breaks, so later lines report one early.
+            line += 1 if k.type in ("softbreak", "hardbreak") else k.content.count("\n")
     return sorted(set(found))
 
 
@@ -306,12 +313,18 @@ def self_test():
                 and 'ok, see <a href="other.html">spec</a>' in page,
                 "a lead line stays a paragraph; a double-backtick span keeps its arrow; reference links resolve")
         shape.write_text("# S\n\nprints report: <abs path> for <feature id>, S1 <a> > S2 <b>, in <i>it</i>\n\n"
-                         "<!-- note -->\n\n<div>\n<feature id>\n</div>\n\nB1: run -> stdout <path>\n")
+                         "Text <path title=\"><img src=x onerror=alert(1)>\"> and <bold> after\n\n<!-- note -->\n\n<div>\n<feature id>\n</div>\n\nB1: run -> stdout <path>\n")
         page = render(shape, root).read_text()
         c.check("report: &lt;abs path&gt; for &lt;feature id&gt;, S1 &lt;a&gt; &gt; S2 &lt;b&gt;, in <i>it</i>" in page
                 and "<div>\n&lt;feature id&gt;\n</div>" in page and "stdout &lt;path&gt;" in page
-                and "<!-- note -->" in page,
-                "a <placeholder> shows as text, in an HTML block too; closed real tags and comments stay HTML")
+                and "<!-- note -->" in page and "<img" not in page and "and &lt;bold&gt; after" in page,
+                "a <placeholder> shows as text, whole and in an HTML block too; closed real tags and comments stay HTML")
+        shape.write_text("# S\n\n> B1: a -> b\n\n- one\n\n- B2: c -> d\n\n> Example `\n> B9: x -> y\n> ` end.\n")
+        page = render(shape, root).read_text()
+        c.check('<blockquote>\n<div class="expectations"><div class="expectation" id="B1">' in page
+                and '<li>\n<div class="expectations"><div class="expectation" id="B2">' in page
+                and "<p>Example <code>B9: x -&gt; y</code> end.</p>" in page,
+                "cards keep their blockquote or list; a code span across lines stays one paragraph")
 
         def warnings(text):
             shape.write_text(text)
@@ -325,11 +338,13 @@ def self_test():
                 and warnings("# S\n\n`grep -rn 'highest `NNN`' plugins/` → 0\n") == [(3, SPLIT_SPAN)],
                 "a backtick inside a quoted string warns, with the source line (frontmatter counted)")
         c.check(warnings("# S\n\none `open span\n") == [(3, UNPAIRED)]
+                and warnings("---\nid: x\n---\n> safe\n> bad `open\n") == [(5, UNPAIRED)]
+                and warnings("# S\n\n`\\` and `open\n") == [(3, UNPAIRED)]
                 and warnings("# S\n\n| a | b |\n|---|---|\n| `x|y` | z |\n") == [(5, TABLE_PIPE)],
-                "an unpaired backtick and a table-cell pipe warn")
+                "an unpaired backtick warns on its own line, beside a code span holding a backslash; so does a table-cell pipe")
         clean = ("---\ntitle: Show ` char\n---\n# S\n\n~~~\nlone ` x\n~~~\n\nPara.\n\n    lone ` in code\n\n"
                  "> `one\n> two`\n\n- `one\n  two`\n\n<span title=\"`\">x</span> and before <!-- ` --> after\n\n"
-                 "`x'`/`y'`, `[\"`, `\"]`, `${D}/`/`\"${D}/`, `'`/`'`, a \\` escaped, `don't`, `'`\n\n| use `a|b` in prose\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
+                 "`x'`/`y'`, `[\"`, `\"]`, `${D}/`/`\"${D}/`, `'`/`'`, a \\` escaped, &#96; and &grave;, `don't`, `'`\n\n| use `a|b` in prose\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
         c.check(warnings(clean) == [], "valid fences, indented code, quotes, lists, HTML, escapes and frontmatter pass")
     return c.done()
 

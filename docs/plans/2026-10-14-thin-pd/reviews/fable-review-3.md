@@ -62,7 +62,7 @@ Kept on purpose: the two artifacts and `from_shape` (the record says the boundar
 
 | # | One side | Other side | Fix |
 |---|---|---|---|
-| C1 | Mode vocabulary: canonical.mmd:26 `full · small · express` | plan §A2:43 and §5:571 `standard | small | express`; essay names no modes | S: one word everywhere |
+| C1 | Mode vocabulary: canonical.mmd:26 `full · small · express` | plan §A2:43 and §5:571 `standard \| small \| express`; essay names no modes | S: one word everywhere |
 | C2 | Where a bug enters: principles.mmd:23 RCA skips straight to Architecture & contracts | plan §A2:64 the RCA's fix "enters at Criteria, or runs express"; canonical.mmd:33 bug → Clarify (rca) → Criteria | S: fix principles.mmd:23 to point at BEH, or cut the diagram (§3) |
 | C3 | Criteria get fix cycles: principles.mmd:31 G1B "fixes proven by checks, ≤ 3 cycles" | plan §A2:45 calvin plus the user's confirmation, no loop; canonical.mmd:40 "you sign off the criteria". Review 2 §3.5 flagged this; D13 did not adopt it | S: edit G1B |
 | C4 | A mechanical predicate check exists: essay §3:77 "That check is mechanical"; principles.mmd:28; canonical.mmd:35 | plan §9:705-726 lists no such check; phase-gate.sh:46-49 checks section existence only | S: add the lint, or soften the essay to "can be made mechanical" |

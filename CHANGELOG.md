@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`pd-html` warns on markdown that renders garbled,** naming the line: an unpaired backtick, a quoted string whose inner backtick split a code span in two (a regex or shell command in single backticks), and a backtick left unpaired in a table cell, usually a `|` inside backticks. It reads the CommonMark parser's tokens, so fences, indented code, HTML, lists and frontmatter don't raise false alarms. The conductor fixes each warning before showing a page; `references/doc-format.md` gives the authoring rules.
+- **`pd-html` warns on markdown that renders garbled,** naming the line: an unpaired backtick, a quoted string whose inner backtick split a code span in two (a regex or shell command in single backticks), and a backtick left unpaired in a table cell, usually a `|` inside backticks. It reads the CommonMark parser's tokens, so fences, indented code, HTML, lists, entities and frontmatter don't raise false alarms, and each warning names the line it is on. The conductor fixes each warning before showing a page; `references/doc-format.md` gives the authoring rules.
 
 ### Fixed
 
-- **`pd-html` shows placeholders.** A bare `<path>` or `<feature id>` parsed as an HTML tag and vanished from the page. A tag now stays HTML only when it names a common HTML element (`pd-html`'s list) and, unless void, the document closes it; anything else renders as text, in HTML blocks too.
-- **`pd-html` expectation cards** are built from the parser's paragraphs: a longer fence holding a `B<n>:` line stays code, a double-backtick span keeps its arrow, a lead line stays a paragraph, and reference links resolve.
+- **`pd-html` shows placeholders.** A bare `<path>` or `<feature id>` parsed as an HTML tag and vanished from the page. A tag now stays HTML only when it names a common HTML element (`pd-html`'s list) and, unless void, the document closes it; anything else renders as text, in HTML blocks too. A tag is read whole, quoted attributes included, so text inside an attribute never becomes markup.
+- **`pd-html` expectation cards** are built from the parser's paragraphs: a longer fence holding a `B<n>:` line stays code, a double-backtick span keeps its arrow, a lead line stays a paragraph, reference links resolve, cards keep their blockquote or list, and a code span running across lines is never cut into a card.
 - **`cleanup-stale-versions`'s header** said it deleted older versions; it deletes every version but the active one and those in use. `scripts/rename-to-pd.sh` no longer names the deleted sync-cache hook.
 - **Two garbled code spans in pd's own docs** (`references/risk-patterns.md`, `skills/verifying/SKILL.md`) used a backslash to escape a backtick inside a code span.
 
