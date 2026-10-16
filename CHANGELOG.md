@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pd-html` no longer warns on a backtick between `<code>`, `<kbd>` or `<samp>` tags,** where it is meant literally.
+- **`pd-html` reads tags by CommonMark's own grammar** (markdown-it's), so a stray quote in an unquoted attribute can't carry later markup through unescaped.
+- **`pd-html` cards survive a code span wrapped across the lead line or a backtick inside an HTML attribute;** only a line a code span runs into or out of stays text.
+- **`pd-html` warns on a split code span with an escape between the halves** (`` `grep 'a `\*`' f` ``), and a `&#10;` entity no longer shifts warning line numbers.
+
 ## [7.0.4] - 2026-10-16
 
 ### Added

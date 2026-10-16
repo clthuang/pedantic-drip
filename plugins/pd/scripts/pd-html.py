@@ -21,6 +21,7 @@ from itertools import groupby
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.common import html_re
 from markdown_it.token import Token
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,7 +38,9 @@ HTML_TAGS = set("a abbr article aside b blockquote br caption cite code col colg
                 "pre q s samp section small source span strong sub summary sup table tbody td tfoot th thead time tr "
                 "u ul var video wbr".split())
 VOID_TAGS = {"br", "col", "hr", "img", "source", "wbr"}
-TAG_RE = re.compile(r"""<(/?)([A-Za-z][A-Za-z0-9-]*)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>|<(?=/?[A-Za-z])""")
+TAG_RE = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9-]*)" + html_re.attribute + r"*\s*/?>|<(?=/?[A-Za-z])")
+RAW_HTML = re.compile("|".join((html_re.open_tag, html_re.close_tag, html_re.comment, html_re.processing,
+                                html_re.declaration, html_re.cdata)))
 UNPAIRED = ("unpaired backtick: a code span is never closed or was cut short; wrap code holding backticks "
             "in a longer run (``like `this` one``) or a fenced block")
 TABLE_PIPE = ("a backtick in this table cell is unpaired: a `|` inside backticks splits the cell (write it "
@@ -89,11 +92,15 @@ def _md():
 
 def code_spans(line):
     """CommonMark's code spans in a string: (content start, content end) offsets. A run of n backticks
-    closes at the next run of exactly n; a backslash escapes a backtick only outside a span."""
+    closes at the next run of exactly n; a backslash escapes a backtick only outside a span; HTML is skipped."""
     spans, i = [], 0
     while i < len(line):
         if line[i] == "\\":
             i += 2
+            continue
+        tag = RAW_HTML.match(line, i) if line[i] == "<" else None
+        if tag:
+            i = tag.end()
             continue
         if line[i] != "`":
             i += 1
@@ -127,15 +134,19 @@ def expectation_cards(tokens, md, env):
     while i < len(tokens):
         t = tokens[i]
         src = tokens[i + 1].content if t.type == "paragraph_open" and not t.hidden else ""
-        lines = src.split("\n")
-        # A code span across lines would be cut apart: such a paragraph stays whole.
-        if not any(EXPECTATION_RE.match(line) for line in lines) or any("\n" in src[s:e] for s, e in code_spans(src)):
+        spans, flags, start = code_spans(src), [], 0
+        for line in src.split("\n"):
+            # A line is a card only when no code span runs into or out of it, past a newline.
+            crossed = any(s <= newline < e for s, e in spans for newline in (start - 1, start + len(line)))
+            flags.append((bool(EXPECTATION_RE.match(line)) and not crossed, line))
+            start += len(line) + 1
+        if not any(is_card for is_card, _ in flags):
             out.append(t)
             i += 1
             continue
         parts = []
-        for is_expectation, run in groupby(lines, key=lambda line: bool(EXPECTATION_RE.match(line))):
-            run = list(run)
+        for is_expectation, run in groupby(flags, key=lambda flag: flag[0]):
+            run = [line for _, line in run]
             parts.append('<div class="expectations">' + "".join(_expectation(x, md, env) for x in run) + "</div>"
                          if is_expectation else f"<p>{md.renderInline(chr(10).join(run), env)}</p>")
         cards = Token("pd_html", "", 0)
@@ -164,15 +175,20 @@ def hazards(tokens, first_line):
         if t.type != "inline" or not t.children:
             continue
         line = first_line + (t.map[0] if t.map else 0)
-        kids = t.children + [Token("text", "", 0)] * 2
-        for k, mid, b in zip(kids, kids[1:], kids[2:]):
-            if k.type == "text" and "`" in k.content:  # a backtick no code span took
+        kids, in_code_tag = t.children, False
+        for i, k in enumerate(kids):
+            if k.type == "html_inline" and re.match(r"</?(code|kbd|samp)\b", k.content, re.I):
+                in_code_tag = not k.content.startswith("</")  # a backtick between <code> tags is meant literally
+            if k.type == "text" and "`" in k.content and not in_code_tag:  # a backtick no code span took
                 found.append((line, TABLE_PIPE if in_table else UNPAIRED))
-            if (k.type == b.type == "code_inline" and mid.type == "text" and mid.content
-                    and not re.search(r"\s", mid.content) and _split_quote(k.content, b.content)):
-                found.append((line, SPLIT_SPAN))
+            if k.type == "code_inline":
+                j = next((j for j in range(i + 1, len(kids)) if kids[j].type not in ("text", "text_special")), len(kids))
+                mid = "".join(x.content for x in kids[i + 1:j])
+                if (j < len(kids) and kids[j].type == "code_inline" and mid and not re.search(r"\s", mid)
+                        and _split_quote(k.content, kids[j].content)):
+                    found.append((line, SPLIT_SPAN))
             # shortcut: a code span across lines loses its line breaks, so later lines report one early.
-            line += 1 if k.type in ("softbreak", "hardbreak") else k.content.count("\n")
+            line += 1 if k.type in ("softbreak", "hardbreak") else k.content.count("\n") if k.type == "html_inline" else 0
     return sorted(set(found))
 
 
@@ -321,6 +337,14 @@ def self_test():
                 "a <placeholder> shows as text, whole and in an HTML block too; closed real tags and comments stay HTML")
         shape.write_text("# S\n\n> B1: a -> b\n\n- one\n\n- B2: c -> d\n\n> Example `\n> B9: x -> y\n> ` end.\n")
         page = render(shape, root).read_text()
+        shape.write_text("# S\n\nRun `pd-lint\n--strict` on each:\nB1: a -> b\nB2: run <span title=\"`\">x</span> -> ok\n\n"
+                         "<div x=a\"b>\n<script>alert(1)</script>\n\">\n</div>\n\n<div>\n<feature id's>\n</div>\n")
+        page2 = render(shape, root).read_text()
+        c.check("<p>Run <code>pd-lint --strict</code> on each:</p>" in page2 and 'id="B1"' in page2
+                and '<div class="given">run <span title="`">x</span></div>' in page2,
+                "a code span wrapped across a lead line, or a backtick in an attribute, still leaves cards")
+        c.check("<script>" not in page2 and "&lt;feature id's" in page2,
+                "a tag only parses whole by CommonMark's grammar; a stray <name in an HTML block shows as text")
         c.check('<blockquote>\n<div class="expectations"><div class="expectation" id="B1">' in page
                 and '<li>\n<div class="expectations"><div class="expectation" id="B2">' in page
                 and "<p>Example <code>B9: x -&gt; y</code> end.</p>" in page,
@@ -335,16 +359,19 @@ def self_test():
         # The bake-off's shape.md line 54: '`.meta.json`' inside a single-backtick span split it in two.
         line54 = "`>>> f(r'(?!\\w)', 'UI', re.I)` · `>>> re.search(r'\\.meta', '`.meta.json`', re.I)) → True`\n"
         c.check(warnings("---\nid: x\n---\n# S\n\n" + line54) == [(6, SPLIT_SPAN)]
-                and warnings("# S\n\n`grep -rn 'highest `NNN`' plugins/` → 0\n") == [(3, SPLIT_SPAN)],
+                and warnings("# S\n\n`grep -rn 'highest `NNN`' plugins/` → 0\n") == [(3, SPLIT_SPAN)]
+                and warnings("# S\n\n`grep 'a `\\*`' f`\n") == [(3, SPLIT_SPAN)],
                 "a backtick inside a quoted string warns, with the source line (frontmatter counted)")
         c.check(warnings("# S\n\none `open span\n") == [(3, UNPAIRED)]
+                and warnings("# S\n\n<code>x</code> then `open\n") == [(3, UNPAIRED)]
+                and warnings("# S\n\nsafe &#10; bad `open\n") == [(3, UNPAIRED)]
                 and warnings("---\nid: x\n---\n> safe\n> bad `open\n") == [(5, UNPAIRED)]
                 and warnings("# S\n\n`\\` and `open\n") == [(3, UNPAIRED)]
                 and warnings("# S\n\n| a | b |\n|---|---|\n| `x|y` | z |\n") == [(5, TABLE_PIPE)],
                 "an unpaired backtick warns on its own line, beside a code span holding a backslash; so does a table-cell pipe")
         clean = ("---\ntitle: Show ` char\n---\n# S\n\n~~~\nlone ` x\n~~~\n\nPara.\n\n    lone ` in code\n\n"
                  "> `one\n> two`\n\n- `one\n  two`\n\n<span title=\"`\">x</span> and before <!-- ` --> after\n\n"
-                 "`x'`/`y'`, `[\"`, `\"]`, `${D}/`/`\"${D}/`, `'`/`'`, a \\` escaped, &#96; and &grave;, `don't`, `'`\n\n| use `a|b` in prose\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
+                 "<code>a`b</code>\n\n<kbd>`</kbd> key\n\n`x'`/`y'`, `[\"`, `\"]`, `${D}/`/`\"${D}/`, `'`/`'`, a \\` escaped, &#96; and &grave;, `don't`, `'`\n\n| use `a|b` in prose\n\n| a | b |\n|---|---|\n| `x\\|y` | z |\n")
         c.check(warnings(clean) == [], "valid fences, indented code, quotes, lists, HTML, escapes and frontmatter pass")
     return c.done()
 
