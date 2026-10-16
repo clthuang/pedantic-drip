@@ -89,13 +89,13 @@ In Claude Code:
 /plugin install pd@pedantic-drip-marketplace
 ```
 
-After making changes to plugin files, sync the cache from the main checkout:
+To try plugin changes, start a session with this checkout's plugin in place of the installed one, for that session only:
 
-```
-/pd:sync-cache
+```bash
+claude --plugin-dir plugins/pd
 ```
 
-Only a main checkout publishes the plugin cache, or a directory with no `.git` (a `git archive` export). From a linked worktree nothing is published, nor from a `.git` file git cannot answer for (an orphaned worktree); a worktree's plugin edits reach the cache once they reach the main checkout.
+The installed copy changes only through a release (`scripts/release.sh`), which Claude Code picks up from GitHub.
 
 ## For Public Users
 
@@ -163,7 +163,7 @@ flowchart TD
     end
 
     subgraph HOOKS["Hooks · scripts"]
-        H1["SessionStart (3)<br/>sync-cache,<br/>cleanup-stale-versions,<br/>pd-session-start"]
+        H1["SessionStart (2)<br/>cleanup-stale-versions,<br/>pd-session-start"]
         H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard,<br/>pd-agent-write-guard"]
         H3["Stop (1)<br/>pd-stop-gate"]
     end
@@ -297,7 +297,6 @@ Hooks execute automatically at lifecycle points.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache from a main checkout; publishes nothing from a linked worktree |
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions older than the active one |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit`; a lint error blocks the commit (exit 2) |
@@ -308,7 +307,7 @@ Hooks execute automatically at lifecycle points.
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py` — a worker module invoked by the wrapper, not separately registered.
 
-`sync-cache` and `cleanup-stale-versions` match `startup|resume|clear` only; `pd-session-start` also fires on `compact`, so the summary survives compaction.
+`cleanup-stale-versions` matches `startup|resume|clear` only; `pd-session-start` also fires on `compact`, so the summary survives compaction.
 
 Defined in `plugins/pd/hooks/hooks.json`.
 

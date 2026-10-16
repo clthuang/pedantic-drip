@@ -76,7 +76,6 @@ Defined in `plugins/pd/hooks/hooks.json`.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to the Claude cache from a main checkout |
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd versions older than the active one |
 | `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The `{pd_*}` values, active and blocked items, next ready items, retros owed; offers `/pd:init` or `/pd:adopt` |
 | `pre-commit-guard` | PreToolUse (Bash) | Warns on commits to `main`/`master` |

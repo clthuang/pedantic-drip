@@ -636,7 +636,7 @@ while IFS= read -r md_file; do
     [ -z "$md_file" ] && continue
     # Skip dev-only files, READMEs, and plans
     case "$md_file" in
-        */sync-cache.md|*/README*.md|*/plan*.md) continue ;;
+        */README*.md|*/plan*.md) continue ;;
     esac
     # Search for hardcoded plugins/pd/ paths with 1-line context
     # Skip lines (or preceding context lines) with fallback/conditional markers

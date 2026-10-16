@@ -1,12 +1,12 @@
 # Thin pd bake-off (T5.2)
 
-The first live run of thin pd: one real feature, built through every stage on the installed plugin (v7.0.1), plus the probes for the checks that don't happen naturally. It settles plan §A7. Every result row below cites its evidence: a `log.md` entry, a commit, or a file path.
+The first live run of thin pd: one real feature, built through every stage on the installed plugin (v7.0.2), plus the probes for the checks that don't happen naturally. It settles plan §A7. Every result row below cites its evidence: a `log.md` entry, a commit, or a file path.
 
 **If a check fails,** the rollout stops there. Revise the plan section it rests on, calvin it, and decide (§A7). T6.1 (adopting pedantic-drip) waits until every check passes and every question has an answer.
 
 ## Done already (2026-10-16)
 
-- **The main checkout is on develop.** `sync-cache.sh` copies the checked-out branch's plugin into the installed cache whenever a session starts there. The unstaged `README.md` edits were saved to `agent_sandbox/2026-10-16/readme-unstaged-edits/README.md.patch` first.
+- **The main checkout is on develop.** Through v7.0.1, `sync-cache.sh` copied the checked-out branch's plugin into the installed cache whenever a session started there; v7.0.2 removed it, so the installed copy is always the GitHub release. The unstaged `README.md` edits were saved to `agent_sandbox/2026-10-16/readme-unstaged-edits/README.md.patch` first.
 - **Steps 1 and 2 below are done:** `~/projects/pd-bakeoff-backlog-sweep` exists. Its scaffold is commit `4574f97`; `pd-init` (7.0.1, run as a script) is commit `62185ec`, with the settings diff applied and `test_paths: [tests/]`, `fixture_paths: [fixtures/]` set by hand. `pd-lint` exits 0 and `pd-status` prints "no items".
 - **A headless smoke session** (`claude -p`, plan mode, session `96f90855-7820-48d1-b7b9-724abba0c111`) in that repository:
   - received `pd_artifacts_root: docs/dev_artifacts` and `pd_base_branch: main` from the session-start hook;
@@ -15,7 +15,7 @@ The first live run of thin pd: one real feature, built through every stage on th
 
 ## Before you start
 
-1. **Restart Claude Code**, so v7.0.1 loads. In a session, `/plugin` lists `pd` at 7.0.1.
+1. **Restart Claude Code**, so v7.0.2 loads. In a session, `/plugin` lists `pd` at 7.0.2.
 2. **Leave the other pd repos alone.** fractorg, project_illium, illium-golive and cast-below still use the old layout. pd's hooks only suggest `/pd:adopt` there, and nothing adopts them before T6.
 
 ## Step 1: make the bake-off repository (done)

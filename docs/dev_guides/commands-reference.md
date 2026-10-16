@@ -1,6 +1,6 @@
 # Commands Reference
 
-Run every test with a throwaway `HOME`: `test-hooks.sh` and `validate.sh` rsync into the plugin cache under `$HOME`. Prefix each command below with `env -u ENTITY_DB_PATH HOME=$(mktemp -d)`.
+Run every test with a throwaway `HOME`, so no test touches your real `~/.claude`. Prefix each command below with `env -u ENTITY_DB_PATH HOME=$(mktemp -d)`.
 
 ```bash
 # Validate components (0 errors, 0 warnings expected)
@@ -27,7 +27,7 @@ bash plugins/pd/hooks/tests/test-hooks.sh
 # Workflow scripts: syntax, result shapes and stubbed runs
 node plugins/pd/workflows/tests/test-workflows.mjs
 
-# Python hook tests (sync-cache, project root, unicode guard)
+# Python hook tests (project root, unicode guard)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks -q
 
 # Release (bumps version, merges develop→main, tags)

@@ -114,7 +114,6 @@ The full diagram, with every check and review, is the Mermaid source [docs/workf
 | `/pd:add-to-backlog <idea>` | Add a line to the backlog |
 | `/pd:retrospect` | Run a retrospective for a feature |
 | `/pd:generate-docs` | Scaffold or update `docs/user-guide/`, `docs/dev-guide/` and `docs/technical/` |
-| `/pd:sync-cache` | For plugin developers: copy this repository's plugin into Claude Code's plugin cache |
 
 **Also included** (domain tools that work outside the stages):
 
