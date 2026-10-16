@@ -13,6 +13,7 @@ The first live run of thin pd: one real feature, built through every stage on th
   - listed 25 commands, 24 skills, the 4 workflows (`pd:implement-tasks`, `pd:verify-change`, `pd:research-fanout`, `pd:rca-fanout`) and 21 agents, every name with the `pd:` prefix.
 - **v7.0.3 landed mid-run** (during the criteria sign-off): content past half a terminal opens in the browser, expectations render as cards, and `cleanup-stale-versions` spares a version a live session uses. A session started before it keeps running 7.0.2 until resumed.
 - **v7.0.4 landed mid-run** (after the criteria sign-off): `pd-html` shows `<placeholders>` as text and warns, naming the line, on markdown that renders garbled, such as this run's `shape.md:54`. Resume the session (`claude -r`) to pick it up.
+- **v7.0.5 landed mid-run** (after Contracts): each stage's checklist ends with its blocker bar; designing asks for nothing unrequested and evidence behind every risk; no backward compatibility without external consumers; Verify fixes a removal by deleting code. The Contracts below were approved under 7.0.4's checklist, so these rules didn't apply to them. Resume the session (`claude -r`) so Plan runs on 7.0.5.
 - **What it found:** Claude Code ignores the repository's `permissions.allow` entries until the workspace is trusted. Check 8 depends on those rules, so accept the trust dialog the first time you open Claude Code there.
 
 ## Before you start
@@ -138,6 +139,7 @@ Fill in each row during the run.
 
 | Item | Result | Evidence |
 |------|--------|----------|
+| Contracts: the review call | pass | `log.md` 14:37 `review design — codex (fallback: no)`: 5 blockers (R1 symlinked archive, R2 hard link, R3 empty re-run newline, R4 `\|\|ID\|…` header, R5 extra keys), 4 warnings, all fixed in `04011d1`; 14:42 scoped re-review approved, no blocker, `95d7bc5`. Session `fd57286f`: the full review's prompt carried designing's checklist inline and the pinned `{approved, issues, summary}` schema, `--model gpt-6-astra`; the re-review used the scoped schema. Design gate passes; `pd-lint` exits 0 (7.0.5 scripts, 2026-10-16 17:20). `pd-html` still warns once, on `shape.md:54` |
 | The feature reaches `done` | pending | |
 | `pd-lint` passes on it | pending | |
 | Tokens and agent count recorded | pending | |
