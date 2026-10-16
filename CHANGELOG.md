@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.5] - 2026-10-16
+
 ### Changed
 
 - **The design checklist asks for nothing unrequested and for evidence behind every risk.** Every contract element traces to a `B<n>`, an edge case or must-not, an evidenced risk row, or a cited constraint; a new module names the existing one it couldn't extend. Risks are written as if the feature had failed, and a risk without evidence (file:line, a documentation URL, a reproduced failure, or an input that breaks a `B<n>`) is a note, never code.
