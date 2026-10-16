@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.4] - 2026-10-16
+
 ### Added
 
 - **`pd-html` warns on markdown that renders garbled,** naming the line: an unpaired backtick, a quoted string whose inner backtick split a code span in two (a regex or shell command in single backticks), and a backtick left unpaired in a table cell, usually a `|` inside backticks. It reads the CommonMark parser's tokens, so fences, indented code, HTML, lists, entities and frontmatter don't raise false alarms, and each warning names the line it is on. The conductor fixes each warning before showing a page; `references/doc-format.md` gives the authoring rules.
