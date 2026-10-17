@@ -1,6 +1,6 @@
 {
   "name": "pd",
-  "version": "7.0.6-dev",
+  "version": "7.0.7",
   "description": "Structured feature development workflow with skills, agents, and commands for methodical development from ideation to implementation",
   "author": {
     "name": "clthuang"
