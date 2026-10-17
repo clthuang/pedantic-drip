@@ -56,7 +56,7 @@ Run each qa_battery command and report it as one ran line, the command verbatim,
 ran holds only these commands: anything else you run (pd-lint, probes, mutants) goes under issues or gaps.
 List under gaps what passing each criterion in ${args.shape} would still allow. Drive the flows that cross tasks.
 ${run === 1 ? `Run once, over the branch diff: pd-lint --risk ${args.base}..HEAD and pd-lint --isolation ${args.base}..HEAD; each error or unmatched risk signal is an issue.`
-    : `Check each fix: its new test is red on its test commit and green after, or, for a removal (empty test), its commit deletes the code at its finding's file:line. A fix that doesn't hold is a blocker: ${J(fixes)}. The last run: ${J(last)}. Keep the ids of issues still open; number new ones after them.`}
+    : `Check each fix: its new test is red on its test commit and green after, or, for a removal (empty test), its commit deletes the code at its finding's file:line. A fix that doesn't hold is a blocker: ${J(fixes)}. The last run: ${J(last)}. Re-check each of its issues before keeping it (for a QX, re-run its command): keep the ids of those still open, drop the rest, and number new ones after them.`}
 Issue ids Q1, Q2, …; severity blocker, warning or note. List tests whose re-runs disagreed under flakes.`
 // QA's ran keeps the battery lines only, and failures become issues the log and the gate can see (file:line as R0's).
 // A battery command with a fail line is blocker QB<n> (n its place in the battery); QA's other failing checks are
