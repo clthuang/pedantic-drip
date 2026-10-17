@@ -39,6 +39,8 @@ The Plan stage (`phase: create-plan`) removes one unknown: in what order, and ho
   - C1 [B1, B2] (fixture: <path> | fake: <name> | fixture: none): given <input>, expect <outcome>.
 ```
 
+Terms several tasks' cases share (fixture names, a line-counting rule) go once under `## Plan`, above `### Wave 1`: each executor reads that part, then its own block.
+
 Add `- proof: green-only (refactor|infra|fixture)` only for a task whose tests can't be red first; the merger then skips the red check, and the review sees the mark.
 
 ## Review checklist
