@@ -110,6 +110,43 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(r5.cycles === 1 && s5.calls.find(c => c.label === 'fix:1').prompt.includes('no new test, and its test is empty')
     && qa2.includes('"file":"src/legacy.js","line":42') && qa2.includes('for a removal (empty test), its commit deletes the code at its finding'),
     'verify-change: a removal fix (empty test) reaches QA with its finding\'s file:line, for QA to check the deletion')
+  const APPROVED = { approved: true, issues: [], summary: '' }, ran = (...rs) => ({ commit: 'h', ran: rs, gaps: [], issues: [], flakes: [] })
+  const s6 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : ran({ command: 'pytest', result: 'pass' }, { command: 'pd-lint --isolation b..HEAD', result: 'fail' }))
+  const r6 = await run({ ...A, codex: false }, ...s6.args)
+  check(r6.cycles === 0 && r6.qa.ran.map(r => r.command).join() === 'pytest' && r6.qa.issues.map(i => `${i.id}:${i.severity}`).join() === 'QX1:warning',
+    `verify-change: a failing check outside the battery is a warning, starts no cycle, and leaves ran to the battery (cycles ${r6.cycles})`)
+  let q7 = 0
+  const s7 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : ran({ command: 'pytest', result: q7++ ? 'pass' : 'fail' }, { command: 'pytest', result: 'pass' }))
+  const r7 = await run({ ...A, codex: false }, ...s7.args)
+  check(r7.cycles === 1 && s7.calls.find(c => c.label === 'fix:1').prompt.includes('"id":"QB1"'),
+    `verify-change: a failing battery command is blocker QB1 even beside a passing line for it, and one cycle fixes it (cycles ${r7.cycles})`)
+  let q10 = 0
+  const s10 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : q10++ ? { ...ran({ command: 'pytest', result: 'pass' }, { command: 'lint', result: 'fail' }), issues: [{ id: 'QX1', severity: 'warning', category: 'qa-check', file: 's', line: 1, claim: 'pd-lint failed', evidence: '' }] }
+    : ran({ command: 'pytest', result: 'fail' }, { command: 'pd-lint', result: 'fail' }))
+  const r10 = await run({ ...A, codex: false }, ...s10.args)
+  check(r10.cycles === 1 && r10.qa.issues.map(i => `${i.id}:${i.claim}`).join() === 'QX1:pd-lint failed,QX2:lint failed',
+    `verify-change: an echoed QX warning survives the next run, and a new one numbers after it (${r10.qa.issues.map(i => i.id)})`)
+  let q12 = 0
+  const s12 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : q12++ ? { ...ran({ command: 'pytest', result: 'pass' }, { command: 'lint', result: 'pass' }), issues: [{ id: 'QX1', severity: 'warning', category: 'qa-check', file: 's', line: 1, claim: 'lint failed', evidence: '' }] }
+    : ran({ command: 'pytest', result: 'fail' }, { command: 'lint', result: 'fail' }))
+  const r12 = await run({ ...A, codex: false }, ...s12.args)
+  check(r12.cycles === 1 && r12.qa.issues.length === 0, `verify-change: an echoed QX whose command now passes is dropped (${r12.qa.issues.map(i => i.id)})`)
+  const s8 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [{ issue: 'QB1', evidence: 'needs a contract change: shape.md:9' }] }
+    : ran({ command: 'pytest', result: 'fail' }))
+  const r8 = await run({ ...A, codex: false }, ...s8.args)
+  check(r7.qa.issues.length === 0 && s7.calls.find(c => c.label === 'fix:1').prompt.includes('"file":"s","line":1'), 'verify-change: QB1 carries a file:line the log parser reads, and clears once the battery passes')
+  check(r8.cycles === 1 && r8.rejections.length === 1, `verify-change: a rejected battery failure ends the loop for the user's ruling (cycles ${r8.cycles})`)
+  const s9 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] } : l.startsWith('qa') ? null : null)
+  const r9 = await run({ ...A, codex: false }, ...s9.args)
+  check(r9.cycles === 0, `verify-change: no QA result starts no fix cycle; the exit gate stops on the missing battery (cycles ${r9.cycles})`)
+  const s11 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] } : ran())
+  const r11 = await run({ ...A, codex: false }, ...s11.args)
+  check(r11.cycles === 0 && r11.qa.ran.length === 0 && r11.qa.issues.length === 0, `verify-change: a battery line missing from ran raises no issue and no cycle; the gate catches it (cycles ${r11.cycles})`)
+  check(s5.calls.find(c => c.label === 'fix:1').prompt.includes('Change code and tests only, never s or p'), 'verify-change: the fixer never edits shape.md or plan.md')
   const s4 = stubs(l => l.startsWith('review') ? null : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
   const r4 = await run(A, ...s4.args)
   check(r4.reviewed_by === null && r4.review.issues.map(i => `${i.id}:${i.severity}:${i.file}:${i.line}`).join() === 'R0:blocker:s:1'

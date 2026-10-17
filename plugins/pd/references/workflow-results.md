@@ -57,6 +57,7 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 
 - **`reviewed_by`:** who made the review call, as the `review` entry's heading names it: `codex (fallback: no)`, `<Claude reviewer> (fallback: yes)` or `<Claude reviewer> (codex off)`; `null` when no usable review came back.
 - **No usable review** (every reviewer failed, not a cap stop): `review.issues` holds one blocker, `{"id": "R0", "severity": "blocker", "category": "review", "file": <args.shape>, "line": 1, "claim": "no usable review: Codex and the Claude reviewer both failed", "evidence": ""}`. The fix cycles skip it; only a re-run review or the user's `decision` closes it.
+- **`qa`:** `ran` holds the `qa_battery` lines only. Failures come back in `qa.issues` at `shape.md:1`: a battery command with a `fail` line is a blocker, `QB<n>` (n its place in the battery); QA's other failing checks are warnings, `QX<n>`.
 - **A removal fix** (unneeded code deleted: see verifying's blocker bar) has an empty `test`: QA checks its commit deletes the code at the finding's file:line (plan §A2).
 - **A budget stop's unstarted tasks** aren't listed: the conductor derives them from `plan.md` and the `pd/<id>/task-*` branches.
 

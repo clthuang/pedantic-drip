@@ -26,7 +26,8 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
    - **`note`:** one per flake.
 5. **Settle what is still open:**
    - **Rejections:** put them to the user through AskUserQuestion, at most four per call, blockers first. Each answer is a `decision` entry, `A (user, verbatim)`; an accepted one adds `Closes:` for its issue, naming the entry that raised it (`review@…#R<n>` or `qa@…#Q<n>`).
-   - **Blockers left after the third cycle, or a failing battery:** a `capped verify` entry (four lists), then ask the user; the answer is a `decision` with `answers: capped@<date> <time>`.
+   - **An accepted rejection naming a criteria or contract change** (the fixer's, when only a spec change allows the fix): after its `decision`, a backward move to the stage that owns the change, `specify` for a criterion and `design` for a contract, per `workflow-transitions`, with `Invalidates:` naming the element; the code change follows from there.
+   - **Blockers left after the third cycle, or a battery command failing or missing from QA's run:** a `capped verify` entry (four lists), then ask the user; the answer is a `decision` with `answers: capped@<date> <time>`.
    - **A judgement finding with no testable check:** a hard stop: ask.
    - **No usable review** (`reviewed_by: null`, an `R0` blocker): a hard stop. Ask through AskUserQuestion: re-run the review call, or waive it, a `decision` entry with `Closes: review@<this entry>#R0`. The open `R0` blocks `phase-gate.sh verify` until then.
 6. **Risk tags.** A risk signal with no matching tag: decide the tag with the user (a `decision` entry), then set `risk:` in the README.
@@ -51,4 +52,4 @@ The code review's bar, over the whole branch diff (`<base>..HEAD`), not one task
 - **Safety:** input validated at trust boundaries, no data loss on error paths, no secret in code or logs.
 - **The executors' reports are claims, not evidence:** check each at file:line before relying on it.
 
-A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or a removal: code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it, fixed by deleting it and any contract element asking for it. Style and preference are notes. Every finding cites file:line.
+A blocker is wrong behaviour a user would hit, a criterion with no test that would catch its breaking, or a removal: code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it, fixed by deleting it; when a contract asks for it, the contract change goes to the user first. Style and preference are notes. Every finding cites file:line.
