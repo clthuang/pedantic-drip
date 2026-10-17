@@ -140,7 +140,7 @@ main() {
     command=$(read_tool_input)
 
     # Only process git commit commands
-    if [[ ! "$command" =~ git[[:space:]]+commit ]]; then
+    if [[ ! "$command" =~ git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+commit ]]; then
         output_allow
         exit 0
     fi

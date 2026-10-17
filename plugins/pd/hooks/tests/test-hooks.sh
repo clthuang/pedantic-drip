@@ -163,23 +163,19 @@ test_pre_commit_guard_allows_non_git() {
 test_pre_commit_guard_warns_main() {
     log_test "pre-commit-guard.sh warns on commits to main branch"
 
-    cd "${PROJECT_ROOT}"
+    # A throwaway repo on main, so the test runs whatever branch this checkout is on.
+    local repo output
+    repo=$(mktemp -d)
+    git -C "$repo" init -q -b main
+    git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+    output=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
+    rm -rf "$repo"
 
-    # Only test if actually on main
-    local branch
-    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-
-    if [[ "$branch" == "main" ]] || [[ "$branch" == "master" ]]; then
-        local output exit_code
-        output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "git commit -m test"}}' | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || exit_code=$?
-
-        if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('hookSpecificOutput', {}).get('permissionDecision') == 'ask'" 2>/dev/null; then
-            log_pass
-        else
-            log_fail "Should warn on commits to main"
-        fi
+    # A reminder, not a block: allow, with a reason only the protected-branch path gives.
+    if echo "$output" | python3 -c "import json,sys; h=json.load(sys.stdin)['hookSpecificOutput']; assert h['permissionDecision'] == 'allow' and \"Committing directly to 'main'\" in h['permissionDecisionReason']" 2>/dev/null; then
+        log_pass
     else
-        log_skip "Not on main branch (on $branch)"
+        log_fail "Should remind on commits to main"
     fi
 }
 
