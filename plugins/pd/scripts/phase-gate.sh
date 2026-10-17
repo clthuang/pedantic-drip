@@ -132,9 +132,9 @@ def verify():
         elif pc.git(["cat-file", "-e", commit + "^{commit}"], root, check=False) is None:
             fail(f"qa commit {commit} is not in this repository")
         else:
-            paths = [str(p).rstrip("/") + "/" for k in ("source_paths", "test_paths", "fixture_paths") for p in pc.as_list(cfg.get(k))]
+            paths = [pc.dir_prefix(p) for k in ("source_paths", "test_paths", "fixture_paths") for p in pc.as_list(cfg.get(k))]
             paths = paths or [p for p in ("src/", "tests/") if (root / p).is_dir()]
-            art = str(cfg.get("artifacts_root")).rstrip("/") + "/"
+            art = pc.dir_prefix(cfg.get("artifacts_root"))
             # The index, the working tree and untracked files: whatever differs from the QA'd commit.
             changed = "\n".join(pc.git(a, root) or "" for a in (["diff", "--cached", "--name-only", commit, "--"],
                                                                 ["diff", "--name-only", commit, "--"],

@@ -134,6 +134,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
     : q12++ ? { ...ran({ command: 'pytest', result: 'pass' }, { command: 'lint', result: 'pass' }), issues: [{ id: 'QX1', severity: 'warning', category: 'qa-check', file: 's', line: 1, claim: 'lint failed', evidence: '' }] }
     : ran({ command: 'pytest', result: 'fail' }, { command: 'lint', result: 'fail' }))
   const r12 = await run({ ...A, codex: false }, ...s12.args)
+  check(s12.calls.find(c => c.label === 'qa:2').prompt.includes('Re-check each of its issues before keeping it (for a QX, re-run its command)'), 'verify-change: QA run 2 re-checks the last run\'s issues instead of echoing them')
   check(r12.cycles === 1 && r12.qa.issues.length === 0, `verify-change: an echoed QX whose command now passes is dropped (${r12.qa.issues.map(i => i.id)})`)
   const s8 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [{ issue: 'QB1', evidence: 'needs a contract change: shape.md:9' }] }
     : ran({ command: 'pytest', result: 'fail' }))

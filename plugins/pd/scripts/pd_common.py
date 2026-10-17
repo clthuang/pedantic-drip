@@ -4,6 +4,7 @@ items, sections and log.md entries (plan Part B §5, §6, §12).
 Stdlib only, so pd-lint runs offline inside the commit hook.
 Self-test: python3 pd_common.py --self-test
 """
+import os
 import re
 import subprocess
 import sys
@@ -298,6 +299,11 @@ def _closes(entry):
 
 
 CLOSERS = ("review", "qa", "decision", "capped")
+
+
+def dir_prefix(path):
+    """A configured directory as git prints paths under it: `./tests` and `docs/../records/` become `tests/` and `records/`."""
+    return os.path.normpath(str(path)) + "/"
 
 
 def open_blockers(entries):
