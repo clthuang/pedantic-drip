@@ -10,7 +10,8 @@ trap 'rm -rf "$T"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 mkdir -p "$T/bin"
-printf '#!/bin/sh\necho "gh $*" >> "%s/gh.log"\n' "$T" > "$T/bin/gh"
+# The stub logs every call and answers `run list` (CI's conclusion on main) from $T/ci, default success.
+printf '#!/bin/sh\necho "gh $*" >> "%s/gh.log"\n[ "$1 $2" = "run list" ] && { cat "%s/ci" 2>/dev/null || echo success; }\nexit 0\n' "$T" "$T" > "$T/bin/gh"
 chmod +x "$T/bin/gh"
 export PATH="$T/bin:$PATH"
 
@@ -88,6 +89,15 @@ fails "release-pr: not on main" in_work bash "$SCRIPTS/release-pr.sh"
 g checkout -q main && g reset -q --hard HEAD~1
 fails "release-pr: main behind origin/main" in_work bash "$SCRIPTS/release-pr.sh"
 g reset -q --hard origin/main
+
+echo "" > "$T/ci"
+fails "release-pr: CI on main still running" in_work bash "$SCRIPTS/release-pr.sh"
+echo failure > "$T/ci"
+fails "release-pr: CI on main failed" in_work bash "$SCRIPTS/release-pr.sh"
+echo none > "$T/ci"
+fails "release-pr: no CI run on main" in_work bash "$SCRIPTS/release-pr.sh"
+ok "release-pr: asks about this main commit's push run" grep -q "gh run list --workflow ci.yml --commit $(g rev-parse HEAD) --event push" "$T/gh.log"
+rm "$T/ci"
 
 # --- release-pr.sh: the PR ---
 ok "release-pr: patch" in_work bash "$SCRIPTS/release-pr.sh"

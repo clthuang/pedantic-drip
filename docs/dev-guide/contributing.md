@@ -53,7 +53,7 @@ Solo work merges through `/pd:finish-feature`. For collaborative changes, push t
 
 ## Releasing
 
-See [README_FOR_DEV.md](../../README_FOR_DEV.md) ("Version", "Release Process"). In short: `scripts/release-pr.sh [patch|minor|major]` (default patch) on a clean `main` equal to `origin/main` opens the release PR; merge it once CI passes, and the Publish workflow tags `vX.Y.Z` and fast-forwards `stable`.
+See [README_FOR_DEV.md](../../README_FOR_DEV.md) ("Version", "Release Process"). In short: `scripts/release-pr.sh [patch|minor|major]` (default patch) on a clean `main` equal to `origin/main`, once CI on that commit has passed, opens the release PR; merge it once CI passes, and the Publish workflow tags `vX.Y.Z` and fast-forwards `stable`.
 
 ## Adding Components
 

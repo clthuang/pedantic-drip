@@ -46,7 +46,7 @@ There is one path.
    scripts/release-pr.sh [patch|minor|major]   # default patch
    ```
 
-   It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses while the previous version isn't published yet.
+   It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses while CI on that `main` commit hasn't passed, or while the previous version isn't published yet.
 2. Merge the PR once CI passes.
 3. `.github/workflows/publish.yml` runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`.
 4. Installs pick up the release on their next marketplace update.
