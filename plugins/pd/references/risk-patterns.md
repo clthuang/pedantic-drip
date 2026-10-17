@@ -2,7 +2,7 @@
 
 The risk scan's patterns (plan Part B §9, risk signals). At `verify`, `pd-lint --risk <range>` matches the branch diff against them and warns when a match's tag is missing from the feature's `risk:` list. It never fails. The conductor sets the tag, or the user clears it with a `decision` entry.
 
-Each line is `` - <tag> <path|line>: `<regex>` ``. A `path` pattern matches a changed file's path; a `line` pattern matches an added line. Python `re` syntax, case-insensitive.
+Files under the artifacts root (pd's own records) and `test_paths` are skipped. Each line is `` - <tag> <path|line>: `<regex>` ``. A `path` pattern matches a changed file's path; a `line` pattern matches an added line. Python `re` syntax, case-insensitive.
 
 ## Patterns
 
