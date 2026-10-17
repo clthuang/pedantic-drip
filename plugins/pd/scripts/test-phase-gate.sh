@@ -141,7 +141,7 @@ r=$(repo v-wt "$BAT"); qa "$r" pass; echo 'x = 3' > "$r/src/a.py"
 expect 1 "verify fails on an unstaged source change since the qa commit" verify "$r/$F"
 r=$(repo v-new "$BAT"); qa "$r" pass; echo 'y = 1' > "$r/src/b.py"
 expect 1 "verify fails on an untracked source file since the qa commit" verify "$r/$F"
-r=$(repo v-dot "$BAT"); sed -i '' 's#source_paths: \[src/\]#source_paths: [./src/]#' "$r/.claude/pd.local.md"; qa "$r" pass; echo 'x = 4' > "$r/src/a.py"
+r=$(repo v-dot "$BAT"); perl -pi -e 's#source_paths: \[src/\]#source_paths: [./src/]#' "$r/.claude/pd.local.md"; qa "$r" pass; echo 'x = 4' > "$r/src/a.py"
 expect 1 "verify fails on a source change when source_paths is spelled ./src/" verify "$r/$F"
 r=$(repo v-nobat ""); qa "$r" pass
 out=$(bash "$GATE" verify "$r/$F" 2>&1)
@@ -176,13 +176,13 @@ expect 1 "express fails with no expectation" express "$(feature e-nob "## Requir
 
 $TASKS")"
 expect 1 "express fails when the task has no command" express "$(feature e-nocmd "${MINI/- command:*xml\`/}")"
-d=$(feature e-impl "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: express/' "$d/README.md"
+d=$(feature e-impl "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
 expect 0 "implement on mode: express takes its task from shape.md" implement "$d"
-d=$(feature e-quote "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: "express"/' "$d/README.md"
+d=$(feature e-quote "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: "express"/' "$d/README.md"
 expect 0 "implement on a quoted mode: \"express\" takes its task from shape.md" implement "$d"
 # A log checker that exits 0 without finishing (a broken import, an empty heredoc) fails the gate.
 mkdir -p "$TMP/broken" && cp "$GATE" "$TMP/broken/" && echo 'import sys; sys.exit(0)' > "$TMP/broken/pd_common.py"
-d=$(feature e-crash "$MINI" "${RUN%$'\n'- task 2*}"); sed -i '' 's/mode: standard/mode: express/' "$d/README.md"
+d=$(feature e-crash "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
 GATE="$TMP/broken/phase-gate.sh" expect 1 "a log checker that never finishes fails the gate" implement "$d"
 expect 1 "implement on an express feature still needs the run line" implement "$(feature e-impl2 "$MINI")" --express
 

@@ -24,7 +24,7 @@ mkdir -p "$R/.claude"
 README=$(ls "$R"/docs/dev_artifacts/features/*/README.md)
 
 # 1. A bad staged artifact: a status outside the closed list.
-sed -i '' 's/^status: active$/status: finished/' "$README"
+perl -pi -e 's/^status: active$/status: finished/' "$README"
 git -C "$R" add -A
 err=$(hook_json "git commit -m x" "$R" | bash "$HOOK" 2>&1 >/dev/null); code=$?
 [ "$code" = 2 ] && echo "$err" | grep -q 'finished' && ok || bad "bad staged artifact: exit $code, stderr: $err"
@@ -42,7 +42,7 @@ code=0; hook_json "echo \\\"run git commit -m x\\\"" "$R" | bash "$HOOK" >/dev/n
 [ "$code" = 0 ] && ok || bad "quoted prose naming git commit: exit $code"
 
 # 2. A clean commit.
-sed -i '' 's/^status: finished$/status: active/' "$README"
+perl -pi -e 's/^status: finished$/status: active/' "$README"
 git -C "$R" add -A
 code=0; out=$(hook_json "git commit -m x" "$R" | bash "$HOOK" 2>&1) || code=$?
 [ "$code" = 0 ] && ok || bad "clean commit: exit $code, output: $out"
@@ -54,7 +54,7 @@ t=$( { time (hook_json "ls -la" "$R" | bash "$HOOK" >/dev/null 2>&1); } 2>&1 ); 
 
 # A command that only mentions "commit" isn't a commit.
 code=0; hook_json "echo commit" "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
-sed -i '' 's/^status: active$/status: finished/' "$README"; git -C "$R" add -A
+perl -pi -e 's/^status: active$/status: finished/' "$README"; git -C "$R" add -A
 code2=0; hook_json "grep commit notes.txt" "$R" | bash "$HOOK" >/dev/null 2>&1 || code2=$?
 [ "$code" = 0 ] && [ "$code2" = 0 ] && ok || bad "a non-git mention of commit: exits $code, $code2"
 

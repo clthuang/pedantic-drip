@@ -69,9 +69,9 @@ expect "the registered Stop command blocks an unfinished goal" 2 "target finish 
 printf '## 2026-10-15 10:00+08:00 review\n- R1 blocker src/a.py:3 — wrong value\n' >> "$FD/log.md"
 run "$(hook "$A" S1)"; expect "an open blocker blocks" 2 "open blocker review@2026-10-15 10:00+08:00#R1"
 cp "$TMP/log.orig" "$FD/log.md"
-sed -i '' 's/^status: active$/status: bogus/' "$FD/README.md"
+perl -pi -e 's/^status: active$/status: bogus/' "$FD/README.md"
 run "$(hook "$A" S1)"; expect "a pd-lint failure blocks" 2 "pd-lint fails"
-sed -i '' 's/^status: bogus$/status: active/' "$FD/README.md"
+perl -pi -e 's/^status: bogus$/status: active/' "$FD/README.md"
 
 # --- background work --------------------------------------------------------------------
 run "$(hook "$A" S1 false '[{"type":"workflow","status":"running"}]')"; expect "a running workflow yields" 0
@@ -142,7 +142,7 @@ run "$(hook "$B" S3)"; expect "a decision's raise lifts the cap" 2 "not reached"
 
 # --- the target --------------------------------------------------------------------------------
 cp "$TMP/readme.orig" "$FD/README.md"
-sed -i '' 's/^phase: specify$/phase: design/' "$FD/README.md"
+perl -pi -e 's/^phase: specify$/phase: design/' "$FD/README.md"
 now "$A" "goal: $FID target specify session S1"
 printf '## Requirements\n\nB1: an empty input -> EmptyInput is raised\n' > "$FD/shape.md"
 run "$(hook "$A" S1)"; expect "past the target, its exit check failing: not reached" 2 "target specify not reached"

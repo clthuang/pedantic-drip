@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The risk scan skips pd's own records and test code.** Every run entry writes `Tokens:` into the feature's `log.md`, and error-case tests carry `Permission denied`; both raised a false security signal on the bake-off feature. Migration directories outside the source paths are still scanned.
+- **The risk scan skips pd's own records and test code.** Every run entry writes `Tokens:` into the feature's `log.md`, and error-case tests carry `Permission denied`; both raised a false security signal on the bake-off feature. Everything else is still scanned, migration directories included.
 - **Configured directories are matched however they're spelled.** `./src/` or `docs/../records` never matched git's `src/x` paths, so `phase-gate verify` passed with source changed since the QA commit, and the isolation and risk scans missed their directories. One helper, `pd_common.dir_prefix`, normalizes them.
 
 ## [7.0.7] - 2026-10-17
