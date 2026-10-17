@@ -110,6 +110,11 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(r5.cycles === 1 && s5.calls.find(c => c.label === 'fix:1').prompt.includes('no new test, and its test is empty')
     && qa2.includes('"file":"src/legacy.js","line":42') && qa2.includes('for a removal (empty test), its commit deletes the code at its finding'),
     'verify-change: a removal fix (empty test) reaches QA with its finding\'s file:line, for QA to check the deletion')
+  const s6 = stubs(l => l.startsWith('review') ? { approved: true, issues: [], summary: '' } : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : { commit: 'h', ran: [{ command: 'pytest', result: 'pass' }, { command: 'pd-lint --isolation b..HEAD', result: 'fail' }], gaps: [], issues: [], flakes: [] })
+  const r6 = await run({ ...A, codex: false }, ...s6.args)
+  check(r6.cycles === 0 && !s6.calls.some(c => c.label.startsWith('fix')), `verify-change: a failing line outside the battery starts no fix cycle (cycles ${r6.cycles})`)
+  check(s5.calls.find(c => c.label === 'fix:1').prompt.includes('Change code and tests only, never s or p'), 'verify-change: the fixer never edits shape.md or plan.md')
   const s4 = stubs(l => l.startsWith('review') ? null : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
   const r4 = await run(A, ...s4.args)
   check(r4.reviewed_by === null && r4.review.issues.map(i => `${i.id}:${i.severity}:${i.file}:${i.line}`).join() === 'R0:blocker:s:1'
