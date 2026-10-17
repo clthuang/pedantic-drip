@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.8] - 2026-10-17
+
 ### Changed
 
 - **The risk scan skips pd's own records and test code.** Every run entry writes `Tokens:` into the feature's `log.md`, and error-case tests carry `Permission denied`; both raised a false security signal on the bake-off feature. Everything else is still scanned, migration directories included.
