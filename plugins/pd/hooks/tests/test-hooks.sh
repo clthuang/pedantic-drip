@@ -170,9 +170,13 @@ test_pre_commit_guard_warns_main() {
     if ! git -C "$repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty --no-verify -m init; then
         log_fail "setup: couldn't commit in a throwaway repo"; rm -rf "$repo"; return
     fi
+    # Run from a repo on another branch, so only the -C path can report 'main'.
+    local elsewhere
+    elsewhere=$(mktemp -d)
+    git -C "$elsewhere" init -q -b other
     # -c and -C before the subcommand: both global-option forms must still count as a commit.
-    output=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
-    rm -rf "$repo"
+    output=$(cd "$elsewhere" && echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
+    rm -rf "$repo" "$elsewhere"
 
     # A reminder, not a block: allow, with a reason only the protected-branch path gives.
     if echo "$output" | python3 -c "import json,sys; h=json.load(sys.stdin)['hookSpecificOutput']; assert h['permissionDecision'] == 'allow' and \"Committing directly to 'main'\" in h['permissionDecisionReason']" 2>/dev/null; then
