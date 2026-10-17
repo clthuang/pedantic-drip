@@ -175,7 +175,7 @@ test_pre_commit_guard_warns_main() {
     elsewhere=$(mktemp -d)
     git -C "$elsewhere" init -q -b other
     # -c and -C before the subcommand: both global-option forms must still count as a commit.
-    output=$(cd "$elsewhere" && echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
+    output=$(cd "$elsewhere" && echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || true  # a non-zero guard is a failed assertion, not an aborted suite
     rm -rf "$repo" "$elsewhere"
 
     # A reminder, not a block: allow, with a reason only the protected-branch path gives.
