@@ -416,12 +416,12 @@ while IFS= read -r line; do [ -n "$line" ] && log_error "agents/$line"; done <<<
 # The failing fixture: one break per check, so a rule that stops checking fails validation.
 roles_fixture=$(mktemp -d)
 cp plugins/pd/agents/*.md "$roles_fixture"/
-sed -i '' 's/^tools:.*/tools: [Read, Grep, Glob, Bash]/' "$roles_fixture/design-reviewer.md"
-sed -i '' '/^effort:/d' "$roles_fixture/plan-reviewer.md"
-sed -i '' -e 's/^model:.*/model: opus/' -e 's/^## Verify before you report/## Verify/' "$roles_fixture/implementer.md"
-sed -i '' 's/^model:.*/model: sonnet/' "$roles_fixture/qa-executor.md"
-sed -i '' 's/^tools:.*/tools: [Bash, Read, Write]/' "$roles_fixture/merger.md"
-sed -i '' 's/^tools:.*/tools: [Read, Glob, Write]/' "$roles_fixture/calvin-runner.md"
+perl -pi -e 's/^tools:.*/tools: [Read, Grep, Glob, Bash]/' "$roles_fixture/design-reviewer.md"
+perl -ni -e 'print unless /^effort:/' "$roles_fixture/plan-reviewer.md"
+perl -pi -e 's/^model:.*/model: opus/; s/^## Verify before you report/## Verify/' "$roles_fixture/implementer.md"
+perl -pi -e 's/^model:.*/model: sonnet/' "$roles_fixture/qa-executor.md"
+perl -pi -e 's/^tools:.*/tools: [Bash, Read, Write]/' "$roles_fixture/merger.md"
+perl -pi -e 's/^tools:.*/tools: [Read, Glob, Write]/' "$roles_fixture/calvin-runner.md"
 rm "$roles_fixture/security-reviewer.md"
 fixture_errors=$(agent_roles_errors "$roles_fixture" | grep -c . || true)
 rm -rf "$roles_fixture"

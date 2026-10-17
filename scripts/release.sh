@@ -199,7 +199,7 @@ bump_version() {
 update_plugin_json() {
     local new_version=$1
 
-    sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$PLUGIN_JSON"
+    perl -pi -e "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$PLUGIN_JSON"
     success "Updated $PLUGIN_JSON: version=$new_version"
 }
 
@@ -289,7 +289,7 @@ bump_to_next_dev() {
     local next_dev_version="${new_version}-dev"
 
     # Bump plugin.json to next dev version
-    sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"${next_dev_version}\"/" "$PLUGIN_JSON"
+    perl -pi -e "s/\"version\": *\"[^\"]*\"/\"version\": \"${next_dev_version}\"/" "$PLUGIN_JSON"
 
     # Bump marketplace.json
     python3 -c "
