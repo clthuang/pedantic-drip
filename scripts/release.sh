@@ -247,7 +247,7 @@ promote_changelog() {
     fi
 
     # Insert versioned header after [Unreleased] line
-    sed -i '' "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$new_version] - $today/" CHANGELOG.md
+    perl -pi -e "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$new_version] - $today/" CHANGELOG.md
     success "Promoted CHANGELOG [Unreleased] entries to [$new_version] - $today"
 }
 
