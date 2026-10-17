@@ -97,7 +97,7 @@ Fill in each row during the run.
 
 | # | Check | Result | Evidence |
 |---|-------|--------|----------|
-| 1 | A task's worktree starts from the feature branch's HEAD, and the merger merges its commits | pending | |
+| 1 | A task's worktree starts from the feature branch's HEAD, and the merger merges its commits | pass so far (task 1 of 5) | Run `wf_01738b9b-57b`, 2026-10-17: task 1's first commit `bdc0505` has parent `5246f9b`, the feature HEAD at launch; the merger landed it as `ad6dbd2` "merge task 1". Task 2's worktree also started from `5246f9b` |
 | 2 | A plugin agent's `tools`, `model`, `effort` and `skills` apply through `agentType`; a subagent's hook input carries the parent `session_id` | pass, except `skills`: still to see | Criteria, session `fd57286f`: both `pd:calvin-runner` agents ran on `claude-opus-5-5` at effort `high` (frontmatter `opus`, `high`; the parent ran at `xhigh`) and used only `Skill`, `Read` and `Write` of their four tools. Hook input: a probe (scratch repo, `claude -p --session-id`, a gate file naming `agent_sandbox/ok.md`) had `pd:calvin-runner` write `ok.md`, allowed, then `bad.md`, refused with "calvin-runner may write only its ledger agent_sandbox/ok.md": only a hook input carrying `agent_type` and the parent's `session_id` reaches that message. Only the Claude fallback reviewers carry `skills:` (design-, plan- and code-quality-reviewer), so with Codex enabled it may stay unseen |
 | 3 | A pinned reviewer model gets the 1M-token window as a subagent | pending | |
 | 4 | A `/goal` run stops at a hard stop | pending | |
@@ -120,7 +120,7 @@ Fill in each row during the run.
 | Item | Result | Evidence |
 |------|--------|----------|
 | `${CLAUDE_SESSION_ID}` substitution in skills (the `goal:` line in `## Now`) | pending | |
-| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | partial: agents dispatch by prefixed name; workflows and `skills:` still to see | smoke session `96f90855` lists every name with the prefix; session `fd57286f` dispatched `agentType: pd:calvin-runner` twice |
+| Plugin agent, skill and workflow names with the `pd:` prefix; plain skill names in `skills:` | partial: agents dispatch by prefixed name; workflows and `skills:` still to see (Execute launched a generated copy by `scriptPath`, not `pd:implement-tasks`: finding F1) | smoke session `96f90855` lists every name with the prefix; session `fd57286f` dispatched `agentType: pd:calvin-runner` twice |
 | Subagent hook input carries `agent_type` and the parent `session_id` | pass | the write-guard refusal probe in check 2's row |
 | The `background_tasks` status values the Stop gate reads | pending | |
 
@@ -140,9 +140,16 @@ Fill in each row during the run.
 | Item | Result | Evidence |
 |------|--------|----------|
 | Contracts: the review call | pass | `log.md` 14:37 `review design — codex (fallback: no)`: 5 blockers (R1 symlinked archive, R2 hard link, R3 empty re-run newline, R4 `\|\|ID\|…` header, R5 extra keys), 4 warnings, all fixed in `04011d1`; 14:42 scoped re-review approved, no blocker, `95d7bc5`. Session `fd57286f`: the full review's prompt carried designing's checklist inline and the pinned `{approved, issues, summary}` schema, `--model gpt-6-astra`; the re-review used the scoped schema. Design gate passes; `pd-lint` exits 0 (7.0.5 scripts, 2026-10-16 17:20). `pd-html` still warns once, on `shape.md:54` |
+| Plan: the review call | pass | Ran on 7.0.5. `log.md` 18:51 Codex review, 4 blockers (R1 fixture row 00004 doesn't exist, R2 a case that can't be red at its task's first commit, R3 no "no file written" for B24–B28, R4 B14 not through main), fixed in `fc43e9d`; 18:53 scoped re-review approved. Calvin plan cycle 1 (19:05): 3 blockers and 29 others, answered in `37d45e6`; a scoped check of that edit found 1 blocker (N1), fixed and re-reviewed (19:11). The full review's prompt carried planning's checklist with the blocker bar and "Shared config"; the re-reviews used the scoped schema. Approved `6458b7b`, 5 tasks in 3 waves |
 | The feature reaches `done` | pending | |
 | `pd-lint` passes on it | pending | |
 | Tokens and agent count recorded | pending | |
+
+### Findings for pd
+
+- **F1: `implement-tasks` args are too big to pass.** Each task carries `block`, its `plan.md` block verbatim (`implement-tasks.js:44`, `:51`): 4.4 KB for task 1, 31 KB for five tasks. The Workflow tool takes `args` only as inline tool input, so the conductor would have to type 31 KB of JSON. It generated a copy of 7.0.5's script with the args embedded and launched that by `scriptPath` instead (session `fd57286f`, 2026-10-17 10:01). The logic was unchanged: the diff is `args` → `ARGS`.
+- **F2: shared definitions don't reach implementers.** The cases use terms defined once at the top of `plan.md` `## Plan`, but an implementer gets only its own block. The conductor added a `- shared terms:` pointer to every task (`log.md` 2026-10-17 10:00).
+- **F3: raw U+2028 in `plan.md`.** Task 1 C2 held two raw line-separator characters where it meant the escape `\u2028`. The conductor caught them before launch (`5246f9b`). One occurrence, so no check is proposed.
 
 ## When it passes
 
