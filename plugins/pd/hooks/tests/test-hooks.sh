@@ -167,8 +167,11 @@ test_pre_commit_guard_warns_main() {
     local repo output
     repo=$(mktemp -d)
     git -C "$repo" init -q -b main
-    git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-    output=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
+    if ! git -C "$repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty --no-verify -m init; then
+        log_fail "setup: couldn't commit in a throwaway repo"; rm -rf "$repo"; return
+    fi
+    # -c and -C before the subcommand: both global-option forms must still count as a commit.
+    output=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
     rm -rf "$repo"
 
     # A reminder, not a block: allow, with a reason only the protected-branch path gives.

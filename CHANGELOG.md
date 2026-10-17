@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The reminder on commits to `main` also covers `git -C <dir> commit`.** `pre-commit-guard` matched only `git commit`, so a commit run with `-C` never got the protected-branch reminder.
+- **The reminder on commits to `main` also covers `git -C <dir> commit` and `git -c <key>=<value> commit`.** `pre-commit-guard` matched only `git commit`, so a commit run with those options never got the protected-branch reminder. A quoted `-C` path containing spaces still isn't matched.
 
 ## [7.0.9] - 2026-10-18
 

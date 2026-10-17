@@ -41,9 +41,9 @@ extract_command_workdir() {
         return 0
     fi
 
-    # Match: git -C /path ... or git -C "/path" ...
-    if [[ "$command" =~ git[[:space:]]+-C[[:space:]]+[\"\']?([^\"\'[:space:]]+)[\"\']? ]]; then
-        echo "${BASH_REMATCH[1]}"
+    # Match: git -C /path ... or git -C "/path" ..., after any -c key=value options
+    if [[ "$command" =~ git([[:space:]]+-c[[:space:]]+[^[:space:]]+)*[[:space:]]+-C[[:space:]]+[\"\']?([^\"\'[:space:]]+)[\"\']? ]]; then
+        echo "${BASH_REMATCH[2]}"
         return 0
     fi
 

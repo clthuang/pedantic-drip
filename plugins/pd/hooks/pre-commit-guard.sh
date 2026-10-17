@@ -140,7 +140,8 @@ main() {
     command=$(read_tool_input)
 
     # Only process git commit commands
-    if [[ ! "$command" =~ git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+commit ]]; then
+    # shortcut: a quoted -C path with spaces isn't matched (extract_command_workdir can't parse one either); quote-aware parsing if pd agents start using such paths
+    if [[ ! "$command" =~ git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+commit ]]; then
         output_allow
         exit 0
     fi
