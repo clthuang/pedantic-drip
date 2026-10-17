@@ -34,7 +34,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks -q
 bash scripts/test-release.sh
 
 # Release: bumps plugin.json, promotes [Unreleased], opens a PR from release/vX.Y.Z into main (needs gh)
-# Run on a clean main equal to origin/main; the bump is your choice, default patch
+# Run on a clean main equal to origin/main, once CI on that commit has passed; the bump is your choice, default patch
 scripts/release-pr.sh [patch|minor|major]
 # Merge the PR once CI passes; publish.yml then tags vX.Y.Z and fast-forwards stable
 ```

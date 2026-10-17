@@ -94,6 +94,9 @@ echo "" > "$T/ci"
 fails "release-pr: CI on main still running" in_work bash "$SCRIPTS/release-pr.sh"
 echo failure > "$T/ci"
 fails "release-pr: CI on main failed" in_work bash "$SCRIPTS/release-pr.sh"
+echo none > "$T/ci"
+fails "release-pr: no CI run on main" in_work bash "$SCRIPTS/release-pr.sh"
+ok "release-pr: asks about this main commit's push run" grep -q "gh run list --workflow ci.yml --commit $(g rev-parse HEAD) --event push" "$T/gh.log"
 rm "$T/ci"
 
 # --- release-pr.sh: the PR ---
