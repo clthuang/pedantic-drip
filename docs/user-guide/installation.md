@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-10-15T12:00:00Z
+last-updated: 2026-10-18T12:00:00Z
 source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
@@ -17,8 +17,10 @@ audit-feature: 098-tier-doc-frontmatter-sweep
 
 ## Install
 
+In a Claude Code session (`#stable` follows releases):
+
 ```bash
-/plugin marketplace add clthuang/pedantic-drip
+/plugin marketplace add clthuang/pedantic-drip#stable
 /plugin install pd@pedantic-drip-marketplace
 ```
 

@@ -21,10 +21,10 @@
 | uv | runs `pd-html.py` (Markdown to HTML) |
 | Codex plugin | optional: the first reviewer, when your CLAUDE.md enables it |
 
-In a Claude Code session:
+In a Claude Code session (`#stable` follows releases):
 
 ```
-/plugin marketplace add clthuang/pedantic-drip
+/plugin marketplace add clthuang/pedantic-drip#stable
 /plugin install pd@pedantic-drip-marketplace
 ```
 

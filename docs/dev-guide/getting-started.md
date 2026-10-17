@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-10-15T12:00:00Z
+last-updated: 2026-10-18T12:00:00Z
 source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
@@ -26,10 +26,10 @@ cd plugins/pd && uv sync && cd ../..
 
 ## Installing the Plugin Locally
 
-Inside Claude Code, from the repository root:
+Inside Claude Code, install the released plugin (`#stable` follows releases):
 
 ```
-/plugin marketplace add .claude-plugin/marketplace.json
+/plugin marketplace add clthuang/pedantic-drip#stable
 /plugin install pd@pedantic-drip-marketplace
 ```
 
@@ -39,7 +39,7 @@ To try plugin changes, start a session with this checkout's plugin in place of t
 claude --plugin-dir plugins/pd
 ```
 
-The installed copy changes only through a release (`scripts/release.sh`), which Claude Code picks up from GitHub.
+The installed copy changes only through a release, which reaches installs through `stable`.
 
 ## Project Configuration
 
@@ -53,11 +53,9 @@ Each project's settings live in `.claude/pd.local.md`, written by `/pd:init`. Ke
 | `workflow_output_cap` | `2000000` | Output tokens per workflow run |
 | `feature_token_budget` | unset | Tokens per feature, checked by the Stop hook |
 
-> **Note:** In this repository `base_branch` auto-detects `main`, but feature branches merge to `develop`. The release script handles `develop → main`.
-
 ## Running Tests
 
-Run every command with a throwaway `HOME`: `test-hooks.sh` and `validate.sh` rsync into the plugin cache under `$HOME`. The full list is in [commands-reference.md](../dev_guides/commands-reference.md).
+Run every command with a throwaway `HOME`, so no test touches your real `~/.claude`. The full list is in [commands-reference.md](../dev_guides/commands-reference.md).
 
 ```bash
 H=$(mktemp -d)

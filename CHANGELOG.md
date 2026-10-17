@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases go through a PR, and installs follow a `stable` branch.** `main` is the trunk: every change reaches it through a PR, and rulesets require the `validate` check. `scripts/release-pr.sh [patch|minor|major]` opens the release PR (the version bump and the CHANGELOG promotion). Merging it lets the Publish workflow tag the release and fast-forward `stable`. Add the marketplace as `clthuang/pedantic-drip#stable` to get released versions only; an existing one has to be removed and added again. `release.sh`, `release.yml`, the `develop` branch and `-dev` versions are gone, and `plugin.json` holds the only version.
+- **`/pd:finish-feature` merges through a PR when the base branch requires one.** When the base branch's rules require a pull request, the finish pushes the branch, opens the PR, waits for its checks and merges it, instead of a local merge the remote would refuse.
+- **Verify's later QA runs re-check carried issues** (shipped in 7.0.8, left out of its notes). Run 2 and later re-check each issue of the last run before keeping it, re-running a `QX` warning's command, so a fixed warning isn't echoed back to you.
+
 ## [7.0.8] - 2026-10-17
 
 ### Changed

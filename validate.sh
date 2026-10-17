@@ -302,11 +302,11 @@ validate_plugin_json() {
         return 1
     fi
 
-    # Validate version format: X.Y.Z or X.Y.Z-dev
+    # Validate version format: X.Y.Z
     local version=$(jq -r '.version // empty' "$file")
     if [ -n "$version" ]; then
-        if ! echo "$version" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+(-dev)?$"; then
-            log_error "$file: version '$version' must be in X.Y.Z or X.Y.Z-dev format"
+        if ! echo "$version" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+$"; then
+            log_error "$file: version '$version' must be in X.Y.Z format"
             return 1
         fi
     fi
@@ -617,7 +617,7 @@ while IFS= read -r plugin_json; do
     validate_plugin_json "$plugin_json" && log_success "plugin.json valid"
     # Check that .claude-plugin/ only contains allowed files
     validate_plugin_dir_structure "$(dirname "$plugin_json")"
-done < <(find . -path "*/.claude-plugin/plugin.json" -type f 2>/dev/null)
+done < <(git ls-files "*.claude-plugin/plugin.json")  # tracked only: worktree and sandbox copies aren't ours to check
 echo ""
 
 # Validate marketplace.json
@@ -626,7 +626,12 @@ while IFS= read -r marketplace_json; do
     [ -z "$marketplace_json" ] && continue
     log_info "Checking $marketplace_json"
     validate_marketplace_json "$marketplace_json" && log_success "marketplace.json valid"
-done < <(find . -path "*/.claude-plugin/marketplace.json" -type f 2>/dev/null)
+done < <(git ls-files "*.claude-plugin/marketplace.json")
+echo ""
+
+# One version, in plugin.json: X.Y.Z, at least the last release tag (scripts/check-version.sh)
+echo "Checking the release version..."
+if version_report=$(bash scripts/check-version.sh 2>&1); then log_success "$version_report"; else log_error "$version_report"; fi
 echo ""
 
 # Validate no hardcoded plugin paths in component markdown files
@@ -835,15 +840,6 @@ echo "Validation Complete"
 echo "=========================================="
 echo "Errors: $ERRORS"
 echo "Warnings: $WARNINGS"
-
-# Feature 115: FR-C-115.1 atomicity post-merge gate.
-# Asserts the entity_status_changed emit insertion + F111 manual emit deletion
-# resolved to the same commit on this feature branch.
-if [[ -x scripts/dev/check_fr_c_115_atomicity_postmerge.sh ]]; then
-    if ! bash scripts/dev/check_fr_c_115_atomicity_postmerge.sh "${PD_BASE_BRANCH:-develop}"; then
-        log_error "FR-C-115.1 atomicity check failed (see scripts/dev/check_fr_c_115_atomicity_postmerge.sh output above)"
-    fi
-fi
 
 if [ $ERRORS -gt 0 ]; then
     echo -e "${RED}Validation failed with $ERRORS error(s)${NC}"

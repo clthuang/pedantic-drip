@@ -2,15 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
   pull_request:
-    branches: [develop, main]
+    branches: [main]
 
 jobs:
   validate:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the version and CHANGELOG checks read tags and the base branch
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,3 +24,10 @@ jobs:
 
       - name: Run hook tests
         run: bash plugins/pd/hooks/tests/test-hooks.sh
+
+      - name: Run release script tests
+        run: bash scripts/test-release.sh
+
+      - name: Released CHANGELOG sections unchanged
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-changelog.sh "origin/$GITHUB_BASE_REF"

@@ -65,12 +65,6 @@ When work is done outside the workflow, recover by creating feature artifacts af
 - Benefit: Preserves audit trail without discarding completed work
 - Trade-off: Artifacts are reconstructed, not organic; less detailed than if created during work
 
-### Pattern: Two-Plugin Coexistence
-Maintain separate dev (pd/) and production (pd/) plugin directories.
-- Used in: Feature #012
-- Benefit: Clean releases via copy, no branch-based transformations
-- Protection: Pre-commit hook blocks direct commits to production plugin
-
 ### Pattern: Environment Variable Bypass for Automation
 Use env var (e.g., IFLOW_RELEASE=1) to bypass protective hooks during scripted operations.
 - Used in: Feature #012
@@ -720,7 +714,7 @@ When two code paths must produce identical outputs on identical inputs (e.g., tw
 - Observation count: 1
 
 ### Pattern: AC-13 Hash-Equality Gate for Atomic-Commit Refactors
-When a refactor must commit atomically across N files, add an AC asserting that `git log {base}..HEAD --format=%H -- file_i` returns the same single hash across all files. The gate is cheap (one hash per file via per-file `git log`), runs at branch level, and catches the 2-commit anti-pattern before merge. Pattern: `H1=$(git log develop..HEAD --format=%H -- f1) && ... && test "$H1" = "$H2" -a "$H2" = "$H3" -a -n "$H1" && [[ $(echo "$H1" | wc -w) -eq 1 ]]`.
+When a refactor must commit atomically across N files, add an AC asserting that `git log {base}..HEAD --format=%H -- file_i` returns the same single hash across all files. The gate is cheap (one hash per file via per-file `git log`), runs at branch level, and catches the 2-commit anti-pattern before merge. Pattern: `H1=$(git log {base}..HEAD --format=%H -- f1) && ... && test "$H1" = "$H2" -a "$H2" = "$H3" -a -n "$H1" && [[ $(echo "$H1" | wc -w) -eq 1 ]]`.
 - Observed in: Feature 096-iso8601-pattern-relocation (design AC-13; T5 verification PASS with H1=H2=H3=fc42d6f6730eb7fe026a73f205c8ef46db652604)
 - Benefit: cheapest possible gate (O(file-size), zero infrastructure) for the highest-blast-radius refactor mode (split atomic commits)
 - Confidence: high
