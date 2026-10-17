@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Verify's loop runs only on what can be fixed.** The loop runs on blockers alone. QA's `ran` keeps the battery lines: a failing battery command becomes blocker `QB<n>`, and any other failing check a warning `QX<n>`, so it reaches you without starting a cycle. A contract-pinned `pd-lint --isolation` error kept the bake-off's QA failing, so two fix cycles ran with no open blocker (bake-off F5).
+- **Verify's loop runs only on what can be fixed.** The loop runs on blockers alone. QA's `ran` keeps the battery lines: a failing battery command becomes blocker `QB<n>`, and a failing check QA put in `ran` beside them becomes warning `QX<n>`, which reaches you without starting a cycle. QA's own issues (lint, probes) keep the severity QA gives them. A contract-pinned `pd-lint --isolation` error kept the bake-off's QA failing, so two fix cycles ran with no open blocker (bake-off F5).
 - **The fixer changes code and tests only.** A fix that needs a criteria or contract change goes to the user as a rejection naming the change; a removal a contract asks for does too. Accepting one moves the feature back to `specify` or `design`. In the bake-off, a fixer extended signed criterion B36 while fixing a warning (F6).
 
 ## [7.0.6] - 2026-10-17
