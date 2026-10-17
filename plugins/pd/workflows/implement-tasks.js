@@ -11,7 +11,7 @@ export const meta = {
 
 // args (plan §A4, Part B §8): {feature_id, shape, plan, workflow_output_cap, waves: [[task]],
 //   merged: [n] (already landed: skipped), finished: [{n, branch, head, first_commit, case_map}] (resume: straight to the merger)}
-// task: {n, title, parallel_safe, block (the plan's task block, verbatim), command, junit, green_only (reason or null)}
+// task: {n, title, parallel_safe, command, junit, green_only (reason or null)}. plan is null in express mode.
 // The main checkout must have the feature branch checked out: worktree.baseRef "head" makes it every worktree's base.
 if (!args || typeof args.workflow_output_cap !== 'number') throw new Error('implement-tasks needs args.workflow_output_cap (plan §A5 cap 1)')
 const START = budget.spent()
@@ -41,16 +41,16 @@ const MERGED = obj({ status: { enum: ['merged', 'failed', 'conflict'] }, head: s
   broke: arr({ type: 'integer' }), flakes: arr(FLAKE), reason: str })
 
 const branchOf = t => `pd/${args.feature_id}/task-${t.n}`
-const IMPLEMENT = t => `${t.block}
-
-Feature ${args.feature_id}, task ${t.n}. Pointers: ${args.shape} (## Design), ${args.plan} (task ${t.n}).
+// The executor reads its task block from the committed file in its worktree: the args stay small, and it gets the shared terms too.
+const TASK = t => args.plan
+  ? `Your task is #### Task ${t.n} in ${args.plan}. Read ## Plan above ### Wave 1 first (the terms every task shares), then your task block. Its contract is in ${args.shape} ## Design.`
+  : `Your task is the task block in ${args.shape} ## Requirements (express mode). Its contract is in ${args.shape} ## Design.`
+const IMPLEMENT = t => `Feature ${args.feature_id}, task ${t.n}. ${TASK(t)}
 You run in your own git worktree. Before your first commit, rename its branch: git branch -m ${branchOf(t)}.
 ${t.green_only ? `proof: green-only (${t.green_only}): no tests-first commit; the proving command's existing tests prove the task. Commit each meaningful step until it passes.` : 'Commit the tests first: one commit holding only the test files, plus new source files or added signatures that raise; every test fails as a test, with no load errors. Then commit each meaningful step until the proving command passes.'} Write the minimum code that meets the contract.
 Never change a test file after that first commit. If a test is wrong, stop and report error "transcription" (the case is right, its test code is wrong) or "wrong-test" (the case itself is wrong); otherwise error "none".
 Report your branch, HEAD, first commit, worktree path (pwd) and case_map: each test case id mapped to the test that encodes it.`
-const FIX = (t, s, cycle, failure) => `${t.block}
-
-Fix cycle ${cycle} of 3 for feature ${args.feature_id}, task ${t.n}.
+const FIX = (t, s, cycle, failure) => `Fix cycle ${cycle} of 3 for feature ${args.feature_id}, task ${t.n}. ${TASK(t)}
 ${s.worktree ? `First remove the failed attempt's worktree, keeping its branch: git worktree remove --force ${s.worktree}. Then, in` : 'In'} your own worktree, check out ${branchOf(t)} and work there.
 Why it failed: ${J(failure)}
 ${s.error === 'transcription' ? 'It is a transcription error: rebuild the branch from its base with a corrected tests-first commit, then implement again.' : 'Fix the code only: the tests stay as the first commit left them.'} If the failure shows a test case itself is wrong, stop and report error "wrong-test".

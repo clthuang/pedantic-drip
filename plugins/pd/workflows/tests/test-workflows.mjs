@@ -48,7 +48,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
     const ok = n === '1' || (n === '2' && merges[n] === 2)
     return { status: ok ? 'merged' : 'failed', head: 'h2', proof: { first: 'fail', head: ok ? 'pass' : 'fail', greens: [], skipped: [] }, broke: [], flakes: [], reason: ok ? '' : 'head fails' }
   }
-  const t = (n, ps) => ({ n, title: `t${n}`, parallel_safe: ps, block: `#### Task ${n}`, command: `cmd ${n}`, junit: `j${n}.xml`, green_only: null })
+  const t = (n, ps) => ({ n, title: `t${n}`, parallel_safe: ps, command: `cmd ${n}`, junit: `j${n}.xml`, green_only: null })
   const a = { feature_id: 'f', shape: 's', plan: 'p', workflow_output_cap: 1e9, waves: [[t(1, true), t(2, true)], [t(3, false)], [t(4, false)]] }
   const s = stubs(answer)
   const r = await run(a, ...s.args)
@@ -57,6 +57,12 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
     && keys(globalThis.__RESULT.properties.tasks.items.properties) === keys(impl.tasks[0]), 'implement-tasks: task fields equal')
   check(r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`).join(' ') === '1:merged:0 2:merged:1 3:failed:3', `implement-tasks: statuses ${r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`)}`)
   check(!s.calls.some(c => c.label === 'implement:4'), 'implement-tasks: the run stops after a failed task')
+  const p1 = s.calls.find(c => c.label === 'implement:1').prompt, f3 = s.calls.find(c => c.label === 'fix:3:1').prompt
+  check([p1, f3].every(p => p.includes('#### Task ') && p.includes(' in p. Read ## Plan above ### Wave 1 first') && !p.includes('undefined')),
+    'implement-tasks: the implementer and the fixer read their task block, after the shared terms, from plan.md')
+  const sx = stubs(answer)
+  await run({ ...a, plan: null, waves: [[t(1, false)]] }, ...sx.args)
+  check(sx.calls[0].prompt.includes('the task block in s ## Requirements (express mode)'), 'implement-tasks: express reads its task block from shape.md')
   const fixes = s.calls.filter(c => c.label.startsWith('fix:3:'))
   check(fixes.map(c => c.model || '-').join() === '-,opus,opus' && fixes.every(c => c.isolation === 'worktree'), 'implement-tasks: cycle 1 keeps the frontmatter model, 2 and 3 run opus')
   check(fixes[0].prompt.includes('git worktree remove --force /wt/implement:3') && fixes[0].prompt.includes('check out pd/f/task-3'), 'implement-tasks: a fix cycle removes the failed worktree and reuses the branch')

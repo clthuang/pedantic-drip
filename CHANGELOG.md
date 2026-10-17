@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`implement-tasks` passes each task as a pointer, not its block.** The executor reads `#### Task n` from the committed `plan.md` in its worktree, after the terms under `## Plan` above `### Wave 1` that every task shares (express: `shape.md` `## Requirements`, with `plan: null`). Five tasks' blocks made 31 KB of args, too much for the conductor to pass inline; the bake-off's conductor launched a generated script copy instead (bake-off findings F1, F2).
+
 ## [7.0.5] - 2026-10-16
 
 ### Changed
