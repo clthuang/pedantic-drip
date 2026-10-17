@@ -58,7 +58,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`).join(' ') === '1:merged:0 2:merged:1 3:failed:3', `implement-tasks: statuses ${r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`)}`)
   check(!s.calls.some(c => c.label === 'implement:4'), 'implement-tasks: the run stops after a failed task')
   const p1 = s.calls.find(c => c.label === 'implement:1').prompt, f3 = s.calls.find(c => c.label === 'fix:3:1').prompt
-  check([p1, f3].every(p => p.includes('#### Task ') && p.includes(' in p. Read ## Plan above ### Wave 1 first') && !p.includes('undefined')),
+  check(p1.includes('#### Task 1 in p.') && f3.includes('#### Task 3 in p.') && [p1, f3].every(p => p.includes('Read ## Plan above ### Wave 1 first') && !p.includes('undefined')),
     'implement-tasks: the implementer and the fixer read their task block, after the shared terms, from plan.md')
   const sx = stubs(answer)
   await run({ ...a, plan: null, waves: [[t(1, false)]] }, ...sx.args)

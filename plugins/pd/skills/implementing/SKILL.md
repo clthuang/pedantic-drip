@@ -27,7 +27,7 @@ The Execute stage (`phase: implement`) turns the plan's tasks into merged, prove
    - **`stopped: "budget"`:** per `workflow-transitions`; the resume list is step 3's, re-derived.
    - **a merge conflict:** a hard stop. Ask the user through AskUserQuestion; never resolve it here.
    - **a task `failed` after its three fix cycles:** a hard stop for the user, with the merger's reason and the branch. Their ruling is a `decision` entry.
-   - **a task `wrong-test`** (the test case itself is wrong): move back to `create-plan` (`phase implement -> create-plan (back)`, `Invalidates:` the task's test cases). Merged tasks stay merged; the plan's fix re-runs only the tasks whose contract or cases changed.
+   - **a task `wrong-test`** (the test case itself is wrong): move back to `create-plan` (`phase implement -> create-plan (back)`, `Invalidates:` the task's test cases). Merged tasks stay merged; the plan's fix re-runs only the tasks whose contract or cases changed. Before relaunching, delete each such task's unmerged `pd/<feature id>/task-<n>` branch (`git branch -D`): its tests and its copy of `plan.md` hold the old cases, so resuming it would hand the merger and the fixer the wrong test.
    - **every task merged:** go on.
 7. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh implement <feature dir>`, which needs every plan task (express: the one task) on a `merged, proof pass` line. Then phase exit per `workflow-transitions` (`phase implement -> verify`).
 
