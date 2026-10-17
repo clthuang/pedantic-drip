@@ -61,13 +61,14 @@ Issue ids Q1, Q2, …; severity blocker, warning or note. List tests whose re-ru
 // QA's ran keeps the battery lines only, and failures become issues the log and the gate can see (file:line as R0's).
 // A battery command with a fail line is blocker QB<n> (n its place in the battery); QA's other failing checks are
 // warnings QX<n>, so they reach the user without starting a cycle. A missing battery line is no issue: no fixer can
-// supply it, and the exit gate stops on it. QB is re-derived each run (the battery always runs); an echoed QX is kept.
+// supply it, and the exit gate stops on it. QB is re-derived each run (the battery always runs); an echoed QX is kept
+// unless this run shows its command passing.
 const qxMax = issues => Math.max(0, ...issues.map(i => +((i.id.match(/^QX(\d+)$/) || [])[1] || 0)))
 const same = (a, b) => a.trim() === b.trim()
 const failIssue = (id, severity, claim, q) => ({ id, severity, category: 'qa-check', file: args.shape, line: 1, claim, evidence: `QA run at ${q.commit}` })
 const normalize = q => {
   if (!q) return q
-  const kept = q.issues.filter(i => !/^QB\d+$/.test(i.id))
+  const kept = q.issues.filter(i => !/^QB\d+$/.test(i.id) && !(/^QX\d+$/.test(i.id) && q.ran.some(r => r.result === 'pass' && i.claim === `${r.command} failed`)))
   const offBattery = q.ran.filter(r => r.result === 'fail' && !args.qa_battery.some(c => same(c, r.command)) && !kept.some(i => i.claim === `${r.command} failed`))
   return { ...q, ran: q.ran.filter(r => args.qa_battery.some(c => same(c, r.command))), issues: [...kept,
     ...args.qa_battery.flatMap((c, i) => q.ran.some(r => same(c, r.command) && r.result === 'fail') ? [failIssue(`QB${i + 1}`, 'blocker', `qa_battery command fails: ${c}`, q)] : []),

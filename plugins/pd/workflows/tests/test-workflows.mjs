@@ -129,6 +129,12 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   const r10 = await run({ ...A, codex: false }, ...s10.args)
   check(r10.cycles === 1 && r10.qa.issues.map(i => `${i.id}:${i.claim}`).join() === 'QX1:pd-lint failed,QX2:lint failed',
     `verify-change: an echoed QX warning survives the next run, and a new one numbers after it (${r10.qa.issues.map(i => i.id)})`)
+  let q12 = 0
+  const s12 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
+    : q12++ ? { ...ran({ command: 'pytest', result: 'pass' }, { command: 'lint', result: 'pass' }), issues: [{ id: 'QX1', severity: 'warning', category: 'qa-check', file: 's', line: 1, claim: 'lint failed', evidence: '' }] }
+    : ran({ command: 'pytest', result: 'fail' }, { command: 'lint', result: 'fail' }))
+  const r12 = await run({ ...A, codex: false }, ...s12.args)
+  check(r12.cycles === 1 && r12.qa.issues.length === 0, `verify-change: an echoed QX whose command now passes is dropped (${r12.qa.issues.map(i => i.id)})`)
   const s8 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [{ issue: 'QB1', evidence: 'needs a contract change: shape.md:9' }] }
     : ran({ command: 'pytest', result: 'fail' }))
   const r8 = await run({ ...A, codex: false }, ...s8.args)
