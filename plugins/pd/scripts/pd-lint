@@ -544,7 +544,7 @@ class Linter:
         if not found and key in ("source_paths", "test_paths"):
             default = "src/" if key == "source_paths" else "tests/"
             found = [default] if (self.root / default).is_dir() else []
-        return [str(x).rstrip("/") + "/" for x in found]
+        return [pc.dir_prefix(x) for x in found]
 
     def branch_feature(self):
         branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], self.root, check=False) or ""
@@ -630,7 +630,7 @@ class Linter:
             elif line.startswith("+") and cur:
                 added[cur].append(line[1:])
         # pd's own records ("Tokens:" in every run entry) and test code ("Permission denied" in an error case) are no surface.
-        skip = [self.rel(self.art).rstrip("/") + "/"] + self.paths("test_paths")
+        skip = [pc.dir_prefix(self.rel(self.art))] + self.paths("test_paths")
         hits = set()
         for tag, kind, rx in patterns:
             r = re.compile(rx, re.I)
@@ -926,6 +926,9 @@ def cases(code):
         ("isolation: a clean diff passes", lambda r: commit(r, {"tests/test_parse.py": "import json\nfrom pkg.parse import parse\n"}), ["--isolation", "HEAD~1..HEAD"], "ok", ""),
         ("risk: a signal without its tag warns", lambda r: commit(r, {"src/pkg/api.py": "@app.get('/x')\ndef x():\n    pass\n"}), ["--risk", "HEAD~1..HEAD"], "warn", "risk signal (security)"),
         ("risk: pd's records and tests are no surface", lambda r: commit(r, {f"{ART}/notes.md": "Tokens: 5\n", "tests/test_io.py": "raise PermissionError('Permission denied')\n"}),
+         ["--risk", "HEAD~1..HEAD"], "nowarn", "risk signal"),
+        ("risk: ./tests/ is the same directory", lambda r: (rw(r / CFG, "test_paths: [tests/]", "test_paths: [./tests/]"),
+                                                          commit(r, {"tests/test_io.py": "raise PermissionError('Permission denied')\n"})),
          ["--risk", "HEAD~1..HEAD"], "nowarn", "risk signal"),
         ("risk: the tag silences it", lambda r: (rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nrisk: [security]\n"),
                                                  commit(r, {"src/pkg/api.py": "@app.get('/x')\n"})), ["--risk", "HEAD~1..HEAD"], "nowarn", "risk signal"),

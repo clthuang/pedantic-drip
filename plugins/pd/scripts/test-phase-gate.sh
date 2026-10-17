@@ -141,6 +141,8 @@ r=$(repo v-wt "$BAT"); qa "$r" pass; echo 'x = 3' > "$r/src/a.py"
 expect 1 "verify fails on an unstaged source change since the qa commit" verify "$r/$F"
 r=$(repo v-new "$BAT"); qa "$r" pass; echo 'y = 1' > "$r/src/b.py"
 expect 1 "verify fails on an untracked source file since the qa commit" verify "$r/$F"
+r=$(repo v-dot "$BAT"); sed -i '' 's#source_paths: \[src/\]#source_paths: [./src/]#' "$r/.claude/pd.local.md"; qa "$r" pass; echo 'x = 4' > "$r/src/a.py"
+expect 1 "verify fails on a source change when source_paths is spelled ./src/" verify "$r/$F"
 r=$(repo v-nobat ""); qa "$r" pass
 out=$(bash "$GATE" verify "$r/$F" 2>&1)
 if echo "$out" | grep -q 'set qa_battery in .claude/pd.local.md'; then PASSED=$((PASSED + 1)); else FAILED=$((FAILED + 1)); echo "FAIL: a missing qa_battery says to set it"; fi
