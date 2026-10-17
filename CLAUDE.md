@@ -9,7 +9,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 ## Key Principles
 
 - **No backward compatibility** - This is private tooling with no external users. Delete old code, don't maintain compatibility shims.
-- **Branches for all modes** - All workflow modes (Standard, Full) create feature branches. Branches are lightweight.
+- **Branches for all modes** - All workflow modes (standard, small, express) create feature branches. Branches are lightweight.
 - **Retro before cleanup** - Retrospective runs BEFORE branch deletion so context is still available.
 - **Plugin portability** - Never use hardcoded `plugins/pd/` paths in agent, skill, or command files. Use two-location Glob: primary `~/.claude/plugins/cache/*/pd*/*/...`, fallback `plugins/*/...` (dev workspace). Mark fallback lines with "Fallback" or "dev workspace" so `validate.sh` can distinguish them from violations.
 - **Project-aware design** - pd is used across multiple projects. Paths resolution, configs, and state must be relative to the current project context — never assume a specific project root.
@@ -65,7 +65,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
 *Stays because:* briefings are prose the conductor writes; no check reads them.
 
-**Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `validate.sh`, `release.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
+**Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `validate.sh`, `scripts/release-pr.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
 *Also-why:* Feature 121's specify iter-1 fix pulled the project-creation command in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of the feature's 10 blockers came from that one unchecked scope-widening.
 *Why:* Feature 118's Python-floor bump left the bootstrap and health-check scripts and CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
 *Enforced by:* `planning`'s review checklist ("Shared config"), which the Plan review applies.
@@ -113,7 +113,7 @@ See [Commands Reference](docs/dev_guides/commands-reference.md) for the full lis
 ```bash
 ./validate.sh                    # Validate components
 bash plugins/pd/hooks/tests/test-hooks.sh  # Hook integration tests
-bash scripts/release.sh --ci     # Release (develop→main)
+scripts/release-pr.sh            # Release: opens the release PR into main
 ```
 
 ## Key References
@@ -155,13 +155,13 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 
 **Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
-**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh`):
+**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`, still pending here):
 - `artifacts_root` (default: `docs/dev_artifacts`) — root directory for features, plans, brainstorms, rca and backlog items
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
 
 Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{pd_release_script}`.
 
-**Base branch for this repo is `develop`** — `base_branch: auto` detects `main` from remote HEAD, but all feature branches merge to `develop` (confirmed by git merge history). The release script handles `develop→main`.
+**Base branch for this repo is `main`** — `base_branch: auto` resolves to it from the remote HEAD. Feature branches merge to `main` through PRs; releases go through `scripts/release-pr.sh`.
 
 **Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/backlog-manual.md](docs/backlog-manual.md) is the historical detail annex for pre-134 items.

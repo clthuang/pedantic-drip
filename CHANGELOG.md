@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases go through a PR, and installs follow a `stable` branch.** `main` is the trunk: every change reaches it through a PR, and rulesets require the `validate` check. `scripts/release-pr.sh [patch|minor|major]` opens the release PR (the version bump and the CHANGELOG promotion). Merging it lets the Publish workflow tag the release and fast-forward `stable`. Add the marketplace as `clthuang/pedantic-drip#stable` to get released versions only; an existing one has to be removed and added again. `release.sh`, `release.yml`, the `develop` branch and `-dev` versions are gone, and `plugin.json` holds the only version.
+- **`/pd:finish-feature` merges through a PR when the base branch requires one.** When the base branch's rules require a pull request, the finish pushes the branch, opens the PR, waits for its checks and merges it, instead of a local merge the remote would refuse.
+- **Verify's later QA runs re-check carried issues** (shipped in 7.0.8, left out of its notes). Run 2 and later re-check each issue of the last run before keeping it, re-running a `QX` warning's command, so a fixed warning isn't echoed back to you.
+
 ## [7.0.8] - 2026-10-17
 
 ### Changed
 
 - **The risk scan skips pd's own records and test code.** Every run entry writes `Tokens:` into the feature's `log.md`, and error-case tests carry `Permission denied`; both raised a false security signal on the bake-off feature. Everything else is still scanned, migration directories included.
 - **Configured directories are matched however they're spelled.** `./src/` or `docs/../records` never matched git's `src/x` paths, so `phase-gate verify` passed with source changed since the QA commit, and the isolation and risk scans missed their directories. One helper, `pd_common.dir_prefix`, normalizes them.
-- **Verify's later QA runs re-check carried issues.** Run 2 and later re-check each issue of the last run before keeping it, re-running a `QX` warning's command, so a fixed warning isn't echoed back to you.
 
 ## [7.0.7] - 2026-10-17
 

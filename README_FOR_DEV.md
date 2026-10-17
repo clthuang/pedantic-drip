@@ -1,80 +1,59 @@
 # Developer Guide
 
-This repo uses a git-flow branching model with automated releases via conventional commits.
+All work lands on `main` through pull requests. A script opens each release as a PR; a workflow publishes it once merged.
 
 ## Branch Structure
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Stable releases only (tagged versions) |
-| `develop` | Integration branch (default for development) |
-| `feature/*` | Feature branches (created by pd workflow) |
+| `main` | Trunk and GitHub's default; every change lands here through a PR, merged as a merge commit |
+| `stable` | Release channel that installs follow; only the Publish workflow moves it, fast-forward only |
+| `feature/<id>` | Feature branches (created by pd workflow) |
+| `pd/<id>/task-<n>` | One plan task's branch inside `implement-tasks` |
+| `release/vX.Y.Z` | A release PR's branch, opened by `scripts/release-pr.sh` |
 
-## Single-Plugin Model
+GitHub rulesets protect them:
+- **`main`:** PR required (0 approvals, merge commits only); the `validate` check must pass and be up to date with `main`; no force push or deletion.
+- **`stable`:** no force push or deletion.
+- **`v*` tags:** no update or deletion.
 
-One plugin, branch-based separation:
-
-| Branch | Purpose | Version Format |
-|--------|---------|----------------|
-| `develop` | Active development (dogfood) | X.Y.Z-dev |
-| `main` | Stable releases | X.Y.Z |
-
-All plugin code lives in `plugins/pd/`. Development happens on `develop`, releases merge to `main` with a version tag.
+All plugin code lives in `plugins/pd/`.
 
 ## Development Workflow
 
-1. Create feature branch from `develop`
-2. Use conventional commits (`feat:`, `fix:`, `BREAKING CHANGE:`)
-3. Merge to `develop` via `/pd:finish-feature` or PR
+1. Create a feature branch from `main`
+2. Add your entries under `## [Unreleased]` in `CHANGELOG.md`
+3. Open a PR into `main` (or run `/pd:finish-feature`) and merge once CI passes
 4. Release when ready using the release script
 
-## Version Bump Logic
+## Version
 
-Version bumps are calculated automatically based on code change volume:
+One version: `version` in `plugins/pd/.claude-plugin/plugin.json`, plain `X.Y.Z`. `marketplace.json` carries none. Between releases `main` keeps the last released version.
 
-| Change % | Bump | Example |
-|----------|------|---------|
-| ≤3% | Patch | 1.0.0 → 1.0.1 |
-| 3-10% | Minor | 1.0.0 → 1.1.0 |
-| >10% | Major | 1.0.0 → 2.0.0 |
+The maintainer chooses the bump at release time (patch, minor or major) by semver. Nothing computes it from change volume or commit prefixes.
 
-The script calculates: `(lines added + lines deleted) / total codebase lines`
+`validate.sh` checks the version: it is `X.Y.Z`, at least the highest `v*` tag, a new version has its `CHANGELOG.md` section, and `marketplace.json` has no version.
+
+Released `CHANGELOG.md` sections are frozen: `scripts/check-changelog.sh` fails a PR that changes them. A forgotten entry goes in the next release.
 
 ## Release Process
 
-### Option 1: GitHub Actions (Recommended)
+There is one path.
 
-Trigger from GitHub Actions UI or CLI:
+1. On a clean `main` equal to `origin/main`, with `gh` installed:
 
-```bash
-# Dry run - verify what would happen
-gh workflow run release.yml --ref develop -f dry_run=true
+   ```bash
+   scripts/release-pr.sh [patch|minor|major]   # default patch
+   ```
 
-# Real release
-gh workflow run release.yml --ref develop -f dry_run=false
-```
-
-### Option 2: Local Release
-
-From the develop branch with a clean working tree:
-
-```bash
-./scripts/release.sh
-```
-
-### What the Release Script Does
-
-1. Validate preconditions (on develop, clean tree, has origin)
-2. Calculate version from code change percentage since last tag
-3. Strip `-dev` suffix from plugin.json and marketplace.json
-4. Promote CHANGELOG [Unreleased] entries
-5. Commit on develop, push
-6. Merge develop → main (no-ff), tag, push
-7. Bump develop to next `-dev` version
+   It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses while the previous version isn't published yet.
+2. Merge the PR once CI passes.
+3. `.github/workflows/publish.yml` runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`.
+4. Installs pick up the release on their next marketplace update.
 
 ## Local Development Setup
 
-Clone the repository and install the development plugin:
+Clone the repository and install the released plugin:
 
 ```bash
 git clone https://github.com/clthuang/pedantic-drip.git
@@ -85,7 +64,7 @@ claude
 In Claude Code:
 
 ```
-/plugin marketplace add .claude-plugin/marketplace.json
+/plugin marketplace add clthuang/pedantic-drip#stable
 /plugin install pd@pedantic-drip-marketplace
 ```
 
@@ -95,24 +74,27 @@ To try plugin changes, start a session with this checkout's plugin in place of t
 claude --plugin-dir plugins/pd
 ```
 
-The installed copy changes only through a release (`scripts/release.sh`), which Claude Code picks up from GitHub.
+The installed copy changes only through a release, which reaches installs through `stable`.
 
 ## For Public Users
 
-To install the released version:
+To install the released version (`#stable` follows releases):
 
 ```
-/plugin marketplace add clthuang/pedantic-drip
-/plugin install pd
+/plugin marketplace add clthuang/pedantic-drip#stable
+/plugin install pd@pedantic-drip-marketplace
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `scripts/release.sh` | Release automation script |
-| `.github/workflows/release.yml` | CI release workflow |
-| `.github/workflows/claude-review.yml` | Claude Code reviews each push to develop (not `docs/`) and comments on the commit; needs the `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` |
+| `scripts/release-pr.sh` | Opens the release PR: bumps the version and promotes the CHANGELOG |
+| `scripts/publish-release.sh` | Tags `vX.Y.Z` and fast-forwards `stable`; run by `publish.yml` |
+| `scripts/check-changelog.sh` | Fails a PR that changes a released CHANGELOG section |
+| `.github/workflows/ci.yml` | The `validate` check on PRs into and pushes to `main` |
+| `.github/workflows/publish.yml` | Publishes each release merged to `main` |
+| `.github/workflows/claude-review.yml` | Claude Code reviews each PR into `main` (not `docs/`) and posts a PR comment; needs the `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
 | `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |
 
@@ -392,9 +374,9 @@ When something fails:
 ## Contributing
 
 1. Fork the repository
-2. Create feature branch
+2. Create a feature branch from `main`
 3. Run `./validate.sh`
-4. Submit PR
+4. Submit a PR into `main`
 
 ## References
 

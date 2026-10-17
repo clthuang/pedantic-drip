@@ -21,8 +21,7 @@ This repository uses a two-level plugin system:
     {
       "name": "plugin-name",
       "source": "./plugins/plugin-name",
-      "description": "What this plugin provides",
-      "version": "1.0.0"
+      "description": "What this plugin provides"
     }
   ]
 }
@@ -44,8 +43,9 @@ This repository uses a two-level plugin system:
 ```
 
 **Installation Flow:**
-1. Add marketplace to project: `/plugin marketplace add .`
-2. Install plugin from marketplace: `/plugin install plugin-name@marketplace-name`
+1. Add the marketplace on its release channel: `/plugin marketplace add clthuang/pedantic-drip#stable`
+2. Install the plugin: `/plugin install pd@pedantic-drip-marketplace`
+3. To test local changes, start a session with `claude --plugin-dir plugins/pd` instead
 
 ---
 
@@ -327,9 +327,9 @@ Use these terms consistently across all skills, commands, agents, and documentat
 
 ## Versioning
 
-- Plugins use semantic versioning (MAJOR.MINOR.PATCH)
-- Pin versions in marketplace.json for stability
-- Breaking changes require MAJOR version bump
+- One version, plain `X.Y.Z`: `version` in `plugins/pd/.claude-plugin/plugin.json`; `marketplace.json` carries none
+- The maintainer picks the bump at release time (patch, minor or major) by semver; breaking changes take a MAJOR bump
+- Between releases `main` keeps the last released version; only `scripts/release-pr.sh` changes it
 
 ---
 

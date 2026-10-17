@@ -5,7 +5,7 @@ artifacts_root: docs
 # Merge target branch. "auto" detects from remote HEAD, falls back to "main"
 base_branch: auto
 # Path to release script, run after merge in /finish-feature. Empty to skip
-release_script: scripts/release.sh --ci
+release_script:
 # Comma-separated documentation tiers: user-guide, dev-guide, technical
 doc_tiers: user-guide,dev-guide,technical
 

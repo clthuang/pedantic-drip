@@ -86,8 +86,10 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 ## Installation
 
+In a Claude Code session (`#stable` follows releases):
+
 ```bash
-/plugin marketplace add clthuang/pedantic-drip
+/plugin marketplace add clthuang/pedantic-drip#stable
 /plugin install pd@pedantic-drip-marketplace
 ```
 

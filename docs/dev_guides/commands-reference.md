@@ -30,8 +30,11 @@ node plugins/pd/workflows/tests/test-workflows.mjs
 # Python hook tests (project root, unicode guard)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks -q
 
-# Release (bumps version, merges develop→main, tags)
-# Uses --ci for non-interactive; BUMP_OVERRIDE=patch|minor|major to force bump type
-bash scripts/release.sh --ci
-# Preconditions: (1) clean working tree — git stash first, (2) CHANGELOG.md needs entries under [Unreleased]
+# Release scripts' tests (throwaway repos, stub gh)
+bash scripts/test-release.sh
+
+# Release: bumps plugin.json, promotes [Unreleased], opens a PR from release/vX.Y.Z into main (needs gh)
+# Run on a clean main equal to origin/main; the bump is your choice, default patch
+scripts/release-pr.sh [patch|minor|major]
+# Merge the PR once CI passes; publish.yml then tags vX.Y.Z and fast-forwards stable
 ```

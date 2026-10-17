@@ -1,0 +1,26 @@
+name: Publish
+
+# On every push to main: tags vX.Y.Z on the commit where plugin.json's version became X.Y.Z and
+# fast-forwards stable, the branch the marketplace follows (scripts/publish-release.sh).
+# Between releases it does nothing. Runs are serialized, never cancelled; each converges on the same state.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # push the tag and stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # first-parent history, tags and stable
+
+      - name: Tag the release and move stable
+        run: bash scripts/publish-release.sh "$GITHUB_SHA"
