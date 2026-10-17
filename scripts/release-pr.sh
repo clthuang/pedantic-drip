@@ -14,6 +14,9 @@ command -v gh >/dev/null || die "gh (GitHub CLI) is required to open the PR"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "commit or stash your changes first"
 git fetch -q --tags origin main stable
 [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || die "main isn't origin/main: pull first"
+# A red main blocks the release: CI's run for this exact commit must have passed.
+ci=$(gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)" --event push --limit 1 --json conclusion --jq '.[0].conclusion // "none"')
+[[ "$ci" == success ]] || die "CI on main at $(git rev-parse --short HEAD) is '${ci:-in progress}', not success: fix or wait first"
 
 current=$(jq -r '.version' "$MANIFEST")
 { git rev-parse -q --verify "refs/tags/v$current" >/dev/null && git merge-base --is-ancestor "v$current" origin/stable; } \
