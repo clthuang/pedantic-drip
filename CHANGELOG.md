@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.9] - 2026-10-18
+
 ### Changed
 
 - **Releases go through a PR, and installs follow a `stable` branch.** `main` is the trunk: every change reaches it through a PR, and rulesets require the `validate` check. `scripts/release-pr.sh [patch|minor|major]` opens the release PR (the version bump and the CHANGELOG promotion). Merging it lets the Publish workflow tag the release and fast-forward `stable`. Add the marketplace as `clthuang/pedantic-drip#stable` to get released versions only; an existing one has to be removed and added again. `release.sh`, `release.yml`, the `develop` branch and `-dev` versions are gone, and `plugin.json` holds the only version.
