@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.10] - 2026-10-18
+
 ### Changed
 
 - **A release needs a green `main`.** `scripts/release-pr.sh` refuses unless CI's run for the `main` commit being released passed, so a red `main` blocks the next release instead of shipping in it.
