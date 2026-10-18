@@ -97,7 +97,7 @@ remind() {
 
 main() {
     local command
-    command=$(read_tool_input)
+    command=$(read_tool_input) || exit 0  # unreadable input: no opinion, the normal permission flow decides
 
     # Only process git commit commands
     # shortcut: a quoted -C path with spaces isn't matched (extract_command_workdir can't parse one either); quote-aware parsing if pd agents start using such paths
