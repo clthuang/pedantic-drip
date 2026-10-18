@@ -889,7 +889,7 @@ roadmap:
   - **a defect:** a `defect` entry. Added to a done feature, it never blocks the commit: lint warns, and the retro is owed (§6).
 - **Legacy items** (numeric ids):
   - **one that is `done`** is exempt from the phase-artifact, `metrics`, retro and `from_shape:` checks, but still checked for frontmatter vocabulary, ids and links;
-  - **one that isn't `done`** is listed by `/pd:adopt` and converted to the new artifact set before work on it resumes (§12).
+  - **one that is neither `done` nor `abandoned`** is listed by `/pd:adopt` and converted to the new artifact set before work on it resumes (§12); abandoned work won't resume.
 - **Plans** (§A2):
   - every task in `plan.md` names its test cases, a `uses:` list, a proving command and the files it may touch; each test case names its fixture or fake, or "none"; each proving command names the JUnit XML path it writes, for `pd-proof` (D15);
   - `### Test strategy` names the runner's JUnit option; a runner with none gets a JUnit reporter from an `infra` task before the first feature task;
@@ -1018,6 +1018,7 @@ roadmap:
      - `completed`, `complete`, `implemented`, `satisfied` → `done`;
      - `planned`, `preregistered` → `draft`;
      - `in-progress`, `active` → `active`;
+     - `promoted`, `analyzed` → `abandoned`: not done, so not `done` (the user's ruling on pedantic-drip's dry run, 2026-10-18);
      - anything else is listed for the user to map by hand.
 3. **Convert each `projects/<id>/` into `plans/<id>.md`.**
    - **The body:** the old `prd.md`, followed by the old `roadmap.md`'s prose.
@@ -1028,7 +1029,7 @@ roadmap:
 4. **Convert the review and gate files into `log.md` entries:** `.review-history.md`, `.qa-gate.json` and `implementation-log.md`, plus the registry's phase events and reviewer notes from the read-only export (D5). The originals are removed in the same commit.
    - **Why:** the retro and `pd-status --compare` read past features from `log.md`; without the conversion, legacy features drop out.
    - **Converted entries are written closed:** each carries a `Status: closed (legacy)` line (§6), so `pd-status` shows none of their blockers as open.
-5. **Leave the content files alone.** `spec.md`, `design.md`, `tasks.md` and `prd.md` stay as they are; new items use `shape.md` and `plan.md`. §9 says what `pd-lint` asks of legacy items. One that isn't `done` is listed here and converted to the new artifact set before work on it resumes.
+5. **Leave the content files alone.** `spec.md`, `design.md`, `tasks.md` and `prd.md` stay as they are; new items use `shape.md` and `plan.md`. §9 says what `pd-lint` asks of legacy items. One that is neither `done` nor `abandoned` is listed here and converted to the new artifact set before work on it resumes.
 6. **Commit `docs/dev_artifacts/backlog.md`.**
 7. **Pedantic-drip only:** remove the `.meta.json` and `docs/backlog.md` lines from `.gitignore`.
 8. **Last, write `sop: 1`** into `.claude/pd.local.md`. From here on, `pd-lint` flags the forbidden files (§9).

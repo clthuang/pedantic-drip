@@ -36,6 +36,8 @@ FILES = {
     "docs/brainstorms/20260101-000000-alpha.prd.md": "# PRD: Alpha\n\nThe idea.\n",
     "docs/rca/20260309-drift.md": "# RCA: drift\n",
     "docs/rca/20260310-stale.md": "---\ntitle: Stale\nstatus: completed\n---\n# RCA: stale\n",
+    "docs/brainstorms/20260102-000000-beta.prd.md": "---\nstatus: promoted\n---\n# PRD: Beta\n",
+    "docs/rca/20260311-gone.md": "---\nstatus: analyzed\n---\n# RCA: gone\n",
     "docs/features/003-gamma/README.md": "# Gamma notes\n\nHand-written.\n",
     "docs/plans/2026-01-28-design.md": "# Design plan\n\nAnnex: [notes](2026-01-28-design/notes.md).\n",
     "docs/plans/2026-01-28-design/notes.md": "notes\n",
@@ -59,6 +61,8 @@ IGNORED = {
         "phases": {"specify": {"started": "2026-01-02T09:00:00+00:00", "completed": "2026-01-02T11:00:00+00:00",
                                "iterations": 2, "reviewerNotes": "spec ok"}}}),
     "docs/features/003-gamma/.meta.json": json.dumps({"status": "satisfied", "lastCompletedPhase": "finish"}),
+    "docs/features/005-epsilon/spec.md": "# Epsilon\n",
+    "docs/features/005-epsilon/.meta.json": json.dumps({"status": "abandoned"}),
     "docs/features/001-alpha/.qa-gate.log": "raw gate log\n",
     "docs/features/001-alpha/.qa-gate/security.json": "{}\n",  # a tracked sidecar directory
     "docs/features/001-alpha/.qa-gate/raw.log": "ignored, inside it\n",
