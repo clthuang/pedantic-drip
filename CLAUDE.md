@@ -107,7 +107,7 @@ AskUserQuestion:
 
 ## Commands
 
-See [Commands Reference](docs/dev_guides/commands-reference.md) for the full list of test, validation, and release commands.
+See [Commands Reference](docs/dev-guide/commands-reference.md) for the full list of test, validation, and release commands.
 
 **Quick reference:**
 ```bash
@@ -120,18 +120,17 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 
 | Document | Use When |
 |----------|----------|
-| [Component Authoring Guide](docs/dev_guides/component-authoring.md) | Creating skills, agents, plugins, commands, or hooks |
+| [Component Authoring Guide](docs/dev-guide/component-authoring.md) | Creating skills, agents, plugins, commands, or hooks |
 | [Developer Guide](README_FOR_DEV.md) | Architecture, release process, design principles |
-| [Hook Development Guide](docs/dev_guides/hook-development.md) | Writing or modifying hooks — covers PROJECT_ROOT vs PLUGIN_ROOT, JSON output, shared libs |
-| [Commands Reference](docs/dev_guides/commands-reference.md) | Test commands, validation, release process |
-| [ECC Comparison Improvements](docs/ecc-comparison-improvements.md) | Prioritizing plugin improvements based on competitive analysis |
+| [Hook Development Guide](docs/dev-guide/hook-development.md) | Writing or modifying hooks — covers PROJECT_ROOT vs PLUGIN_ROOT, JSON output, shared libs |
+| [Commands Reference](docs/dev-guide/commands-reference.md) | Test commands, validation, release process |
 
 ## Gotchas
 
 - **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — inert reference markdown (no tooling reads/writes it)
 - **Helper dispatch isolation:** When a function orchestrates N independent helpers, wrap each in its own `try/except`. List-literal dispatch (`[helper1(), helper2()]`) means one exception blocks all subsequent helpers.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
-- **Hook EPIPE safety (feature 107):** Hooks emitting structured output via printf/cat MUST keep `trap '' PIPE` AND wrap writes with `{ ...; } 2>/dev/null || true`. The trap is co-load-bearing — without it, the bash process is SIGPIPE-killed before `|| true` can run. Use `safe_emit_hook_json` from `lib/session-start-helpers.sh`. See `docs/dev_guides/hook-development.md` "Broken-pipe handling".
+- **Hook EPIPE safety (feature 107):** Hooks emitting structured output via printf/cat MUST keep `trap '' PIPE` AND wrap writes with `{ ...; } 2>/dev/null || true`. The trap is co-load-bearing — without it, the bash process is SIGPIPE-killed before `|| true` can run. Use `safe_emit_hook_json` from `lib/session-start-helpers.sh`. See `docs/dev-guide/hook-development.md` "Broken-pipe handling".
 - **Bash 3.2 / macOS BSD portability:** Use POSIX `[[:space:]]` (not `\s`) in `grep -E`; use `${!varname:-default}` indirect expansion (not `eval`) for env-var indirection — both work on macOS bash 3.2 and avoid eval-injection. `$?` in `trap '...' EXIT` strings expands at fire time, not registration time (verified empirically).
 
 ## Quick Reference
@@ -144,7 +143,8 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 **Token budget:** SKILL.md <500 lines, <5,000 tokens
 
 **Documentation sync:** When adding, removing, or renaming skills, commands, agents, or hooks in `plugins/pd/`, update:
-- `README.md` and `README_FOR_DEV.md` — skill/agent/command tables and counts
+- `README.md` — the command tables, the skill list and the skill and agent counts
+- `README_FOR_DEV.md` — the skill tables and the agent groups
 - `plugins/pd/README.md` — component counts table and command/agent tables
 - `plugins/pd/commands/secretary.md` — Specialist Fast-Path table (if renaming agents listed there)
 - `README_FOR_DEV.md` — hooks table (if adding/removing hooks)

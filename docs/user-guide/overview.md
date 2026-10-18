@@ -1,26 +1,25 @@
 ---
-last-updated: 2026-10-15T12:00:00Z
+last-updated: 2026-10-18T06:00:00Z
 source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
-audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 # pd Plugin — Overview
 
-pd is a Claude Code plugin that turns an idea into a merged feature through fixed stages. Each stage hands the next one a committed file, and a script checks that hand-off before the stage closes.
+pd is a Claude Code plugin that turns an idea into a merged feature through fixed stages. Each stage hands the next one a committed file; from Criteria on, a script checks that hand-off before the stage closes.
 
 ## What pd Does
 
-- **Stages in order:** Clarify (brainstorm or RCA), Criteria (`specify`), Contracts (`design`), Plan (`create-plan`), Execute (`implement`), Verify (`verify`), Finish (`finish-feature`).
-- **State in committed files:** each feature is a folder under `docs/dev_artifacts/features/<id>/` holding `README.md` (status, phase, mode, `## Now`), `log.md` (append-only history), `shape.md` and `plan.md`. Nothing lives in a database.
-- **Mechanical checks:** `phase-gate.sh` checks what each stage must hand down; the commit hook runs `pd-lint --staged` before every `git commit`.
-- **Review calls** at Contracts, Plan and Verify: Codex first, else a Claude reviewer; one pass, up to three fix cycles against runnable checks, then you.
+- **Stages in order:** Clarify (brainstorm or RCA), Criteria (`specify`), Contracts (`design`), Plan (`create-plan`), Execute (`implement`), Verify (`verify`), Finish (`finish`).
+- **State in committed files:** each feature is a folder under `{pd_artifacts_root}/features/<id>/` (default `docs/dev_artifacts/`) holding `README.md` (status, phase, mode, `## Now`), `log.md` (append-only history), `shape.md` and `plan.md`. Nothing lives in a database.
+- **Mechanical checks:** `phase-gate.sh` checks what each stage from Criteria to Finish must hand down (Clarify has no exit check); the commit hook runs `pd-lint --staged` before every `git commit` Claude runs. Commits you type in a terminal aren't checked.
+- **Review calls** at Contracts, Plan and Verify: Codex first unless your CLAUDE.md says `**Codex reviewer: DISABLED**`, otherwise (or when Codex fails twice) a Claude reviewer; one pass, up to three fix cycles against runnable checks, then you.
 - **Three depths:** standard, small (one joint review over design and plan) and express (a mini-spec, straight to implement).
 
 ## Key Features
 
 ### Tests first, proven per task
 
-`/pd:implement` runs the `implement-tasks` workflow: one `implementer` per plan task, each in its own worktree on a `pd/<id>/task-<n>` branch. The `merger` lands a task only if its tests failed at the task's first commit and pass at its head (`pd-proof`).
+`/pd:implement` runs the `implement-tasks` workflow: one `implementer` per plan task, each in its own worktree on a `pd/<id>/task-<n>` branch. The `merger` lands a task only if its tests failed at the task's first commit and pass at its head (`pd-proof`). A `proof: green-only` task (a refactor, infra or fixture task) needs only the passing run at its head.
 
 ### Verify: review beside QA
 
@@ -32,7 +31,12 @@ A `/goal` run drives a feature to a target phase. The Stop hook (`pd-stop-gate.s
 
 ### Security review at finish
 
-`pd:security-reviewer` runs at `/pd:finish-feature`, on Anthropic models; it is mandatory for a feature tagged `risk: security`. Its findings block the merge until fixed or waived in a `decision` entry.
+`pd:security-reviewer` runs at `/pd:finish-feature`, on Anthropic models:
+
+- **Always** for a feature tagged `risk: security`.
+- **Otherwise when the branch diff touches a security surface:** auth, secrets, input parsing at a trust boundary, permissions, data deletion, dependency bumps.
+
+A blocker sends the feature back to Verify, where the fixer gets a fresh three fix cycles.
 
 ### Retros on a trigger
 
@@ -46,9 +50,4 @@ A retro runs only when `log.md` records a trigger (a second backward move, a cap
 
 ## How the Workflow Fits Together
 
-```
-brainstorm / rca → specify → design → create-plan → implement → verify → finish
-                      ↑______________ backward move (phase <from> -> <to> (back)) ___|
-```
-
-A backward move sets `phase:` back and appends a `phase` entry naming its reason and what it invalidates. Express features skip specify's full criteria, design and create-plan: the mini-spec in `shape.md` carries the one task.
+The stages run in the order above. A backward move sets `phase:` back and appends a `phase <from> -> <to> (back)` entry naming its reason and what it invalidates. Express features skip specify's full criteria, design and create-plan: the mini-spec in `shape.md` carries the one task.

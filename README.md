@@ -4,22 +4,16 @@
 
 ## What It Does
 
-- **Fixed stages:** Clarify, Criteria, Contracts, Plan, Execute, Verify, Finish. Each stage hands the next committed work, and closes only when its check passes.
+- **Fixed stages:** Clarify, Criteria, Contracts, Plan, Execute, Verify, Finish. Each stage hands the next committed work. Criteria through Finish each close only when their exit check (`phase-gate.sh`) passes.
 - **State in git:** each feature is a folder of Markdown files, committed with your code.
-- **Mechanical checks:** a script checks each stage's hand-off and prints one line per problem. A hook lints the feature files staged by every `git commit` Claude runs; commits you type in a terminal aren't checked.
-- **Tests first, proven per task:** each plan task runs in its own worktree, on its own branch. The merger lands a task after checking that its tests failed before the code was written and pass after. A test that was already passing is named for the review at Verify.
-- **Bounded reviews:** at Contracts, Plan and Verify, Codex reviews first when you've enabled it, otherwise a Claude reviewer. Up to three fix cycles follow. Blockers still open after that stop the run, and pd asks you what to do.
+- **Mechanical checks:** from Criteria on, a script checks each stage's hand-off and prints one line per problem. A hook lints the feature files staged by every `git commit` Claude runs; commits you type in a terminal aren't checked.
+- **Tests first, proven per task:** each plan task runs in its own worktree, on its own branch. The merger lands a task after checking that its tests failed before the code was written and pass after; a refactor or fixture task marked `proof: green-only` only has to pass. A test that was already passing is named for the review at Verify.
+- **Bounded reviews:** at Contracts, Plan and Verify, Codex reviews first unless your CLAUDE.md disables it; otherwise, or when Codex fails twice, a Claude reviewer does. Up to three fix cycles follow. Blockers still open after that stop the run, and pd asks you what to do.
 - **Unattended runs:** `/goal` drives a feature to a target stage. A Stop hook holds the run until that stage is reached with no open blocker.
 
 ## Installation
 
-| Requirement | Notes |
-|-------------|-------|
-| Claude Code | latest |
-| git | any |
-| Python 3 | pd's scripts use only the standard library |
-| uv | runs `pd-html.py` (Markdown to HTML) |
-| Codex plugin | optional: the first reviewer, when your CLAUDE.md enables it |
+pd needs Claude Code, git, Python 3, `jq` and `uv`; the Codex plugin is optional. [Installation](docs/user-guide/installation.md) lists what each is for, and how to update.
 
 In a Claude Code session (`#stable` follows releases):
 
@@ -29,7 +23,7 @@ In a Claude Code session (`#stable` follows releases):
 ```
 
 Then, once per project:
-- **A new project:** run `/pd:init`. It writes `.claude/pd.local.md` (the artifacts folder, the base branch, your QA commands and the token budgets). It also proposes `.claude/settings.json` entries as a diff. Approve at least `worktree.baseRef: "head"`; without it, each task's worktree starts from the default branch instead of the feature branch. [Installation](docs/user-guide/installation.md) explains each entry.
+- **A new project:** run `/pd:init` before the first feature: it writes `.claude/pd.local.md`, which every pd workflow reads (`workflow_output_cap`; Verify also needs `qa_battery`), and proposes `.claude/settings.json` entries as a diff. Approve at least `worktree.baseRef: "head"`, so each task's worktree starts from the feature branch. [Set a Project Up](docs/user-guide/installation.md#set-a-project-up) explains each entry.
 - **A project used with an older pd** (it has a `docs/features/` folder): run `/pd:adopt`. It shows a dry run, then migrates the project on a `pd-adopt` branch for you to review and merge. Its last step adds `sop: 1` to `.claude/pd.local.md`, which marks the project as adopted.
 
 To check the setup, follow [Check It Works](docs/user-guide/installation.md#check-it-works).
@@ -70,7 +64,7 @@ flowchart TD
 - **small:** at most three tasks by default (`small_feature_tasks`). Contracts and Plan are written together and reviewed once.
 - **express:** a small change on a known pattern, provable by one command. A mini-spec replaces Criteria, Contracts and Plan. Verify runs the proof and your QA commands, and may skip the code review (the skip is recorded with its reason).
 
-Triage always picks standard for security work, migrations, changes across many files and areas new to the codebase. Triage can also send a request straight to a specialist command. A later stage can send a feature back to an earlier one; `log.md` records why and what it invalidates.
+Triage always picks standard for security work, migrations, changes across many files and areas new to the codebase. Triage can also send a request straight to a specialist agent or command. A later stage can send a feature back to an earlier one; `log.md` records why and what it invalidates.
 
 **What each stage settles:**
 
@@ -80,7 +74,7 @@ Triage always picks standard for security work, migrations, changes across many 
 | 2 · Criteria | What counts as done | `shape.md` `## Requirements` |
 | 3 · Contracts | What crosses each module boundary | `shape.md` `## Design` |
 | 4 · Plan | Task order, and what proves each task | `plan.md` `## Plan` |
-| 5 · Execute | Does the code meet each contract? | code, one branch per task, merged in plan order |
+| 5 · Execute | Does the code meet each contract? | code, one branch per task, merged wave by wave |
 | 6 · Verify | Does the whole change hold together? | review and QA entries in `log.md` |
 | 7 · Finish | What this feature taught | a metrics entry; a retro only when `log.md` records a trigger, such as a second move back or a defect after merge |
 
@@ -135,7 +129,8 @@ docs/dev_artifacts/            # artifacts_root in .claude/pd.local.md, set by /
 │   ├── README.md              # status, phase, mode (the depth), and ## Now: the work in progress
 │   ├── log.md                 # history: decisions, reviews, QA, metrics; added to, never rewritten
 │   ├── shape.md               # ## Requirements, then ## Design
-│   └── plan.md                # ## Plan
+│   ├── plan.md                # ## Plan
+│   └── retro.md               # only when log.md records a retro trigger
 ├── brainstorms/               # from /pd:brainstorm
 ├── rca/                       # from /pd:root-cause-analysis
 ├── plans/                     # multi-feature plans and their roadmaps

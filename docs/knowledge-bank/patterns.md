@@ -45,7 +45,7 @@ Use PROJECT_ROOT for dynamic project state, PLUGIN_ROOT for static plugin assets
 - Benefit: Prevents reading stale cached data when plugin files are copied
 - Implementation: Shared `detect_project_root()` function in `hooks/lib/common.sh`
 - Key insight: Claude's PWD may be a subdirectory, so walk up to find `.git`
-- See: [Hook Development Guide](../dev_guides/hook-development.md)
+- See: [Hook Development Guide](../dev-guide/hook-development.md)
 
 ### Pattern: Hook Schema Compliance
 Hook JSON output must use correct field names for each hook type.

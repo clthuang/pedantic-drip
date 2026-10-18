@@ -1,12 +1,11 @@
 ---
-last-updated: 2026-10-15T12:00:00Z
+last-updated: 2026-10-18T06:00:00Z
 source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
-audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 # API Reference
 
-The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usage below is the script's own docstring; every script except `phase-gate.sh` also takes `--self-test`. Skills call them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`.
+The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usage below is the script's own docstring, minus its `--self-test` line: every script except `phase-gate.sh` (tested by `test-phase-gate.sh`) and `batch-promptimize.sh` takes `--self-test`. Skills call them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`.
 
 ## pd-new — create an item
 
@@ -22,7 +21,7 @@ Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOA
 ## pd-status — the repository's state
 
 ```
-pd-status
+pd-status              # print the state
 ```
 
 Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done features owing a retro. Takes no other argument.
@@ -34,7 +33,7 @@ phase-gate.sh <phase> <feature-dir> [--express]
   phase ∈ specify|design|create-plan|implement|verify|finish|express
 ```
 
-Checks artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. `express` is the mini-spec check (one task block in `shape.md` `## Requirements`), which replaces specify, design and create-plan for a `mode: express` feature. Exit 0 passes; 1 prints each failure on its own line (`GATE FAIL …`); 2 is a usage error.
+Checks artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. `express` is the mini-spec check (one task block in `shape.md` `## Requirements`), which replaces specify, design and create-plan for a `mode: express` feature. Exit 0 passes and prints `GATE PASS [<phase>] <feature-dir>`; 1 prints each failure on its own line (`GATE FAIL [<phase>]: …`); 2 is a usage error.
 
 ## pd-lint — the artifact checks
 
@@ -48,6 +47,9 @@ pd-lint --sweep              list agent_sandbox/ dirs to clean; never deletes
 ```
 
 Errors print `pd-lint: ERROR <path>:<line>: <message>` and exit 1; warnings never change the exit.
+
+- **Not adopted:** in an old-layout project (`docs/features/` without `sop: 1`), every mode except `--self-test` prints `pd-lint: not adopted: run /pd:adopt` and exits 0.
+- **`--staged` and unstaged changes:** a staged item with unstaged or untracked changes is an error, so the lint checks exactly what will be committed.
 
 ## pd-proof — judge a task's JUnit XML
 
@@ -84,7 +86,12 @@ pd-adopt [--registry <path>] [--workspace <uuid>]          dry run: print the pl
 pd-adopt --apply [--registry <path>] [--workspace <uuid>]  on a new pd-adopt branch, one commit per step
 ```
 
-Run it from the project root. The old registry is opened once, read-only (`immutable=1`), to copy it into `agent_sandbox/<date>/pd-adopt/`; every later read uses the copy.
+Run it from the project root. The registry is opened once, read-only (`immutable=1`), to copy it into `agent_sandbox/<date>/pd-adopt/`; every later read uses the copy.
+
+- **The registry:** `~/.claude/pd/entities/entities.db`, or `$ENTITY_DB_PATH`, unless `--registry` names one.
+- **`--workspace`:** the registry workspace to read; by default, the one whose project root is this project.
+- **A non-empty `-wal` file:** pd-adopt refuses to run, since `immutable=1` would skip it; checkpoint the registry first.
+- **No registry:** pd-adopt takes the state from `.meta.json` alone.
 
 ## pd-html.py — markdown to HTML
 
@@ -93,11 +100,28 @@ uv run pd-html.py <file.md | dir> [--open]
 uv run pd-html.py --all [--open]
 ```
 
-Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it.
+Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it. `--all` renders `docs/user-guide/`, `docs/dev-guide/`, `docs/technical/` and every active item under the artifacts root (all of a feature's `.md` files; a plan, brainstorm or rca's one file).
+
+## batch-promptimize.sh — score every component prompt
+
+```
+Usage: batch-promptimize.sh [OPTIONS]
+
+Options:
+  --max-parallel N   Max concurrent scoring processes (default: 5)
+  --threshold N      Minimum passing score 0-100 (default: 80)
+  --help             Show this help message
+```
+
+- **What it scores:** every `skills/*/SKILL.md`, `agents/*.md` and `commands/*.md` under `plugins/pd/`, against `plugins/pd/skills/promptimize/references/scoring-rubric.md`'s ten dimensions.
+- **How:** one headless `claude -p --model sonnet` call per file, limited to `Read`, `Grep` and `Glob`, with a 120-second timeout; bash arithmetic turns the ten scores into a 0-100 score.
+- **Output:** one `[PASS]`, `[FAIL]`, `[ERROR]` or `[TIMEOUT]` line per file, then a summary with the counts and the mean score.
+- **Exit:** 0 when every file passes the threshold; 1 when any fails, errors or times out.
+- **Where:** the pd repository root (where `plugins/pd/` exists); anywhere else it stops, since it can't find the rubric.
 
 ## Shared formats
 
 - **Log entries:** `plugins/pd/references/log-entries.md`.
 - **Workflow results and the review schema:** `plugins/pd/references/workflow-results.md`.
 - **The review call:** `plugins/pd/references/review-call.md`.
-- **`.claude/pd.local.md` fields:** written by `pd-init`; defaults in `pd_common.py`.
+- **`.claude/pd.local.md` fields:** the proposed values `pd-init` writes come from its `render_config`; the read-time fallbacks for an unset field are `pd_common.CONFIG_DEFAULTS`.

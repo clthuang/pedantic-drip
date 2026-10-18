@@ -5,7 +5,7 @@ argument-hint: "[--force]"
 
 # /pd:init
 
-**Purpose:** set the current git repository up for pd, once (plan Part B §12, "A new project"). It is optional: pd runs on defaults without it, except Verify, which needs `qa_battery`.
+**Purpose:** set the current git repository up for pd, once (plan Part B §12, "A new project"). Run it before the first feature: every pd workflow needs the `workflow_output_cap` it writes, and Verify needs `qa_battery`.
 
 **Steps:**
 1. **When the session-start line offered this command** (the user didn't type `/pd:init`), ask first through AskUserQuestion: "Run /pd:init now", "Not now", "Never for this repository".

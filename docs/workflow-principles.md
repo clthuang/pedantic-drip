@@ -76,8 +76,8 @@ count, a file or a latency bound. A criterion that names no observable outcome i
 It is a question, and it belongs back with whoever asked.
 
 Criteria are not tests yet. The plan turns each one into test cases, edge cases included, and the
-executor turns those into test code (principle 7). Keeping the expectation, the case and the code
-apart is what lets a different hand write each.
+executor turns those into test code (principle 7, dispatchable tasks). Keeping the expectation, the
+case and the code apart is what lets a different hand write each.
 
 That every criterion names an observable outcome, and later that every one is covered by a test
 case, can be checked mechanically. That is the smaller half. Two further properties decide whether
@@ -108,7 +108,8 @@ The middle one is the interesting failure. It passes, it will always pass, and n
 you that it proves nothing. Being mechanically scoreable is the easy half; whether a criterion is
 faithful, and whether the set covers enough, needs a judgement someone has to actually make.
 Whatever that judgement cannot settle is worth carrying forward as a named deferred unknown under
-principle 1, and it is what principle 10 later sends verification hunting for.
+principle 1 (every stage kills a named unknown), and it is what principle 10 (verification is
+execution) later sends verification hunting for.
 
 ### 4. Contracts are the hand-off boundary between agents
 
@@ -154,10 +155,10 @@ Contracts say what crosses each boundary; they do not show where the boundaries 
 also draws the architecture: the modules, the data that flows between them, and the contract that
 sits on each edge. The diagram is where a reviewer spots a seam nobody pinned, and where a planner
 sees which tasks can run apart and which two will collide in the same module. It obeys principle 5
-like everything else: it names modules and edges and points at the contracts, and never restates a
-signature. Draw it as text in the same document, so it changes in the same commit as the contracts
-it maps. Every edge carries a contract, and every contract sits on an edge. An edge without one is
-a seam left open.
+(one fact, one home) like everything else: it names modules and edges and points at the contracts,
+and never restates a signature. Draw it as text in the same document, so it changes in the same
+commit as the contracts it maps. Every edge carries a contract, and every contract sits on an edge.
+An edge without one is a seam left open.
 
 ### 5. One fact, one home
 
@@ -165,7 +166,8 @@ Every fact lives in exactly one place. Downstream artifacts point at it; they ne
 covers contracts, but also constants, key names, casing, file paths, counts and status
 vocabularies.
 
-This is the load-bearing principle behind principle 4 rather than a footnote to it. A chain of
+This is the load-bearing principle behind principle 4 (contracts as the hand-off) rather than a
+footnote to it. A chain of
 artifacts that each restate the same fact is a chain that rots the moment one of them is edited,
 and the rot is invisible because every copy still looks internally consistent. When a fact does
 change, the edit has to sweep every restatement in the same revision, upstream as well as down.
@@ -200,15 +202,21 @@ the test cases descend from the plan, where the stronger model wrote them, as be
 cases in plain words or pseudo code. The executor turns them into test code and then makes that code
 pass. It may not change what they test.
 
-A proof also has to be capable of failing. The executor commits the test code first, before any of
-the change. For a new module that commit may also hold the module's empty surface, signatures that
-raise and nothing that could pass a test, so the tests fail as tests rather than as code that does
-not load. Each test in it must fail as a test. One that already passes proves nothing about the
-change, and it is the commonest way a plan hands down a vacuous test; some are green for good
-reason, so each one is named for the reviewer to judge. Then the change goes in, a commit per
-meaningful step, so whoever reads the branch later can follow how it got there, and the same tests
-must pass without being touched. The exception is a change meant to alter nothing, such as a
-refactor, and the plan should say so.
+A proof also has to be capable of failing:
+
+- **Tests first.** The executor commits the test code first, before any of the change.
+- **An empty surface is allowed.** For a new module that commit may also hold the module's empty
+  surface, signatures that raise and nothing that could pass a test, so the tests fail as tests
+  rather than as code that does not load.
+- **Each test fails as a test.** One that already passes proves nothing about the change, and it is
+  the commonest way a plan hands down a vacuous test.
+- **Green tests are named.** Some are green for good reason, so each one is named for the reviewer
+  to judge.
+- **A commit per step.** Then the change goes in, a commit per meaningful step, so whoever reads the
+  branch later can follow how it got there.
+- **Tests untouched.** The same tests must pass without being touched.
+- **The exception: a change meant to alter nothing.** A refactor, say, has no test that can fail
+  first, and the plan should say so.
 
 Tests and the system meet only at the contract. Fixtures live where the design says they live.
 Production code never reaches into them, and tests never reach past the contract into internals, or
@@ -245,13 +253,13 @@ may touch:
 
 A task with no test cases is not merely incomplete. It is not finished being written.
 
-The brief also asks for the least code that meets the contract. Capable models still add what
-nobody asked for: an extra test file, a helper, a fix to the neighbouring function. Every
-unrequested line is scope that nobody reviewed against anything, and asking for less up front is
-cheaper than cutting it out afterwards. Whether the brief should also tell the executor to check
-its own work depends on the model. Some current models do it unprompted, and telling them to buys
-more checking, not better checking; others, run cheaply, skip it. That is a setting to revisit per
-model (principle 15), not a rule. Either way, the proof that counts is the one that runs outside
+The brief also asks for the least code that meets the contract. Capable models still add what nobody
+asked for: an extra test file, a helper, a fix to the neighbouring function. Every unrequested line
+is scope that nobody reviewed against anything, and asking for less up front is cheaper than cutting
+it out afterwards. Whether the brief should also tell the executor to check its own work depends on
+the model. Some current models do it unprompted, and telling them to buys more checking, not better
+checking; others, run cheaply, skip it. That is a setting to revisit per model (principle 15, some
+rules are scaffolding), not a rule. Either way, the proof that counts is the one that runs outside
 the executor.
 
 ### 8. Executors take a narrow scope; the smartest owns the seams
@@ -268,8 +276,8 @@ change has widened the blast radius of the review as well.
 Splitting work across agents also has a price, and it is not small: Anthropic measured its
 multi-agent research system at about fifteen times the tokens of a chat. It pays when the pieces are
 genuinely independent and big enough to be worth a fresh context, which research questions usually
-are and most code changes are not. Small or sequential work stays with one agent. A run that
-delegates by reflex spends its budget on coordination.
+are and most code changes are not. Small or sequential work is not fanned out in parallel. A run
+that delegates by reflex spends its budget on coordination.
 
 ---
 
@@ -300,9 +308,9 @@ stops reporting reliably, because every unrepaired finding starts to look like i
 
 This is also where you hunt for what the criteria never mentioned. Success criteria capture the
 cases someone thought of; verification exists for the ones nobody did, which is why principle 6
-puts the strong model here. It is the second net and not the first: coverage was already argued
-once under principle 3, and anything found here that no criterion named is evidence that the
-argument was too thin.
+(thinking goes where being wrong is expensive) puts the strong model here. It is the second net and
+not the first: coverage was already argued once under principle 3 (behaviour before architecture),
+and anything found here that no criterion named is evidence that the argument was too thin.
 
 Simplification belongs here as a lens, not as another editing pass. Over-engineering is a finding
 like any other: the reviewer raises it, and whoever fixes the other findings removes it. A separate
@@ -319,29 +327,29 @@ Iterating a reviewer does not converge on correct. The research on self-refineme
 diminishing returns after the first round or two, and correction without outside feedback can make
 answers worse. Those results come from older models, but my own record points the same way: three to
 five review rounds per feature used to eat large parts of the context and the time. So every loop
-gets a budget, and the budget depends on what can judge the result.
+gets a budget, and the budget depends on what can judge the result:
 
-Before code exists, in the criteria, the contracts and the test cases, there is nothing to run, and
-a reviewer is the only judge. These stages also carry the most uncertainty, so they get up to three
-cycles of review and revision. A re-review is not a fresh review: it checks only the earlier
-findings and the edit that answered them, and the loop ends at the first pass that raises no
-blocker. Whatever is still open after the third cycle goes to a human, and before it does, what was
-deferred, what follows up, what was decided and what was assumed are written down.
-
-Once code exists, a fix can be judged without an opinion. The change gets one review pass, and its
-fixes get up to three cycles, each judged by running the checks again, never by asking the reviewer
-again. If the checks still fail after the third cycle, a human decides.
+- **Before code: up to three cycles of review and revision.** In the criteria, the contracts and
+  the test cases there is nothing to run, and a reviewer is the only judge. These stages also carry
+  the most uncertainty, so they get up to three cycles. A re-review is not a fresh review: it checks
+  only the earlier findings and the edit that answered them, and the loop ends at the first pass
+  that raises no blocker. Whatever is still open after the third cycle goes to a human, and before
+  it does, what was deferred, what follows up, what was decided and what was assumed are written
+  down.
+- **After code: one review, then fixes judged by the checks.** Once code exists, a fix can be judged
+  without an opinion. The change gets one review pass, and its fixes get up to three cycles, each
+  judged by running the checks again, never by asking the reviewer again. If the checks still fail
+  after the third cycle, a human decides.
+- **Findings no check covers: the fix brings its own check.** Running the checks again only judges
+  what the checks already test. Some findings are about what no check tests yet: a criterion that
+  proves nothing, a contract with the wrong error, a missing case. The suite is green before such a
+  fix and green after it, so a green run proves nothing. A finding of that kind counts as fixed only
+  when the fix brings a new check with it, one that fails on the old code and passes on the new. The
+  finder states the missing case and the fixer writes its test, committed before the fix, as in
+  principle 7 (dispatchable tasks). If no such check can be written, the finding goes to a human.
 
 Three is a budget I chose, not a measured ceiling. A confirmatory second review that finds nothing
 is not reassurance, it is the anti-pattern.
-
-Running the checks again only judges what the checks already test. Some findings are about what
-no check tests yet: a criterion that proves nothing, a contract with the wrong error, a missing
-case. The suite is green before such a fix and green after it, so a green run proves nothing. A
-finding of that kind counts as fixed only when the fix brings a new check with it, one that fails on
-the old code and passes on the new. The finder states the missing case and the fixer writes its
-test, committed before the fix, as in principle 7. If no such check can be written, the finding goes
-to a human.
 
 Ask reviewers only for what breaks correctness or the stated criteria. A reviewer told to find gaps
 will find some even in sound work, because that is what it was asked to do, and chasing every one
@@ -378,11 +386,14 @@ Autonomy changes how much gets asked, never whether an unresolvable thing may be
 stops are irreducible in every mode: a merge conflict, a check still failing after the third fix
 cycle, a criterion nobody can state as an observable outcome.
 
-Autonomy also needs a budget it cannot argue with. Left to its own judgement, an unattended run
-spends as if tokens and agents were free: every time it is not yet done it starts another round,
-and capable models delegate readily. So bound it mechanically, in agents, depth and tokens, and
-bound each piece of work separately rather than a whole programme at once. A limit the run can talk
-itself past is not a limit.
+Autonomy also needs a budget it cannot argue with:
+
+- **Why it needs one.** Left to its own judgement, an unattended run spends as if tokens and agents
+  were free: every time it is not yet done it starts another round, and capable models delegate
+  readily.
+- **Bound it mechanically,** in agents, depth and tokens. A limit the run can talk itself past is
+  not a limit.
+- **Bound each piece of work separately,** rather than a whole programme at once.
 
 The same goes for the finish line. Whether unattended work is done has to be decided by something
 that runs the checks itself, not by a judge reading the run's own account of them. A run that can
@@ -398,17 +409,17 @@ listening.
 
 ### 14. Lessons become checks, not prose
 
-A retrospective earns its cost when something went wrong: a second step back in the same work,
-fix cycles that ran out, a defect found after the merge, or work that cost far more than its
-budget. When nothing did, one line saying so is enough.
+A retrospective earns its cost when something went wrong: a second step back in the same work, a
+loop that hit its cap, a defect found after the merge, or work that cost more than its budget. When
+nothing did, one line saying so is enough.
 
 What a retrospective finds has to land where it acts. If the lesson can be checked, it becomes a
 check. If it cannot, it becomes one line in the instructions an agent actually reads, or an edit to
 the step that went wrong. A lessons file nobody loads is a diary. One defect class in my own
-tooling turned up seven times; the gates caught all seven, and the written rule against it, in
-force the whole time, stopped none of them. That record is the best evidence in this essay, and it
-is the case for principle 5
-as much as for this one.
+tooling, the half-sweep (a fact restated in several places, edited in one and left stale in
+another), turned up seven times; the gates caught all seven, and the written rule against it
+stopped none of them. That record is the best evidence in this essay, and it is the case for
+principle 5 (one fact, one home) as much as for this one.
 
 ### 15. Some rules are scaffolding
 
@@ -461,17 +472,21 @@ work which cannot be verified actually gets stopped.
 
 The empirical claims above, and where they come from:
 
-- **Self-preference** (principle 11): Panickssery et al., "LLM Evaluators Recognize and Favor Their
-  Own Generations", 2024. https://arxiv.org/abs/2404.13076
-- **Diminishing returns from self-refinement** (principle 11): Madaan et al., "Self-Refine", 2023.
-  https://arxiv.org/abs/2303.17651
-- **Correction without outside feedback** (principle 11): Huang et al., "Large Language Models
-  Cannot Self-Correct Reasoning Yet", 2023. https://arxiv.org/abs/2310.01798
-- **Fifteen times the tokens** (principle 8): Anthropic, "How we built our multi-agent research
-  system". https://www.anthropic.com/engineering/multi-agent-research-system
-- **Slower while believing it faster** (principle 15): METR, "Measuring the Impact of Early-2025 AI
-  on Experienced Open-Source Developer Productivity", 2025-07-10.
+- **Self-preference** (principle 11, loop budgets): Panickssery et al., "LLM Evaluators Recognize
+  and Favor Their Own Generations", 2024. https://arxiv.org/abs/2404.13076
+- **Diminishing returns from self-refinement** (principle 11, loop budgets): Madaan et al.,
+  "Self-Refine", 2023. https://arxiv.org/abs/2303.17651
+- **Correction without outside feedback** (principle 11, loop budgets): Huang et al., "Large
+  Language Models Cannot Self-Correct Reasoning Yet", 2023. https://arxiv.org/abs/2310.01798
+- **Fifteen times the tokens** (principle 8, narrow scope): Anthropic, "How we built our multi-agent
+  research system". https://www.anthropic.com/engineering/multi-agent-research-system
+- **Slower while believing it faster** (principle 15, scaffolding): METR, "Measuring the Impact of
+  Early-2025 AI on Experienced Open-Source Developer Productivity", 2025-07-10.
   https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/
 - **Planning only when the approach is uncertain; a check the model can run; reviewers who will
-  always find gaps** (principles 2, 10 and 11): Claude Code, "Best practices".
-  https://code.claude.com/docs/en/best-practices
+  always find gaps** (principles 2, entry depth; 10, verification is execution; and 11, loop
+  budgets): Claude Code, "Best practices". https://code.claude.com/docs/en/best-practices
+- **Seven half-sweeps, all caught by a gate, none prevented by the rule** (principle 14, lessons
+  become checks): my own record, kept in this repository's CLAUDE.md under "Non-vacuity test
+  guard" until commit 6d12d835 (2026-10-15) moved the sweep rule into pd-lint's checks. Read it with
+  `git show 6d12d835 -- CLAUDE.md`.

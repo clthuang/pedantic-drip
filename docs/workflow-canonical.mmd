@@ -13,7 +13,10 @@ config:
 flowchart TD
 
   %% The canonical pd workflow on Claude Code's native features.
-  %% Source of truth: docs/plans/2026-10-14-thin-pd-native-design.md §A2–§A5 (decisions D7–D16).
+  %% Source of truth: the stage skills, plugins/pd/skills/<name>/SKILL.md (brainstorming,
+  %% root-cause-analysis, specifying, designing, planning, implementing, verifying,
+  %% finishing-branch, workflow-transitions). Triage: plugins/pd/commands/secretary.md.
+  %% Gates: plugins/pd/scripts/phase-gate.sh. Fan-outs: plugins/pd/workflows/*.js.
 
   %% ===================== ENTRY =====================
   subgraph ENTRY ["Work arrives"]
@@ -23,34 +26,34 @@ flowchart TD
     BUG["<b>Bug</b><br/>something broke"]
   end
 
-  TRI{{"<b>0 · Triage</b> · /pd:secretary<br/>picks the depth: <b>standard</b> · <b>small</b> (an estimate: ≤ 3 tasks) · <b>express</b><br/>always standard for security, migrations, many files, areas new to the codebase<br/>risk tags: security · migration"}}
+  TRI{{"<b>0 · Triage</b> · /pd:secretary<br/>picks the depth: <b>standard</b> · <b>small</b> (an estimate: ≤ small_feature_tasks tasks, default 3) · <b>express</b><br/>always standard for security, migrations, many files, areas new to the codebase,<br/>criteria hard to state as observable outcomes<br/>risk tags: security · migration"}}
   IDEA --> TRI
   REQ --> TRI
   BUG --> TRI
 
   %% ===================== SPINE =====================
   CLAR["<b>1 · Clarify</b> &nbsp; <i>a brainstorm or rca item</i><br/>is this the right problem? what would success look like?<br/>research-fanout only when it pays · rca-fanout for every bug<br/><i>kills: the wrong problem</i>"]
-  TRI -- "idea · bug" --> CLAR
+  TRI -- "idea · bug, cause unknown" --> CLAR
 
   CRIT["<b>2 · Criteria</b> &nbsp; <i>specify</i><br/>shape.md ## Requirements<br/>goals · non-goals · user stories<br/>behaviour expectations B1…Bn, each with an observable outcome<br/><i>kills: what counts as done</i>"]
   CLAR --> CRIT
-  TRI -- "request" --> CRIT
+  TRI -- "request · bug, cause known" --> CRIT
 
   G2{{"<b>gate</b> · phase-gate specify (exit)<br/>every expectation: id and observable outcome<br/>your sign-off recorded"}}
-  R2{{"<b>calvin</b> · ≤ 3 review-revise rounds<br/>are the criteria faithful, and enough?<br/><b>you sign off the criteria</b>"}}
+  R2{{"<b>calvin</b> · ≤ 3 review-revise cycles<br/>are the criteria faithful, and enough?<br/><b>you sign off the criteria</b>"}}
   CRIT --> R2 --> G2
 
   CON["<b>3 · Contracts</b> &nbsp; <i>design</i><br/>shape.md ## Design<br/><b>architecture diagram</b>: modules · flows · one contract per edge<br/>each contract pinned once · invariants<br/>test strategy: fixture locations · fakes · real resources allowed<br/>documents only: no code yet<br/><i>kills: what crosses each boundary</i>"]
   G2 --> CON
 
-  G3{{"<b>gate</b> · phase-gate design<br/>diagram and test strategy present · no restated contract"}}
   R3{{"<b>design review</b> · Codex first · ≤ 3 review-revise cycles<br/>re-review checks only the earlier findings<br/>every edge has a contract, every contract an edge"}}
-  CON --> G3 --> R3
+  G3{{"<b>gate</b> · phase-gate design (exit)<br/>diagram and test strategy present · no restated contract"}}
+  CON --> R3 --> G3
 
-  PLAN["<b>4 · Plan</b> &nbsp; <i>create-plan</i><br/>plan.md: per task · contract · test cases · proving command · file set<br/>test cases in plain words or pseudo code, citing B-ids,<br/>naming their fixture, edges included<br/>from_shape: goes stale when shape.md moves<br/><i>kills: order, and what proves each step</i>"]
-  R3 --> PLAN
+  PLAN["<b>4 · Plan</b> &nbsp; <i>create-plan</i><br/>plan.md: tasks in waves · per task: contract · test cases · proving command · file set<br/>test cases in plain words or pseudo code, citing B-ids,<br/>naming their fixture, edges included<br/>from_shape: goes stale when shape.md moves<br/><i>kills: order, and what proves each step</i>"]
+  G3 --> PLAN
 
-  G4{{"<b>gate</b> · pd-lint<br/>every task: test cases, proving command, files<br/>every B-id covered · from_shape: still matches"}}
+  G4{{"<b>gate</b> · pd-lint, before the review<br/>every task: test cases, proving command, files<br/>every B-id covered · from_shape: still matches<br/>again at exit, with phase-gate create-plan"}}
   PLAN --> G4
 
   R4{{"<b>test-case review</b> · Codex first · ≤ 3 review-revise cycles<br/>faithful to the expectations? edges covered?"}}
@@ -59,10 +62,10 @@ flowchart TD
   %% ===================== EXECUTE =====================
   subgraph EXEC ["5 · Execute — implement-tasks workflow &nbsp; (kills: does the code meet each contract?)"]
     direction LR
-    T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
-    T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
-    T3["sequential tasks · sonnet · own worktree<br/>one at a time, after the parallel ones land<br/>same commit rules"]
-    MRG["<b>merger</b><br/>merges in plan order · per task:<br/>pd-proof · first commit: each test fails as a test,<br/>any already green is named<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
+    T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>(proof: green-only: tests may pass at once)<br/>then a commit per meaningful step"]
+    T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>(proof: green-only: tests may pass at once)<br/>then a commit per meaningful step"]
+    T3["sequential tasks · sonnet · own worktree<br/>one at a time, after the wave's parallel ones land<br/>same commit rules"]
+    MRG["<b>merger</b><br/>per wave: the parallel tasks in plan order, then the sequential ones<br/>per task, pd-proof (reads the proving command's JUnit XML):<br/>first commit: no load or collection error,<br/>a test already green is named for Verify<br/>proof: green-only tasks skip the first-commit checks<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
     T1 --> MRG
     T2 --> MRG
     T3 --> MRG
@@ -71,52 +74,64 @@ flowchart TD
   R4 --> T2
   R4 --> T3
 
+  G5{{"<b>gate</b> · phase-gate implement (exit)<br/>every plan task on a run entry: merged, proof pass"}}
+  MRG --> G5
+
   %% ===================== VERIFY =====================
   subgraph VER ["6 · Verify — verify-change workflow &nbsp; (kills: does the whole change hold together?)"]
     direction LR
-    REV["<b>code review</b> · Codex first · one pass<br/>correctness, criteria, over-engineering<br/>each test asserts its case (case map)"]
-    QA["<b>QA</b> · strongest model<br/>runs the suites, drives the flows<br/>hunts the cases no criterion named<br/>asks what each criterion still allows"]
-    FIX["<b>fixer</b> · ≤ 3 cycles<br/>each cycle judged by re-running the checks<br/>a judgement finding: the finder states the case,<br/>the fixer commits its test first,<br/>the QA re-run checks red, then green"]
-    REV --> FIX
-    QA --> FIX
+    REV["<b>code review</b> · Codex first · one pass<br/>correctness, criteria, over-engineering<br/>each test asserts its case (case_map: each test case → its test)"]
+    QA["<b>QA</b> · opus<br/>runs the suites, drives the flows<br/>hunts the cases no criterion named<br/>asks what each criterion still allows"]
+    FIX["<b>fixer</b> · ≤ 3 cycles<br/>each cycle judged by re-running the checks<br/>each real finding: a failing test, then the fix<br/>a removal: delete the code<br/>the QA re-run checks red, then green"]
+    REV -- "blockers" --> FIX
+    QA -- "failing checks" --> FIX
   end
-  MRG --> REV
-  MRG --> QA
+  G5 --> REV
+  G5 --> QA
 
-  FIN["<b>7 · Finish</b> &nbsp; <i>finish</i><br/>security review when tagged risk: security<br/>metrics entry in log.md · retro only on a trigger<br/>lessons become checks · merge to the base branch<br/><i>kills: what this taught</i>"]
-  FIX --> FIN
+  G6{{"<b>gate</b> · phase-gate verify (exit)<br/>every qa_battery command passes in the latest QA run<br/>no source, test or fixture change since · no open blocker"}}
+  FIX --> G6
+  VER -- "clean: no blocker, every check green, zero fix cycles" --> G6
+
+  FIN["<b>7 · Finish</b> &nbsp; <i>finish</i><br/>security review: always when tagged risk: security,<br/>else when the diff touches a security surface<br/>metrics entry in log.md · retro only on a trigger<br/>lessons become checks<br/><i>kills: what this taught</i>"]
+  G6 --> FIN
+
+  G7{{"<b>gate</b> · phase-gate finish<br/>retro.md present when log.md records a trigger:<br/>a second move back · a capped loop · a defect · tokens over budget"}}
+  FIN --> G7
   SHIP([Ship])
-  FIN --> SHIP
+  G7 -- "merge to the base branch" --> SHIP
 
   %% ===================== SHORTER PATHS =====================
-  SMALL["<b>small</b>: Contracts and Plan<br/>written in one sitting<br/>one review call checks both"]
-  EXP["<b>express</b>: a mini-spec<br/>stands in for stages 2–4<br/>each skip recorded<br/>verify: proof + QA battery"]
-  TRI -. "small" .-> SMALL
-  SMALL -.-> CON
+  SMALL["<b>small</b>: Contracts and Plan<br/>written in one sitting<br/>one review call checks both<br/>exit: the design and plan gates<br/>a late risk tag: back to Contracts, at standard depth"]
+  EXP["<b>express</b>: a mini-spec<br/>stands in for stages 2–4<br/>each skip recorded<br/>gate: phase-gate express (one task block, its fields and cases)<br/>verify: proof + QA battery (the qa_battery commands);<br/>the code review is optional, a skip is a decision entry<br/>a late risk tag or a failed assumption:<br/>back to Criteria, at standard depth"]
+  G2 -. "small" .-> SMALL
+  SMALL -.-> EXEC
   TRI -. "express" .-> EXP
+  CLAR -. "rca: one known pattern" .-> EXP
   EXP -.-> T3
 
   %% ===================== STOPS =====================
   STOP[/"<b>stop and ask you</b><br/>in the main session · blocked beats guessed<br/>also at the token cap, or no progress: continue or stop?<br/>at a cap, first written down: deferred · follow-ups · decisions · assumptions"/]
-  R2 -. "blockers left after 3 rounds" .-> STOP
+  R2 -. "blockers left after 3 cycles" .-> STOP
   R3 -. "blockers left after 3 cycles" .-> STOP
   R4 -. "blockers left after 3 cycles" .-> STOP
+  MRG -. "merge conflict, or a task<br/>failing after 3 fix cycles" .-> STOP
   FIX -. "still failing after 3 cycles" .-> STOP
-  MRG -. "check fails:<br/>fix cycle 1 on sonnet<br/>cycles 2–3 on strongest" .-> T1
+  MRG -. "check fails:<br/>fix cycle 1 on sonnet<br/>cycles 2–3 on opus" .-> T1
 
   %% ===================== BACKWARD =====================
   R3 -. "criteria unbuildable" .-> CRIT
-  QA -. "a case no criterion named" .-> CRIT
-  REV -. "the contract was wrong" .-> CON
-  MRG -. "task under-specified,<br/>or a test case wrong" .-> PLAN
-  FIN -. "security blocker" .-> FIX
+  FIX -. "you accept: a criterion must change" .-> CRIT
+  FIX -. "you accept: a contract must change" .-> CON
+  T1 -. "a test case is wrong (wrong-test)" .-> PLAN
+  FIN -. "security blocker:<br/>Verify again, a fresh 3 cycles" .-> VER
 
   %% ===================== RUNTIME =====================
   subgraph RUN ["How it runs"]
     direction LR
     COND["<b>Conductor</b> · main session<br/>asks you · writes the files<br/>launches the fan-out workflows<br/>dispatches single reviewers"]
     AUTO["<b>Unattended</b><br/>/goal keeps it going<br/>a Stop-hook script decides done<br/>yields while a workflow runs<br/>caps on depth · tokens"]
-    FILES["<b>State</b> · committed files<br/>README.md frontmatter · log.md<br/>shape.md · plan.md · retro.md"]
+    FILES["<b>State</b> · committed files<br/>README.md frontmatter · log.md<br/>shape.md · plan.md · retro.md<br/>commit hook: pd-lint --staged re-runs the earlier gates"]
     COND ~~~ AUTO ~~~ FILES
   end
   SHIP ~~~ RUN
@@ -136,7 +151,7 @@ flowchart TD
   class CLAR,CRIT,CON,PLAN,FIN stage
   class QA verify
   class R2,R3,R4,REV review
-  class TRI,G2,G3,G4 mech
+  class TRI,G2,G3,G4,G5,G6,G7 mech
   class T1,T2,T3,MRG,FIX worker
   class IDEA,REQ,BUG entry
   class SMALL,EXP path

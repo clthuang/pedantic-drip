@@ -18,7 +18,7 @@ fail() {
 
 # Canonical living-doc set (explicit include-list; historical trees are never scanned).
 LIVING_DOCS="README.md README_FOR_DEV.md CLAUDE.md plugins/pd/README.md \
-docs/dev_guides docs/user-guide docs/dev-guide plugins/pd/references \
+docs/user-guide docs/dev-guide plugins/pd/references \
 docs/technical/architecture.md docs/technical/api-reference.md docs/technical/workflow-artifacts.md"
 
 # --- Check 1: counts -------------------------------------------------------

@@ -7,8 +7,8 @@ All work lands on `main` through pull requests. A script opens each release as a
 | Branch | Purpose |
 |--------|---------|
 | `main` | Trunk and GitHub's default; every change lands here through a PR, merged as a merge commit |
-| `stable` | Release channel that installs follow; only the Publish workflow moves it, fast-forward only |
-| `feature/<id>` | Feature branches (created by pd workflow) |
+| `stable` | Release channel that installs follow; by convention only the Publish workflow moves it, fast-forward only |
+| `feature/<id>` | A feature's branch, created by `/pd:create-feature` (`<id>` is `YYYY-MM-DD-slug`) |
 | `pd/<id>/task-<n>` | One plan task's branch inside `implement-tasks` |
 | `release/vX.Y.Z` | A release PR's branch, opened by `scripts/release-pr.sh` |
 
@@ -26,13 +26,15 @@ All plugin code lives in `plugins/pd/`.
 3. Open a PR into `main` (or run `/pd:finish-feature`) and merge once CI passes
 4. Release when ready using the release script
 
+[docs/dev-guide/contributing.md](docs/dev-guide/contributing.md) covers the checks a change must pass and where new components go.
+
 ## Version
 
 One version: `version` in `plugins/pd/.claude-plugin/plugin.json`, plain `X.Y.Z`. `marketplace.json` carries none. Between releases `main` keeps the last released version.
 
 The maintainer chooses the bump at release time (patch, minor or major) by semver. Nothing computes it from change volume or commit prefixes.
 
-`validate.sh` checks the version: it is `X.Y.Z`, at least the highest `v*` tag, a new version has its `CHANGELOG.md` section, and `marketplace.json` has no version.
+`validate.sh` checks the version through `scripts/check-version.sh`: it is `X.Y.Z`, at least the highest `v*` tag, a new version has its `CHANGELOG.md` section, and `marketplace.json` has no version.
 
 Released `CHANGELOG.md` sections are frozen: `scripts/check-changelog.sh` fails a PR that changes them. A forgotten entry goes in the next release.
 
@@ -40,32 +42,28 @@ Released `CHANGELOG.md` sections are frozen: `scripts/check-changelog.sh` fails 
 
 There is one path.
 
-1. On a clean `main` equal to `origin/main`, with `gh` installed:
+1. On a clean `main` equal to `origin/main`, with `gh` and `jq` installed:
 
    ```bash
    scripts/release-pr.sh [patch|minor|major]   # default patch
    ```
 
-   It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses while CI on that `main` commit hasn't passed, or while the previous version isn't published yet.
+   It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses when:
+   - **CI hasn't passed** on that `main` commit;
+   - **the previous version isn't published yet** (its tag and `stable`);
+   - **`[Unreleased]` is empty** in `CHANGELOG.md`.
 2. Merge the PR once CI passes.
 3. `.github/workflows/publish.yml` runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`.
-4. Installs pick up the release on their next marketplace update.
+4. Installs pick up the release on their next marketplace update ([Update](docs/user-guide/installation.md#update)).
 
 ## Local Development Setup
 
-Clone the repository and install the released plugin:
+Clone the repository, then install the released plugin as [Installation](docs/user-guide/installation.md) describes:
 
 ```bash
 git clone https://github.com/clthuang/pedantic-drip.git
 cd pedantic-drip
 claude
-```
-
-In Claude Code:
-
-```
-/plugin marketplace add clthuang/pedantic-drip#stable
-/plugin install pd@pedantic-drip-marketplace
 ```
 
 To try plugin changes, start a session with this checkout's plugin in place of the installed one, for that session only:
@@ -76,25 +74,20 @@ claude --plugin-dir plugins/pd
 
 The installed copy changes only through a release, which reaches installs through `stable`.
 
-## For Public Users
-
-To install the released version (`#stable` follows releases):
-
-```
-/plugin marketplace add clthuang/pedantic-drip#stable
-/plugin install pd@pedantic-drip-marketplace
-```
-
 ## Key Files
 
 | File | Purpose |
 |------|---------|
+| `validate.sh` | Validates every component, the version and the docs; CI's first step |
 | `scripts/release-pr.sh` | Opens the release PR: bumps the version and promotes the CHANGELOG |
 | `scripts/publish-release.sh` | Tags `vX.Y.Z` and fast-forwards `stable`; run by `publish.yml` |
+| `scripts/check-version.sh` | The version rules above; run by `validate.sh` |
 | `scripts/check-changelog.sh` | Fails a PR that changes a released CHANGELOG section |
+| `scripts/check-doc-drift.sh` | Checks the component counts in `README.md` and `plugins/pd/README.md`, and the hooks table below, against the filesystem; fails on retired terms in the living docs; run by `validate.sh` |
+| `scripts/test-release.sh` | Tests the release scripts; run by CI |
 | `.github/workflows/ci.yml` | The `validate` check on PRs into and pushes to `main` |
 | `.github/workflows/publish.yml` | Publishes each release merged to `main` |
-| `.github/workflows/claude-review.yml` | Claude Code reviews each PR into `main` (not `docs/`) and posts a PR comment; needs the `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` |
+| `.github/workflows/claude-review.yml` | Claude Code reviews each same-repo PR into `main` and posts a PR comment. It skips fork PRs and PRs that change only `docs/`, and does nothing until the `CLAUDE_CODE_OAUTH_TOKEN` secret (from `claude setup-token`) is set |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
 | `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |
 
@@ -102,282 +95,180 @@ To install the released version (`#stable` follows releases):
 
 ## Architecture
 
-Commands invoke Skills; Skills spawn Agents; Hooks fire at lifecycle points. The secretary command is a triage layer, not a pipeline: it picks a mode (deep, express, or specialist fast-path), states the rationale, routes, and hands off. Triage never mutates state — the routed command owns all entity work.
+Commands invoke skills. A skill dispatches agents directly, or launches a workflow script that dispatches them. Hooks fire on session start, before tool calls and at each stop. The secretary is triage, not a pipeline: it picks the kind of work and, for a feature, its depth, then creates the item through the routed command.
 
 ```mermaid
 flowchart TD
     U([User]) -->|"/command"| CMD[Command]
-    U -->|"/secretary request"| SEC
+    U -->|"/pd:secretary request"| SEC
 
-    subgraph SEC["Secretary Triage"]
+    subgraph SEC["Secretary triage"]
         direction TB
-        S1["1. ASSESS<br/>mode signals"] --> S2["2. PICK MODE<br/>deep · express · specialist"]
-        S2 --> S7["3. ROUTE + HAND OFF"]
+        S1["1. ASSESS<br/>kind and risk signals"] --> S2["2. KIND + DEPTH<br/>feature (standard · small · express)<br/>brainstorm · rca · specialist"]
+        S2 --> S3["3. ROUTE<br/>the routed command creates the item"]
     end
 
     CMD --> SK[Skill]
-    S7 -->|"workflow match"| SK
-    S7 -->|"agent match"| AG
-    S7 -->|"skill match"| SK
+    S3 -->|"stage command"| SK
+    S3 -->|"specialist"| AG
 
-    subgraph WORKFLOW["Workflow Phases"]
+    subgraph PHASES["Phases"]
         direction LR
-        WF1[brainstorm] --> WF2[specify] --> WF3[design]
-        WF3 --> WF4[create-plan] --> WF5[implement]
-        WF5 --> WF6[finish]
+        P1[specify] --> P2[design] --> P3[create-plan]
+        P3 --> P4[implement] --> P5[verify] --> P6[finish]
     end
 
-    SK --> WORKFLOW
-    SK --> AG
+    SK --> PHASES
+    SK -->|"dispatches"| AG
+    SK -->|"launches"| WF
 
-    subgraph AG["Agents · 21 subagents"]
+    subgraph WF["Workflow scripts"]
+        W1["implement-tasks · verify-change<br/>research-fanout · rca-fanout"]
+    end
+
+    WF -->|"dispatches"| AG
+
+    subgraph AG["Agents"]
         direction TB
-        A1["Reviewers (6)<br/>design, code-quality, plan,<br/>security, ds-*"]
-        A2["Workers (5)<br/>implementer, qa-executor,<br/>documentation-writer, generic-worker, ras-synthesizer"]
-        A3["Researchers (5)<br/>codebase-explorer,<br/>investigation-agent, ..."]
-        A4["Advisory (1) · Orchestration (4)"]
+        A1["Reviewers<br/>design, code-quality, plan,<br/>security, ds-*"]
+        A2["Workers<br/>implementer, qa-executor,<br/>documentation-writer, generic-worker, ras-synthesizer"]
+        A3["Researchers<br/>codebase-explorer, rca-investigator, ..."]
+        A4["Advisory · Orchestration"]
     end
 
-    WORKFLOW -->|"produces"| ART
+    PHASES -->|"commit"| ART
 
-    subgraph ART["File Artifacts"]
-        F1["shape.md<br/>Requirements + Design"] ~~~ F2["plan.md<br/>ordered tasks"]
-        F3[retro.md]
+    subgraph ART["Item files"]
+        F1["README.md<br/>frontmatter + ## Now"] ~~~ F2["log.md<br/>append-only history"]
+        F3["shape.md<br/>Requirements + Design"] ~~~ F4["plan.md<br/>tasks in waves"]
+        F5["retro.md<br/>on a trigger"]
     end
 
-    subgraph HOOKS["Hooks · scripts"]
-        H1["SessionStart (2)<br/>cleanup-stale-versions,<br/>pd-session-start"]
-        H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard,<br/>pd-agent-write-guard"]
-        H3["Stop (1)<br/>pd-stop-gate"]
+    subgraph HOOKS["Hooks"]
+        H1["SessionStart<br/>cleanup-stale-versions,<br/>pd-session-start"]
+        H2["PreToolUse<br/>pre-commit-guard,<br/>pd-commit-lint,<br/>pre-edit-unicode-guard,<br/>pd-agent-write-guard"]
+        H3["Stop<br/>pd-stop-gate"]
     end
 
-    HOOKS -.->|"lifecycle events"| SK
-    HOOKS -.->|"lifecycle events"| AG
-
+    HOOKS -.->|"session start · tool calls · stop"| SK
 ```
 
-## Design Principles
-
-| Principle | Meaning |
-|-----------|---------|
-| **Everything is prompts** | Skills and agents are just instructions Claude follows |
-| **Files are truth** | Artifacts persist in files; any session can resume |
-| **Humans unblock** | When stuck, Claude asks—never spins endlessly |
-| **Composable > Rigid** | Phases work independently; combine as needed |
+The design principles are in [docs/dev-guide/architecture-overview.md](docs/dev-guide/architecture-overview.md#design-principles), and the full flow with every check is [docs/technical/architecture.md](docs/technical/architecture.md).
 
 ## Skills
 
-Skills are instructions Claude follows for specific development practices. Located in `plugins/pd/skills/{name}/SKILL.md`.
+Skills are instructions Claude follows. Each lives in `plugins/pd/skills/{name}/SKILL.md`; its frontmatter `description` is the canonical summary.
 
-### Workflow Phases
+### Stage playbooks
 | Skill | Purpose |
 |-------|---------|
-| `brainstorming` | Guides 6-stage process producing evidence-backed PRDs with advisory team analysis and structured problem-solving |
-| `structured-problem-solving` | Applies SCQA framing and type-specific decomposition to problems during brainstorming |
-| `specifying` | Criteria: B-numbered expectations in `shape.md`, calvin cycles, the user's sign-off |
+| `brainstorming` | Clarify for an idea: the brainstorm item, the Clarify questions, the optional `research-fanout`, the PRD, and promotion at Criteria |
+| `root-cause-analysis` | Clarify for a bug: the rca item, reproduction, 3+ hypotheses, the `rca-fanout` workflow with its refuters, the causal DAG and the RCA report, then the fix's entry depth |
+| `specifying` | Criteria: B-numbered expectations in `shape.md`, calvin cycles, the user's sign-off; also an express feature's mini-spec |
 | `designing` | Contracts: `shape.md` `## Design` with its diagram, contracts and test strategy, then the review call |
 | `planning` | Plan: `plan.md` task blocks with test cases, then the test-case review |
 | `implementing` | Execute: launches `implement-tasks` from `plan.md` and records each task's merge and proof |
 | `verifying` | Verify: launches `verify-change` (the code review beside QA, then fix cycles) and records the review and QA entries |
 | `finishing-branch` | Finish: security review, docs, metrics, the retro check, replan, merge and cleanup |
-
-### Quality & Review
-| Skill | Purpose |
-|-------|---------|
-| `promptimize` | Reviews plugin prompts against best practices guidelines and returns scored assessment with improved version |
+| `retrospecting` | On a retro trigger: one `retro-facilitator` dispatch over `log.md` and git, written to `retro.md`, each lesson landing where it acts |
 | `workflow-transitions` | The conductor's shared contract: where state lives, phase entry and exit, the review call, caps, workflow and goal runs |
 
-### Investigation
+### Other skills
 | Skill | Purpose |
 |-------|---------|
-| `systematic-debugging` | Guides four-phase root cause investigation |
-| `root-cause-analysis` | Structured 6-phase process for finding ALL contributing causes |
+| `systematic-debugging` | Four-phase root cause investigation |
+| `researching` | The dispatch contract for research subagents: one narrow question each, pointers back |
+| `promptimize` | Reviews a prompt against the guidelines and returns a scored assessment with an improved version |
+| `updating-docs` | The doc-sync checklist for component changes, publishing artifacts to the human docs, and the doc-writer dispatch |
+| `writing-skills` | A test-first approach to writing skills |
+| `creating-specialist-teams` | Ephemeral specialist teams through template injection into `generic-worker` |
+| `structured-problem-solving` | SCQA framing and type-specific decomposition |
+| `game-design`, `crypto-analysis`, `data-science-analysis` | Domain frameworks for a brainstorm PRD |
+| `writing-ds-python`, `structuring-ds-projects`, `spotting-ds-analysis-pitfalls`, `choosing-ds-modeling-approach` | Data science practice: code, project layout, statistical pitfalls, modeling choice |
 
-### Research & Synthesis
-| Skill | Purpose |
-|-------|---------|
-| `researching` | Orchestrates parallel research, analysis, and synthesis into decision-ready summaries |
-
-### Domain Knowledge
-| Skill | Purpose |
-|-------|---------|
-| `game-design` | Game design frameworks, engagement/retention analysis, aesthetic direction, and feasibility evaluation |
-| `crypto-analysis` | Crypto/Web3 frameworks for protocol comparison, DeFi taxonomy, tokenomics, trading strategies, MEV classification, market structure, and risk assessment |
-| `data-science-analysis` | Data science frameworks for methodology assessment, pitfall analysis, and modeling approach recommendations (brainstorming domain) |
-| `writing-ds-python` | Clean DS Python code: anti-patterns, pipeline rules, type hints, testing strategy, dependency management |
-| `structuring-ds-projects` | Cookiecutter v2 project layout, notebook conventions, data immutability, the 3-use rule |
-| `spotting-ds-analysis-pitfalls` | 15 common statistical pitfalls with diagnostic decision tree and mitigation checklists |
-| `choosing-ds-modeling-approach` | Predictive vs causal modeling, method selection flowchart, Rubin/Pearl frameworks, hybrid approaches |
-
-### Specialist Teams
-| Skill | Purpose |
-|-------|---------|
-| `creating-specialist-teams` | Creates ephemeral specialist teams via template injection into generic-worker |
-
-### Maintenance
-| Skill | Purpose |
-|-------|---------|
-| `retrospecting` | Runs data-driven AORTA retrospective using retro-facilitator agent; writes plain-markdown retro.md |
-| `updating-docs` | Automatically updates documentation using agents |
-| `writing-skills` | Applies TDD approach to skill documentation |
+`structured-problem-solving` and the three domain-framework skills still describe being loaded by brainstorming's old stages; the current `brainstorming` playbook doesn't load them, so they run only when Claude picks them up from their descriptions.
 
 ## Commands
 
-Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.md`. See [README.md](README.md) for the full list. Notable utility commands:
-
-| Command | Purpose |
-|---------|---------|
-| `generate-docs` | Generate three-tier documentation scaffold or update existing docs |
-| `subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
-| `promptimize` | Review a plugin prompt against best practices and return an improved version |
-| `refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
+Commands are the user's entry points, in `plugins/pd/commands/{name}.md`. Each stage command is a thin wrapper that invokes its stage skill. The full list is in [README.md](README.md#commands).
 
 ## Agents
 
-Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd/agents/{name}.md`.
+Agents are subagents, in `plugins/pd/agents/{name}.md`, dispatched by a command, a skill or a workflow script. The full list with descriptions is in [plugins/pd/README.md](plugins/pd/README.md#agents). The groups:
 
-**Reviewers (6):** — `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` are the Claude fallback for the review call at Contracts, Plan and Verify (Codex goes first); each preloads its stage skill's `## Review checklist`.
-- `design-reviewer` — Challenges design assumptions and finds gaps (`/pd:design`)
-- `code-quality-reviewer` — Adversarially reviews the whole branch diff, inside `verify-change` (`/pd:verify`)
-- `security-reviewer` — Reviews implementation for security vulnerabilities; dispatched from `/pd:finish-feature` on security-surface changes. Always an Anthropic-model Task, never routed to Codex
-- `plan-reviewer` — Reviews `plan.md`'s test cases for faithfulness and coverage (`/pd:create-plan`), and pasted plans
-- `ds-analysis-reviewer` — Reviews data analysis for statistical pitfalls, methodology issues, and conclusion validity; uses WebSearch + Context7
-- `ds-code-reviewer` — Reviews DS Python code for anti-patterns, pipeline quality, and best practices; uses Context7 for API verification
+- **Reviewers:** `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` are the Claude fallback for the review call at Contracts, Plan and Verify (Codex goes first unless CLAUDE.md disables it); each preloads its stage skill's `## Review checklist`. `security-reviewer` is dispatched directly at Finish with the `Agent` tool, on Anthropic models, never routed to Codex. `ds-analysis-reviewer` and `ds-code-reviewer` serve the DS commands.
+- **Workers:** `implementer` (one plan task in its own worktree, tests first; also the fixer in fix cycles), `qa-executor` (runs the QA battery and drives affected flows; fixes nothing), `documentation-writer`, `generic-worker`, `ras-synthesizer`.
+- **Researchers:** `codebase-explorer`, `internet-researcher`, `skill-searcher`, `investigation-agent`, `documentation-researcher`, and `rca-investigator` (in `rca-fanout`, it investigates one hypothesis or tries to refute one cause).
+- **Advisory:** `advisor` applies one advisory lens inside `research-fanout`.
+- **Orchestration:** `merger` (checks a task's proof with `pd-proof` and lands its branch; no Write or Edit), `calvin-runner` (runs the calvin skill on a feature's criteria; writes only its ledger path), `retro-facilitator`.
 
-**Workers (5):**
-- `implementer` — Implements one plan task in its own worktree inside `implement-tasks`, tests first; also the fixer in fix cycles
-- `qa-executor` — Execution-grounded QA: runs the test battery and drives affected flows, returning commands plus output as evidence. Fixes nothing
-- `generic-worker` — General-purpose implementation agent for mixed-domain tasks
-- `documentation-writer` — Writes and updates documentation based on research findings
-- `ras-synthesizer` — Synthesizes multi-source research findings into thematic analysis with confidence calibration
+### Advisors
 
-**Advisory (1):**
-- `advisor` — Applies strategic or domain advisory lens to brainstorm problems via template injection
+Brainstorming's research step (§3) may start the `research-fanout` workflow. Its `lenses` arg carries one `{name, brief}` per advisor, the brief being the text of `plugins/pd/skills/brainstorming/references/advisors/<name>.advisor.md` plus the Clarify answers. Each lens runs as one `pd:advisor` agent beside the codebase, web and skill researchers.
 
-**Researchers (5):**
-- `codebase-explorer` — Analyzes codebase to find relevant patterns and constraints
-- `documentation-researcher` — Researches documentation state and identifies update needs
-- `internet-researcher` — Searches web for best practices, standards, and prior art
-- `investigation-agent` — Read-only research agent for context gathering
-- `skill-searcher` — Finds relevant existing skills for a given topic
-
-**Orchestration (4):**
-- `merger` — Checks a task's proof with `pd-proof` and lands its branch on the feature branch; no Write or Edit
-- `calvin-runner` — Runs the calvin skill on a feature's criteria; writes only its ledger path
-- `rca-investigator` — Finds all root causes through 6-phase systematic investigation
-- `retro-facilitator` — Runs data-driven AORTA retrospective with full intermediate context
-
-### Advisory Team Architecture
-The brainstorm skill dispatches advisory agents alongside research agents in Stage 2.
-Advisors are `.advisor.md` template files in `skills/brainstorming/references/advisors/`.
-The secretary classifies problems by archetype (from `references/archetypes.md`) and assembles
-an advisory team of 2-5 advisors. Domain advisors reference existing domain skill reference files.
-New advisors are added by creating a `.advisor.md` file and listing it in the archetypes inventory.
+- **Default pair:** `pre-mortem` and `opportunity-cost`.
+- **The rest:** 11 more templates sit in that folder.
+- **To add an advisor:** add its `.advisor.md` file and name it in brainstorming's `SKILL.md` §3.
 
 ## Hooks
 
-Hooks execute automatically at lifecycle points.
+Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/check-doc-drift.sh` checks this table against that file.
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions other than the active one, except one a running session still uses (Claude Code's `.in_use/<pid>` marker) |
-| `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
-| `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit`; a lint error blocks the commit (exit 2) |
+| `pre-commit-guard` | PreToolUse (Bash) | Reminders only, never a permission decision: on a `git commit` to `main`/`master`, or when the project has test files, it adds a reminder to Claude's context; every other Bash call passes through silently |
+| `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit` Claude runs; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
-| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt` |
+| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
 | `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-feature token cap |
 
-`pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py` — a worker module invoked by the wrapper, not separately registered.
-
-`cleanup-stale-versions` matches `startup|resume|clear` only; `pd-session-start` also fires on `compact`, so the summary survives compaction.
-
-Defined in `plugins/pd/hooks/hooks.json`.
-
-### Hook Protection
-
-The `pre-commit-guard` hook warns when committing to protected branches (main/master) and reminds about running tests.
+`pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py`, a worker the wrapper calls; it isn't registered on its own. Writing a hook: [docs/dev-guide/hook-development.md](docs/dev-guide/hook-development.md).
 
 ## Workflow Mechanics
 
 Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/plans/2026-10-14-thin-pd-native-design.md`.
 
-**State lives in committed files** (no engine, no registry, no MCP server):
+- **State lives in committed files:** a feature is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
+- **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
+- **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-html.py`, `pd-init`, `pd-adopt`, `batch-promptimize.sh`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
+- **The workflows** (`plugins/pd/workflows/`) are the stages' only fan-outs:
+  - **`implement-tasks`:** one implementer per task in its own worktree, the merger landing each wave's parallel-safe tasks, then its sequential ones; up to three fix cycles;
+  - **`verify-change`:** the review call beside QA, then up to three fixer cycles;
+  - **`research-fanout` and `rca-fanout`:** the Clarify fan-outs.
 
-| File | Holds |
-|------|-------|
-| `features/<id>/README.md` | Frontmatter (`status`, `phase`, `mode`, `branch`, `risk`) and `## Now` (next step, `goal:` and `run in flight:` lines) |
-| `features/<id>/log.md` | Append-only history: one entry per decision, phase move, review, QA run, gate, workflow run, cap, metrics or defect (`references/log-entries.md`) |
-| `features/<id>/shape.md` | `## Requirements` (B-numbered expectations) and `## Design` (architecture diagram, contracts, test strategy) |
-| `features/<id>/plan.md` | `## Plan`: waves of task blocks, each with its contract, files, proving command, JUnit path and test cases |
-| `features/<id>/retro.md` | Written only when a retro trigger fired |
-
-Everything else is computed by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
-
-**The scripts** (`plugins/pd/scripts/`, stdlib Python unless noted):
-
-| Script | Role |
-|--------|------|
-| `pd-new` | Creates a feature, plan, brainstorm, rca or backlog item with a local `YYYY-MM-DD-slug` id |
-| `phase-gate.sh` | A phase's exit check: what the phase must hand down |
-| `pd-lint` | The artifact checks, run by the commit hook on staged items; also `--isolation`, `--risk`, `--archive`, `--sweep` |
-| `pd-status` | The repository's state, computed from its files |
-| `pd-proof` | Judges a proving command's JUnit XML for the merger |
-| `pd-review-filter` | Drops a scoped re-review's findings outside the diff |
-| `pd-html.py` | Markdown to standalone HTML (PEP 723, `uv run`) |
-| `pd-init` / `pd-adopt` | Set a new project up; migrate an old-layout one |
-
-**The workflows** (`plugins/pd/workflows/`) are the only fan-outs: `implement-tasks` (one implementer per task in its own worktree, the merger landing each in plan order, up to three fix cycles), `verify-change` (the review call beside QA, then up to three fixer cycles), `research-fanout` and `rca-fanout`. Their results are pinned in `references/workflow-results.md`; the conductor writes `log.md` from them.
-
-**Reviews.** One review call per stage that has one (`references/review-call.md`): Codex first with one retry, else the stage's Claude reviewer; one pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
-
-**Long runs.** `/goal` drives a feature; the `Stop` gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per feature (`feature_token_budget`).
+  Each pins its result schema, restated in `plugins/pd/references/workflow-results.md`; the conductor writes `log.md` from them.
+- **Reviews:** one review call per stage that has one (`plugins/pd/references/review-call.md`). Codex goes first with one retry unless CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
+- **Long runs:** `/goal` drives a feature. The Stop gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per feature (`feature_token_budget`).
 
 ## Knowledge Bank
 
-Inert reference markdown lives in `docs/knowledge-bank/`:
+`docs/knowledge-bank/` is a frozen, read-only archive of lessons from before thin pd; no stage reads or writes it (`/pd:adopt` moves it and rewrites its links). New lessons land where they act: a check, a line in CLAUDE.md, or a skill edit.
 
-- **constitution.md** — Core principles (KISS, YAGNI, etc.)
-- **patterns.md** — Approaches that worked
-- **anti-patterns.md** — Things to avoid
-- **heuristics.md** — Decision guides
-
-These files are preserved as plain documentation. Memory capture and recall are delegated to Claude Code's native memory or an external memory plugin — pd no longer owns any memory subsystem.
+- **constitution.md:** core principles (KISS, YAGNI, etc.)
+- **patterns.md:** approaches that worked
+- **anti-patterns.md:** things to avoid
+- **heuristics.md:** decision guides
 
 ## Creating Components
 
-See [Component Authoring Guide](./docs/dev_guides/component-authoring.md).
+All components live in `plugins/pd/`:
 
-All components are created in the `plugins/pd/` directory:
+- **Skills:** `plugins/pd/skills/{name}/SKILL.md`, instructions Claude follows
+- **Agents:** `plugins/pd/agents/{name}.md`, subagents with a specific focus
+- **Commands:** `plugins/pd/commands/{name}.md`, user-invocable entry points
+- **Hooks:** `plugins/pd/hooks/{name}.sh`, registered in `hooks.json`, with shared code in `hooks/lib/`
 
-**Skills:** `plugins/pd/skills/{name}/SKILL.md` — Instructions Claude follows
-**Agents:** `plugins/pd/agents/{name}.md` — Isolated workers with specific focus
-**Commands:** `plugins/pd/commands/{name}.md` — User-invocable entry points
-**Hooks:** `plugins/pd/hooks/` — Lifecycle automation scripts
+The [Component Authoring Guide](docs/dev-guide/component-authoring.md) gives each component's frontmatter and the rules `validate.sh` enforces.
 
 ## Validation
 
-```bash
-./validate.sh    # Check all components
-```
-
-## Error Recovery
-
-When something fails:
-
-1. **Auto-retry** for transient issues
-2. **Fresh approach** if retry fails
-3. **Ask human** with clear options
-
-**Principle:** Never spin endlessly. Never fail silently. Ask.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch from `main`
-3. Run `./validate.sh`
-4. Submit a PR into `main`
+`./validate.sh` checks every component. The full list of checks CI runs, and how to run them locally, is [docs/dev-guide/commands-reference.md](docs/dev-guide/commands-reference.md).
 
 ## References
 
-- [Component Authoring Guide](./docs/dev_guides/component-authoring.md)
+- [Component Authoring Guide](docs/dev-guide/component-authoring.md)
+- [Hook Development Guide](docs/dev-guide/hook-development.md)
+- [Commands Reference](docs/dev-guide/commands-reference.md)
+- [Contributing](docs/dev-guide/contributing.md)
