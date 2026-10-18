@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/pd:adopt` runs to the end on pedantic-drip, and its backlog passes `pd-lint`.** The dry run crashed on registry rows whose metadata is JSON-encoded twice (117 here) and on a tracked sidecar directory (`.qa-gate/`); both are now handled. The backlog export wrote line forms its own `pd-lint` rejects: an `active` row is now open work, a promoted row with no feature is `promoted → (no feature recorded): <title>`, and any other closed status is `dropped: closed as <status> in the registry, with no feature: <title>`.
 - **The reminder on commits to `main` also covers `git -C <dir> commit` and `git -c <key>=<value> commit`.** `pre-commit-guard` matched only `git commit`, so a commit run with those options never got the protected-branch reminder. A quoted `-C` path containing spaces still isn't matched.
 
 ## [7.0.9] - 2026-10-18
