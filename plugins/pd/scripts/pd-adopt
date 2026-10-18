@@ -503,7 +503,7 @@ class Adopt:
                 self.note(f"features/{fid}/README.md moved to readme-legacy.md; the new README carries the frontmatter")
             links = [f"- [{f.stem}]({f.name})" for f in sorted(d.glob("*.md")) if not f.name.startswith(".") and f.name not in ("README.md", "log.md", "implementation-log.md")]
             now = f"Legacy feature, adopted by pd-adopt on {self.today}." + (
-                "" if status == "done" else " Convert it to shape.md and plan.md before work on it resumes.")
+                "" if status in ("done", "abandoned") else " Convert it to shape.md and plan.md before work on it resumes.")
             written.append(self.write(f"{NEW}/features/{fid}/README.md", "---\n" + "".join(
                 f"{k}: {v}\n" for k, v in fm.items() if v) + f"---\n# {title}\n\n## Now\n\n{now}\n\n## Links\n\n" + "\n".join(links) + "\n"))
             if meta is not None:
@@ -960,6 +960,8 @@ def self_test():
                 and "- [x] 2026-01-11-delta-idea — promoted → features/004-delta\n" in bl
                 and "- [x] 2026-01-12-spaced-reason — dropped: spaced out\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
+        c.check("Convert it" in (art / "features/002-beta/README.md").read_text() and "Convert it" not in (art / "features/005-epsilon/README.md").read_text(),
+                "a not-done legacy feature's README asks for conversion; an abandoned one's doesn't")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
                 and fm("rca/20260309-drift.md")["status"] == "done"
                 and fm("brainstorms/20260102-000000-beta.prd.md")["status"] == "abandoned" and fm("rca/20260311-gone.md")["status"] == "abandoned",
