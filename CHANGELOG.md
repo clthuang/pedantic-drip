@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`/pd:adopt` maps `promoted` and `analyzed` to `abandoned`.** A promoted brainstorm or an analyzed rca isn't done, so it isn't labelled `done`; before, both were left for the user to map by hand, and `pd-lint` failed on them after apply.
+- **An abandoned legacy feature no longer asks to be converted.** `pd-lint` and `/pd:adopt` told every legacy feature not `done` to convert before work resumes; abandoned work won't resume.
+
 ## [7.0.10] - 2026-10-18
 
 ### Changed

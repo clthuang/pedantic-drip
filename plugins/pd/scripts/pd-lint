@@ -131,7 +131,7 @@ class Linter:
         self.check_links(it)
         fm = it["fm"]
         if it["legacy"]:  # done legacy items are checked only for frontmatter vocabulary, ids and links
-            if it["type"] == "feature" and fm.get("status") != "done":
+            if it["type"] == "feature" and fm.get("status") not in ("done", "abandoned"):  # abandoned work won't resume
                 self.warn(it["path"], 1, "legacy feature not done: convert it with /pd:adopt before work on it resumes")
             return
         self.check_sections(it)
@@ -906,6 +906,7 @@ def cases(code):
         ("earlier phases' exit checks", rm_entry("decision"), [], "error", "phase-gate specify"),
         ("a done legacy item is exempt", lambda r: put(r, {f"{ART}/features/134-old/README.md": LEGACY}), [], "ok", ""),
         ("a legacy feature not done warns", lambda r: put(r, {f"{ART}/features/134-old/README.md": LEGACY.replace("done", "active")}), [], "warn", "/pd:adopt"),
+        ("an abandoned legacy feature doesn't warn", lambda r: put(r, {f"{ART}/features/134-old/README.md": LEGACY.replace("done", "abandoned")}), [], "nowarn", "/pd:adopt"),
         ("--staged lints only staged items", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 handoff\nNext: none.\n"),
                                                         pc.git(["add", F], r)), ["--staged"], "ok", ""),
         ("--staged reports a staged item", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), pc.git(["add", "-A"], r)), ["--staged"], "error", "status: bogus"),

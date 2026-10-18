@@ -1018,6 +1018,7 @@ roadmap:
      - `completed`, `complete`, `implemented`, `satisfied` → `done`;
      - `planned`, `preregistered` → `draft`;
      - `in-progress`, `active` → `active`;
+     - `promoted`, `analyzed` → `abandoned`: not done, so not `done` (the user's ruling on pedantic-drip's dry run, 2026-10-18);
      - anything else is listed for the user to map by hand.
 3. **Convert each `projects/<id>/` into `plans/<id>.md`.**
    - **The body:** the old `prd.md`, followed by the old `roadmap.md`'s prose.

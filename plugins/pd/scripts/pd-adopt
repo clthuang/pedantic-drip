@@ -35,7 +35,8 @@ MOVED = ("features", "brainstorms", "rca", "plans", "knowledge-bank")
 PLACED = {"user-guide", "dev-guide", "technical", "projects", "dev_artifacts", "_html"}
 RETIRED = re.compile(r"^(yolo_mode|yolo_max_stop_blocks|yolo_usage_\w+|plan_mode_review|max_concurrent_agents|activation_mode):")
 STATUS_MAP = {"completed": "done", "complete": "done", "implemented": "done", "satisfied": "done",
-              "planned": "draft", "preregistered": "draft", "in-progress": "active", "active": "active"}
+              "planned": "draft", "preregistered": "draft", "in-progress": "active", "active": "active",
+              "promoted": "abandoned", "analyzed": "abandoned"}  # not done: the user's ruling, 2026-10-18
 OPEN_BACKLOG = {None, "", "open", "triaged", "active"}  # an active backlog row is open work, not a feature
 OLD_PHASES = ("brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish")
 TITLE_PREFIX = re.compile(r"^(?:PRD|RCA|Spec(?:ification)?|Design|Plan|Tasks|Roadmap|Feature \d+)\s*[:—-]\s*", re.I)
@@ -736,7 +737,7 @@ class Adopt:
     def step5(self):
         for d in self.features():
             fm = pc.split_frontmatter((d / "README.md").read_text())[0] or {} if (d / "README.md").is_file() else {}
-            if fm.get("status") != "done":
+            if fm.get("status") not in ("done", "abandoned"):
                 self.note(f"NOT DONE: features/{d.name} (status: {fm.get('status')}): convert it to shape.md and plan.md before work resumes")
 
     def step6(self):
@@ -958,7 +959,9 @@ def self_test():
                 and "- [x] 2026-01-12-spaced-reason — dropped: spaced out\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
-                and fm("rca/20260309-drift.md")["status"] == "done", "legacy single-file items get id, type, title and status")
+                and fm("rca/20260309-drift.md")["status"] == "done"
+                and fm("brainstorms/20260102-000000-beta.prd.md")["status"] == "abandoned" and fm("rca/20260311-gone.md")["status"] == "abandoned",
+                "legacy single-file items get id, type, title and status; promoted and analyzed map to abandoned")
         gi = (repo / ".gitignore").read_text()
         c.check("**/.meta.json" not in gi and "docs/backlog.md" not in gi and "agent_sandbox/" in gi
                 and (repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/backlog.md").is_file(),

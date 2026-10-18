@@ -36,6 +36,8 @@ FILES = {
     "docs/brainstorms/20260101-000000-alpha.prd.md": "# PRD: Alpha\n\nThe idea.\n",
     "docs/rca/20260309-drift.md": "# RCA: drift\n",
     "docs/rca/20260310-stale.md": "---\ntitle: Stale\nstatus: completed\n---\n# RCA: stale\n",
+    "docs/brainstorms/20260102-000000-beta.prd.md": "---\nstatus: promoted\n---\n# PRD: Beta\n",
+    "docs/rca/20260311-gone.md": "---\nstatus: analyzed\n---\n# RCA: gone\n",
     "docs/features/003-gamma/README.md": "# Gamma notes\n\nHand-written.\n",
     "docs/plans/2026-01-28-design.md": "# Design plan\n\nAnnex: [notes](2026-01-28-design/notes.md).\n",
     "docs/plans/2026-01-28-design/notes.md": "notes\n",
