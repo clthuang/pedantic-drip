@@ -391,10 +391,12 @@ class Adopt:
             self.backlog_ids[e["uuid"]] = bid
             status = str(e.get("status") or "").lower()
             child = next((f for f in self.reg["entities"] if f["kind"] == "feature" and f.get("parent_uuid") == e["uuid"]), None)
-            if status in OPEN_BACKLOG:
+            if child and status != "dropped":  # a feature exists, whatever the row's status says
+                lines.append(f"- [x] {bid} — promoted → features/{child['key']}")
+            elif status in OPEN_BACKLOG:
                 lines.append(f"- [ ] {bid} — {title}")
-            elif status == "promoted" or (child and status != "dropped"):
-                lines.append(f"- [x] {bid} — promoted → features/{child['key']}" if child else f"- [x] {bid} — promoted → (no feature recorded): {title}")
+            elif status == "promoted":
+                lines.append(f"- [x] {bid} — promoted → (no feature recorded): {title}")
             elif status == "dropped":
                 reason = " ".join(str(e['meta'].get('reason') or e['meta'].get('drop_reason') or '').split())
                 lines.append(f"- [x] {bid} — dropped: {reason or 'no reason recorded'}")

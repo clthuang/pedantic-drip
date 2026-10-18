@@ -117,7 +117,7 @@ def build(tmp):
          "work", "backlog"),
         ("bl6", WS, "backlog:00006", "00006", "Hard delete", "completed", None, None, "2026-01-10T08:00:00Z",
          "work", "backlog"),
-        ("bl7", WS, "backlog:00007", "00007", "Delta idea", "completed", None, None, "2026-01-11T08:00:00Z",
+        ("bl7", WS, "backlog:00007", "00007", "Delta idea", "active", None, None, "2026-01-11T08:00:00Z",
          "work", "backlog"),
         ("f4", WS, "feature:004-delta", "004-delta", "delta", "completed", "bl7", None, t, "work", "feature"),  # registry only
         ("bl8", WS, "backlog:00008", "00008", "Spaced reason", "dropped", None, None, "2026-01-12T08:00:00Z",
