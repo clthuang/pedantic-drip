@@ -67,7 +67,7 @@ G1 4920/2, G2 51/1, G3 0/0. Raw logs: agent_sandbox/2026-10-14/m1/.
 ```
 
 ### run
-A workflow launched or finished. A finished `implement-tasks` run lists every plan task, as `phase-gate.sh implement` reads it, each followed by an indented `case_map:` line that Verify (and a resumed run) reads back. A goal's first `run` entry records the original `feature_token_budget` (or `unset`).
+A workflow launched or finished. A finished `implement-tasks` run lists each task it landed (a resumed run, only the ones it ran), each followed by an indented `case_map:` line; `phase-gate.sh implement` and Verify's reviewer read the task lines across every `run` entry, and a resumed run reads them back. A goal's first `run` entry records the original `feature_token_budget` (or `unset`).
 
 ```markdown
 ## 2026-10-14 14:00+08:00 run implement-tasks — finished
