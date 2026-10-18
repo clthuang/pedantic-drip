@@ -19,7 +19,7 @@ The Execute stage (`phase: implement`) turns the plan's tasks into merged, prove
 4. **Launch `implement-tasks`** per `workflow-transitions` "Workflow runs": write `run in flight:` to `## Now` and commit first. On a goal's first run, its `run` entry records `Budget: feature_token_budget=<n|unset>`.
 5. **Record the result** (`references/workflow-results.md`, `implement-tasks`) in one `run` entry, in the shape of `references/log-entries.md`:
    - one line per task, exactly `- task <n>: merged, proof pass, cycles <k>, branch <branch>` for a merged task (`phase-gate.sh implement` reads it), or `- task <n>: <status>, cycles <k>, branch <branch>` otherwise;
-   - under each task line, `  case_map: C1=<test>, C2=<test>; greens: <tests or none>; skipped: <tests or none>`, which Verify passes to its reviewer;
+   - under each task line, `  case_map: C1=<test>, C2=<test>; greens: <tests or none>; skipped: <tests or none>`, which Verify's reviewer reads from this entry;
    - `Agents:` and `Tokens:` from the result's `agents_used` and `tokens`;
    - one `note` entry per flake (`Flaky: <test> — <runs>`).
    Clear `run in flight:` and commit.
