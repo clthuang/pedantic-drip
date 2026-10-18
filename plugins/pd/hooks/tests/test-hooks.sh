@@ -129,33 +129,33 @@ test_escape_json() {
     fi
 }
 
-# Test 8: pre-commit-guard.sh allows non-commit commands
+# Test 8: pre-commit-guard.sh passes non-commit commands through silently
 test_pre_commit_guard_allows_non_commit() {
-    log_test "pre-commit-guard.sh allows non-commit commands"
+    log_test "pre-commit-guard.sh passes non-commit commands through silently"
 
     cd "${PROJECT_ROOT}"
     local output
     output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "git status"}}' | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
 
-    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('hookSpecificOutput', {}).get('permissionDecision') == 'allow'" 2>/dev/null; then
+    if [[ -z "$output" ]]; then  # silent: no decision, so the normal permission flow decides
         log_pass
     else
-        log_fail "Should allow git status"
+        log_fail "Should print nothing for git status, got: $output"
     fi
 }
 
-# Test 9: pre-commit-guard.sh allows non-git commands
+# Test 9: pre-commit-guard.sh passes non-git commands through silently
 test_pre_commit_guard_allows_non_git() {
-    log_test "pre-commit-guard.sh allows non-git commands"
+    log_test "pre-commit-guard.sh passes non-git commands through silently"
 
     cd "${PROJECT_ROOT}"
     local output
     output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}' | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
 
-    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('hookSpecificOutput', {}).get('permissionDecision') == 'allow'" 2>/dev/null; then
+    if [[ -z "$output" ]]; then  # silent: no decision, so the normal permission flow decides
         log_pass
     else
-        log_fail "Should allow ls command"
+        log_fail "Should print nothing for ls, got: $output"
     fi
 }
 
@@ -178,8 +178,8 @@ test_pre_commit_guard_warns_main() {
     output=$(cd "$elsewhere" && echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"git -c user.name=t -C $repo commit -m test\"}}" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || true  # a non-zero guard is a failed assertion, not an aborted suite
     rm -rf "$repo" "$elsewhere"
 
-    # A reminder, not a block: allow, with a reason only the protected-branch path gives.
-    if echo "$output" | python3 -c "import json,sys; h=json.load(sys.stdin)['hookSpecificOutput']; assert h['permissionDecision'] == 'allow' and \"Committing directly to 'main'\" in h['permissionDecisionReason']" 2>/dev/null; then
+    # A reminder for Claude, with no permission decision (an allow would skip the user's prompt).
+    if echo "$output" | python3 -c "import json,sys; h=json.load(sys.stdin)['hookSpecificOutput']; assert 'permissionDecision' not in h and h['hookEventName'] == 'PreToolUse' and \"Committing directly to 'main'\" in h['additionalContext']" 2>/dev/null; then
         log_pass
     else
         log_fail "Should remind on commits to main"
@@ -194,10 +194,10 @@ test_pre_commit_guard_from_subdirectory() {
     local output
     output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "git status"}}' | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null)
 
-    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('hookSpecificOutput', {}).get('permissionDecision') == 'allow'" 2>/dev/null; then
+    if [[ -z "$output" ]]; then  # silent: no decision, so the normal permission flow decides
         log_pass
     else
-        log_fail "Hook should work from subdirectory"
+        log_fail "Should print nothing from a subdirectory, got: $output"
     fi
 
     cd "${PROJECT_ROOT}"

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# PreToolUse hook: guard git commits
+# PreToolUse hook: reminders on git commits (a commit to main/master; tests when the project has them).
+# It never makes a permission decision: "allow" would skip the user's permission prompt, so a
+# pass-through prints nothing and a reminder goes to Claude as additionalContext.
 
 set -euo pipefail
+trap '' PIPE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
 install_err_trap
 PROJECT_ROOT="$(detect_project_root)"
 
@@ -86,55 +90,11 @@ has_test_files() {
     return 1
 }
 
-# Output: allow the action
-output_allow() {
-    local context="${1:-Allowed}"
-    local escaped
-    escaped=$(escape_json "$context")
-    cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "allow",
-    "permissionDecisionReason": "${escaped}"
-  }
-}
-EOF
+# A reminder for Claude, with no permission decision.
+remind() {
+    safe_emit_hook_json "{\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": \"$(escape_json "$1")\"}}"
 }
 
-# Output: block the action
-output_block() {
-    local reason="$1"
-    local escaped
-    escaped=$(escape_json "$reason")
-    cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "${escaped}"
-  }
-}
-EOF
-}
-
-# Output: ask user to confirm
-output_ask() {
-    local reason="$1"
-    local escaped
-    escaped=$(escape_json "$reason")
-    cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "ask",
-    "permissionDecisionReason": "${escaped}"
-  }
-}
-EOF
-}
-
-# Main
 main() {
     local command
     command=$(read_tool_input)
@@ -142,7 +102,6 @@ main() {
     # Only process git commit commands
     # shortcut: a quoted -C path with spaces isn't matched (extract_command_workdir can't parse one either); quote-aware parsing if pd agents start using such paths
     if [[ ! "$command" =~ git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+commit ]]; then
-        output_allow
         exit 0
     fi
 
@@ -151,18 +110,10 @@ main() {
     branch=$(get_branch_for_command "$command")
 
     if is_protected_branch "$branch"; then
-        output_allow "Reminder: Committing directly to '${branch}'. Consider using a feature branch for larger changes."
-        exit 0
+        remind "Reminder: Committing directly to '${branch}'. Consider using a feature branch for larger changes."
+    elif has_test_files; then
+        remind "Reminder: Test files exist in this project. Have you run the tests?"
     fi
-
-    # Check for test files and remind
-    if has_test_files; then
-        output_allow "Reminder: Test files exist in this project. Have you run the tests?"
-    else
-        output_allow
-    fi
-
     exit 0
 }
-
 main

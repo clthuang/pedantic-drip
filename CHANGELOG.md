@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`pre-commit-guard` no longer approves Bash commands.** It answered `permissionDecision: "allow"` on every Bash call, and a PreToolUse `allow` skips the user's permission prompt, so installing pd auto-approved every Bash command no settings deny or ask rule covered. It now prints nothing on pass-through, and its two commit reminders (a commit to `main`/`master`; run the tests) reach Claude as `additionalContext`, with no permission decision.
+
 ## [7.0.11] - 2026-10-18
 
 ### Changed
