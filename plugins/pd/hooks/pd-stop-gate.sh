@@ -121,9 +121,9 @@ fid, target = f["id"], m.group(2)
 # 3. Yield to background work that will wake the session; a shell or monitor doesn't count.
 tasks = inp.get("background_tasks")
 if isinstance(tasks, list):
-    # shortcut: an entry without a status counts as running; revisit once the bake-off records real entries.
+    # Observed 2026-10-18 (bake-off): entries are {type: workflow|subagent|shell, status: running}; a finished task leaves the list.
     busy = any(isinstance(t, dict) and t.get("type") in ("workflow", "subagent")
-               and t.get("status") in (None, "running", "pending") for t in tasks)
+               and t.get("status") == "running" for t in tasks)
 else:
     busy = any(r and r.group(2) == sid for r in map(RUN_RE.match, f["now"]))
 if busy:
