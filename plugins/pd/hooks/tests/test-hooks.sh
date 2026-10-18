@@ -188,6 +188,25 @@ test_pre_commit_guard_warns_main() {
     fi
 }
 
+# Test 10b: pre-commit-guard.sh reminds about tests on a feature branch when the project has test files
+test_pre_commit_guard_reminds_tests() {
+    log_test "pre-commit-guard.sh reminds about tests when the project has test files"
+
+    local repo output rc=0
+    repo=$(mktemp -d)
+    git -C "$repo" init -q -b feature/x
+    touch "$repo/test_probe.py"
+    output=$(cd "$repo" && echo '{"tool_name": "Bash", "tool_input": {"command": "git commit -m test"}}' | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || rc=$?
+    rm -rf "$repo"
+    [[ $rc -eq 0 ]] || { log_fail "Should exit 0 on a reminder, got $rc"; return; }
+
+    if echo "$output" | python3 -c "import json,sys; h=json.load(sys.stdin)['hookSpecificOutput']; assert 'permissionDecision' not in h and 'Test files exist' in h['additionalContext']" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Should remind about tests with no permission decision, got: $output"
+    fi
+}
+
 # Test 11: pre-commit-guard.sh works from subdirectory
 test_pre_commit_guard_from_subdirectory() {
     log_test "pre-commit-guard.sh works from subdirectory"
@@ -532,6 +551,7 @@ main() {
     test_pre_commit_guard_allows_non_commit
     test_pre_commit_guard_allows_non_git
     test_pre_commit_guard_warns_main
+    test_pre_commit_guard_reminds_tests
     test_pre_commit_guard_from_subdirectory
     test_finish_feature_contract_present
     test_finish_feature_under_600_lines
