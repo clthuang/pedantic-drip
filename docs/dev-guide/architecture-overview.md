@@ -56,7 +56,7 @@ A feature's README frontmatter holds `phase:`, one of `specify`, `design`, `crea
 
 | Workflow | Stage | What it does |
 |----------|-------|--------------|
-| `implement-tasks` | Execute | One `implementer` per plan task in its own worktree; the `merger` lands each in plan order after `pd-proof`; up to three fix cycles |
+| `implement-tasks` | Execute | One `implementer` per plan task in its own worktree; the `merger` lands each after `pd-proof`, per wave the parallel-safe tasks first, then the sequential ones; up to three fix cycles |
 | `verify-change` | Verify | The review call beside `qa-executor`, then up to three cycles of a separate fixer and a QA re-run |
 | `research-fanout` | Clarify | Researchers, one `advisor` per lens, then `ras-synthesizer` |
 | `rca-fanout` | Clarify | One investigator per hypothesis, then a refuter for each supported one |

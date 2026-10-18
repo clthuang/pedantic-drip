@@ -62,8 +62,8 @@ flowchart TD
   %% ===================== EXECUTE =====================
   subgraph EXEC ["5 · Execute — implement-tasks workflow &nbsp; (kills: does the code meet each contract?)"]
     direction LR
-    T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
-    T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
+    T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>(proof: green-only: tests may pass at once)<br/>then a commit per meaningful step"]
+    T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>(proof: green-only: tests may pass at once)<br/>then a commit per meaningful step"]
     T3["sequential tasks · sonnet · own worktree<br/>one at a time, after the wave's parallel ones land<br/>same commit rules"]
     MRG["<b>merger</b><br/>per wave: the parallel tasks in plan order, then the sequential ones<br/>per task, pd-proof (reads the proving command's JUnit XML):<br/>first commit: no load or collection error,<br/>a test already green is named for Verify<br/>proof: green-only tasks skip the first-commit checks<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
     T1 --> MRG

@@ -60,7 +60,7 @@ This repository uses a two-level plugin system:
 ```markdown
 ---
 name: skill-name-gerund
-description: What it does. Use when [specific triggers].
+description: What the skill does, in one sentence. Use when [specific triggers].
 ---
 
 # Skill Title
