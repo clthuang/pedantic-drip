@@ -42,9 +42,9 @@ Stage names map to `phase:` values: Criteria = `specify`, Contracts = `design`, 
 2. Each task runs as one `implementer` in a Claude Code worktree (base: the feature branch's HEAD, via `worktree.baseRef: "head"`), committing its tests first on `pd/<id>/task-<n>`.
 3. The `merger` lands each task ([merger.md](../../plugins/pd/agents/merger.md)):
    - **First commit:** holds only test files, plus source additions; `pd-lint --isolation` passes over it.
-   - **At the first commit:** `pd-proof first` sees every test fail as a test, with no load or collection errors.
+   - **At the first commit:** `pd-proof first` rejects load or collection errors; each test should fail as a test, and one already green is reported (`greens`) for Verify's review rather than rejected.
    - **At HEAD:** `pd-proof head` sees them pass, and no later commit touches the test files the first commit added or changed.
-   - **Merge:** `git merge --no-ff` onto the feature branch, in plan order. A conflict aborts the merge and stops the run for the user.
+   - **Merge:** `git merge --no-ff` onto the feature branch; per wave, the parallel-safe tasks land first in plan order, then each sequential task, started from HEAD once the one before it landed. A conflict aborts the merge and stops the run for the user.
    - **After the merge:** every merged task's proving command and `pd-lint` re-run; a break fails the task just merged.
    - **`proof: green-only` tasks** (refactor, infra, fixture): skip the first-commit checks and the test-file check; the rest stays.
 4. A failed task gets up to three fix cycles (cycles 2 and 3 on opus), reusing its branch; still failing, the run stops for the user.
@@ -52,7 +52,7 @@ Stage names map to `phase:` values: Criteria = `specify`, Contracts = `design`, 
 
 ### Verify: `verify-change`
 
-- **The review call** ([review-call.md](../../plugins/pd/references/review-call.md)): Codex, one retry, else `code-quality-reviewer`. It runs beside `qa-executor`.
+- **The review call** ([review-call.md](../../plugins/pd/references/review-call.md)): Codex with one retry unless CLAUDE.md disables it, else `code-quality-reviewer`. It runs beside `qa-executor`.
 - **QA:** `qa-executor` runs the `qa_battery`, and on its first run `pd-lint --risk` and `pd-lint --isolation` over the branch diff.
 - **Fix cycles:** open blockers or a failing battery start up to three cycles of a separate fixer and a QA re-run.
 - **Exit:** the conductor writes the `review` and `qa` entries. `phase-gate.sh verify` passes when the latest `qa` entry has a passing `Ran:` line for every `qa_battery` command and a `Commit:` hash that exists, no source, test or fixture file changed since that commit, and no blocker is open.

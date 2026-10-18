@@ -65,7 +65,7 @@ flowchart TD
     T1["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
     T2["task agent · sonnet · own worktree<br/>first commit: the tests + raising stubs<br/>then a commit per meaningful step"]
     T3["sequential tasks · sonnet · own worktree<br/>one at a time, after the wave's parallel ones land<br/>same commit rules"]
-    MRG["<b>merger</b><br/>per wave: the parallel tasks in plan order, then the sequential ones<br/>per task, pd-proof (reads the proving command's JUnit XML):<br/>first commit: each test fails as a test,<br/>any already green is named<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
+    MRG["<b>merger</b><br/>per wave: the parallel tasks in plan order, then the sequential ones<br/>per task, pd-proof (reads the proving command's JUnit XML):<br/>first commit: no load or collection error,<br/>a test already green is named for Verify<br/>proof: green-only tasks skip the first-commit checks<br/>HEAD passes · tests untouched · fixtures in place<br/>after each merge: all merged proofs re-run<br/>an unexpected result is re-run once"]
     T1 --> MRG
     T2 --> MRG
     T3 --> MRG
@@ -83,14 +83,15 @@ flowchart TD
     REV["<b>code review</b> · Codex first · one pass<br/>correctness, criteria, over-engineering<br/>each test asserts its case (case_map: each test case → its test)"]
     QA["<b>QA</b> · opus<br/>runs the suites, drives the flows<br/>hunts the cases no criterion named<br/>asks what each criterion still allows"]
     FIX["<b>fixer</b> · ≤ 3 cycles<br/>each cycle judged by re-running the checks<br/>each real finding: a failing test, then the fix<br/>a removal: delete the code<br/>the QA re-run checks red, then green"]
-    REV --> FIX
-    QA --> FIX
+    REV -- "blockers" --> FIX
+    QA -- "failing checks" --> FIX
   end
   G5 --> REV
   G5 --> QA
 
   G6{{"<b>gate</b> · phase-gate verify (exit)<br/>every qa_battery command passes in the latest QA run<br/>no source, test or fixture change since · no open blocker"}}
   FIX --> G6
+  VER -- "clean: no blocker, every check green, zero fix cycles" --> G6
 
   FIN["<b>7 · Finish</b> &nbsp; <i>finish</i><br/>security review: always when tagged risk: security,<br/>else when the diff touches a security surface<br/>metrics entry in log.md · retro only on a trigger<br/>lessons become checks<br/><i>kills: what this taught</i>"]
   G6 --> FIN
@@ -102,7 +103,7 @@ flowchart TD
 
   %% ===================== SHORTER PATHS =====================
   SMALL["<b>small</b>: Contracts and Plan<br/>written in one sitting<br/>one review call checks both<br/>exit: the design and plan gates<br/>a late risk tag: back to Contracts, at standard depth"]
-  EXP["<b>express</b>: a mini-spec<br/>stands in for stages 2–4<br/>each skip recorded<br/>gate: phase-gate express (one task block, its fields and cases)<br/>verify: proof + QA battery (the qa_battery commands)<br/>a late risk tag or a failed assumption:<br/>back to Criteria, at standard depth"]
+  EXP["<b>express</b>: a mini-spec<br/>stands in for stages 2–4<br/>each skip recorded<br/>gate: phase-gate express (one task block, its fields and cases)<br/>verify: proof + QA battery (the qa_battery commands);<br/>the code review is optional, a skip is a decision entry<br/>a late risk tag or a failed assumption:<br/>back to Criteria, at standard depth"]
   G2 -. "small" .-> SMALL
   SMALL -.-> EXEC
   TRI -. "express" .-> EXP
@@ -120,8 +121,8 @@ flowchart TD
 
   %% ===================== BACKWARD =====================
   R3 -. "criteria unbuildable" .-> CRIT
-  QA -. "accepted: the criteria must change" .-> CRIT
-  REV -. "the contract was wrong" .-> CON
+  FIX -. "you accept: a criterion must change" .-> CRIT
+  FIX -. "you accept: a contract must change" .-> CON
   T1 -. "a test case is wrong (wrong-test)" .-> PLAN
   FIN -. "security blocker:<br/>Verify again, a fresh 3 cycles" .-> VER
 

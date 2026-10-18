@@ -196,7 +196,7 @@ Commands are the user's entry points, in `plugins/pd/commands/{name}.md`. Each s
 
 Agents are subagents, in `plugins/pd/agents/{name}.md`, dispatched by a command, a skill or a workflow script. The full list with descriptions is in [plugins/pd/README.md](plugins/pd/README.md#agents). The groups:
 
-- **Reviewers:** `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` are the Claude fallback for the review call at Contracts, Plan and Verify (Codex goes first when CLAUDE.md enables it); each preloads its stage skill's `## Review checklist`. `security-reviewer` is dispatched directly at Finish with the `Agent` tool, on Anthropic models, never routed to Codex. `ds-analysis-reviewer` and `ds-code-reviewer` serve the DS commands.
+- **Reviewers:** `design-reviewer`, `plan-reviewer` and `code-quality-reviewer` are the Claude fallback for the review call at Contracts, Plan and Verify (Codex goes first unless CLAUDE.md disables it); each preloads its stage skill's `## Review checklist`. `security-reviewer` is dispatched directly at Finish with the `Agent` tool, on Anthropic models, never routed to Codex. `ds-analysis-reviewer` and `ds-code-reviewer` serve the DS commands.
 - **Workers:** `implementer` (one plan task in its own worktree, tests first; also the fixer in fix cycles), `qa-executor` (runs the QA battery and drives affected flows; fixes nothing), `documentation-writer`, `generic-worker`, `ras-synthesizer`.
 - **Researchers:** `codebase-explorer`, `internet-researcher`, `skill-searcher`, `investigation-agent`, `documentation-researcher`, and `rca-investigator` (in `rca-fanout`, it investigates one hypothesis or tries to refute one cause).
 - **Advisory:** `advisor` applies one advisory lens inside `research-fanout`.
@@ -230,21 +230,21 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 
 Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/plans/2026-10-14-thin-pd-native-design.md`.
 
-- **State lives in committed files:** each item's `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` and, on a trigger, `retro.md`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
+- **State lives in committed files:** a feature is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
 - **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
 - **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-html.py`, `pd-init`, `pd-adopt`, `batch-promptimize.sh`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
-- **The workflows** (`plugins/pd/workflows/`) are the only fan-outs:
+- **The workflows** (`plugins/pd/workflows/`) are the stages' only fan-outs:
   - **`implement-tasks`:** one implementer per task in its own worktree, the merger landing each in plan order, up to three fix cycles;
   - **`verify-change`:** the review call beside QA, then up to three fixer cycles;
   - **`research-fanout` and `rca-fanout`:** the Clarify fan-outs.
 
   Each pins its result schema, restated in `plugins/pd/references/workflow-results.md`; the conductor writes `log.md` from them.
-- **Reviews:** one review call per stage that has one (`plugins/pd/references/review-call.md`). Codex goes first with one retry when CLAUDE.md enables it, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
+- **Reviews:** one review call per stage that has one (`plugins/pd/references/review-call.md`). Codex goes first with one retry unless CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
 - **Long runs:** `/goal` drives a feature. The Stop gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per feature (`feature_token_budget`).
 
 ## Knowledge Bank
 
-`docs/knowledge-bank/` is a frozen, read-only archive of lessons from before thin pd; no tooling reads or writes it. New lessons land where they act: a check, a line in CLAUDE.md, or a skill edit.
+`docs/knowledge-bank/` is a frozen, read-only archive of lessons from before thin pd; no stage reads or writes it (`/pd:adopt` only moves it). New lessons land where they act: a check, a line in CLAUDE.md, or a skill edit.
 
 - **constitution.md:** core principles (KISS, YAGNI, etc.)
 - **patterns.md:** approaches that worked

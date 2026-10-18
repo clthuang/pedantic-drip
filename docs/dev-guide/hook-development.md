@@ -38,7 +38,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 ```
 
-A hook that doesn't read stdin uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead (`pre-commit-guard.sh`).
+A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead, which walks up from the working directory (`pre-commit-guard.sh` reads stdin only for `tool_input.command`).
 
 ### When to Use Each
 
@@ -98,7 +98,7 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 
 ## Testing Hooks
 
-Each hook has its own suite (`plugins/pd/hooks/tests/test-pd-*.sh`), and `test-hooks.sh` is the integration suite:
+Four hooks have their own suite (`plugins/pd/hooks/tests/test-pd-*.sh`); `pre-commit-guard`, `cleanup-stale-versions` and the shared library are tested in the integration suite, `test-hooks.sh`. [commands-reference.md](commands-reference.md) lists every suite CI runs:
 ```bash
 bash plugins/pd/hooks/tests/test-hooks.sh
 ```
@@ -122,8 +122,8 @@ The events pd registers in `plugins/pd/hooks/hooks.json`:
 | Event | pd hooks | Stdin fields pd reads | Can block | Responds with |
 |-------|----------|------------------------|-----------|---------------|
 | SessionStart | `pd-session-start.sh`, `cleanup-stale-versions.sh` | `source` (`startup`, `resume`, `clear`, `compact`), `cwd` | No | `hookSpecificOutput.additionalContext`, or nothing |
-| PreToolUse | `pre-commit-guard.sh`, `pd-commit-lint.sh` (Bash); `pre-edit-unicode-guard.sh`, `pd-agent-write-guard.sh` (Write, Edit) | `tool_name`, `tool_input` (`command`, `file_path`, `old_string`, `new_string`, `content`), `cwd`, `session_id`, `agent_type` | Yes | exit 2 with stderr, `permissionDecision`, `additionalContext`, or nothing |
-| Stop | `pd-stop-gate.sh` (fires each time Claude finishes a response) | `session_id`, `cwd`, `stop_hook_active` | Yes | exit 2 with the reason on stderr keeps Claude working |
+| PreToolUse | `pre-commit-guard.sh`, `pd-commit-lint.sh` (Bash); `pre-edit-unicode-guard.sh`, `pd-agent-write-guard.sh` (Write, Edit) | `tool_name`, `tool_input` (`command`, `file_path`, `old_string`, `new_string`, `content`), `cwd`, `session_id`, `agent_type` | Yes | pd emits exit 2 with stderr, `additionalContext`, `{"continue": true}` (the unicode guard), or nothing; the protocol also allows `permissionDecision`, which no pd hook sets |
+| Stop | `pd-stop-gate.sh` (fires each time Claude finishes a response) | `session_id`, `cwd`, `stop_hook_active`, `transcript_path` (token charging), `background_tasks` (yielding to running work) | Yes | exit 2 with the reason on stderr keeps Claude working |
 
 `validate.sh` accepts these event names in `hooks.json`: PreToolUse, PostToolUse, PostToolUseFailure, UserPromptSubmit, Stop, SubagentStop, SessionStart, SessionEnd, PreCompact, Notification.
 

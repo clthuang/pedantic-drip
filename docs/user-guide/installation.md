@@ -17,7 +17,7 @@ source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 
 ### Optional
 
-- **[Codex plugin](https://github.com/openai/codex-plugin-cc):** reviews first at Contracts, Plan and Verify when your CLAUDE.md has the line `**Codex reviewer: ENABLED**`. Without it, a Claude reviewer does each review.
+- **[Codex plugin](https://github.com/openai/codex-plugin-cc):** reviews first at Contracts, Plan and Verify unless your CLAUDE.md has the line `**Codex reviewer: DISABLED**`. When it's disabled, missing or fails twice, a Claude reviewer does the review.
 - **[calvin skill](https://github.com/clthuang/calvin):** questions the criteria at Criteria, run by the `calvin-runner` agent. `/pd:init` reports it when it's missing, and without it `/pd:specify` asks whether to sign off anyway.
 - **`gh`:** `/pd:finish-feature` uses it to push, open and merge a PR when the base branch's rules require a pull request.
 
@@ -49,7 +49,7 @@ claude plugin marketplace remove pedantic-drip-marketplace
 
 ## Set a Project Up
 
-Run `/pd:init` once per project. It writes `.claude/pd.local.md` (`artifacts_root`, `base_branch`, `qa_battery`, the test paths and the budgets) and proposes these `.claude/settings.json` entries, as a diff you approve:
+Run `/pd:init` once per project, before the first feature: every pd workflow needs the `workflow_output_cap` it writes, and Verify needs `qa_battery`. It writes `.claude/pd.local.md` (`artifacts_root`, `base_branch`, `qa_battery`, the test paths and the budgets) and proposes these `.claude/settings.json` entries, as a diff you approve:
 
 - **`worktree.baseRef: "head"`:** each task's worktree starts from the feature branch, not the default branch.
 - **`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`:** agents can't spawn agents.

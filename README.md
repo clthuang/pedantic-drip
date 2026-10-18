@@ -8,7 +8,7 @@
 - **State in git:** each feature is a folder of Markdown files, committed with your code.
 - **Mechanical checks:** a script checks each stage's hand-off and prints one line per problem. A hook lints the feature files staged by every `git commit` Claude runs; commits you type in a terminal aren't checked.
 - **Tests first, proven per task:** each plan task runs in its own worktree, on its own branch. The merger lands a task after checking that its tests failed before the code was written and pass after; a refactor or fixture task marked `proof: green-only` only has to pass. A test that was already passing is named for the review at Verify.
-- **Bounded reviews:** at Contracts, Plan and Verify, Codex reviews first when you've enabled it, otherwise a Claude reviewer. Up to three fix cycles follow. Blockers still open after that stop the run, and pd asks you what to do.
+- **Bounded reviews:** at Contracts, Plan and Verify, Codex reviews first unless your CLAUDE.md disables it; otherwise, or when Codex fails twice, a Claude reviewer does. Up to three fix cycles follow. Blockers still open after that stop the run, and pd asks you what to do.
 - **Unattended runs:** `/goal` drives a feature to a target stage. A Stop hook holds the run until that stage is reached with no open blocker.
 
 ## Installation
@@ -23,7 +23,7 @@ In a Claude Code session (`#stable` follows releases):
 ```
 
 Then, once per project:
-- **A new project:** run `/pd:init`. It's optional, since pd runs on defaults, but Verify needs the QA commands (`qa_battery`) it proposes. It writes `.claude/pd.local.md` (the artifacts folder, the base branch, your QA commands and the token budgets). It also proposes `.claude/settings.json` entries as a diff. Approve at least `worktree.baseRef: "head"`; without it, each task's worktree starts from the default branch instead of the feature branch. [Installation](docs/user-guide/installation.md) explains each entry.
+- **A new project:** run `/pd:init` before the first feature: it writes `.claude/pd.local.md`, which every pd workflow reads (`workflow_output_cap`; Verify also needs `qa_battery`), and proposes `.claude/settings.json` entries as a diff. Approve at least `worktree.baseRef: "head"`, so each task's worktree starts from the feature branch. [Set a Project Up](docs/user-guide/installation.md#set-a-project-up) explains each entry.
 - **A project used with an older pd** (it has a `docs/features/` folder): run `/pd:adopt`. It shows a dry run, then migrates the project on a `pd-adopt` branch for you to review and merge. Its last step adds `sop: 1` to `.claude/pd.local.md`, which marks the project as adopted.
 
 To check the setup, follow [Check It Works](docs/user-guide/installation.md#check-it-works).

@@ -5,14 +5,14 @@ source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 
 # pd Plugin — Overview
 
-pd is a Claude Code plugin that turns an idea into a merged feature through fixed stages. Each stage hands the next one a committed file, and a script checks that hand-off before the stage closes.
+pd is a Claude Code plugin that turns an idea into a merged feature through fixed stages. Each stage hands the next one a committed file; from Criteria on, a script checks that hand-off before the stage closes.
 
 ## What pd Does
 
 - **Stages in order:** Clarify (brainstorm or RCA), Criteria (`specify`), Contracts (`design`), Plan (`create-plan`), Execute (`implement`), Verify (`verify`), Finish (`finish`).
 - **State in committed files:** each feature is a folder under `{pd_artifacts_root}/features/<id>/` (default `docs/dev_artifacts/`) holding `README.md` (status, phase, mode, `## Now`), `log.md` (append-only history), `shape.md` and `plan.md`. Nothing lives in a database.
-- **Mechanical checks:** `phase-gate.sh` checks what each stage must hand down; the commit hook runs `pd-lint --staged` before every `git commit` Claude runs. Commits you type in a terminal aren't checked.
-- **Review calls** at Contracts, Plan and Verify: Codex first when your CLAUDE.md has `**Codex reviewer: ENABLED**`, otherwise a Claude reviewer; one pass, up to three fix cycles against runnable checks, then you.
+- **Mechanical checks:** `phase-gate.sh` checks what each stage from Criteria to Finish must hand down (Clarify has no exit check); the commit hook runs `pd-lint --staged` before every `git commit` Claude runs. Commits you type in a terminal aren't checked.
+- **Review calls** at Contracts, Plan and Verify: Codex first unless your CLAUDE.md says `**Codex reviewer: DISABLED**`, otherwise (or when Codex fails twice) a Claude reviewer; one pass, up to three fix cycles against runnable checks, then you.
 - **Three depths:** standard, small (one joint review over design and plan) and express (a mini-spec, straight to implement).
 
 ## Key Features

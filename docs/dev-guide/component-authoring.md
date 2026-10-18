@@ -56,10 +56,10 @@ This repository uses a two-level plugin system:
 
 **Location:** `skills/{skill-name}/SKILL.md`
 
-**Required Structure:**
+**Required Structure** (`name`: lowercase and hyphens only, gerund form preferred; `validate.sh` reads the whole value, so keep comments out of the frontmatter):
 ```markdown
 ---
-name: skill-name-gerund        # lowercase, hyphens only; gerund form preferred
+name: skill-name-gerund
 description: What it does. Use when [specific triggers].
 ---
 

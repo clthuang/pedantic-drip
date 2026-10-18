@@ -48,7 +48,7 @@ A feature's README frontmatter holds `phase:`, one of `specify`, `design`, `crea
 - **Phase entry:** resolve the feature (argument, branch, or `pd-status`), check out its branch, read the README, `## Now` and the open blockers.
 - **Phase exit:** `phase-gate.sh <phase> <feature dir>` passes; set `phase:` to the next phase, append a `phase <from> -> <to>` entry, overwrite `## Now`, commit `<phase>: <summary>`.
 - **Backward move:** set `phase:` back and append `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`.
-- **Review call** (`references/review-call.md`): Codex first with one retry when the user's CLAUDE.md has `**Codex reviewer: ENABLED**`, else the stage's Claude reviewer; one pass, up to three fix cycles against runnable checks, then the user.
+- **Review call** (`references/review-call.md`): Codex first with one retry unless the user's CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer; one pass, up to three fix cycles against runnable checks, then the user.
 - **Workflow runs:** write `run in flight:` to `## Now` before launching; append the `run`, `review`, `qa` and `gate` entries from the result.
 - **Goal runs:** `goal: <id> target <phase> session <id>` in `## Now`; the Stop hook decides when the run may stop.
 
@@ -61,7 +61,7 @@ A feature's README frontmatter holds `phase:`, one of `specify`, `design`, `crea
 | `research-fanout` | Clarify | Researchers, one `advisor` per lens, then `ras-synthesizer` |
 | `rca-fanout` | Clarify | One investigator per hypothesis, then a refuter for each supported one |
 
-Each checks `workflow_output_cap` before every agent and returns `stopped: "budget"` with partial results at the cap. Results are pinned in `references/workflow-results.md`.
+Each checks `workflow_output_cap` before every agent and returns `stopped: "budget"` with partial results at the cap. Each script pins its result schema, and `references/workflow-results.md` restates it; `test-workflows.mjs` checks they agree.
 
 ## Agents
 
@@ -71,7 +71,7 @@ Each checks `workflow_output_cap` before every agent and returns `stopped: "budg
 - **Advisory:** `advisor`.
 - **Orchestration:** `merger`, `calvin-runner`, `retro-facilitator`.
 
-Each agent's frontmatter sets its `model:`, `effort:` and `tools:`; `validate.sh` checks the roles' tool limits.
+Each agent's frontmatter sets its `model:` and `tools:` (and `effort:` where its role requires one); `validate.sh` checks the roles' limits.
 
 ## Hooks
 
