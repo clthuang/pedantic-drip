@@ -13,7 +13,7 @@ import pd_common as pc
 WS, OTHER_WS = "ws-fixture", "ws-other"
 
 FILES = {
-    ".gitignore": "agent_sandbox/\n**/.meta.json\ndocs/backlog.md\ndocs/features/**/.qa-gate.log\n",
+    ".gitignore": "agent_sandbox/\n**/.meta.json\ndocs/backlog.md\ndocs/features/**/.qa-gate.log\ndocs/features/**/.qa-gate/*.log\n",
     ".claude/pd.local.md": (
         "---\nartifacts_root: docs\nbase_branch: auto\n"
         "doc_tiers: user-guide,dev-guide,technical\n# Fully autonomous mode\nyolo_mode: true\nyolo_max_stop_blocks: 50\n"
@@ -61,6 +61,7 @@ IGNORED = {
     "docs/features/003-gamma/.meta.json": json.dumps({"status": "satisfied", "lastCompletedPhase": "finish"}),
     "docs/features/001-alpha/.qa-gate.log": "raw gate log\n",
     "docs/features/001-alpha/.qa-gate/security.json": "{}\n",  # a tracked sidecar directory
+    "docs/features/001-alpha/.qa-gate/raw.log": "ignored, inside it\n",
     "docs/projects/005-alpha-evolution/.meta.json": "{}",
     "docs/backlog.md": "# Backlog (projection)\n",
 }
@@ -110,11 +111,16 @@ def build(tmp):
          "work", "backlog"),
         ("bl3", WS, "backlog:00003", "00003", "Old idea", "dropped", None, None, "2026-01-07T08:00:00Z",
          "work", "backlog"),
-        ("bl4", WS, "backlog:00004", "00004", "Watch fix rate", "active", None, None, "2026-01-08T08:00:00Z",
+        ("bl4", WS, "backlog:00004", "00004", "Watch\rfix  rate", "active", None, None, "2026-01-08T08:00:00Z",
          "work", "backlog"),
         ("bl5", WS, "backlog:00005", "00005", "Rename repo", "promoted", None, None, "2026-01-09T08:00:00Z",
          "work", "backlog"),
         ("bl6", WS, "backlog:00006", "00006", "Hard delete", "completed", None, None, "2026-01-10T08:00:00Z",
+         "work", "backlog"),
+        ("bl7", WS, "backlog:00007", "00007", "Delta idea", "completed", None, None, "2026-01-11T08:00:00Z",
+         "work", "backlog"),
+        ("f4", WS, "feature:004-delta", "004-delta", "delta", "completed", "bl7", None, t, "work", "feature"),  # registry only
+        ("bl8", WS, "backlog:00008", "00008", "Spaced reason", "dropped", None, None, "2026-01-12T08:00:00Z",
          "work", "backlog"),
         ("f3", WS, "feature:003-gamma", "003-gamma", "gamma", "completed", "bl2", None, t, "work", "feature"),
         ("b1", WS, "brainstorm:20260101-000000-alpha", "20260101-000000-alpha", "Alpha", "draft", None,
@@ -129,6 +135,7 @@ def build(tmp):
                     (u, ws, tid, eid, name, status, parent, ap, created, created, typ, kind))
     # The live registry holds some rows' metadata JSON-encoded twice (117 rows, 2026-10-18).
     con.execute("UPDATE entities SET metadata = ? WHERE uuid = 'bl3'", (json.dumps(json.dumps({"reason": "superseded by 003"})),))
+    con.execute("UPDATE entities SET metadata = ? WHERE uuid = 'bl8'", (json.dumps({"reason": "  spaced\n out "}),))
     con.execute("INSERT INTO workflow_phases VALUES ('feature:002-beta', 'design', 'specify', 'standard', ?, 'f2')", (t,))
     events = [  # 002-beta's history exists only in the registry
         ("started", "specify", "2026-02-01T09:00:00+08:00", None, None, None, None),

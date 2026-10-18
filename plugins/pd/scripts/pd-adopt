@@ -283,7 +283,7 @@ class Adopt:
             self.git("commit", "-q", "-m", msg)
 
     def remove(self, p):
-        if self.git("rm", "-q", "--", self.rel(p), check=False) is None:
+        if self.git("rm", "-q", "--", f":(literal){self.rel(p)}", check=False) is None:
             p.unlink()
 
     def aside(self, p):
@@ -292,7 +292,7 @@ class Adopt:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if p.is_dir():
             shutil.copytree(p, dst, dirs_exist_ok=True)
-            self.git("rm", "-rq", "--", self.rel(p), check=False)
+            self.git("rm", "-rq", "--", f":(literal){self.rel(p)}", check=False)
             shutil.rmtree(p, ignore_errors=True)
         else:
             shutil.copy2(p, dst)
@@ -382,7 +382,7 @@ class Adopt:
             return
         lines, seen = ["# Backlog", ""], set()
         for e in sorted(rows, key=lambda e: (e.get("created_at") or "", e["type_id"])):
-            title = str(e.get("name") or e["key"]).replace("\n", " ").strip()
+            title = " ".join(str(e.get("name") or e["key"]).split())  # one line: pd-lint reads the backlog line by line
             base = f"{(e.get('created_at') or self.today)[:10]}-{pc.slugify(title) or re.sub(r'[^a-z0-9]+', '-', e['key'].lower()).strip('-')}"
             bid, n = base, 2
             while bid in seen:
@@ -396,7 +396,8 @@ class Adopt:
             elif status == "promoted" or (child and status != "dropped"):
                 lines.append(f"- [x] {bid} — promoted → features/{child['key']}" if child else f"- [x] {bid} — promoted → (no feature recorded): {title}")
             elif status == "dropped":
-                lines.append(f"- [x] {bid} — dropped: {e['meta'].get('reason') or e['meta'].get('drop_reason') or 'no reason recorded'}")
+                reason = " ".join(str(e['meta'].get('reason') or e['meta'].get('drop_reason') or '').split())
+                lines.append(f"- [x] {bid} — dropped: {reason or 'no reason recorded'}")
             else:  # pd-lint knows only promoted and dropped for a closed row
                 lines.append(f"- [x] {bid} — dropped: closed as {status} in the registry, with no feature: {title}")
         self.write(f"{NEW}/backlog.md", "\n".join(lines) + "\n")
@@ -935,7 +936,8 @@ def self_test():
         c.check(kinds == ["note", "phase", "qa", "review", "review", "review"] and len(alog) == 6
                 and all("Status: closed (legacy)" in e["body"] for e in alog) and pc.open_blockers(alog) == []
                 and not any((art / "features/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log", ".qa-gate"))
-                and (repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/dev_artifacts/features/001-alpha/.qa-gate/security.json").is_file(),
+                and all((repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/dev_artifacts/features/001-alpha/.qa-gate" / n).is_file()
+                        for n in ("security.json", "raw.log")),
                 f"log.md entries marked closed (legacy), originals removed: {[e['heading'] for e in alog]}")
         p1 = fm("plans/P001-alpha-evolution.md")
         ptext = (art / "plans/P001-alpha-evolution.md").read_text()
@@ -950,6 +952,8 @@ def self_test():
                 and "- [ ] 2026-01-08-watch-fix-rate — Watch fix rate\n" in bl
                 and "- [x] 2026-01-09-rename-repo — promoted → (no feature recorded): Rename repo\n" in bl
                 and "- [x] 2026-01-10-hard-delete — dropped: closed as completed in the registry, with no feature: Hard delete\n" in bl
+                and "- [x] 2026-01-11-delta-idea — promoted → features/004-delta\n" in bl
+                and "- [x] 2026-01-12-spaced-reason — dropped: spaced out\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
                 and fm("rca/20260309-drift.md")["status"] == "done", "legacy single-file items get id, type, title and status")
