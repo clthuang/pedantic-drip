@@ -77,7 +77,8 @@ perl -pi -e 's/^status: bogus$/status: active/' "$FD/README.md"
 run "$(hook "$A" S1 false '[{"type":"workflow","status":"running"}]')"; expect "a running workflow yields" 0
 run "$(hook "$A" S1 false '[{"type":"subagent","status":"running"}]')"; expect "a running subagent yields" 0
 run "$(hook "$A" S1 false '[{"type":"shell","status":"running"}]')"; expect "a running shell doesn't yield" 2 "not reached"
-run "$(hook "$A" S1 false '[{"type":"workflow","status":"completed"}]')"; expect "only a running entry yields" 2 "not reached"
+run "$(hook "$A" S1 false '[{"type":"workflow"}]')"; expect "an entry without a status doesn't yield" 2 "not reached"
+run "$(hook "$A" S1 false '[{"type":"subagent","status":"pending"}]')"; expect "a pending subagent doesn't yield" 2 "not reached"
 now "$A" "goal: $FID target finish session S1
 run in flight: implement-tasks session S1"
 run "$(hook "$A" S1)"; expect "no array: this session's run in flight: yields" 0
