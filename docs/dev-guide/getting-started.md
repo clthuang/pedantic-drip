@@ -55,7 +55,7 @@ Each project's settings live in `.claude/pd.local.md`, written by `/pd:init`. Ke
 
 ## Running Tests
 
-Run every command with a throwaway `HOME`, so no test touches your real `~/.claude`. The full list is in [commands-reference.md](../dev_guides/commands-reference.md).
+Run every command with a throwaway `HOME`, so no test touches your real `~/.claude`. The full list is in [commands-reference.md](commands-reference.md).
 
 ```bash
 H=$(mktemp -d)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Helpers for the SessionStart hook's broken-pipe handling.
-# Feature 107. See docs/dev_guides/hook-development.md and
+# Feature 107. See docs/dev-guide/hook-development.md and
 # docs/features/107-fix-sessionstart-broken-pipe/design.md.
 #
 # REQUIRES caller to have set `trap '' PIPE` BEFORE invoking

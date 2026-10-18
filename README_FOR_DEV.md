@@ -346,7 +346,7 @@ These files are preserved as plain documentation. Memory capture and recall are 
 
 ## Creating Components
 
-See [Component Authoring Guide](./docs/dev_guides/component-authoring.md).
+See [Component Authoring Guide](./docs/dev-guide/component-authoring.md).
 
 All components are created in the `plugins/pd/` directory:
 
@@ -380,4 +380,4 @@ When something fails:
 
 ## References
 
-- [Component Authoring Guide](./docs/dev_guides/component-authoring.md)
+- [Component Authoring Guide](./docs/dev-guide/component-authoring.md)

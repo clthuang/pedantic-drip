@@ -57,4 +57,4 @@ See [README_FOR_DEV.md](../../README_FOR_DEV.md) ("Version", "Release Process").
 
 ## Adding Components
 
-New plugin components go in `plugins/pd/`. After adding, removing or renaming a skill, agent, command or hook, update the count and reference tables in `README.md`, `README_FOR_DEV.md` and `plugins/pd/README.md`; `scripts/check-doc-drift.sh` checks them. See the [Component Authoring Guide](../dev_guides/component-authoring.md).
+New plugin components go in `plugins/pd/`. After adding, removing or renaming a skill, agent, command or hook, update the count and reference tables in `README.md`, `README_FOR_DEV.md` and `plugins/pd/README.md`; `scripts/check-doc-drift.sh` checks them. See the [Component Authoring Guide](component-authoring.md).
