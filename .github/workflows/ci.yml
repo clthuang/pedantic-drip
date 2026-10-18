@@ -28,6 +28,20 @@ jobs:
       - name: Run release script tests
         run: bash scripts/test-release.sh
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Run pd's script, hook and workflow suites
+        run: |
+          set -e
+          for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/hooks/tests/test-promptimize-content.sh \
+                   plugins/pd/hooks/tests/test-worktree-dispatch.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done
+          for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done
+          python3 plugins/pd/scripts/pd_common.py --self-test
+          uv run --script plugins/pd/scripts/pd-html.py --self-test
+          node plugins/pd/workflows/tests/test-workflows.mjs
+          uv run --project plugins/pd pytest -q plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py plugins/pd/hooks/lib/test_project_root.py
+
       - name: Released CHANGELOG sections unchanged
         if: github.event_name == 'pull_request'
         run: bash scripts/check-changelog.sh "origin/$GITHUB_BASE_REF"

@@ -88,16 +88,20 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
     : l.startsWith('qa') ? (qaRuns++, { commit: 'h', ran: [{ command: 'pytest', result: qaRuns > 1 ? 'pass' : 'fail' }], gaps: [], issues: [], flakes: [] })
     : { fixes: [{ issue: 'R1', commit: 'f1', test: 't::a' }], rejections: [] }
   const s = stubs(answer)
-  const r = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9 }, ...s.args)
+  const r = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }, ...s.args)
   check(keys(r) === keys({ ...every, ...verify }) && keys(r) === keys(globalThis.__RESULT.properties), `verify-change: result fields equal: ${keys(r)}`)
   check(keys(r.qa) === keys(verify.qa) && keys(r.review) === keys(verify.review) && keys(r.fixes[0]) === keys(verify.fixes[0]), 'verify-change: qa, review and fixes fields equal')
   check(s.calls.map(c => c.label).join() === 'review:codex,qa:1,review:codex:retry,review:claude,fix:1,qa:2' && r.cycles === 1, `verify-change: codex, one retry, the Claude fallback, one cycle: ${s.calls.map(c => c.label)}`)
   check(s.calls[0].agentType === 'codex:codex-rescue' && s.calls[3].agentType === 'pd:code-quality-reviewer' && phasesOk(meta, s.calls), 'verify-change: agent types and phases')
+  check(s.calls[0].prompt.includes('every run implement-tasks entry in docs/f/log.md') && !s.calls[0].prompt.includes('undefined'),
+    'verify-change: the review prompt points at log.md for the case maps instead of carrying them inline (F7)')
+  const noLog = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], workflow_output_cap: 1e9 }, ...stubs(answer).args).then(() => 'ran', e => e.message)
+  check(noLog.includes('needs args.log'), `verify-change: refuses to start without args.log: ${noLog}`)
   const s2 = stubs(l => l.startsWith('review') ? { approved: false, issues: [ISS], summary: '' } : l.startsWith('fix') ? { fixes: [], rejections: [] } : (qaRuns = 0, answer('qa')))
-  const r2 = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9, codex: false }, ...s2.args)
+  const r2 = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9, codex: false }, ...s2.args)
   check(r2.cycles === 3 && s2.calls.filter(c => c.label.startsWith('fix')).map(c => c.model || '-').join() === '-,opus,opus' && s2.calls[0].label === 'review:claude',
     'verify-change: toggle off goes straight to Claude; the loop stops at 3 cycles; cycles 2 and 3 run opus')
-  const A = { feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], task_proofs: [], workflow_output_cap: 1e9 }
+  const A = { feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }
   const QA_PASS = issues => ({ commit: 'h', ran: [{ command: 'pytest', result: 'pass' }], gaps: [], issues, flakes: [] })
   const s3 = stubs(l => l.startsWith('review') ? { approved: true, issues: [], summary: '' } : l.startsWith('qa') ? QA_PASS([{ ...ISS, id: 'Q1' }])
     : { fixes: [{ issue: 'Q1', commit: 'f1', test: 't::a' }], rejections: [] })

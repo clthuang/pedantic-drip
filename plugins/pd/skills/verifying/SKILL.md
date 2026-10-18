@@ -14,7 +14,7 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
    - `feature_id`; `shape` and `plan` (the files' paths); `base`: `git merge-base HEAD <base_branch>`;
    - `checklist`: this skill's `## Review checklist` section, verbatim;
    - `qa_battery` from `.claude/pd.local.md` (none set: stop and ask the user to set it; `phase-gate.sh verify` fails without it), plus the migration's up-and-down commands on a fixture database when the feature has `risk: migration`;
-   - `task_proofs`: each task's `case_map`, `greens` and `skipped`, from the `run` entries' task lines and their `case_map:` lines;
+   - `log`: the feature's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from the `run implement-tasks` entries (all of them: a resumed run lists only the tasks it landed), so the args stay small enough to pass inline;
    - `assumptions`: this feature's open assumptions from `pd-status`;
    - `codex`: `false` when the user's CLAUDE.md says `**Codex reviewer: DISABLED**`; `codex_flags`: the `--model <m> --effort <e>` its `**Codex reviewer model:**` line names (`references/review-call.md`);
    - `workflow_output_cap` from the config, raised by any `decision` entry that raised it for this feature.
@@ -30,7 +30,7 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
    - **Blockers left after the third cycle, or a battery command failing or missing from QA's run:** a `capped verify` entry (four lists), then ask the user; the answer is a `decision` with `answers: capped@<date> <time>`.
    - **A judgement finding with no testable check:** a hard stop: ask.
    - **No usable review** (`reviewed_by: null`, an `R0` blocker): a hard stop. Ask through AskUserQuestion: re-run the review call, or waive it, a `decision` entry with `Closes: review@<this entry>#R0`. The open `R0` blocks `phase-gate.sh verify` until then.
-6. **Risk tags.** A risk signal with no matching tag: decide the tag with the user (a `decision` entry), then set `risk:` in the README.
+6. **Risk tags.** A risk signal with no matching tag: decide the tag with the user (a `decision` entry), then set `risk:` in the README. The question quotes each signal's hit verbatim, with its file:line from the `qa` issue, never a summary of what it might mean.
    - **`security`:** the security review at finish becomes mandatory (`finishing-branch`).
    - **`migration`:** re-run this stage with the migration's up and down in the battery.
    - **On a small or express feature,** a tag set here moves the feature back: express to `specify`, small to `design`, each then at standard depth (`phase verify -> <stage> (back)`).

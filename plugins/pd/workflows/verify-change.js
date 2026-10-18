@@ -9,9 +9,10 @@ export const meta = {
 }
 
 // args (plan §A4): {feature_id, base, shape, plan, checklist (the verifying skill's checklist, inline), qa_battery: [cmd],
-//   task_proofs (each task's case_map and greens), assumptions, codex (false when the user's toggle is off),
+//   log (the feature's log.md: its run entries carry each task's case_map and greens), assumptions, codex (false when the user's toggle is off),
 //   codex_flags (the model and effort the user's CLAUDE.md names), reviewer (default pd:code-quality-reviewer), workflow_output_cap}
 if (!args || typeof args.workflow_output_cap !== 'number') throw new Error('verify-change needs args.workflow_output_cap (plan §A5 cap 1)')
+if (!args.log) throw new Error("verify-change needs args.log, the feature's log.md (its run entries carry each task's case_map)")
 const START = budget.spent()
 let stopped = null, agentsUsed = 0, reviewedBy = null
 async function call(prompt, opts) {  // every agent passes the workflow cap first (§A5 cap 1); a dead agent is null
@@ -39,7 +40,7 @@ const RESULT = obj({
 const REVIEW_PROMPT = `Review the whole branch diff ${args.base}..HEAD of feature ${args.feature_id} against ${args.shape} and ${args.plan}.
 Checklist:
 ${args.checklist}
-Each task's case_map and the merger's tests already green at their test commit (claims, not evidence: check each at file:line): ${J(args.task_proofs)}
+Each task's case_map and the merger's tests already green at their test commit are the task lines and their case_map: lines of every run implement-tasks entry in ${args.log} (a resumed run lists only the tasks it landed; for a task listed twice, the later line) (claims, not evidence: check each at file:line).
 Check that each mapped test asserts its case's stated outcome, not a weaker one. Open assumptions to check: ${J(args.assumptions || [])}.
 Issue ids R1, R2, …; severity blocker, warning or note. approved is true only with no blocker.`
 async function review() {  // one agent call: Codex first with one retry, else the Claude reviewer (§A4)
