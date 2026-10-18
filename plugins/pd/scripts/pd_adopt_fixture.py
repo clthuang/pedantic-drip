@@ -61,6 +61,8 @@ IGNORED = {
         "phases": {"specify": {"started": "2026-01-02T09:00:00+00:00", "completed": "2026-01-02T11:00:00+00:00",
                                "iterations": 2, "reviewerNotes": "spec ok"}}}),
     "docs/features/003-gamma/.meta.json": json.dumps({"status": "satisfied", "lastCompletedPhase": "finish"}),
+    "docs/features/005-epsilon/spec.md": "# Epsilon\n",
+    "docs/features/005-epsilon/.meta.json": json.dumps({"status": "abandoned"}),
     "docs/features/001-alpha/.qa-gate.log": "raw gate log\n",
     "docs/features/001-alpha/.qa-gate/security.json": "{}\n",  # a tracked sidecar directory
     "docs/features/001-alpha/.qa-gate/raw.log": "ignored, inside it\n",

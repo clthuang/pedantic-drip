@@ -869,6 +869,8 @@ def self_test():
         c.check(git("status", "--porcelain") == "" and git("rev-parse", "HEAD") == head and git("branch", "--show-current") == "main",
                 "the dry run changes nothing")
         c.check("MAP BY HAND: features/003-gamma: status 'weird'" in out, "an unmapped status is listed, not guessed")
+        c.check("NOT DONE: features/002-beta" in out and "NOT DONE: features/005-epsilon" not in out,
+                "a legacy feature not done is listed for conversion; an abandoned one isn't")
         c.check("UNCLASSIFIED: docs/dev_guides/" in out and "UNCLASSIFIED: docs/user-guide" not in out, "unclassified dirs are flagged")
         gamma.write_text(fx.IGNORED["docs/features/003-gamma/.meta.json"])
         (repo / "stray.txt").write_text("x")
