@@ -1,6 +1,8 @@
 # Claude Code Component Authoring Guide
 
-Reference specifications for creating skills, subagents, plugins, commands, and hooks.
+Reference specifications for creating skills, subagents, plugins, commands, and hooks. The rules marked as errors or warnings are the ones `./validate.sh` enforces.
+
+**Templates:** start a new component from [skill-template.md](templates/skill-template.md), [agent-template.md](templates/agent-template.md) or [command-template.md](templates/command-template.md).
 
 ---
 
@@ -30,6 +32,7 @@ This repository uses a two-level plugin system:
 **Level 2: Plugin Manifest**
 - **Location:** `plugins/{name}/.claude-plugin/plugin.json`
 - **Purpose:** Defines plugin metadata and configuration
+- **Checked by `validate.sh`:** `name` is required and kebab-case; `version`, when present, is `X.Y.Z`
 
 ```json
 {
@@ -42,10 +45,10 @@ This repository uses a two-level plugin system:
 }
 ```
 
-**Installation Flow:**
-1. Add the marketplace on its release channel: `/plugin marketplace add clthuang/pedantic-drip#stable`
-2. Install the plugin: `/plugin install pd@pedantic-drip-marketplace`
-3. To test local changes, start a session with `claude --plugin-dir plugins/pd` instead
+**Installing and testing:**
+- **Install:** [docs/user-guide/installation.md](../user-guide/installation.md).
+- **Test local changes:** [README_FOR_DEV.md "Local Development Setup"](../../README_FOR_DEV.md#local-development-setup).
+- **Versioning:** [README_FOR_DEV.md "Version"](../../README_FOR_DEV.md#version).
 
 ---
 
@@ -56,7 +59,7 @@ This repository uses a two-level plugin system:
 **Required Structure:**
 ```markdown
 ---
-name: skill-name-gerund        # lowercase, hyphens only, prefer gerund form
+name: skill-name-gerund        # lowercase, hyphens only; gerund form preferred
 description: What it does. Use when [specific triggers].
 ---
 
@@ -65,10 +68,12 @@ description: What it does. Use when [specific triggers].
 [Instructions Claude follows when active]
 ```
 
+The stage skills put their work in `## Steps`; the ones that make the review call (`designing`, `planning`, `verifying`) add a `## Review checklist` that goes inline in the reviewer's prompt. [skill-template.md](templates/skill-template.md) follows that shape.
+
 **Authoring Rules:**
-1. **Name**: Use gerund form (`creating-tests`, `reviewing-code`, `generating-docs`)
-2. **Description**: Include BOTH what it does AND when to use it. Write in third person.
-3. **Length**: Keep SKILL.md under 500 lines. Use reference files for detailed content.
+1. **Name**: prefer the gerund form (`creating-tests`, `reviewing-code`). Not enforced: `promptimize`, `root-cause-analysis` and `game-design` are skills too. `validate.sh` errors on a name that isn't lowercase with hyphens.
+2. **Description**: include BOTH what it does AND when to use it, in the third person. `validate.sh` warns on a description under 50 characters, without "Use when" (or "Use for", "Triggered when"), or opening with "I ", "You can" or "This lets you".
+3. **Length**: keep SKILL.md under 500 lines (`validate.sh` warns past that). Use reference files for detailed content.
 4. **Progressive Disclosure**: SKILL.md = overview. Additional files = details loaded on-demand.
 
 **Description Quality Checklist:**
@@ -81,9 +86,10 @@ description: What it does. Use when [specific triggers].
 ```
 skills/{skill-name}/
 ├── SKILL.md              # Required entry point
-├── scripts/              # Executable scripts
 ├── references/           # Supporting docs (loaded on-demand)
-└── templates/            # Output templates
+├── scripts/              # Executable scripts
+├── examples/             # Usage examples and sample outputs
+└── fixtures/             # Test inputs for the skill's own checks
 ```
 
 **Subdirectory Usage:**
@@ -91,80 +97,92 @@ skills/{skill-name}/
 | Directory | Use For |
 |-----------|---------|
 | `references/` | On-demand context docs (loaded when Claude needs them) |
-| `templates/` | Prompt templates and output formats |
 | `scripts/` | Executable scripts and utilities |
 | `examples/` | Usage examples and sample outputs |
+| `fixtures/` | Sample inputs the skill's checks run against |
 
 ---
 
 ## Subagents
 
-**Location:** `agents/{agent-name}.md`
+**Location:** `agents/{agent-name}.md`. Start from [agent-template.md](templates/agent-template.md).
 
 **Required Structure:**
 ```markdown
 ---
 name: agent-name
-description: What this agent does. Use when [delegation criteria].
-tools: [Allowed tools - omit to inherit all]
-model: [Optional: haiku, sonnet, or proxy string like ollama/llama-3]
+description: What this agent does. Use when (1) trigger condition, (2) user says 'keyword'.
+model: sonnet
+effort: medium
+tools: [Read, Glob, Grep]
+skills: [skill-name]
+color: blue
 ---
+
+<example>
+Context: When this agent should trigger
+user: "Example user message"
+assistant: "Example response explaining the delegation."
+<commentary>Why this example triggers the agent.</commentary>
+</example>
 
 [System prompt defining agent behavior]
 ```
 
+**Frontmatter fields:**
+- **`name`** (required): lowercase with hyphens; `validate.sh` errors otherwise.
+- **`description`** (required): what the agent does and when to use it; the same warnings as a skill's.
+- **`model`** (required by convention): `opus`, `sonnet` or `haiku`. Every pd agent sets `opus` or `sonnet`; a missing `model:` is a `validate.sh` warning. Every `subagent_type:` dispatch passes the same `model:` (CLAUDE.md "Agent model tiers").
+- **`effort`** (optional): pd uses `high` or `medium`; the role rules below require it for some agents.
+- **`tools`** (optional): the tools the agent may use. Omit it and the agent inherits every tool.
+- **`skills`** (optional): skills the agent loads, such as `[planning]` for `plan-reviewer`.
+- **`color`**: one of `blue`, `cyan`, `green`, `yellow`, `magenta`, `red`. Missing is a warning; any other value is an error.
+- **Field order:** `name`, `description`, `model`, `tools`, `color` in that order, or `validate.sh` warns. `effort` and `skills` may sit between them.
+- **`<example>` blocks** in the body: missing is a warning. An `examples:` key in the frontmatter is an error.
+
+**Role rules** (`agent_roles_errors` in `validate.sh`; each break is an error):
+- **Reviewers** (`design-reviewer`, `plan-reviewer`, `code-quality-reviewer`, `security-reviewer`): tools exactly `Read, Grep, Glob`; `model: opus`, `effort: high`.
+- **Executor** (`implementer`): `model: sonnet`, `effort: medium`, and it keeps its `## Verify before you report` section.
+- **Verifiers** (`qa-executor`, `retro-facilitator`): `model: opus`, `effort: high`.
+- **Merger** (`merger`): no `Write` or `Edit` in its tools.
+- **Calvin runner** (`calvin-runner`): tools exactly `Read, Glob, Skill, Write`.
+- **All nine files exist:** deleting one of these agents is an error until the rule changes.
+
 **Authoring Rules:**
-1. **Single Responsibility**: Each agent does ONE thing well
-2. **Personality**: The agent's personality traits and approximating character, e.g. Elon Musk, Steve Jobs, etc.
-3. **Tool Scoping**: Explicitly list `tools:` to restrict capabilities, default to all skills if undefined
-4. **Context Isolation**: Agents have separate context windows—use for deep dives
-5. **Output Format**: Define how results should be returned to parent
+1. **Single Responsibility**: each agent does one thing.
+2. **Tool Scoping**: list `tools:` to restrict capabilities; without it the agent inherits every tool.
+3. **Context Isolation**: agents have separate context windows; use them for deep dives.
+4. **Output Format**: define how results return to the parent.
 
 ---
 
 ## Plugins
 
-**Location:** `plugins/{plugin-name}/`
+**Location:** `plugins/{plugin-name}/`. Only `.claude-plugin/plugin.json` is required (its schema is under Level 2 above).
 
-**Required Structure:**
+**pd's layout:**
 ```
-plugin-name/
+plugins/pd/
 ├── .claude-plugin/
-│   └── plugin.json           # Required manifest
-├── skills/                    # Optional
-├── agents/                    # Optional
-├── commands/                  # Optional
-├── hooks/                     # Optional
-└── README.md                  # Required documentation
+│   └── plugin.json      # Required manifest
+├── agents/              # Subagents
+├── commands/            # Slash commands
+├── hooks/               # Hook scripts and hooks.json, with lib/ and tests/
+├── references/          # Shared reference docs the skills read (log-entries.md, review-call.md, ...)
+├── scripts/             # pd's command-line tools (pd-lint, pd-status, phase-gate.sh, ...)
+├── skills/              # Skills
+├── templates/           # Per-item file templates (README.md, log.md, shape.md, plan.md, ...)
+├── workflows/           # Workflow scripts (implement-tasks.js, verify-change.js, ...)
+└── README.md            # Component tables and counts
 ```
-
-**plugin.json Schema:**
-```json
-{
-  "name": "plugin-name",
-  "version": "1.0.0",
-  "description": "Clear description of what this plugin provides",
-  "author": { "name": "...", "email": "..." },
-  "license": "MIT",
-  "keywords": ["relevant", "keywords"],
-  "mcpServers": {
-    "server-name": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/path/to/server-script.sh",
-      "args": []
-    }
-  }
-}
-```
-
-**mcpServers:** Optional. Declares MCP servers that Claude Code registers when the plugin is loaded. Use `${CLAUDE_PLUGIN_ROOT}` for portable paths. Prefer a shell wrapper script that resolves Python and sets up the environment.
 
 ---
 
 ## Commands
 
-**Location:** `commands/{command-name}.md`
+**Location:** `commands/{command-name}.md`. Start from [command-template.md](templates/command-template.md).
 
-**Naming convention:** Use verbs and be explicit. 
+**Naming convention:** Use verbs and be explicit.
 * Bad: feature (ambiguous)
 * Good: create-feature
 
@@ -172,35 +190,29 @@ plugin-name/
 ```markdown
 ---
 description: What this command does
-argument-hint: [optional] [arguments]
-allowed-tools: [Optional tool restrictions]
+argument-hint: "[--feature=<id>]"
 ---
 
-[Instructions for Claude when command is invoked]
+# /pd:<command-name>
+
+[Instructions for Claude when the command is invoked]
 ```
+
+- **`description`:** `validate.sh` warns past 80 characters (it appears in `/help`).
+- **`argument-hint`:** quote it; an unquoted value starting with `[` parses as a YAML list, or fails to parse.
+- **`allowed-tools`** (optional): a YAML list or comma-separated values. No pd command sets it.
+- **Body:** pd's stage commands are thin: one line naming the stage, then "Invoke the `pd:<skill>` skill with `$ARGUMENTS`" (`commands/specify.md`).
 
 ---
 
 ## Hooks
 
-**Location:** `hooks/{hook-name}/`
+**Location:** one flat script per hook, `hooks/<name>.sh`, registered in `hooks/hooks.json`. Shared code lives in `hooks/lib/` and tests in `hooks/tests/`.
 
-**Hook Types:**
-
-| Event | Trigger | Can Block (exit 2) |
-|-------|---------|-------------------|
-| PreToolUse | Before tool execution | Yes |
-| PostToolUse | After tool execution | No |
-| UserPromptSubmit | Before prompt processed | Yes |
-| Stop | Before session ends | Yes |
-| SubagentStop | Before subagent returns | Yes |
-| Notification | On notifications | No |
-| PreCompact | Before context compaction | No |
-| SessionStart | On session start/resume | No |
+- **Writing one:** [hook-development.md](hook-development.md) covers stdin, output patterns, the shared library and broken-pipe safety. Its "Hook Types Reference" lists the events.
+- **Listing one:** add it to the hooks table in [README_FOR_DEV.md "Hooks"](../../README_FOR_DEV.md#hooks); `scripts/check-doc-drift.sh` fails a registered hook missing from that table, and a script in `hooks/` that `hooks.json` doesn't register.
 
 **hooks.json Schema:**
-
-Hooks are configured in `hooks/hooks.json` within the plugin:
 
 ```json
 {
@@ -236,10 +248,12 @@ Hooks are configured in `hooks/hooks.json` within the plugin:
 | Element | Description |
 |---------|-------------|
 | `hooks` | Root object containing event arrays |
-| Event key | One of: `SessionStart`, `PreToolUse`, `PostToolUse`, etc. |
-| `matcher` | Regex pattern to match against (tool name, event type, etc.) |
-| `type` | Hook type: `command` for shell scripts |
-| `command` | Path to executable; use `${CLAUDE_PLUGIN_ROOT}` for plugin-relative paths |
+| Event key | One of `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SubagentStop`, `SessionStart`, `SessionEnd`, `PreCompact`, `Notification` |
+| `matcher` | Regex pattern to match against (tool name, session source); required except for `Stop`, `SubagentStop` and `UserPromptSubmit` |
+| `type` | `command` (needs `command`) or `prompt` (needs `prompt`) |
+| `command` | Path to an existing file; use `${CLAUDE_PLUGIN_ROOT}` (a hardcoded path is a warning) |
+
+`validate.sh` also requires exactly one `Stop` hook, `pd-stop-gate.sh`.
 
 ---
 
@@ -247,10 +261,10 @@ Hooks are configured in `hooks/hooks.json` within the plugin:
 
 | Component | Format | Examples |
 |-----------|--------|----------|
-| Skill name | gerund, lowercase, hyphens | `creating-tests`, `reviewing-code` |
+| Skill name | lowercase, hyphens; gerund preferred | `creating-tests`, `reviewing-code` |
 | Agent name | action/role, lowercase, hyphens | `code-reviewer`, `security-auditor` |
 | Plugin name | noun, lowercase, hyphens | `datascience-team`, `authoring-toolkit` |
-| Command name | verb, lowercase, hyphens | `handoff`, `review`, `analyze` |
+| Command name | verb, lowercase, hyphens | `create-feature`, `abandon-feature`, `add-to-backlog` |
 
 ---
 
@@ -260,9 +274,13 @@ When referencing commands, skills, or agents within plugin files, always use the
 
 | Plugin | Command Reference | Subagent Reference |
 |--------|-------------------|-------------------|
-| `pd` | `/pd:show-status` | `pd:prd-reviewer` |
+| `pd` | `/pd:specify` | `pd:plan-reviewer` |
 
-**Why this matters:** A bare reference (`/show-status`, `prd-reviewer`) resolves against whatever plugins happen to be installed — it can silently invoke a different plugin's component or fail entirely when pd runs from the marketplace cache. The `pd:` prefix pins the reference to this plugin.
+**Why this matters:** A bare reference (`/specify`, `plan-reviewer`) resolves against whatever plugins happen to be installed. It can silently invoke a different plugin's component, or fail when pd runs from the marketplace cache. The `pd:` prefix pins the reference to this plugin.
+
+**Paths to plugin files:** pd runs from `~/.claude/plugins/cache/...`, so a skill, command or agent never names `plugins/pd/...` directly.
+- **Preferred:** `${CLAUDE_PLUGIN_ROOT}/...`, as in `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh` (`skills/workflow-transitions/SKILL.md`).
+- **Two-location Glob:** primary `~/.claude/plugins/cache/*/pd*/*/...`, then a line marked "Fallback (dev workspace)" with `plugins/*/...` (`skills/promptimize/SKILL.md`).
 
 ---
 
@@ -270,36 +288,41 @@ When referencing commands, skills, or agents within plugin files, always use the
 
 ### Validation Checklist
 
-Before merging any component:
-- [ ] YAML frontmatter parses without errors
-- [ ] `name` uses lowercase, hyphens, no spaces
-- [ ] `description` includes what AND when
-- [ ] SKILL.md under 500 lines
-- [ ] Scripts are executable (`chmod +x`)
-- [ ] No hardcoded absolute paths (use relative paths)
-- [ ] README documents usage and examples
-- [ ] Run promptimize on new/modified component files
+Before merging any component, `./validate.sh` passes with 0 errors and 0 warnings. It errors on:
+- [ ] **Frontmatter:** a skill or agent without the opening `---`, `name` or `description`, or with a `name` that isn't lowercase with hyphens
+- [ ] **Agent fields:** a `model` value with characters other than letters, digits, `-`, `_`, `.` and `/`; a `color` outside the six; a YAML `examples:` key; or a break of the role rules
+- [ ] **Plugin paths:** `plugins/pd/` in an agent, skill or command file, unless that line or the one before it says "Fallback", "dev workspace" or "If ... exists" (README and plan files are skipped)
+- [ ] **Artifact paths:** `docs/features/`, `docs/brainstorms/`, `docs/projects/`, `docs/backlog` or `docs/rca/` in a SKILL.md, command or agent; write `{pd_artifacts_root}` instead
+- [ ] **Branch targets:** a `develop` checkout, pull or merge in a SKILL.md or command; write `{pd_base_branch}` instead
+- [ ] **Includes:** an `@plugins/` include in a command; read the file through the two-location Glob instead
+- [ ] **Subjective adjectives:** "appropriate", "sufficient", "robust", "thorough", "proper", "adequate" or "reasonable" in an agent, skill or command outside `references/`; replace each with a measurable criterion
+- [ ] **Hooks:** a `hooks/*.sh` script that isn't executable, a `hooks.json` schema break, a hook that sources `common.sh` without `install_err_trap`, or a `hookSpecificOutput` emission without `hookEventName`
+- [ ] **Version and docs:** `scripts/check-version.sh` and `scripts/check-doc-drift.sh` fail
 
-### Skill Activation Optimization
+It warns on:
+- [ ] **Descriptions:** under 50 characters, no "Use when", or first person
+- [ ] **Size:** a SKILL.md over 500 lines
+- [ ] **Agents:** no `model`, no `color`, no `<example>` block, or fields out of order
+- [ ] **Commands:** a description over 80 characters, or a malformed `allowed-tools`
+- [ ] **hooks.json:** a command path without `${CLAUDE_PLUGIN_ROOT}`
 
-Description quality directly affects auto-triggering:
-- Generic description → ~20% activation rate
-- Specific description with triggers → ~50% activation rate
-- Description + examples in SKILL.md → ~90% activation rate
+By hand:
+- [ ] **Prompt review:** run `/pd:promptimize` on new or changed component files
+- [ ] **Docs sync:** follow the `updating-docs` skill's checklist when adding, removing or renaming a component
 
 ---
 
 ## Terminology Convention
 
-Use these terms consistently across all skills, commands, agents, and documentation:
+Use these terms consistently across all skills, commands, agents, and documentation. [architecture-overview.md "Stages and Phases"](architecture-overview.md#stages-and-phases) shows how they line up.
 
 | Term | Meaning | Example |
 |------|---------|---------|
-| **Stage** | Top-level division within a skill. Stages are the major sections of work a skill defines. | A skill with stages: "Analysis", "Design", "Implementation" |
-| **Step** | A section within a command, or a sub-item within a skill stage. Steps are the actionable units inside a stage or command. | Command steps: "1. Gather context", "2. Generate output" |
-| **Phase** | Reserved for workflow-state phase names only. Refers to the phases defined in the `workflow-state` skill that track feature lifecycle. | Phases: `brainstorm`, `specify`, `design`, `create-plan`, `implement`, `finish` |
+| **Stage** | One part of pd's workflow, with its own command and stage skill: Clarify, Criteria, Contracts, Plan, Execute, Verify, Finish. | Contracts: `/pd:design` and the `designing` skill |
+| **Phase** | The value of `phase:` in a feature's README frontmatter: one of `PHASES` in `plugins/pd/scripts/pd_common.py` (`specify`, `design`, `create-plan`, `implement`, `verify`, `finish`). Clarify has none: it runs on a brainstorm or rca item, before the feature exists. | `phase: design` during Contracts |
+| **Step** | A numbered item in a skill's `## Steps` section or in a command. | The `designing` skill's step 4, "Review" |
 
-**Why this matters:** Mixing these terms (e.g., calling a workflow-state phase a "stage", or calling a skill division a "phase") creates ambiguity in prompts and documentation. Consistent terminology improves LLM instruction-following and reduces author confusion.
+**Why this matters:** Mixing these terms (calling a stage a "phase", or a phase value a "stage") creates ambiguity in prompts and documentation. Consistent terminology improves LLM instruction-following and reduces author confusion.
 
 ---
 
@@ -308,8 +331,8 @@ Use these terms consistently across all skills, commands, agents, and documentat
 | Don't | Why | Do Instead |
 |-------|-----|------------|
 | Put everything in SKILL.md | Exceeds 500 line limit, slow to load | Use reference files |
-| Vague descriptions | Poor activation rate | Include specific triggers |
-| Hardcoded absolute paths | Breaks portability | Use relative paths |
+| Vague descriptions | Claude doesn't pick the skill up | Include specific triggers |
+| Name `plugins/pd/...` in a component | Breaks from the marketplace cache; `validate.sh` errors | `${CLAUDE_PLUGIN_ROOT}/...` or the two-location Glob |
 | Skip tool restrictions | Security risk, context pollution | Explicit `tools:` list |
 | Nest skills deeply | Discovery issues | Flat structure preferred |
 | Duplicate functionality | Maintenance burden | Compose existing skills |
@@ -318,34 +341,13 @@ Use these terms consistently across all skills, commands, agents, and documentat
 
 ## Token Budget
 
-- Skill metadata (name + description): ~100 tokens each
-- Full SKILL.md load: Target <5,000 tokens
-- 15,000-character limit for entire available skills list in system prompt
-- Reference files: Only loaded when Claude needs them
-
----
-
-## Versioning
-
-- One version, plain `X.Y.Z`: `version` in `plugins/pd/.claude-plugin/plugin.json`; `marketplace.json` carries none
-- The maintainer picks the bump at release time (patch, minor or major) by semver; breaking changes take a MAJOR bump
-- Between releases `main` keeps the last released version; only `scripts/release-pr.sh` changes it
-
----
-
-## Committed vs gitignored evidence paths
-
-When designing a feature that prescribes evidence files (terminal output of manual checklists, QA gate procedure logs, etc.) be committed at a specific path, verify the target path's `.gitignore` status FIRST. Common pitfall: `agent_sandbox/` is the project convention for agent-generated non-workflow content (per CLAUDE.md), but it is gitignored at the repo root.
-
-If evidence files MUST be committed for QA-gate verification:
-- Place them under `docs/features/{id}-{slug}/.qa-gate-evidence.md` or similar (committed by default).
-- Or under any other non-gitignored path verified via `git check-ignore <path>`.
-
-Precedent: feature 105 originally prescribed `agent_sandbox/2026-05-06/feature-105-evidence/` in design I-5 ("Evidence files ARE committed..."), discovered at implement-time that the path was gitignored, resolved by committing the procedure outputs to `.qa-gate-evidence.md` in the feature directory. See `docs/features/105-codex-routing-coverage-extension/.qa-gate-evidence.md`.
+- **SKILL.md:** under 500 lines and about 5,000 tokens when loaded.
+- **Reference files:** loaded only when Claude needs them.
 
 ---
 
 ## See Also
 
-- [Developer Guide](../../README_FOR_DEV.md) - Architecture, design principles, and release workflow
-- [Anthropic Skills Repo](https://github.com/anthropics/skills) - Reference implementations
+- [Developer Guide](../../README_FOR_DEV.md): architecture, release workflow and the hooks table
+- [Hook Development Guide](hook-development.md): writing and testing hooks
+- [Anthropic Skills Repo](https://github.com/anthropics/skills): reference implementations

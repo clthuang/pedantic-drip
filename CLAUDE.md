@@ -143,7 +143,8 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 **Token budget:** SKILL.md <500 lines, <5,000 tokens
 
 **Documentation sync:** When adding, removing, or renaming skills, commands, agents, or hooks in `plugins/pd/`, update:
-- `README.md` and `README_FOR_DEV.md` — skill/agent/command tables and counts
+- `README.md` — the command tables, the skill list and the skill and agent counts
+- `README_FOR_DEV.md` — the skill tables and the agent groups
 - `plugins/pd/README.md` — component counts table and command/agent tables
 - `plugins/pd/commands/secretary.md` — Specialist Fast-Path table (if renaming agents listed there)
 - `README_FOR_DEV.md` — hooks table (if adding/removing hooks)

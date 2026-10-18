@@ -1,7 +1,8 @@
 ---
 name: agent-name
 description: "What this agent does. Use when (1) trigger condition, (2) user says 'keyword', (3) user says 'other keyword'."
-model: inherit
+model: sonnet
+effort: medium
 tools: [Read, Glob, Grep]
 color: blue
 ---
