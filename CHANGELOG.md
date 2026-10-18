@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A release needs a green `main`.** `scripts/release-pr.sh` refuses unless CI's run for the `main` commit being released passed, so a red `main` blocks the next release instead of shipping in it.
-- **Verify's args fit inline.** `verify-change` takes `log`, the feature's `log.md`, and its reviewer reads each task's `case_map` from the latest finished `run implement-tasks` entry, instead of the conductor inlining every task's proofs (5 KB in the bake-off). The conductor can launch `pd:verify-change` by name instead of a generated copy (bake-off F7).
+- **Verify's args fit inline.** `verify-change` takes `log`, the feature's `log.md`, and its reviewer reads each task's `case_map` from the `run implement-tasks` entries, instead of the conductor inlining every task's proofs (5 KB in the bake-off). The conductor can launch `pd:verify-change` by name instead of a generated copy (bake-off F7).
 - **The risk-tag question quotes the hits.** When a risk signal has no matching tag, Verify's question to the user quotes each hit verbatim with its file:line, never a summary of what it might mean (bake-off F8).
 - **The `Stop` gate yields on what Claude Code actually sends.** Captured `Stop` input shows background entries as `{type: workflow|subagent|shell, status: running}`, and a finished task leaves the list; the gate now yields on exactly a running workflow or subagent.
 

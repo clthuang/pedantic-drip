@@ -14,7 +14,7 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
    - `feature_id`; `shape` and `plan` (the files' paths); `base`: `git merge-base HEAD <base_branch>`;
    - `checklist`: this skill's `## Review checklist` section, verbatim;
    - `qa_battery` from `.claude/pd.local.md` (none set: stop and ask the user to set it; `phase-gate.sh verify` fails without it), plus the migration's up-and-down commands on a fixture database when the feature has `risk: migration`;
-   - `log`: the feature's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from its latest finished `run implement-tasks` entry, so the args stay small enough to pass inline;
+   - `log`: the feature's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from the `run implement-tasks` entries (all of them: a resumed run lists only the tasks it landed), so the args stay small enough to pass inline;
    - `assumptions`: this feature's open assumptions from `pd-status`;
    - `codex`: `false` when the user's CLAUDE.md says `**Codex reviewer: DISABLED**`; `codex_flags`: the `--model <m> --effort <e>` its `**Codex reviewer model:**` line names (`references/review-call.md`);
    - `workflow_output_cap` from the config, raised by any `decision` entry that raised it for this feature.

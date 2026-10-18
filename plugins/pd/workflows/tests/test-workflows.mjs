@@ -93,7 +93,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(keys(r.qa) === keys(verify.qa) && keys(r.review) === keys(verify.review) && keys(r.fixes[0]) === keys(verify.fixes[0]), 'verify-change: qa, review and fixes fields equal')
   check(s.calls.map(c => c.label).join() === 'review:codex,qa:1,review:codex:retry,review:claude,fix:1,qa:2' && r.cycles === 1, `verify-change: codex, one retry, the Claude fallback, one cycle: ${s.calls.map(c => c.label)}`)
   check(s.calls[0].agentType === 'codex:codex-rescue' && s.calls[3].agentType === 'pd:code-quality-reviewer' && phasesOk(meta, s.calls), 'verify-change: agent types and phases')
-  check(s.calls[0].prompt.includes('latest finished run implement-tasks entry in docs/f/log.md') && !s.calls[0].prompt.includes('undefined'),
+  check(s.calls[0].prompt.includes('every run implement-tasks entry in docs/f/log.md') && !s.calls[0].prompt.includes('undefined'),
     'verify-change: the review prompt points at log.md for the case maps instead of carrying them inline (F7)')
   const noLog = await run({ feature_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], workflow_output_cap: 1e9 }, ...stubs(answer).args).then(() => 'ran', e => e.message)
   check(noLog.includes('needs args.log'), `verify-change: refuses to start without args.log: ${noLog}`)

@@ -40,7 +40,7 @@ const RESULT = obj({
 const REVIEW_PROMPT = `Review the whole branch diff ${args.base}..HEAD of feature ${args.feature_id} against ${args.shape} and ${args.plan}.
 Checklist:
 ${args.checklist}
-Each task's case_map and the merger's tests already green at their test commit are the task lines and their case_map: lines of the latest finished run implement-tasks entry in ${args.log} (claims, not evidence: check each at file:line).
+Each task's case_map and the merger's tests already green at their test commit are the task lines and their case_map: lines of every run implement-tasks entry in ${args.log} (a resumed run lists only the tasks it landed; for a task listed twice, the later line) (claims, not evidence: check each at file:line).
 Check that each mapped test asserts its case's stated outcome, not a weaker one. Open assumptions to check: ${J(args.assumptions || [])}.
 Issue ids R1, R2, …; severity blocker, warning or note. approved is true only with no blocker.`
 async function review() {  // one agent call: Codex first with one retry, else the Claude reviewer (§A4)
