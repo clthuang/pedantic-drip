@@ -60,6 +60,7 @@ IGNORED = {
                                "iterations": 2, "reviewerNotes": "spec ok"}}}),
     "docs/features/003-gamma/.meta.json": json.dumps({"status": "satisfied", "lastCompletedPhase": "finish"}),
     "docs/features/001-alpha/.qa-gate.log": "raw gate log\n",
+    "docs/features/001-alpha/.qa-gate/security.json": "{}\n",  # a tracked sidecar directory
     "docs/projects/005-alpha-evolution/.meta.json": "{}",
     "docs/backlog.md": "# Backlog (projection)\n",
 }
@@ -107,6 +108,14 @@ def build(tmp):
          "work", "backlog"),
         ("bl2", WS, "backlog:00002", "00002", "Gamma cache", "promoted", None, None, "2026-01-06T08:00:00Z",
          "work", "backlog"),
+        ("bl3", WS, "backlog:00003", "00003", "Old idea", "dropped", None, None, "2026-01-07T08:00:00Z",
+         "work", "backlog"),
+        ("bl4", WS, "backlog:00004", "00004", "Watch fix rate", "active", None, None, "2026-01-08T08:00:00Z",
+         "work", "backlog"),
+        ("bl5", WS, "backlog:00005", "00005", "Rename repo", "promoted", None, None, "2026-01-09T08:00:00Z",
+         "work", "backlog"),
+        ("bl6", WS, "backlog:00006", "00006", "Hard delete", "completed", None, None, "2026-01-10T08:00:00Z",
+         "work", "backlog"),
         ("f3", WS, "feature:003-gamma", "003-gamma", "gamma", "completed", "bl2", None, t, "work", "feature"),
         ("b1", WS, "brainstorm:20260101-000000-alpha", "20260101-000000-alpha", "Alpha", "draft", None,
          "docs/brainstorms/20260101-000000-alpha.prd.md", t, "brainstorm", "brainstorm"),
@@ -118,6 +127,8 @@ def build(tmp):
         con.execute("INSERT INTO entities (uuid, workspace_uuid, type_id, entity_id, name, status, parent_uuid, "
                     "artifact_path, created_at, updated_at, type, kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (u, ws, tid, eid, name, status, parent, ap, created, created, typ, kind))
+    # The live registry holds some rows' metadata JSON-encoded twice (117 rows, 2026-10-18).
+    con.execute("UPDATE entities SET metadata = ? WHERE uuid = 'bl3'", (json.dumps(json.dumps({"reason": "superseded by 003"})),))
     con.execute("INSERT INTO workflow_phases VALUES ('feature:002-beta', 'design', 'specify', 'standard', ?, 'f2')", (t,))
     events = [  # 002-beta's history exists only in the registry
         ("started", "specify", "2026-02-01T09:00:00+08:00", None, None, None, None),

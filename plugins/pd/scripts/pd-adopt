@@ -36,7 +36,7 @@ PLACED = {"user-guide", "dev-guide", "technical", "projects", "dev_artifacts", "
 RETIRED = re.compile(r"^(yolo_mode|yolo_max_stop_blocks|yolo_usage_\w+|plan_mode_review|max_concurrent_agents|activation_mode):")
 STATUS_MAP = {"completed": "done", "complete": "done", "implemented": "done", "satisfied": "done",
               "planned": "draft", "preregistered": "draft", "in-progress": "active", "active": "active"}
-OPEN_BACKLOG = {None, "", "open", "triaged"}
+OPEN_BACKLOG = {None, "", "open", "triaged", "active"}  # an active backlog row is open work, not a feature
 OLD_PHASES = ("brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish")
 TITLE_PREFIX = re.compile(r"^(?:PRD|RCA|Spec(?:ification)?|Design|Plan|Tasks|Roadmap|Feature \d+)\s*[:—-]\s*", re.I)
 LINK_RE = re.compile(r"(\]\()([^)\s]+)")
@@ -93,7 +93,10 @@ def load_registry(path, project_root, workspace):
             e["kind"] = e.get("kind") or e.get("entity_type") or e["type_id"].split(":")[0]
             e["key"] = e["type_id"].split(":", 1)[-1]
             try:
-                e["meta"] = json.loads(e.get("metadata") or "{}") or {}
+                meta = json.loads(e.get("metadata") or "{}") or {}
+                if isinstance(meta, str):  # the live registry holds some rows' metadata JSON-encoded twice
+                    meta = json.loads(meta) or {}
+                e["meta"] = meta if isinstance(meta, dict) else {}
             except ValueError:
                 e["meta"] = {}
             reg["entities"].append(e)
@@ -284,11 +287,16 @@ class Adopt:
             p.unlink()
 
     def aside(self, p):
-        """Keep an untracked or sidecar file out of the tree without losing it."""
+        """Keep an untracked or sidecar file, or directory, out of the tree without losing it."""
         dst = self.sandbox / "aside" / self.rel(p)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(p, dst)
-        self.remove(p)
+        if p.is_dir():
+            shutil.copytree(p, dst, dirs_exist_ok=True)
+            self.git("rm", "-rq", "--", self.rel(p), check=False)
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            shutil.copy2(p, dst)
+            self.remove(p)
         self.asides.append(self.rel(p))
 
     def file_date(self, p):
@@ -385,12 +393,12 @@ class Adopt:
             child = next((f for f in self.reg["entities"] if f["kind"] == "feature" and f.get("parent_uuid") == e["uuid"]), None)
             if status in OPEN_BACKLOG:
                 lines.append(f"- [ ] {bid} — {title}")
-            elif status == "promoted":
-                lines.append(f"- [x] {bid} — promoted → features/{child['key']}" if child else f"- [x] {bid} — promoted: {title}")
+            elif status == "promoted" or (child and status != "dropped"):
+                lines.append(f"- [x] {bid} — promoted → features/{child['key']}" if child else f"- [x] {bid} — promoted → (no feature recorded): {title}")
             elif status == "dropped":
                 lines.append(f"- [x] {bid} — dropped: {e['meta'].get('reason') or e['meta'].get('drop_reason') or 'no reason recorded'}")
-            else:
-                lines.append(f"- [x] {bid} — {title} ({status})")
+            else:  # pd-lint knows only promoted and dropped for a closed row
+                lines.append(f"- [x] {bid} — dropped: closed as {status} in the registry, with no feature: {title}")
         self.write(f"{NEW}/backlog.md", "\n".join(lines) + "\n")
         self.note(f"step 0: exported {len(rows)} backlog rows to {NEW}/backlog.md (committed at step 6)")
 
@@ -926,7 +934,8 @@ def self_test():
         kinds = sorted(e["kind"] for e in alog)
         c.check(kinds == ["note", "phase", "qa", "review", "review", "review"] and len(alog) == 6
                 and all("Status: closed (legacy)" in e["body"] for e in alog) and pc.open_blockers(alog) == []
-                and not any((art / "features/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log")),
+                and not any((art / "features/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log", ".qa-gate"))
+                and (repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/dev_artifacts/features/001-alpha/.qa-gate/security.json").is_file(),
                 f"log.md entries marked closed (legacy), originals removed: {[e['heading'] for e in alog]}")
         p1 = fm("plans/P001-alpha-evolution.md")
         ptext = (art / "plans/P001-alpha-evolution.md").read_text()
@@ -937,6 +946,10 @@ def self_test():
         c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no features is a plain plan")
         bl = (art / "backlog.md").read_text()
         c.check("- [ ] 2026-01-05-flaky-ui-test — Flaky UI test\n" in bl and "- [x] 2026-01-06-gamma-cache — promoted → features/003-gamma\n" in bl
+                and "- [x] 2026-01-07-old-idea — dropped: superseded by 003\n" in bl
+                and "- [ ] 2026-01-08-watch-fix-rate — Watch fix rate\n" in bl
+                and "- [x] 2026-01-09-rename-repo — promoted → (no feature recorded): Rename repo\n" in bl
+                and "- [x] 2026-01-10-hard-delete — dropped: closed as completed in the registry, with no feature: Hard delete\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
                 and fm("rca/20260309-drift.md")["status"] == "done", "legacy single-file items get id, type, title and status")
