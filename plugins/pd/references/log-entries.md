@@ -17,7 +17,7 @@ One block per entry kind (plan Part B §6). A feature's entries go in its `log.m
 ## The kinds
 
 ### decision
-A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`. A "continue" at the token cap raises the feature's budget with `Budget: feature_token_budget=<n>` (the latest such line counts).
+A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`. A "continue" at the token cap raises the feature's budget with `Budget: workitem_token_budget=<n>` (the latest such line counts).
 
 ```markdown
 ## 2026-10-14 09:12+08:00 decision
@@ -67,12 +67,12 @@ G1 4920/2, G2 51/1, G3 0/0. Raw logs: agent_sandbox/2026-10-14/m1/.
 ```
 
 ### run
-A workflow launched or finished. A finished `implement-tasks` run lists each task it landed (a resumed run, only the ones it ran), each followed by an indented `case_map:` line; `phase-gate.sh implement` and Verify's reviewer read the task lines across every `run` entry, and a resumed run reads them back. A goal's first `run` entry records the original `feature_token_budget` (or `unset`).
+A workflow launched or finished. A finished `implement-tasks` run lists each task it landed (a resumed run, only the ones it ran), each followed by an indented `case_map:` line; `phase-gate.sh implement` and Verify's reviewer read the task lines across every `run` entry, and a resumed run reads them back. A goal's first `run` entry records the original `workitem_token_budget` (or `unset`).
 
 ```markdown
 ## 2026-10-14 14:00+08:00 run implement-tasks — finished
 Session: 0b5e…  Agents: 6. Tokens: 412000. Journal: ~/.claude/projects/…/journal.jsonl
-Budget: feature_token_budget=unset
+Budget: workitem_token_budget=unset
 - task 1: merged, proof pass, cycles 0, branch pd/2026-10-14-x/task-1
   case_map: C1=tests/test_parse.py::test_empty_input; greens: none; skipped: none
 - task 2: merged, proof pass, cycles 1, branch pd/2026-10-14-x/task-2
@@ -120,7 +120,7 @@ Flaky: tests/test_io.py::test_timeout failed once, passed twice.
 ```
 
 ### capped
-A loop reached its cap. Four lists, each `none` or `- ` items. Every follow-up has its `backlog.md` line, with `(from: features/<id>)`. Assumptions get ids, for `Closes:`.
+A loop reached its cap. Four lists, each `none` or `- ` items. Every follow-up has its `backlog.md` line, with `(from: workitems/<id>)`. Assumptions get ids, for `Closes:`.
 
 ```markdown
 ## 2026-10-14 16:00+08:00 capped verify

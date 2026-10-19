@@ -1,6 +1,6 @@
 ---
 description: Verify a feature's whole change — code review beside QA, then bounded fix cycles
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:verify

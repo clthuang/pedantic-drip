@@ -1,6 +1,6 @@
 ---
 description: Write and sign off a feature's criteria in shape.md
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:specify

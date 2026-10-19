@@ -25,7 +25,7 @@ from markdown_it.common import html_re
 from markdown_it.token import Token
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (EXPECTATION_RE, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
+from pd_common import (EXPECTATION_RE, WORKITEM, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
                        make_repo, repo_root, split_frontmatter)
 
 CSS = Path(__file__).resolve().parent.parent / "templates" / "doc.css"
@@ -211,8 +211,8 @@ def roadmap_table(roadmap, art):
         if not isinstance(item, dict):
             continue
         after = ", ".join(item.get("after") or [])
-        if "feature" in item:
-            path = item["feature"]
+        if WORKITEM in item:
+            path = item[WORKITEM]
             status = _status(art / path / "README.md")
             link = f'<a href="../{html.escape(path)}/README.html">{html.escape(path)}</a>'
             rows.append(f"<tr><td>{link}</td>{_cell(status, status if status in STATUS_CLASSES else None)}"
@@ -275,7 +275,7 @@ def targets(arg, root):
     found = [f for tier in ("user-guide", "dev-guide", "technical") for f in sorted((root / "docs" / tier).rglob("*.md"))]
     for type_, _, control in find_items(artifacts_dir(root, load_config(root))):
         if control.is_file() and _status(control) == "active":
-            found += sorted(control.parent.glob("*.md")) if type_ == "feature" else [control]
+            found += sorted(control.parent.glob("*.md")) if type_ == WORKITEM else [control]
     return found
 
 
@@ -284,13 +284,13 @@ def self_test():
     with tempfile.TemporaryDirectory() as t:
         root = make_repo(Path(t) / "repo").resolve()
         art = root / "docs" / "dev_artifacts"
-        (art / "features" / "2026-10-15-a").mkdir(parents=True)
-        (art / "features" / "2026-10-15-a" / "README.md").write_text("---\nid: 2026-10-15-a\nstatus: done\n---\n# A\n")
+        (art / "workitems" / "2026-10-15-a").mkdir(parents=True)
+        (art / "workitems" / "2026-10-15-a" / "README.md").write_text("---\nid: 2026-10-15-a\nstatus: done\n---\n# A\n")
         (art / "plans").mkdir()
         plan = art / "plans" / "2026-10-14-p.md"
         plan.write_text(
             "---\nid: 2026-10-14-p\ntype: plan\ntitle: P\nstatus: active\nissue: https://x.test/i/1\n"
-            "roadmap:\n  - feature: features/2026-10-15-a\n  - planned: b\n    after: [a]\n"
+            "roadmap:\n  - workitem: workitems/2026-10-15-a\n  - planned: b\n    after: [a]\n"
             "  - dropped: c\n    reason: \"not needed\"\n---\n# P\n\n| x | y |\n|---|---|\n| 1 | 2 |\n\n"
             "```python\nprint(1)\n```\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n"
             "See [other](other.md), [sec](other.md#s), [web](https://x.test/a.md).\n")
@@ -310,7 +310,7 @@ def self_test():
         c.check('<pre class="mermaid">flowchart LR' in page and "mermaid.esm.min.mjs" in page
                 and "language-mermaid" not in page, "mermaid block left for mermaid.js")
         c.check("mermaid.esm" not in render(art / "plans" / "plain.md", root).read_text(), "no mermaid script without a block")
-        shape = art / "features" / "2026-10-15-a" / "shape.md"
+        shape = art / "workitems" / "2026-10-15-a" / "shape.md"
         shape.write_text("# S\n\n**Apply**\n\nB1: `a -> b` on the file -> exit 0; prints `x -> y`\n"
                          "B2: no args -> usage, exit 2\n\nAfter.\n\n```\nB3: in a fence -> stays code\n```\n")
         page = render(shape, root).read_text()

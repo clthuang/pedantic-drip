@@ -12,8 +12,11 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-TYPES = ("feature", "plan", "brainstorm", "rca")
-TYPE_DIRS = {"feature": "features", "plan": "plans", "brainstorm": "brainstorms", "rca": "rca"}
+WORKITEM = "workitem"
+BRANCH_PREFIX = f"{WORKITEM}/"
+BUDGET_KEY = f"{WORKITEM}_token_budget"
+TYPES = (WORKITEM, "plan", "brainstorm", "rca")
+TYPE_DIRS = {WORKITEM: "workitems", "plan": "plans", "brainstorm": "brainstorms", "rca": "rca"}
 STATUSES = ("draft", "active", "blocked", "done", "abandoned")
 PHASES = ("specify", "design", "create-plan", "implement", "verify", "finish")
 MODES = ("standard", "small", "express")
@@ -23,8 +26,11 @@ ENTRY_KINDS = ("decision", "phase", "review", "qa", "gate", "run", "handoff",
 DEFAULT_ARTIFACTS_ROOT = "docs/dev_artifacts"
 CONFIG_DEFAULTS = {
     "artifacts_root": DEFAULT_ARTIFACTS_ROOT, "base_branch": "auto", "tracker": "none",
-    "small_feature_tasks": "3", "many_files": "10",
+    "small_workitem_tasks": "3", "many_files": "10",
 }
+# pd 7 names, read only to detect a project left on them (old_names) and as pd-adopt's old-layout source.
+OLD_ITEM_DIR = "features"
+OLD_CONFIG_KEYS = {"small_feature_tasks": "small_workitem_tasks", "feature_token_budget": BUDGET_KEY}
 
 ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
 HEADING_RE = re.compile(
@@ -84,7 +90,7 @@ def scalar(value):
 
 def parse_yaml(lines):
     """`key: scalar`, `key: [flow, list]`, and `key:` followed by `- item` lines,
-    where an item is a scalar or a one-level mapping (`- feature: x` / `  after: [y]`)."""
+    where an item is a scalar or a one-level mapping (`- workitem: x` / `  after: [y]`)."""
     data, key = {}, None
     for n, raw in enumerate(lines, 1):
         line = _strip_comment(raw)
@@ -158,6 +164,19 @@ def is_unadopted(root, cfg):
     return (Path(root) / "docs" / "features").is_dir() and str(cfg.get("sop")) != "1"
 
 
+def old_names(root, cfg):
+    """What an adopted project still carries under the pd 7 names; pd reads neither, so each one hides work."""
+    if str(cfg.get("sop")) != "1":
+        return []
+    found, art = [], artifacts_dir(root, cfg)
+    if (art / OLD_ITEM_DIR).is_dir():
+        found.append(f"{(art / OLD_ITEM_DIR).relative_to(root)}/: move its items to {TYPE_DIRS[WORKITEM]}/ and remove it")
+    path = Path(root) / ".claude" / "pd.local.md"
+    fm = (split_frontmatter(path.read_text())[0] or {}) if path.is_file() else {}  # raw keys: load_config drops blank ones
+    found += [f".claude/pd.local.md: rename {old}: to {new}:" for old, new in OLD_CONFIG_KEYS.items() if old in fm]
+    return found
+
+
 def as_list(value):
     if value in (None, ""):
         return []
@@ -171,7 +190,7 @@ def find_items(art):
         base = art / sub
         if not base.is_dir():
             continue
-        if type_ == "feature":
+        if type_ == WORKITEM:
             for d in sorted(p for p in base.iterdir() if p.is_dir()):
                 yield type_, d.name, d / "README.md"
         else:
@@ -226,8 +245,8 @@ def split_log(text):
 
 
 def log_text(item_type, control):
-    """The log of an item: log.md beside a feature's README, or a single file's `## Log` section."""
-    if item_type == "feature":
+    """The log of an item: log.md beside a work item's README, or a single file's `## Log` section."""
+    if item_type == WORKITEM:
         p = Path(control).parent / "log.md"
         return (p.read_text(), 1) if p.is_file() else ("", 1)
     _, log, first = split_log(Path(control).read_text())
@@ -367,7 +386,7 @@ def retro_triggers(entries):
     if any(e.get("kind") == "defect" for e in entries):
         found.append("defect")
     budget = next((m.group(1) for e in entries if e.get("kind") == "run" for l in e["body"]
-                   for m in [re.search(r"\bBudget: feature_token_budget=(\d+|unset)\b", l)] if m), None)
+                   for m in [re.search(rf"\bBudget: {BUDGET_KEY}=(\d+|unset)\b", l)] if m), None)
     tokens = next((int(m.group(1)) for e in reversed(entries) if e.get("kind") == "metrics" for l in e["body"]
                    for m in [re.search(r"\bTokens: (\d+)\b", l)] if m), None)
     if budget not in (None, "unset") and tokens is not None and tokens > int(budget):
@@ -419,12 +438,12 @@ def _self_test():
     c = Checks("pd_common")
     fm, body, line = split_frontmatter(
         "---\nid: 2026-10-14-x  # c\nrisk: [security, migration]\norigin: backlog#2026-10-10-foo\n"
-        "roadmap:\n  - feature: features/a\n  - planned: b\n    after: [a]\nqa:\n  - uv run pytest -q\n"
+        "roadmap:\n  - workitem: workitems/a\n  - planned: b\n    after: [a]\nqa:\n  - uv run pytest -q\n"
         "empty:\n---\n# T\n")
     c.check(fm["id"] == "2026-10-14-x", "comment stripped from a scalar")
     c.check(fm["risk"] == ["security", "migration"], "flow list")
     c.check(fm["origin"] == "backlog#2026-10-10-foo", "a # inside a word is kept")
-    c.check(fm["roadmap"] == [{"feature": "features/a"}, {"planned": "b", "after": ["a"]}], "mapping items")
+    c.check(fm["roadmap"] == [{"workitem": "workitems/a"}, {"planned": "b", "after": ["a"]}], "mapping items")
     c.check(fm["qa"] == ["uv run pytest -q"], "scalar list items")
     c.check(fm["empty"] is None and body == "# T\n" and line == 13, "empty key, body and its line")
     for bad in ("---\nid x\n---\n", "---\n  - a\n---\n", "---\nid: x\n"):
@@ -477,7 +496,7 @@ def _self_test():
                     "## 2026-10-14 17:00+08:00 review\nCloses: capped@2026-10-14 16:00+08:00#A1\n")
     c.check([a["ref"][-2:] for a in open_assumptions(asm)] == ["A2"],
             "assumptions: only the Assumptions list, closed by a later Closes")
-    trig = parse_log("## 2026-10-14 10:00+08:00 run goal — started\nBudget: feature_token_budget=100\n"
+    trig = parse_log("## 2026-10-14 10:00+08:00 run goal — started\nBudget: workitem_token_budget=100\n"
                      "## 2026-10-14 11:00+08:00 phase verify -> design (back)\n"
                      "## 2026-10-14 12:00+08:00 phase verify -> design (back)\n"
                      "## 2026-10-14 13:00+08:00 metrics\nMode: standard. Tokens: 150 (source: x).\n")
@@ -490,6 +509,17 @@ def _self_test():
         (r / ".claude").mkdir()
         (r / ".claude" / "pd.local.md").write_text("---\nartifacts_root: docs\nsop: 1\n---\n")
         c.check(load_config(r)["artifacts_root"] == "docs" and not is_unadopted(r, load_config(r)), "config file")
+        (r / "docs" / "workitems" / "x").mkdir(parents=True)
+        (r / "src" / "pkg" / OLD_ITEM_DIR).mkdir(parents=True)  # a data-science package's directory of that name, outside the root
+        c.check([i[:2] for i in find_items(r / "docs")] == [(WORKITEM, "x")] and old_names(r, load_config(r)) == [],
+                "a work item is found under workitems/; nothing old to report")
+        (r / "docs" / OLD_ITEM_DIR).mkdir()
+        c.check(len(old_names(r, load_config(r))) == 1, "the guard reports an old item directory, even empty")
+        cfg_text = "---\nartifacts_root: docs\n" + "".join(f"{k}:\n" for k in OLD_CONFIG_KEYS) + "sop: {}\n---\n"
+        (r / ".claude" / "pd.local.md").write_text(cfg_text.format(1))
+        c.check(len(old_names(r, load_config(r))) == 3, "the guard reports each old config key, blank included")
+        (r / ".claude" / "pd.local.md").write_text(cfg_text.format(0))
+        c.check(old_names(r, load_config(r)) == [], "the guard is silent in a project without sop: 1")
     return c.done()
 
 

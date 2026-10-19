@@ -23,29 +23,29 @@ check() {  # check <label> <condition command…>
 has() { printf '%s' "$1" | grep -qF -- "$2"; }
 lacks() { ! has "$1" "$2"; }
 repo() { mkdir -p "$1" && git -C "$1" init -q && echo "$1"; }
-feature() {  # feature <art> <id> <status> <now> [log]
-  mkdir -p "$1/features/$2"
-  printf -- '---\nid: %s\ntype: feature\ntitle: %s\nstatus: %s\nphase: design\nmode: standard\n---\n# %s\n\n## Now\n\n%s\n\n## Links\n' \
-    "$2" "$2" "$3" "$2" "$4" > "$1/features/$2/README.md"
-  printf '%s' "${5:-}" > "$1/features/$2/log.md"
+workitem() {  # workitem <art> <id> <status> <now> [log]
+  mkdir -p "$1/workitems/$2"
+  printf -- '---\nid: %s\ntype: workitem\ntitle: %s\nstatus: %s\nphase: design\nmode: standard\n---\n# %s\n\n## Now\n\n%s\n\n## Links\n' \
+    "$2" "$2" "$3" "$2" "$4" > "$1/workitems/$2/README.md"
+  printf '%s' "${5:-}" > "$1/workitems/$2/log.md"
 }
 
 # An adopted repo: active and blocked items, the next ready item, the retros owed; not the rest.
 A=$(repo "$TMP/adopted"); ART="$A/docs/dev_artifacts"
 mkdir -p "$A/.claude" "$ART/plans" "$A/docs/features"  # sop: 1 wins over a stray docs/features/
 printf -- '---\nartifacts_root: docs/dev_artifacts\nsop: 1\n---\n' > "$A/.claude/pd.local.md"
-feature "$ART" 2026-10-14-alpha active "next: task 2"
-feature "$ART" 2026-10-14-beta blocked "waiting on the API owner"
-feature "$ART" 2026-10-14-gamma done "Done." $'## 2026-10-14 13:00+08:00 defect\nFixed by: abc1234.\n'
-feature "$ART" 2026-10-14-delta abandoned "Dropped by the user."
-printf -- '---\nid: 2026-10-14-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n  - feature: features/2026-10-14-gamma\n  - planned: emit\n    after: [gamma]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n' \
+workitem "$ART" 2026-10-14-alpha active "next: task 2"
+workitem "$ART" 2026-10-14-beta blocked "waiting on the API owner"
+workitem "$ART" 2026-10-14-gamma done "Done." $'## 2026-10-14 13:00+08:00 defect\nFixed by: abc1234.\n'
+workitem "$ART" 2026-10-14-delta abandoned "Dropped by the user."
+printf -- '---\nid: 2026-10-14-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n  - workitem: workitems/2026-10-14-gamma\n  - planned: emit\n    after: [gamma]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n' \
   > "$ART/plans/2026-10-14-road.md"
 for src in startup compact; do
   out=$(ctx "$A" "$src")
   check "adopted ($src): active item and its ## Now" has "$out" "next: task 2"
   check "adopted ($src): blocked item and its ## Now" has "$out" "waiting on the API owner"
   check "adopted ($src): the next ready item" has "$out" "next ready: emit"
-  check "adopted ($src): the retro owed" has "$out" "features/2026-10-14-gamma: defect"
+  check "adopted ($src): the retro owed" has "$out" "workitems/2026-10-14-gamma: defect"
   check "adopted ($src): done and abandoned rows left out" lacks "$out" "Dropped by the user."
   check "adopted ($src): no /pd:init offer" lacks "$out" "/pd:init"
   check "adopted ($src): the {pd_*} values" eval 'has "$out" "pd_artifacts_root: docs/dev_artifacts" && has "$out" "pd_base_branch: main"'
@@ -60,6 +60,12 @@ out=$(ctx "$C" compact)
 check "configured, no items: the values, no summary" eval 'has "$out" "pd_artifacts_root: docs/agent" && lacks "$out" "active and blocked"'
 check "base_branch auto: origin's HEAD" has "$out" "pd_base_branch: develop"
 check "release_script keeps its spaces" has "$out" "pd_release_script: scripts/release.sh --ci"
+
+# The guard: an adopted repo left on the pd 7 names gets the Migrate section, items or not.
+mkdir -p "$C/docs/agent/features"
+printf -- '---\nartifacts_root: docs/agent\nfeature_token_budget:\nsop: 1\n---\n' > "$C/.claude/pd.local.md"
+out=$(ctx "$C" compact)
+check "pd 7 names: the Migrate section names the folder and the key" eval 'has "$out" "Migrate" && has "$out" "docs/agent/features/" && has "$out" "rename feature_token_budget:"'
 
 # A git repo with no pd.local.md: one /pd:init line, on startup and resume only.
 N=$(repo "$TMP/new")

@@ -58,7 +58,7 @@ Identify all contributing causes. Check for interaction effects between causes.
 Output: Root cause list with evidence.
 
 ### Step 6: REPORT
-Generate RCA report at {pd_artifacts_root}/rca/{timestamp}-{slug}.md. Offer handoff to /create-feature.
+Generate RCA report at {pd_artifacts_root}/rca/{timestamp}-{slug}.md. Offer handoff to /create-workitem.
 
 Create report directory:
 ```bash

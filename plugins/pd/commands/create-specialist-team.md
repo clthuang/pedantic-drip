@@ -102,7 +102,7 @@ For each selected template:
    - Limit context to most relevant 10-15 files
 
 3. Gather workflow context:
-   - Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and take the active feature (several: the checked-out `feature/<id>` branch's, else ask).
+   - Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and take the active feature (several: the checked-out `workitem/<id>` branch's, else ask).
    - If found: read its README frontmatter for `id`, `phase` and `mode`. With no active feature, route to brainstorm.
      Check which artifacts exist (prd.md, shape.md, plan.md)
    - Format as:
@@ -111,7 +111,7 @@ For each selected template:
      Current phase: {phase}
      Next phase: {next phase}
      Artifacts: {comma-separated existing artifacts}
-     Directory: {pd_artifacts_root}/features/{id}-{slug}/
+     Directory: {pd_artifacts_root}/workitems/{id}-{slug}/
      ```
    - If no active feature: "No active feature workflow. Specialist output is standalone."
    - If gathering fails (Glob error, malformed JSON): "Workflow context unavailable."
@@ -172,13 +172,13 @@ After all specialists complete:
    Read the active feature's `phase` from its README frontmatter (`pd-status` lists the active features).
 
    Phase names map 1:1 to commands: `pd:{phase-name}`, except:
-   - finish → `pd:finish-feature`
+   - finish → `pd:finish-workitem`
 
    #### If no active feature:
    | Output signals | Recommended action |
    |---------------|-------------------|
    | Research/exploration findings, problem framing | `/brainstorm` — seed brainstorm with findings |
-   | Detailed requirements, acceptance criteria | `/create-feature` — findings are specified enough |
+   | Detailed requirements, acceptance criteria | `/create-workitem` — findings are specified enough |
    | Code fixes already implemented | Done — standalone fix, no feature needed |
    | General analysis | `/brainstorm` — formalize into a feature |
 

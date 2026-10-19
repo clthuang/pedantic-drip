@@ -21,7 +21,7 @@ import pd_common as pc
 
 GOAL_RE = re.compile(r"^goal: (\S+) target (\S+) session (\S+)$")
 RUN_RE = re.compile(r"^run in flight: (\S+) session (\S+)")
-BUDGET_RE = re.compile(r"^Budget: feature_token_budget=(\d+)$")
+BUDGET_RE = re.compile(rf"^Budget: {pc.BUDGET_KEY}=(\d+)$")
 inp = json.loads(sys.stdin.read() or "{}")
 sid, gate = str(inp.get("session_id") or ""), Path.home() / ".claude" / "pd" / "gate"
 root = pc.git(["rev-parse", "--show-toplevel"], inp.get("cwd") or ".", check=False)
@@ -75,10 +75,10 @@ cfg = pc.load_config(root)
 features = []
 for type_, fid, ctl in pc.find_items(pc.artifacts_dir(root, cfg)):
     try:
-        fm, body, _ = pc.split_frontmatter(ctl.read_text()) if type_ == "feature" else (None, "", 0)
+        fm, body, _ = pc.split_frontmatter(ctl.read_text()) if type_ == pc.WORKITEM else (None, "", 0)
     except (OSError, ValueError):
         continue
-    if type_ == "feature":
+    if type_ == pc.WORKITEM:
         now = [l.strip() for l in pc.blank_fences(pc.sections(body).get("Now", "")).split("\n") if l.strip()]
         features.append({"id": fid, "fm": fm or {}, "readme": ctl, "now": now})
 origin = pc.git(["remote", "get-url", "origin"], root, check=False)
@@ -92,7 +92,7 @@ total, counted = usage(inp.get("transcript_path")), int(sess.get("counted") or 0
 delta = total - counted if total > counted else 0
 sess["counted"] = max(total, counted)
 branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], root, check=False) or ""
-here = next((f for f in features if branch in (f["fm"].get("branch"), f"feature/{f['id']}")), None)
+here = next((f for f in features if branch in (f["fm"].get("branch"), f"{pc.BRANCH_PREFIX}{f['id']}")), None)
 if here and delta:
     p = state(here)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +100,7 @@ if here and delta:
         fcntl.flock(lock, fcntl.LOCK_EX)
         fs = load(p)
         fs["tokens"] = int(fs.get("tokens") or 0) + delta
-        fs.setdefault("budget", number(cfg.get("feature_token_budget")))  # the original budget
+        fs.setdefault("budget", number(cfg.get(pc.BUDGET_KEY)))  # the original budget
         save(p, fs)
 
 
@@ -129,21 +129,21 @@ else:
 if busy:
     finish(0)
 
-# 4. The token cap: the latest decision entry's `Budget: feature_token_budget=<n>` raise, else the config.
-entries = pc.parse_log(*pc.log_text("feature", f["readme"]))
+# 4. The token cap: the latest decision entry's `Budget: workitem_token_budget=<n>` raise, else the config.
+entries = pc.parse_log(*pc.log_text(pc.WORKITEM, f["readme"]))
 raises = [int(b.group(1)) for e in entries if e["kind"] == "decision"
           for b in map(BUDGET_RE.match, (l.strip() for l in e["body"])) if b]
-budget = raises[-1] if raises else number(cfg.get("feature_token_budget"))
+budget = raises[-1] if raises else number(cfg.get(pc.BUDGET_KEY))
 tokens = int(load(state(f)).get("tokens") or 0)
-increment = number(cfg.get("budget_increment")) or number(cfg.get("feature_token_budget")) or budget
+increment = number(cfg.get("budget_increment")) or number(cfg.get(pc.BUDGET_KEY)) or budget
 if budget is not None and tokens >= budget:
-    finish(2, f"pd gate: feature {fid} has used {tokens} tokens of its feature_token_budget {budget}. Ask the user "
+    finish(2, f"pd gate: work item {fid} has used {tokens} tokens of its {pc.BUDGET_KEY} {budget}. Ask the user "
               "through AskUserQuestion: \"budget spent: continue or stop?\". On continue, write a decision entry with "
-              f"`Budget: feature_token_budget={budget + increment}`; on stop, clear "
+              f"`Budget: {pc.BUDGET_KEY}={budget + increment}`; on stop, clear "
               "the goal: line from ## Now and commit.")
 
 # 5. Stuck: blocked last time and nothing moved (a commit on the feature branch, log.md or the README).
-ref = f["fm"].get("branch") or f"feature/{fid}"
+ref = f["fm"].get("branch") or f"{pc.BRANCH_PREFIX}{fid}"
 head = pc.git(["rev-parse", "-q", "--verify", ref], root, check=False) or pc.git(["rev-parse", "HEAD"], root, check=False)
 log = f["readme"].parent / "log.md"
 snap = "|".join([head or ""] + [hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "" for p in (log, f["readme"])])

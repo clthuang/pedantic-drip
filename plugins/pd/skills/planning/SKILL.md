@@ -20,7 +20,7 @@ The Plan stage (`phase: create-plan`) removes one unknown: in what order, and ho
 
 **Entries this stage writes:** `review` (one per review call), `decision` (each user ruling, each accepted rejection, a re-confirmed plan), `capped` (at the cap), `note` (a small feature's overrun), `phase`.
 
-**Small mode:** the joint review made at the end of the `designing` skill covers this plan too; don't make a second call. When the plan has more tasks than `small_feature_tasks`, `pd-lint` warns: record the overrun as a `note` entry and carry on with the single review.
+**Small mode:** the joint review made at the end of the `designing` skill covers this plan too; don't make a second call. When the plan has more tasks than `small_workitem_tasks`, `pd-lint` warns: record the overrun as a `note` entry and carry on with the single review.
 
 **Re-entering after a backward move:** `shape.md` has changed, so `from_shape:` is stale and `pd-lint` fails. Regenerate the plan, or re-confirm it by updating `from_shape:` only when the move changed nothing the plan cites (no contract or expectation it names), and only after a scoped test-case review or the user's ruling, recorded as a `review` or `decision` entry. Tasks whose contract or test cases changed re-run.
 

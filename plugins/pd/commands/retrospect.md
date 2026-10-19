@@ -1,6 +1,6 @@
 ---
 description: Run a retrospective for a feature with a retro trigger or a defect
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:retrospect

@@ -29,12 +29,12 @@ def render_config(root):
         ["npm test"] if (root / "package.json").is_file() else []
     return "\n".join([
         "---", f"artifacts_root: {pc.DEFAULT_ARTIFACTS_ROOT}", "base_branch: auto", "release_script:",
-        "doc_tiers: user-guide,dev-guide,technical", "small_feature_tasks: 3", "many_files: 10",
+        "doc_tiers: user-guide,dev-guide,technical", "small_workitem_tasks: 3", "many_files: 10",
         f"source_paths: {flow(dirs('src'))}", f"test_paths: {flow(dirs('tests'))}",
         f"fixture_paths: {flow(dirs('tests/fixtures'))}", f"languages: {flow(langs)}",
         "qa_battery:" + "".join(f"\n  - {c}" for c in battery) if battery else "qa_battery: []",
-        "workflow_output_cap: 2000000", "feature_token_budget:  # unset: no per-feature cap",
-        "budget_increment:  # defaults to feature_token_budget", "tracker: none", "sop: 1", "---",
+        "workflow_output_cap: 2000000", f"{pc.BUDGET_KEY}:  # unset: no per-work-item cap",
+        f"budget_increment:  # defaults to {pc.BUDGET_KEY}", "tracker: none", "sop: 1", "---",
         "# pd config", "", f"Written by /pd:init on {date.today()}; reviewed like any config (plan Part B §12).", ""])
 
 
@@ -143,9 +143,9 @@ def self_test():
                 (repo / f).write_text(text)
             code, out = run(repo)
             fm = pc.split_frontmatter((repo / ".claude/pd.local.md").read_text())[0]
-            fields = {"artifacts_root", "base_branch", "release_script", "doc_tiers", "small_feature_tasks", "many_files",
+            fields = {"artifacts_root", "base_branch", "release_script", "doc_tiers", "small_workitem_tasks", "many_files",
                       "source_paths", "test_paths", "fixture_paths", "languages", "qa_battery", "workflow_output_cap",
-                      "feature_token_budget", "budget_increment", "tracker", "sop"}
+                      pc.BUDGET_KEY, "budget_increment", "tracker", "sop"}
             c.check(code == 0 and set(fm) == fields, f"pd.local.md has every §12 field: {sorted(set(fm) ^ fields)}")
             c.check(fm["source_paths"] == ["src/"] and fm["test_paths"] == ["tests/"] and fm["fixture_paths"] == ["tests/fixtures/"]
                     and fm["languages"] == ["python"] and fm["qa_battery"] == ["uv run pytest -q"] and str(fm["sop"]) == "1",

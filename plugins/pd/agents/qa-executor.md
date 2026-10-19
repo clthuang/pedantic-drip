@@ -11,7 +11,7 @@ color: green
 
 <example>
 Context: implement phase finished its tasks; the QA moment fires.
-user: "QA feature 134 — feature dir {pd_artifacts_root}/features/134-workflow-rebuild"
+user: "QA feature 134 — feature dir {pd_artifacts_root}/workitems/134-workflow-rebuild"
 assistant: Runs the battery, drives the rewritten flow end-to-end, returns the JSON verdict with per-check evidence.
 </example>
 

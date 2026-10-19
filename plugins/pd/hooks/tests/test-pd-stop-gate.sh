@@ -36,12 +36,12 @@ mkrepo() {
   ( cd "$1" && git init -q -b main && git config user.email t@t && git config user.name t &&
     git config commit.gpgsign false &&
     printf -- '---\nartifacts_root: docs/dev_artifacts\nsop: 1\n%s---\n' "${2:-}" > .claude/pd.local.md &&
-    "$PD_NEW" feature "Parse the input" >/dev/null && git add -A && git commit -qm base &&
-    git checkout -qb "feature/$(ls docs/dev_artifacts/features)" )
+    "$PD_NEW" workitem "Parse the input" >/dev/null && git add -A && git commit -qm base &&
+    git checkout -qb "workitem/$(ls docs/dev_artifacts/workitems)" )
 }
 # now <repo> <text>: the README's ## Now body.
 now() {
-  python3 - "$1"/docs/dev_artifacts/features/*/README.md "$2" <<'PY'
+  python3 - "$1"/docs/dev_artifacts/workitems/*/README.md "$2" <<'PY'
 import re, sys
 p, text = sys.argv[1], sys.argv[2]
 s = open(p).read()
@@ -52,8 +52,8 @@ usage() { printf '{"message":{"usage":{"input_tokens":%s,"output_tokens":%s,"cac
 tokens() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
 
 A="$TMP/a"; mkrepo "$A"
-FID=$(ls "$A/docs/dev_artifacts/features")
-FD="$A/docs/dev_artifacts/features/$FID"
+FID=$(ls "$A/docs/dev_artifacts/workitems")
+FD="$A/docs/dev_artifacts/workitems/$FID"
 cp "$FD/log.md" "$TMP/log.orig"; cp "$FD/README.md" "$TMP/readme.orig"
 
 # --- when it blocks -------------------------------------------------------------------
@@ -128,18 +128,18 @@ run "$(hook "$A" S1)"
 grep -q '"calvin_ledger": "x.md"' "$HOME/.claude/pd/gate/S1.json" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the session state keeps keys it doesn't own"; }
 
 # Two repositories with the same feature id keep separate totals and budgets.
-B="$TMP/b"; mkrepo "$B" $'feature_token_budget: 100\n'
-FB="$B/docs/dev_artifacts/features/$FID"
+B="$TMP/b"; mkrepo "$B" $'workitem_token_budget: 100\n'
+FB="$B/docs/dev_artifacts/workitems/$FID"
 now "$B" "goal: $FID target finish session S3"
 usage 100 50 20 > "$TMP/t-S3.jsonl"
-run "$(hook "$B" S3)"; expect "past feature_token_budget: ask continue or stop" 2 "budget spent: continue or stop?"
-grep -qF 'feature_token_budget=200' <<<"$ERR" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the raise defaults to feature_token_budget"; }
+run "$(hook "$B" S3)"; expect "past workitem_token_budget: ask continue or stop" 2 "budget spent: continue or stop?"
+grep -qF 'workitem_token_budget=200' <<<"$ERR" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the raise defaults to workitem_token_budget"; }
 STATES=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | wc -l | tr -d ' ')
 STATE_B=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | grep -v "^$STATE_A$")
 [ "$STATES" = 2 ] && [ "$(tokens "$STATE_A" tokens)" = 1030 ] && [ "$(tokens "$STATE_B" tokens)" = 170 ] && [ "$(tokens "$STATE_B" budget)" = 100 ] \
   && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: per-repository state ($STATES files)"; }
 run "$(hook "$A" S1)"; expect "the other repository's budget doesn't apply" 2 "not reached" "budget spent"
-printf '## 2026-10-15 11:00+08:00 decision\nQ: budget spent: continue or stop?\nA (user, verbatim): "continue"\nBudget: feature_token_budget=1000\n' >> "$FB/log.md"
+printf '## 2026-10-15 11:00+08:00 decision\nQ: budget spent: continue or stop?\nA (user, verbatim): "continue"\nBudget: workitem_token_budget=1000\n' >> "$FB/log.md"
 run "$(hook "$B" S3)"; expect "a decision's raise lifts the cap" 2 "not reached" "budget spent"
 
 # --- the target --------------------------------------------------------------------------------

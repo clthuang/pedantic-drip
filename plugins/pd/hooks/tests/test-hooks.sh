@@ -226,12 +226,12 @@ test_pre_commit_guard_from_subdirectory() {
 
 # Feature 094: pre-release adversarial QA gate anti-drift assertions
 
-test_finish_feature_contract_present() {
+test_finish_workitem_contract_present() {
     # thin pd: the finish contract lives in the finishing-branch playbook; the command only invokes it.
     log_test "finishing-branch/SKILL.md carries the finish contract essentials"
     local file="${PROJECT_ROOT}/plugins/pd/skills/finishing-branch/SKILL.md"
     local fails=0
-    grep -q 'pd:finishing-branch' "${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md" || { echo "  finish-feature.md doesn't invoke pd:finishing-branch"; ((fails++)); }
+    grep -q 'pd:finishing-branch' "${PROJECT_ROOT}/plugins/pd/commands/finish-workitem.md" || { echo "  finish-workitem.md doesn't invoke pd:finishing-branch"; ((fails++)); }
     grep -q 'pd:security-reviewer' "$file" || { echo "  missing pd:security-reviewer dispatch (security surface)"; ((fails++)); }
     grep -q 'phase-gate.sh finish' "$file" || { echo "  missing mechanical finish gate"; ((fails++)); }
     grep -q 'retrospecting' "$file" || { echo "  missing retrospecting skill reference"; ((fails++)); }
@@ -243,11 +243,11 @@ test_finish_feature_contract_present() {
     if [[ $fails -eq 0 ]]; then log_pass; else log_fail "$fails assertion(s) failed"; fi
 }
 
-test_finish_feature_under_600_lines() {
-    log_test "finish-feature.md kept under 600 lines (contract command, not procedure)"
+test_finish_workitem_under_600_lines() {
+    log_test "finish-workitem.md kept under 600 lines (contract command, not procedure)"
     local lines
-    lines=$(wc -l < "${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md")
-    if [[ $lines -lt 600 ]]; then log_pass; else log_fail "finish-feature.md is $lines lines (>=600)"; fi
+    lines=$(wc -l < "${PROJECT_ROOT}/plugins/pd/commands/finish-workitem.md")
+    if [[ $lines -lt 600 ]]; then log_pass; else log_fail "finish-workitem.md is $lines lines (>=600)"; fi
 }
 
 # Feature 113 FR-2: AC-12 evidence helper script must be executable and emit
@@ -553,8 +553,8 @@ main() {
     test_pre_commit_guard_warns_main
     test_pre_commit_guard_reminds_tests
     test_pre_commit_guard_from_subdirectory
-    test_finish_feature_contract_present
-    test_finish_feature_under_600_lines
+    test_finish_workitem_contract_present
+    test_finish_workitem_under_600_lines
     test_bash_version_capture_script_emits_three_sections
 
     echo ""

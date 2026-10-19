@@ -61,7 +61,7 @@ Every generated documentation file should include YAML frontmatter tracking its 
 ```yaml
 ---
 last-updated: '2024-01-15T10:30:00Z'  # ISO 8601 with UTC Z suffix
-source-feature: '{feature-id}-{slug}'
+source-workitem: '{feature-id}-{slug}'
 ---
 ```
 
@@ -82,5 +82,5 @@ The workflow-artifacts.md file uses a table format linking feature artifacts. Re
 ```
 | Feature | Status | Artifacts |
 |---------|--------|-----------|
-| {id}-{slug} | {status} | [{pd_artifacts_root}/features/{id}-{slug}/](link) |
+| {id}-{slug} | {status} | [{pd_artifacts_root}/workitems/{id}-{slug}/](link) |
 ```

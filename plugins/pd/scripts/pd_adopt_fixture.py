@@ -62,6 +62,8 @@ IGNORED = {
                                "iterations": 2, "reviewerNotes": "spec ok"}}}),
     "docs/features/003-gamma/.meta.json": json.dumps({"status": "satisfied", "lastCompletedPhase": "finish"}),
     "docs/features/005-epsilon/spec.md": "# Epsilon\n",
+    "docs/features/006-zeta/spec.md": "# Zeta\n",
+    "docs/features/006-zeta/.meta.json": json.dumps({"status": "active", "branch": "feature/zeta-old"}),
     "docs/features/005-epsilon/.meta.json": json.dumps({"status": "abandoned"}),
     "docs/features/001-alpha/.qa-gate.log": "raw gate log\n",
     "docs/features/001-alpha/.qa-gate/security.json": "{}\n",  # a tracked sidecar directory
@@ -83,6 +85,9 @@ CREATE TABLE phase_events (id INTEGER PRIMARY KEY AUTOINCREMENT, type_id TEXT NO
   backward_reason TEXT, backward_target TEXT, source TEXT NOT NULL DEFAULT 'live', created_at TEXT NOT NULL,
   metadata TEXT);
 """
+
+
+LEGACY_BRANCH = "feature/zeta-old"  # 006-zeta's recorded branch; the self-test creates it
 
 
 def build(tmp):
@@ -126,6 +131,7 @@ def build(tmp):
         ("f4", WS, "feature:004-delta", "004-delta", "delta", "completed", "bl7", None, t, "work", "feature"),  # registry only
         ("bl8", WS, "backlog:00008", "00008", "Spaced reason", "dropped", None, None, "2026-01-12T08:00:00Z",
          "work", "backlog"),
+        ("f6", WS, "feature:006-zeta", "006-zeta", "zeta", "in-progress", "f2", None, t, "work", "feature"),  # a work item's child
         ("f3", WS, "feature:003-gamma", "003-gamma", "gamma", "completed", "bl2", None, t, "work", "feature"),
         ("b1", WS, "brainstorm:20260101-000000-alpha", "20260101-000000-alpha", "Alpha", "draft", None,
          "docs/brainstorms/20260101-000000-alpha.prd.md", t, "brainstorm", "brainstorm"),

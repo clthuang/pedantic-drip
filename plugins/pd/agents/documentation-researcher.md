@@ -97,7 +97,7 @@ Read spec.md **In Scope** section. Identify changes by audience:
 
 | Indicator | Example | Doc Impact |
 |-----------|---------|------------|
-| Adds new command/skill | "Create `/finish-feature` command" | README, CHANGELOG |
+| Adds new command/skill | "Create `/finish-workitem` command" | README, CHANGELOG |
 | Changes existing behavior | "Modify flow to include..." | README (if documented), CHANGELOG |
 | Adds configuration option | "Add `--no-review` flag" | README, CHANGELOG |
 | Changes user-facing output | "Show new status message" | CHANGELOG |
@@ -229,7 +229,7 @@ Return structured JSON:
   ],
   "user_visible_changes": [
     {
-      "change": "Added /finish-feature command with new flow",
+      "change": "Added /finish-workitem command with new flow",
       "impact": "high",
       "docs_affected": ["README.md", "CHANGELOG.md"]
     }

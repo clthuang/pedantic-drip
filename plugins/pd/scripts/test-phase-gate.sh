@@ -53,7 +53,7 @@ RUN='## 2026-10-14 14:00+08:00 run implement-tasks — finished
 
 feature() {  # feature <name> <shape body> [log body] — a feature dir with README, shape.md, log.md
   local d="$TMP/$1"; mkdir -p "$d"
-  printf -- '---\nid: %s\ntype: feature\nstatus: active\nmode: standard\n---\n# x\n' "$1" > "$d/README.md"
+  printf -- '---\nid: %s\ntype: workitem\nstatus: active\nmode: standard\n---\n# x\n' "$1" > "$d/README.md"
   printf '%s\n' "$2" > "$d/shape.md"
   printf '%s\n' "${3:-}" > "$d/log.md"
   echo "$d"
@@ -113,21 +113,21 @@ expect 1 "implement fails when a task's proof didn't pass" implement "$d"
 # --- verify: a qa entry, every qa_battery command passing at its commit, nothing changed since,
 # no open blockers ----------------------------------------------------------------------
 repo() {  # repo <name> <qa_battery yaml lines> — a git repo with src/, tests/ and one feature
-  local r="$TMP/$1"; mkdir -p "$r/.claude" "$r/src" "$r/tests" "$r/docs/dev_artifacts/features/f"
+  local r="$TMP/$1"; mkdir -p "$r/.claude" "$r/src" "$r/tests" "$r/docs/dev_artifacts/workitems/f"
   printf -- '---\nartifacts_root: docs/dev_artifacts\nsource_paths: [src/]\ntest_paths: [tests/]\n%s---\n' "$2" > "$r/.claude/pd.local.md"
   echo 'x = 1' > "$r/src/a.py"; echo 'def test(): pass' > "$r/tests/test_a.py"
-  printf -- '---\nid: f\ntype: feature\nstatus: active\n---\n' > "$r/docs/dev_artifacts/features/f/README.md"
-  : > "$r/docs/dev_artifacts/features/f/log.md"
+  printf -- '---\nid: f\ntype: workitem\nstatus: active\n---\n' > "$r/docs/dev_artifacts/workitems/f/README.md"
+  : > "$r/docs/dev_artifacts/workitems/f/log.md"
   ( cd "$r" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm base )
   echo "$r"
 }
 qa() {  # qa <repo> <result> [extra body] — append a qa entry citing HEAD
   local c; c=$(git -C "$1" rev-parse --short HEAD)
-  printf '## 2026-10-14 12:30+08:00 qa\nCommit: %s\nRan: `pytest -q` -> %s\n%s\n' "$c" "$2" "${3:-}" >> "$1/docs/dev_artifacts/features/f/log.md"
+  printf '## 2026-10-14 12:30+08:00 qa\nCommit: %s\nRan: `pytest -q` -> %s\n%s\n' "$c" "$2" "${3:-}" >> "$1/docs/dev_artifacts/workitems/f/log.md"
 }
 commit_all() { ( cd "$1" && git add -A && git -c user.email=t@t -c user.name=t commit -qm "$2" ); }
 BAT=$'qa_battery:\n  - pytest -q\n'
-F=docs/dev_artifacts/features/f
+F=docs/dev_artifacts/workitems/f
 
 r=$(repo v-ok "$BAT"); qa "$r" pass
 expect 0 "verify passes" verify "$r/$F"

@@ -14,16 +14,16 @@ It runs while the branch and the task branches still exist, because they are inp
 1. **Assemble the inputs as pointers, not copies:**
    - the feature directory: `README.md`, `log.md`, `shape.md` and `plan.md`;
    - the trigger list from `phase-gate.sh finish`;
-   - `git log --oneline {pd_base_branch}..feature/<id>` and `git diff --stat {pd_base_branch}...feature/<id>`;
-   - the earlier `retro.md` files under `{pd_artifacts_root}/features/`, so self-labels ("first", "only", "Nth") can be checked.
+   - `git log --oneline {pd_base_branch}..workitem/<id>` and `git diff --stat {pd_base_branch}...workitem/<id>`;
+   - the earlier `retro.md` files under `{pd_artifacts_root}/workitems/`, so self-labels ("first", "only", "Nth") can be checked.
 2. **Dispatch one `pd:retro-facilitator`.** The prompt carries those pointers and the template `${CLAUDE_PLUGIN_ROOT}/templates/retro.md`, and ends with the dispatch-hygiene line. The agent re-derives every figure from `log.md` and git, and every figure cites its entry or commit. A count copied from a briefing or an earlier artifact is a defect.
-3. **Write `{pd_artifacts_root}/features/<id>/retro.md`** from its result, in the template's sections.
+3. **Write `{pd_artifacts_root}/workitems/<id>/retro.md`** from its result, in the template's sections.
 4. **Land each lesson where it acts,** in this order of preference:
    - a `pd-lint` or hook check, if it can be checked;
    - otherwise one line in the CLAUDE.md of the project where the feature ran;
    - otherwise an edit to the stage skill. A lesson about pd itself goes into pd's skill.
 
-   Name each landing in `## Takeaways`, with its commit. A follow-up gets a `pd-new backlog "<title>" --from features/<id>` line, listed in `## Actions`.
+   Name each landing in `## Takeaways`, with its commit. A follow-up gets a `pd-new backlog "<title>" --from workitems/<id>` line, listed in `## Actions`.
 5. **Commit `retro.md`** before any cleanup.
 
 ## Never

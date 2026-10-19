@@ -1,6 +1,6 @@
 ---
 description: Write a feature's plan.md — waves, tasks and their test cases, reviewed once
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:create-plan

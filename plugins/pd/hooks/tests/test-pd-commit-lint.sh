@@ -20,8 +20,8 @@ mkdir -p "$R/.claude"
 ( cd "$R" && git init -q -b main && git config user.email t@t && git config user.name t &&
   git config commit.gpgsign false &&
   printf -- '---\nartifacts_root: docs/dev_artifacts\nsop: 1\n---\n' > .claude/pd.local.md &&
-  "$PD_NEW" feature "Parse the input" >/dev/null && git add -A && git commit -qm base )
-README=$(ls "$R"/docs/dev_artifacts/features/*/README.md)
+  "$PD_NEW" workitem "Parse the input" >/dev/null && git add -A && git commit -qm base )
+README=$(ls "$R"/docs/dev_artifacts/workitems/*/README.md)
 
 # 1. A bad staged artifact: a status outside the closed list.
 perl -pi -e 's/^status: active$/status: finished/' "$README"

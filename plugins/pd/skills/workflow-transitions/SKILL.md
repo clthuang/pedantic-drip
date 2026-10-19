@@ -8,14 +8,14 @@ description: The conductor's shared contract — where state lives, phase entry 
 The main session is the conductor. It owns every decision that needs the user, asks through AskUserQuestion, and writes the files. Workflows and agents return results; they never write state.
 
 ## Where state lives
-- **Frontmatter** of `{pd_artifacts_root}/features/<id>/README.md`: `status`, `phase`, `mode`, `branch`, `risk`. Phases in order: `specify`, `design`, `create-plan`, `implement`, `verify`, `finish`.
+- **Frontmatter** of `{pd_artifacts_root}/workitems/<id>/README.md`: `status`, `phase`, `mode`, `branch`, `risk`. Phases in order: `specify`, `design`, `create-plan`, `implement`, `verify`, `finish`.
 - **`## Now`** in the README: overwritten, never appended. Its key lines come first: `goal: <id> target <phase> session <session id>` and `run in flight: <run-name> session <session id>`.
 - **`log.md`** beside the README: append-only, one entry per event, in the shapes of `${CLAUDE_PLUGIN_ROOT}/references/log-entries.md`. User rulings are quoted verbatim; every figure cites its source.
 - **Everything else is computed:** `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` (open blockers, assumptions, next ready items, retros owed). Never restate it in a file.
 - **Config:** `.claude/pd.local.md` (`artifacts_root`, `base_branch`, `qa_battery`, the path lists, the budgets).
 
 ## Phase entry
-1. **Resolve the feature:** the `--feature=<id>` argument, else the checked-out `feature/<id>` branch, else `pd-status`'s active features. None or several: ask.
+1. **Resolve the feature:** the `--workitem=<id>` argument, else the checked-out `workitem/<id>` branch, else `pd-status`'s active features. None or several: ask.
 2. **Check out its branch** (the README's `branch:`). If another branch is checked out with changes, ask before switching.
 3. **Read** the README, `## Now` and `pd-status`'s open blockers for the feature before any work.
 4. **A backward move** sets `phase:` back and appends `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`, committed before the work starts.
@@ -44,7 +44,7 @@ The main session is the conductor. It owns every decision that needs the user, a
 - **`/goal` drives; the `Stop` gate decides.** On start, write `goal: <id> target <phase> session ${CLAUDE_SESSION_ID}` to `## Now`, commit, and print the goal: `/goal pd-status prints feature <id> as <target> with no open blockers, or the user has said to stop`.
 - **Every hard stop is an AskUserQuestion,** never a question in prose: a merge conflict, a cap, a finding with no testable check, the token cap, no progress, a criterion with no observable outcome, the criteria sign-off.
 - **Content past half a terminal opens in the browser.** When the user must read more than about 20 lines to answer (a long `shape.md`, PRD or report), run `uv run ${CLAUDE_PLUGIN_ROOT}/scripts/pd-html.py <file> --open` first (fix the source for each `pd-html: WARN` line, then render again), name the file in the question, and keep the preview to a summary under 20 lines: the terminal cuts longer previews. Shorter content stays in the question. If the render fails, ask anyway and say so.
-- **At the token cap,** the gate blocks with "budget spent: continue or stop?". Continue is a `decision` entry with `Budget: feature_token_budget=<current + budget_increment>`.
+- **At the token cap,** the gate blocks with "budget spent: continue or stop?". Continue is a `decision` entry with `Budget: workitem_token_budget=<current + budget_increment>`.
 - **Clear the `goal:` line,** and commit, only when the user answers "stop", or when `pd-status` shows the target reached with no open blockers.
 - **Print mode (`claude -p`):** nothing can be asked. Each decision made for the user is a `decision` entry answered `A (conductor, on the user's behalf)`; a hard stop ends the run with a `handoff` entry.
 

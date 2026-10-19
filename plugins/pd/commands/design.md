@@ -1,6 +1,6 @@
 ---
 description: Write a feature's contracts and architecture in shape.md, reviewed once
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:design

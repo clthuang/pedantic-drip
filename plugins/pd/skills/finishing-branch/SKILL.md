@@ -20,17 +20,17 @@ Order matters: the retro runs before cleanup, because branch and worktree cleanu
 4. **The retro trigger check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh finish <feature dir>`.
    - **A `retro.md missing` failure names the triggers:** run the `retrospecting` skill, then re-run the check until it passes.
    - **A pass with no retro owed:** append finish's `note` entry, `No retro trigger.`
-5. **Replan, for a feature listed in a roadmap** (a `plans/*.md` whose `roadmap:` names `features/<id>`). Show the plan's computed state from `pd-status`, then append a `replan` entry: `Plan: plans/<plan id>.md — still holds.`, or what changed, with the roadmap edit in the same commit.
+5. **Replan, for a feature listed in a roadmap** (a `plans/*.md` whose `roadmap:` names `workitems/<id>`). Show the plan's computed state from `pd-status`, then append a `replan` entry: `Plan: plans/<plan id>.md — still holds.`, or what changed, with the roadmap edit in the same commit.
 6. **Close:** set `status: done`, delete the `branch:` line, overwrite `## Now` with `Done.`, and commit `finish: <summary>`. The commit hook checks the done feature's entries.
 7. **Merge** into `{pd_base_branch}`:
    ```bash
-   git checkout {pd_base_branch} && git pull && git merge --no-ff feature/<id> && git push
+   git checkout {pd_base_branch} && git pull && git merge --no-ff workitem/<id> && git push
    ```
    - **A conflict is a hard stop** (AskUserQuestion): report the conflicted paths and leave both branches intact. Never force-push, and never resolve a conflict by discarding one side.
-   - **PR path, when `{pd_base_branch}` requires pull requests:** `gh api repos/{owner}/{repo}/rules/branches/{pd_base_branch} --jq 'any(.[]; .type == "pull_request")'` prints `true` (gh fills in `{owner}/{repo}`). Instead of the merge above, run `git push -u origin feature/<id>`, `gh pr create --base {pd_base_branch} --fill`, `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`. A failing check is a hard stop, like a conflict. `--delete-branch` removes the branch locally and on the remote, so step 9 skips it.
+   - **PR path, when `{pd_base_branch}` requires pull requests:** `gh api repos/{owner}/{repo}/rules/branches/{pd_base_branch} --jq 'any(.[]; .type == "pull_request")'` prints `true` (gh fills in `{owner}/{repo}`). Instead of the merge above, run `git push -u origin workitem/<id>`, `gh pr create --base {pd_base_branch} --fill`, `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`. A failing check is a hard stop, like a conflict. `--delete-branch` removes the branch locally and on the remote, so step 9 skips it.
 8. **Release:** run `{pd_release_script}` if it is set and the file exists. Otherwise say none is configured.
 9. **Cleanup, only after the merge:**
-   - **Delete the branches** with `git branch -d feature/<id>`, then each `pd/<id>/task-*` branch. Never `-D`: the safe delete refusing unmerged work is the guard.
+   - **Delete the branches** with `git branch -d workitem/<id>`, then each `pd/<id>/task-*` branch. Never `-D`: the safe delete refusing unmerged work is the guard.
    - **Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-lint --sweep`.** Delete the `agent_sandbox/` directories it lists for done items, and show the user the rest of its list.
 
 ## Entries this stage writes

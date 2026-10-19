@@ -1,6 +1,6 @@
 ---
 description: Execute a feature's plan through the implement-tasks workflow
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:implement
