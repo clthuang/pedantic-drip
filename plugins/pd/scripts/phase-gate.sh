@@ -5,11 +5,11 @@
 # (plugins/pd/references/log-entries.md). The skill runs it before moving `phase:` past a
 # phase; pd-lint re-runs it at commit time, with changes staged, for every earlier phase.
 #
-# Usage: phase-gate.sh <phase> <feature-dir> [--express]
+# Usage: phase-gate.sh <phase> <workitem-dir> [--express]
 #   phase ∈ specify|design|create-plan|implement|verify|finish|express
 #   express: the mini-spec check (one task block in shape.md ## Requirements), which
-#   replaces specify, design and create-plan for a `mode: express` feature. implement on
-#   an express feature (the flag, or `mode: express` in README.md) takes its one task
+#   replaces specify, design and create-plan for a `mode: express` work item. implement on
+#   an express work item (the flag, or `mode: express` in README.md) takes its one task
 #   from that block instead of plan.md.
 # Exit 0 = gate passes; 1 prints each failure on its own line; 2 = usage.
 set -uo pipefail
@@ -22,8 +22,8 @@ EXPRESS=0
 FAIL=0
 say() { echo "GATE FAIL [$PHASE]: $1"; FAIL=1; }
 
-[ -n "$PHASE" ] && [ -n "$DIR" ] || { echo "usage: phase-gate.sh <phase> <feature-dir> [--express]"; exit 2; }
-[ -d "$DIR" ] || { say "feature dir missing: $DIR"; exit 1; }
+[ -n "$PHASE" ] && [ -n "$DIR" ] || { echo "usage: phase-gate.sh <phase> <workitem-dir> [--express]"; exit 2; }
+[ -d "$DIR" ] || { say "work item dir missing: $DIR"; exit 1; }
 grep -qE '^mode:[[:space:]]*["'"'"']?express["'"'"']?([[:space:]]|$)' "$DIR/README.md" 2>/dev/null && EXPRESS=1
 
 need_file() { [ -f "$DIR/$1" ] || say "missing artifact: $1"; }
@@ -192,7 +192,7 @@ case "$PHASE" in
     ;;
   verify|finish) ;;
   *)
-    echo "usage: phase-gate.sh <phase> <feature-dir> [--express] (unknown phase: $PHASE)"; exit 2
+    echo "usage: phase-gate.sh <phase> <workitem-dir> [--express] (unknown phase: $PHASE)"; exit 2
     ;;
 esac
 

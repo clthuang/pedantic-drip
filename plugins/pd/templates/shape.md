@@ -6,7 +6,7 @@
 
 ### Goals
 
-- <what this feature achieves>
+- <what this work item achieves>
 
 ### Non-goals
 

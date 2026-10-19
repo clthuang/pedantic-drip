@@ -38,11 +38,11 @@ You write and update documentation based on research findings from documentation
 
 You receive:
 1. **Research findings** - JSON from documentation-researcher agent (includes `affected_tiers`, `tier_status`, `drift_detected`, `tier_drift`)
-2. **Feature context** - spec.md content, feature ID (finish-feature only; absent in wrap-up)
+2. **Work item context** - spec.md content, work item ID (finish-workitem only; absent in wrap-up)
 3. **Mode** - `scaffold` or `incremental` (injected by caller in dispatch context)
 4. **Enabled tiers** - comma-separated list from `pd_doc_tiers` config
 5. **Doc schema reference** - content of doc-schema.md (injected by caller)
-6. **ADR context** - design.md Technical Decisions + spec.md Problem Statement + existing ADR list (finish-feature and generate-docs only)
+6. **ADR context** - design.md Technical Decisions + spec.md Problem Statement + existing ADR list (finish-workitem and generate-docs only)
 
 The calling command/skill injects mode-specific instructions (scaffold vs incremental behavior) in the dispatch prompt context — NOT defined in this agent file. See the Mode section in your dispatch context for behavioral branching.
 
@@ -53,12 +53,12 @@ Generated documentation uses section markers to separate auto-generated content 
 **Writing new content** — use the full format with source annotation:
 
 ```
-<!-- AUTO-GENERATED: START - source: {feature-id} -->
+<!-- AUTO-GENERATED: START - source: {workitem-id} -->
 {generated content here}
 <!-- AUTO-GENERATED: END -->
 ```
 
-Where `{feature-id}` is the feature identifier (e.g., `028-enriched-documentation-phase`) or `codebase-analysis` for scaffold-mode generation without a specific feature.
+Where `{workitem-id}` is the work item identifier (e.g., `028-enriched-documentation-phase`) or `codebase-analysis` for scaffold-mode generation without a specific work item.
 
 **Detecting existing markers** — accept both formats as valid marker openings:
 - `<!-- AUTO-GENERATED: START -->` (legacy/simple format)
@@ -79,17 +79,17 @@ All generated or updated tier docs include YAML frontmatter at the top of the fi
 ```yaml
 ---
 last-updated: 2024-01-15T10:30:00Z
-source-feature: 028-enriched-documentation-phase
+source-workitem: 028-enriched-documentation-phase
 ---
 ```
 
 **Fields:**
 - `last-updated` — ISO 8601 datetime with UTC timezone suffix `Z` (e.g., `2024-01-15T10:30:00Z`). Set to the current time when generating or updating the file.
-- `source-feature` — The feature identifier that triggered this generation (e.g., `028-enriched-documentation-phase`), or `codebase-analysis` for scaffold-mode generation without a specific feature.
+- `source-workitem` — The work item identifier that triggered this generation (e.g., `028-enriched-documentation-phase`), or `codebase-analysis` for scaffold-mode generation without a specific work item.
 
 **Rules:**
 - When creating a new file: add frontmatter with both fields
-- When updating an existing file: update `last-updated` to current time, update `source-feature` to current feature ID
+- When updating an existing file: update `last-updated` to current time, update `source-workitem` to current work item ID
 - Frontmatter is separate from section markers — frontmatter is at file top, markers wrap content sections
 
 ## Tier-Specific Generation Guidance
@@ -116,7 +116,7 @@ When generating or updating tier content, adapt your writing style and focus to 
 
 ## ADR Extraction
 
-When ADR Context is provided in the dispatch prompt (finish-feature and generate-docs only), extract Technical Decisions into ADR files using the extended Michael Nygard format.
+When ADR Context is provided in the dispatch prompt (finish-workitem and generate-docs only), extract Technical Decisions into ADR files using the extended Michael Nygard format.
 
 ### ADR File Structure
 
@@ -125,7 +125,7 @@ Each ADR follows this format:
 ```markdown
 ---
 last-updated: {ISO 8601 datetime with UTC Z}
-source-feature: {feature-id}
+source-workitem: {workitem-id}
 status: Accepted
 ---
 # ADR-{NNN}: {Decision Title}

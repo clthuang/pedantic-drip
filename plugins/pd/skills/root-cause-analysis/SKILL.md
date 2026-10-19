@@ -59,8 +59,8 @@ Per [rca-report-template](references/rca-report-template.md):
 
 ## 8. Decide the fix's entry depth
 Ask through AskUserQuestion:
-- **Express:** only for one known pattern. The codebase already holds the same change shape, and the mini-spec will cite that example's path (§A2). `/pd:create-feature "<title>" --from rca/<id>.md --mode express`, which writes the mini-spec before its first commit.
-- **Criteria:** `/pd:create-feature "<title>" --from rca/<id>.md`, which applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits; then continue with the specifying skill.
+- **Express:** only for one known pattern. The codebase already holds the same change shape, and the mini-spec will cite that example's path (§A2). `/pd:create-workitem "<title>" --from rca/<id>.md --mode express`, which writes the mini-spec before its first commit.
+- **Criteria:** `/pd:create-workitem "<title>" --from rca/<id>.md`, which applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits; then continue with the specifying skill.
 - **No fix now:** `## Now` says why, and the recommendations go to the backlog with `pd-new backlog "<title>"`.
 
 Then the rca item takes `status: done` and a `note` entry naming where the fix went; commit.
@@ -69,7 +69,7 @@ Then the rca item takes `status: done` and a `note` entry naming where the fix w
 - **MUST** reproduce before analyzing, or record the failed attempts.
 - **MUST** explore at least three hypothesis paths.
 - **MUST NOT** modify production code: `agent_sandbox/` and the rca item only.
-- **MUST NOT** propose fixes in the report: causes only; the fix is a feature.
+- **MUST NOT** propose fixes in the report: causes only; the fix is a work item.
 
 ## Related
 - [systematic-debugging](../systematic-debugging/SKILL.md): the Iron Law ("NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST") and the 3-fix rule.

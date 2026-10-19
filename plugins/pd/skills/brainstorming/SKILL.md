@@ -34,8 +34,8 @@ Settle five things through AskUserQuestion, one question at a time: the problem,
 
 ## 5. Decide
 Ask through AskUserQuestion:
-- **Promote to a feature (Criteria):** run `/pd:create-feature "<title>" --from brainstorms/<id>.md`: it applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits. Then continue with the specifying skill. On the brainstorm: `status: done`, a `note` entry `Promoted → features/<feature id>.`, one commit.
-- **Several features:** `pd-new plan "<title>" --from brainstorms/<id>.md`, its features listed as `planned:` roadmap items in the format `${CLAUDE_PLUGIN_ROOT}/templates/plan-roadmap.md` shows; then `/pd:create-feature --plan <plan> <slug> "<title>"` for the first one.
+- **Promote to a work item (Criteria):** run `/pd:create-workitem "<title>" --from brainstorms/<id>.md`: it applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits. Then continue with the specifying skill. On the brainstorm: `status: done`, a `note` entry `Promoted → workitems/<id>.`, one commit.
+- **Several work items:** `pd-new plan "<title>" --from brainstorms/<id>.md`, its work items listed as `planned:` roadmap items in the format `${CLAUDE_PLUGIN_ROOT}/templates/plan-roadmap.md` shows; then `/pd:create-workitem --plan <plan> <slug> "<title>"` for the first one.
 - **Park it:** `## Now` names what would reopen it; a `note` entry; commit.
 - **Drop it:** `status: abandoned` with a `decision` entry giving the reason; commit.
 

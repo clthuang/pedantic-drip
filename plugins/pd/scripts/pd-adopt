@@ -31,13 +31,20 @@ import pd_common as pc  # noqa: E402
 DEFAULT_REGISTRY = Path(os.environ.get("ENTITY_DB_PATH") or "~/.claude/pd/entities/entities.db").expanduser()
 CFG = ".claude/pd.local.md"
 NEW = pc.DEFAULT_ARTIFACTS_ROOT
-MOVED = ("features", "brainstorms", "rca", "plans", "knowledge-bank")
+MOVED = (pc.OLD_ITEM_DIR, "brainstorms", "rca", "plans", "knowledge-bank")  # the old layout's names
+WI = pc.TYPE_DIRS[pc.WORKITEM]
+
+
+def moved_to(d):
+    return WI if d == pc.OLD_ITEM_DIR else d
+
+
 PLACED = {"user-guide", "dev-guide", "technical", "projects", "dev_artifacts", "_html"}
 RETIRED = re.compile(r"^(yolo_mode|yolo_max_stop_blocks|yolo_usage_\w+|plan_mode_review|max_concurrent_agents|activation_mode):")
 STATUS_MAP = {"completed": "done", "complete": "done", "implemented": "done", "satisfied": "done",
               "planned": "draft", "preregistered": "draft", "in-progress": "active", "active": "active",
               "promoted": "abandoned", "analyzed": "abandoned"}  # not done: the user's ruling, 2026-10-18
-OPEN_BACKLOG = {None, "", "open", "triaged", "active"}  # an active backlog row is open work, not a feature
+OPEN_BACKLOG = {None, "", "open", "triaged", "active"}  # an active backlog row is open work, not a work item
 OLD_PHASES = ("brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish")
 TITLE_PREFIX = re.compile(r"^(?:PRD|RCA|Spec(?:ification)?|Design|Plan|Tasks|Roadmap|Feature \d+)\s*[:—-]\s*", re.I)
 LINK_RE = re.compile(r"(\]\()([^)\s]+)")
@@ -326,8 +333,8 @@ class Adopt:
     def by_uuid(self, uuid):
         return next((e for e in self.reg["entities"] if e["uuid"] == uuid), None) if uuid else None
 
-    def features(self):
-        d = self.root / NEW / "features"
+    def workitems(self):
+        d = self.root / NEW / WI
         return sorted(p for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
 
     def run(self):
@@ -392,29 +399,27 @@ class Adopt:
             self.backlog_ids[e["uuid"]] = bid
             status = str(e.get("status") or "").lower()
             child = next((f for f in self.reg["entities"] if f["kind"] == "feature" and f.get("parent_uuid") == e["uuid"]), None)
-            if child and status != "dropped":  # a feature exists, whatever the row's status says
-                lines.append(f"- [x] {bid} — promoted → features/{child['key']}")
+            if child and status != "dropped":  # a work item exists, whatever the row's status says
+                lines.append(f"- [x] {bid} — promoted → {WI}/{child['key']}")
             elif status in OPEN_BACKLOG:
                 lines.append(f"- [ ] {bid} — {title}")
             elif status == "promoted":
-                lines.append(f"- [x] {bid} — promoted → (no feature recorded): {title}")
+                lines.append(f"- [x] {bid} — promoted → (no work item recorded): {title}")
             elif status == "dropped":
                 reason = " ".join(str(e['meta'].get('reason') or e['meta'].get('drop_reason') or '').split())
                 lines.append(f"- [x] {bid} — dropped: {reason or 'no reason recorded'}")
             else:  # pd-lint knows only promoted and dropped for a closed row
-                lines.append(f"- [x] {bid} — dropped: closed as {status} in the registry, with no feature: {title}")
+                lines.append(f"- [x] {bid} — dropped: closed as {status} in the registry, with no work item: {title}")
         self.write(f"{NEW}/backlog.md", "\n".join(lines) + "\n")
         self.note(f"step 0: exported {len(rows)} backlog rows to {NEW}/backlog.md (committed at step 6)")
 
     # step 1: move the development artifacts, rewrite links
     def step1(self):
-        if self.old == NEW:
-            return
-        known, pairs = self.known(), []
+        known, pairs = self.known(), []  # a root already at NEW still moves its old item directory
         (self.root / NEW).mkdir(parents=True, exist_ok=True)
         for d in MOVED:
-            src, dst = f"{self.old}/{d}", f"{NEW}/{d}"
-            if (self.root / src).is_dir():
+            src, dst = f"{self.old}/{d}", f"{NEW}/{moved_to(d)}"
+            if src != dst and (self.root / src).is_dir():
                 if any(f.startswith(src + "/") for f in self.old_files):
                     self.git("mv", src, dst)
                 else:
@@ -428,14 +433,15 @@ class Adopt:
                     name = name.replace(".md", "-legacy.md")  # pd-lint reads these two names as §7 lines
                     self.note(f"MAP BY HAND: {f} has pre-§7 lines; moved as {NEW}/{name}"
                               + ("; add its open items with pd-new backlog" if name == "backlog-legacy.md" else ""))
-                self.git("mv", f, f"{NEW}/{name}")
-                pairs.append((f, f"{NEW}/{name}"))
+                if f != f"{NEW}/{name}":
+                    self.git("mv", f, f"{NEW}/{name}")
+                    pairs.append((f, f"{NEW}/{name}"))
         self.pairs = pairs
         changed = self.rewrite_links(pairs, known)
         self.set_config("artifacts_root", NEW)
         tiers = {t.strip() for t in str(pc.load_config(self.root).get("doc_tiers") or "").split(",")}
         for d in sorted(p for p in (self.root / self.old).iterdir() if p.is_dir()) if (self.root / self.old).is_dir() else []:
-            if d.name not in PLACED | tiers and not d.name.startswith("."):
+            if d.name not in PLACED | tiers | set(map(moved_to, MOVED)) and not d.name.startswith("."):
                 self.note(f"UNCLASSIFIED: {self.rel(d)}/ — place it by hand")
         self.note(f"step 1: moved {', '.join(s for s, _ in pairs)} under {NEW}/; rewrote links in {len(changed)} files")
         self.commit(f"pd-adopt step 1: move the development artifacts under {NEW}", changed + [CFG])
@@ -472,39 +478,43 @@ class Adopt:
                 changed.append(f)
         return changed
 
-    # step 2: README frontmatter per feature; frontmatter on single-file items
+    # step 2: README frontmatter per work item; frontmatter on single-file items
     def step2(self):
         self.project_groups()
         art, written, metas_read = self.root / NEW, [], 0
-        for d in self.features():
+        for d in self.workitems():
             fid, mp, meta = d.name, d / ".meta.json", None
             if mp.is_file():
                 try:
                     meta = json.loads(mp.read_text())
                 except ValueError:
-                    self.note(f"MAP BY HAND: features/{fid}/.meta.json does not parse; kept")
+                    self.note(f"MAP BY HAND: {WI}/{fid}/.meta.json does not parse; kept")
             ent = self.entity("feature", fid)
             self.metas[fid] = meta or {}
             raw = (meta or {}).get("status") or (ent or {}).get("status")
             status = map_status(raw)
             if status is None:
-                self.note(f"MAP BY HAND: features/{fid}: status {raw!r} has no mapping; written as-is" if raw
-                          else f"MAP BY HAND: features/{fid}: no recorded status; none written")
+                self.note(f"MAP BY HAND: {WI}/{fid}: status {raw!r} has no mapping; written as-is" if raw
+                          else f"MAP BY HAND: {WI}/{fid}: no recorded status; none written")
             title = next((heading_title((d / n).read_text()) for n in ("spec.md", "prd.md", "design.md", "plan.md", "tasks.md")
                           if (d / n).is_file() and heading_title((d / n).read_text())), None) \
                 or (meta or {}).get("slug", "").replace("-", " ") or (ent or {}).get("name") or fid
-            fm = {"id": fid, "type": "feature", "title": yq(title), "status": status or raw,
+            fm = {"id": fid, "type": pc.WORKITEM, "title": yq(title), "status": status or raw,
                   "phase": self.current_phase(fid, status, meta, ent), "mode": self.mode(meta, ent),
                   "origin": self.origin(fid, meta, ent),
-                  "branch": None if status == "done" else (meta or {}).get("branch") or (ent or {}).get("meta", {}).get("branch") or f"feature/{fid}"}
+                  "branch": None if status == "done" else f"{pc.BRANCH_PREFIX}{fid}"}
+            legacy = (meta or {}).get("branch") or (ent or {}).get("meta", {}).get("branch")
+            if fm["branch"] and legacy and legacy != fm["branch"] and \
+                    pc.git(["rev-parse", "-q", "--verify", f"refs/heads/{legacy}"], self.project_root, check=False):
+                self.note(f"RENAME BY HAND: git branch -m {legacy} {fm['branch']}")
             if (d / "README.md").exists():
                 if self.git("mv", self.rel(d / "README.md"), self.rel(d / "readme-legacy.md"), check=False) is None:
                     (d / "README.md").rename(d / "readme-legacy.md")
-                self.note(f"features/{fid}/README.md moved to readme-legacy.md; the new README carries the frontmatter")
+                self.note(f"{WI}/{fid}/README.md moved to readme-legacy.md; the new README carries the frontmatter")
             links = [f"- [{f.stem}]({f.name})" for f in sorted(d.glob("*.md")) if not f.name.startswith(".") and f.name not in ("README.md", "log.md", "implementation-log.md")]
-            now = f"Legacy feature, adopted by pd-adopt on {self.today}." + (
+            now = f"Legacy work item, adopted by pd-adopt on {self.today}." + (
                 "" if status in ("done", "abandoned") else " Convert it to shape.md and plan.md before work on it resumes.")
-            written.append(self.write(f"{NEW}/features/{fid}/README.md", "---\n" + "".join(
+            written.append(self.write(f"{NEW}/{WI}/{fid}/README.md", "---\n" + "".join(
                 f"{k}: {v}\n" for k, v in fm.items() if v) + f"---\n# {title}\n\n## Now\n\n{now}\n\n## Links\n\n" + "\n".join(links) + "\n"))
             if meta is not None:
                 self.remove(mp)
@@ -513,7 +523,7 @@ class Adopt:
             for f in sorted((art / sub).glob("*.md")) if (art / sub).is_dir() else []:
                 if not f.name.startswith(".") and self.single_file(type_, sub, f):
                     written.append(self.rel(f))
-        self.note(f"step 2: {len(self.features())} feature READMEs; frontmatter on {len(written) - len(self.features())} "
+        self.note(f"step 2: {len(self.workitems())} work item READMEs; frontmatter on {len(written) - len(self.workitems())} "
                   f"single-file items; deleted {metas_read} .meta.json")
         self.commit("pd-adopt step 2: README frontmatter from .meta.json and the registry", written)
 
@@ -531,7 +541,7 @@ class Adopt:
             phase = wp.get("workflow_phase") or (evs and (evs[-1].get("backward_target") or evs[-1].get("phase"))) or None
         phase = {"create-tasks": "create-plan"}.get(phase, phase)
         if phase and phase not in pc.PHASES:
-            self.note(f"MAP BY HAND: features/{fid}: phase {phase!r} is not one of {', '.join(pc.PHASES)}; left out")
+            self.note(f"MAP BY HAND: {WI}/{fid}: phase {phase!r} is not one of {', '.join(pc.PHASES)}; left out")
             return None
         return phase
 
@@ -550,9 +560,9 @@ class Adopt:
                 return f"backlog#{self.backlog_ids[par['uuid']]}"
             if k == "brainstorm" and par.get("artifact_path") and (art / "brainstorms" / Path(par["artifact_path"]).name).is_file():
                 return f"brainstorms/{Path(par['artifact_path']).name}"
-            if k == "feature" and (art / "features" / par["key"]).is_dir():
-                return f"features/{par['key']}"
-            self.note(f"features/{fid}: parent {par['type_id']} has no path in the new layout; origin left out")
+            if k == "feature" and (art / WI / par["key"]).is_dir():
+                return f"{WI}/{par['key']}"
+            self.note(f"{WI}/{fid}: parent {par['type_id']} has no path in the new layout; origin left out")
         src = (meta or {}).get("brainstorm_source")
         if src and (art / "brainstorms" / Path(src).name).is_file():
             return f"brainstorms/{Path(src).name}"
@@ -645,7 +655,7 @@ class Adopt:
                 for p in sorted(x for x in d.rglob("*") if x.is_file()) if d.is_dir() else []:
                     self.aside(p)
             self.note(f"step 3: projects/{', projects/'.join(names)} -> plans/{pid}.md"
-                      + (f" with a roadmap of {sum(1 for x in roadmap if x.startswith('  - '))}" if roadmap else " (no features: a plain plan)"))
+                      + (f" with a roadmap of {sum(1 for x in roadmap if x.startswith('  - '))}" if roadmap else " (no work items: a plain plan)"))
         pdir = self.root / self.old / "projects"
         for d in sorted((p for p in pdir.rglob("*") if p.is_dir()), reverse=True) if pdir.is_dir() else []:
             with contextlib.suppress(OSError):
@@ -656,9 +666,9 @@ class Adopt:
         self.commit("pd-adopt step 3: convert projects into plans with a roadmap", written + changed)
 
     def roadmap(self, nodes, edges, project_uuids):
-        """`roadmap:` lines: the mermaid order and dependencies, features resolved by the registry's parent links."""
+        """`roadmap:` lines: the mermaid order and dependencies, work items resolved by the registry's parent links."""
         children = sorted(e["key"] for e in self.reg["entities"] if e["kind"] == "feature" and e.get("parent_uuid") in project_uuids)
-        dirs = [d.name for d in self.features()]
+        dirs = [d.name for d in self.workitems()]
 
         def resolve(key):
             label = nodes.get(key) or (key[1:] + "-" if re.fullmatch(r"F\d+", key) else key)
@@ -675,16 +685,16 @@ class Adopt:
             placed.add(free[0])
         items, slug_of = {}, {}
         for k in order:
-            slug, is_feature = resolve(k)
+            slug, is_workitem = resolve(k)
             slug_of[k] = slug
             if slug not in items:
-                items[slug] = [is_feature, []]
+                items[slug] = [is_workitem, []]
             items[slug][1] += [slug_of[a] for a in preds[k] if a in slug_of and slug_of[a] != slug and slug_of[a] not in items[slug][1]]
         for c in children:
             items.setdefault(c, [True, []])
         lines = []
-        for slug, (is_feature, after) in items.items():
-            lines.append(f"  - feature: features/{slug}" if is_feature else f"  - planned: {slug}")
+        for slug, (is_workitem, after) in items.items():
+            lines.append(f"  - {pc.WORKITEM}: {WI}/{slug}" if is_workitem else f"  - planned: {slug}")
             if after:
                 lines.append(f"    after: [{', '.join(after)}]")
         return lines
@@ -692,7 +702,7 @@ class Adopt:
     # step 4: legacy history into log.md
     def step4(self):
         written = []
-        for d in self.features():
+        for d in self.workitems():
             fid, entries = d.name, []
             ent = self.entity("feature", fid)
             entries += event_entries((self.reg["events"].get(ent["type_id"]) if ent else None) or meta_events(self.metas.get(fid, {})))
@@ -730,15 +740,15 @@ class Adopt:
             if readme.is_file() and "](log.md)" not in readme.read_text():
                 readme.write_text(readme.read_text().rstrip("\n") + "\n- [log](log.md)\n")
             written += [self.rel(log), self.rel(readme)]
-        self.note(f"step 4: wrote log.md for {len(written) // 2} features, each entry `Status: closed (legacy)`")
+        self.note(f"step 4: wrote log.md for {len(written) // 2} work items, each entry `Status: closed (legacy)`")
         self.commit("pd-adopt step 4: legacy review, gate and phase history into log.md", written)
 
     # step 5: content files stay; list what isn't done
     def step5(self):
-        for d in self.features():
+        for d in self.workitems():
             fm = pc.split_frontmatter((d / "README.md").read_text())[0] or {} if (d / "README.md").is_file() else {}
             if fm.get("status") not in ("done", "abandoned"):
-                self.note(f"NOT DONE: features/{d.name} (status: {fm.get('status')}): convert it to shape.md and plan.md before work resumes")
+                self.note(f"NOT DONE: {WI}/{d.name} (status: {fm.get('status')}): convert it to shape.md and plan.md before work resumes")
 
     def step6(self):
         self.commit("pd-adopt step 6: commit the backlog", [f"{NEW}/backlog.md"])
@@ -863,14 +873,17 @@ def self_test():
         fm = lambda rel: pc.split_frontmatter((art / rel).read_text())[0]
         gamma = repo / "docs/features/003-gamma/.meta.json"
         gamma.write_text(json.dumps({"status": "weird"}))  # ignored: the tree stays clean
+        git("branch", fx.LEGACY_BRANCH)
         code, out = call(repo, "--registry", str(reg))
-        c.check(code == 0 and "diff --git" in out and "rename to docs/dev_artifacts/features/001-alpha/plan.md" in out,
+        c.check(code == 0 and "diff --git" in out and "rename to docs/dev_artifacts/workitems/001-alpha/plan.md" in out,
                 "the dry run prints the diff")
         c.check(git("status", "--porcelain") == "" and git("rev-parse", "HEAD") == head and git("branch", "--show-current") == "main",
                 "the dry run changes nothing")
-        c.check("MAP BY HAND: features/003-gamma: status 'weird'" in out, "an unmapped status is listed, not guessed")
-        c.check("NOT DONE: features/002-beta" in out and "NOT DONE: features/005-epsilon" not in out,
-                "a legacy feature not done is listed for conversion; an abandoned one isn't")
+        c.check("MAP BY HAND: workitems/003-gamma: status 'weird'" in out, "an unmapped status is listed, not guessed")
+        c.check("NOT DONE: workitems/002-beta" in out and "NOT DONE: workitems/005-epsilon" not in out,
+                "a legacy work item not done is listed for conversion; an abandoned one isn't")
+        c.check(f"RENAME BY HAND: git branch -m {fx.LEGACY_BRANCH} {pc.BRANCH_PREFIX}006-zeta" in out,
+                "an unfinished item's recorded branch that exists gets a rename note")
         c.check("UNCLASSIFIED: docs/dev_guides/" in out and "UNCLASSIFIED: docs/user-guide" not in out, "unclassified dirs are flagged")
         gamma.write_text(fx.IGNORED["docs/features/003-gamma/.meta.json"])
         (repo / "stray.txt").write_text("x")
@@ -909,59 +922,62 @@ def self_test():
                 and "base_branch: auto" in cfg and f"artifacts_root: {NEW}" in cfg, "the retired fields are removed")
         c.check(subjects[0].endswith("sop: 1") and git("show", "--name-only", "--format=", "HEAD") == CFG
                 and "sop:" not in (git("show", f"HEAD~1:{CFG}") or "sop:") and "sop: 1" in cfg, "sop: 1 is written last")
-        c.check(not (repo / "docs/features").exists() and (art / "features/001-alpha/spec.md").is_file()
+        c.check(not (repo / "docs/features").exists() and (art / "workitems/001-alpha/spec.md").is_file()
                 and (art / "plans/2026-01-28-design/notes.md").is_file() and (art / "knowledge-bank/patterns.md").is_file(),
                 "the artifacts moved under docs/dev_artifacts/")
-        usage, spec = (repo / "docs/user-guide/usage.md").read_text(), (art / "features/001-alpha/spec.md").read_text()
-        c.check("](../dev_artifacts/features/001-alpha/spec.md)" in usage and "`docs/dev_artifacts/features/001-alpha/plan.md`" in usage
+        usage, spec = (repo / "docs/user-guide/usage.md").read_text(), (art / "workitems/001-alpha/spec.md").read_text()
+        c.check("](../dev_artifacts/workitems/001-alpha/spec.md)" in usage and "`docs/dev_artifacts/workitems/001-alpha/plan.md`" in usage
                 and "](../../../user-guide/usage.md)" in spec and "](../002-beta/spec.md)" in spec, "links are rewritten")
         c.check((art / "backlog-archive-legacy.md").is_file() and not (art / "backlog-archive.md").exists(),
                 "a pre-§7 backlog archive moves aside from pd-lint's name")
-        a1 = fm("features/001-alpha/README.md")
-        c.check(a1 == {"id": "001-alpha", "type": "feature", "title": "Alpha parser", "status": "done", "phase": "finish",
+        a1 = fm("workitems/001-alpha/README.md")
+        c.check(a1 == {"id": "001-alpha", "type": "workitem", "title": "Alpha parser", "status": "done", "phase": "finish",
                        "mode": "standard", "origin": "plans/P001-alpha-evolution.md"} and not list(art.rglob(".meta.json")),
                 f"README frontmatter from .meta.json, and .meta.json deleted: {a1}")
-        c.check((art / "features/003-gamma/readme-legacy.md").read_text() == "# Gamma notes\n\nHand-written.\n"
-                and "](readme-legacy.md)" in (art / "features/003-gamma/README.md").read_text(), "an existing README moves aside, linked")
+        c.check((art / "workitems/003-gamma/readme-legacy.md").read_text() == "# Gamma notes\n\nHand-written.\n"
+                and "](readme-legacy.md)" in (art / "workitems/003-gamma/README.md").read_text(), "an existing README moves aside, linked")
         c.check(fm("rca/20260310-stale.md")["status"] == "done", "a single file's recorded status is mapped")
-        c.check(fm("features/003-gamma/README.md").get("status") == "done"
-                and fm("features/003-gamma/README.md").get("origin") == "backlog#2026-01-06-gamma-cache", "satisfied maps to done; backlog origin")
-        b2, blog = fm("features/002-beta/README.md"), (art / "features/002-beta/log.md").read_text()
-        c.check(b2 == {"id": "002-beta", "type": "feature", "title": "Beta io", "status": "active", "phase": "design",
-                       "mode": "standard", "origin": "plans/P001-alpha-evolution.md", "branch": "feature/002-beta"},
+        c.check(fm("workitems/003-gamma/README.md").get("status") == "done"
+                and fm("workitems/003-gamma/README.md").get("origin") == "backlog#2026-01-06-gamma-cache", "satisfied maps to done; backlog origin")
+        b2, blog = fm("workitems/002-beta/README.md"), (art / "workitems/002-beta/log.md").read_text()
+        c.check(b2 == {"id": "002-beta", "type": "workitem", "title": "Beta io", "status": "active", "phase": "design",
+                       "mode": "standard", "origin": "plans/P001-alpha-evolution.md", "branch": "workitem/002-beta"},
                 f"registry-only recovery: state and parent from the registry: {b2}")
+        z6 = fm(f"{WI}/006-zeta/README.md")
+        c.check(z6["origin"] == f"{WI}/002-beta" and z6["branch"] == f"{pc.BRANCH_PREFIX}006-zeta",
+                f"a work item's parent work item is its origin; the branch takes the new prefix: {z6}")
         heads = [e["heading"] for e in pc.parse_log(blog)]
         c.check(heads == ["## 2026-02-01 09:00+08:00 phase start -> specify", "## 2026-02-01 10:00+08:00 review specify — legacy",
                           "## 2026-02-02 09:00+08:00 phase specify -> design", "## 2026-02-02 15:40+08:00 phase design -> specify (back)",
                           "## 2026-02-03 09:00+08:00 phase specify -> design"]
                 and "Reason: contract named no error" in blog and "other workspace" not in blog,
                 f"registry-only recovery: exactly its history, no other workspace's: {heads}")
-        alog = pc.parse_log((art / "features/001-alpha/log.md").read_text())
+        alog = pc.parse_log((art / "workitems/001-alpha/log.md").read_text())
         kinds = sorted(e["kind"] for e in alog)
         c.check(kinds == ["note", "phase", "qa", "review", "review", "review"] and len(alog) == 6
                 and all("Status: closed (legacy)" in e["body"] for e in alog) and pc.open_blockers(alog) == []
-                and not any((art / "features/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log", ".qa-gate"))
-                and all((repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/dev_artifacts/features/001-alpha/.qa-gate" / n).is_file()
+                and not any((art / "workitems/001-alpha" / n).exists() for n in (".review-history.md", ".qa-gate.json", "implementation-log.md", ".qa-gate.log", ".qa-gate"))
+                and all((repo / "agent_sandbox" / date.today().isoformat() / "pd-adopt/aside/docs/dev_artifacts/workitems/001-alpha/.qa-gate" / n).is_file()
                         for n in ("security.json", "raw.log")),
                 f"log.md entries marked closed (legacy), originals removed: {[e['heading'] for e in alog]}")
         p1 = fm("plans/P001-alpha-evolution.md")
         ptext = (art / "plans/P001-alpha-evolution.md").read_text()
-        c.check(p1["roadmap"] == [{"feature": "features/001-alpha"}, {"feature": "features/002-beta", "after": ["001-alpha"]}]
+        c.check(p1["roadmap"] == [{"workitem": "workitems/001-alpha"}, {"workitem": "workitems/002-beta", "after": ["001-alpha"]}]
                 and p1["status"] == "active" and "Why." in ptext and "Alpha first, then beta." in ptext and "graph TD" not in ptext
                 and not (art / "plans/005-alpha-evolution.md").exists() and not (repo / "docs/projects").exists(),
                 f"projects become plans with a roadmap; duplicates merged: {p1}")
-        c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no features is a plain plan")
+        c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no work items is a plain plan")
         bl = (art / "backlog.md").read_text()
-        c.check("- [ ] 2026-01-05-flaky-ui-test — Flaky UI test\n" in bl and "- [x] 2026-01-06-gamma-cache — promoted → features/003-gamma\n" in bl
+        c.check("- [ ] 2026-01-05-flaky-ui-test — Flaky UI test\n" in bl and "- [x] 2026-01-06-gamma-cache — promoted → workitems/003-gamma\n" in bl
                 and "- [x] 2026-01-07-old-idea — dropped: superseded by 003\n" in bl
                 and "- [ ] 2026-01-08-watch-fix-rate — Watch fix rate\n" in bl
-                and "- [x] 2026-01-09-rename-repo — promoted → (no feature recorded): Rename repo\n" in bl
-                and "- [x] 2026-01-10-hard-delete — dropped: closed as completed in the registry, with no feature: Hard delete\n" in bl
-                and "- [x] 2026-01-11-delta-idea — promoted → features/004-delta\n" in bl
+                and "- [x] 2026-01-09-rename-repo — promoted → (no work item recorded): Rename repo\n" in bl
+                and "- [x] 2026-01-10-hard-delete — dropped: closed as completed in the registry, with no work item: Hard delete\n" in bl
+                and "- [x] 2026-01-11-delta-idea — promoted → workitems/004-delta\n" in bl
                 and "- [x] 2026-01-12-spaced-reason — dropped: spaced out\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
-        c.check("Convert it" in (art / "features/002-beta/README.md").read_text() and "Convert it" not in (art / "features/005-epsilon/README.md").read_text(),
-                "a not-done legacy feature's README asks for conversion; an abandoned one's doesn't")
+        c.check("Convert it" in (art / "workitems/002-beta/README.md").read_text() and "Convert it" not in (art / "workitems/005-epsilon/README.md").read_text(),
+                "a not-done legacy work item's README asks for conversion; an abandoned one's doesn't")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
                 and fm("rca/20260309-drift.md")["status"] == "done"
                 and fm("brainstorms/20260102-000000-beta.prd.md")["status"] == "abandoned" and fm("rca/20260311-gone.md")["status"] == "abandoned",
@@ -1002,6 +1018,18 @@ def self_test():
         if lint:
             r = subprocess.run([str(lint)], cwd=repo2, capture_output=True, text=True)
             c.check(r.returncode == 0, f"pd-lint exits 0 after a tracked legacy backlog: {r.stdout[-600:]}")
+        # A third: an old layout already at the new root moves its old item directory, and nothing onto itself.
+        repo3, reg3 = fx.build(Path(tmp) / "three")
+        (repo3 / NEW).mkdir(parents=True)
+        for d in (pc.OLD_ITEM_DIR, "brainstorms"):
+            (repo3 / "docs" / d).rename(repo3 / NEW / d)
+        (repo3 / CFG).write_text((repo3 / CFG).read_text().replace("artifacts_root: docs\n", f"artifacts_root: {NEW}\n"))
+        pc.git(["add", "-A"], repo3)
+        pc.git(["commit", "-qm", "already at the new root"], repo3)
+        code, out = call(repo3, "--apply", "--registry", str(reg3))
+        c.check(code == 0 and (repo3 / NEW / WI / "001-alpha" / "README.md").is_file() and not (repo3 / NEW / pc.OLD_ITEM_DIR).exists()
+                and (repo3 / NEW / "brainstorms" / "20260101-000000-alpha.prd.md").is_file(),
+                f"a root already at {NEW} still moves its old item directory: {out[-400:]}")
     return c.done()
 
 

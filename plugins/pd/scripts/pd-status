@@ -6,7 +6,7 @@
 
 Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and
 next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and
-done features owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
+done work items owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
 """
 import re
 import sys
@@ -14,9 +14,9 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (ID_RE, PHASES, REF_RE, STATUSES, TYPE_DIRS, Checks, artifacts_dir,  # noqa: E402
-                       blank_fences, find_items, is_unadopted, load_config, log_text, make_repo,
-                       open_assumptions, open_blockers, parse_log, repo_root, retro_triggers,
+from pd_common import (ID_RE, OLD_ITEM_DIR, PHASES, REF_RE, STATUSES, TYPE_DIRS, WORKITEM, Checks,  # noqa: E402
+                       artifacts_dir, blank_fences, find_items, is_unadopted, load_config, log_text, make_repo,
+                       old_names, open_assumptions, open_blockers, parse_log, repo_root, retro_triggers,
                        sections, split_frontmatter)
 
 
@@ -36,11 +36,11 @@ def load_items(art):
     return items
 
 
-def slug_of(feature_id):
-    return feature_id[11:] if ID_RE.match(feature_id) else feature_id
+def slug_of(workitem_id):
+    return workitem_id[11:] if ID_RE.match(workitem_id) else workitem_id
 
 
-def roadmap_lines(plan, features):
+def roadmap_lines(plan, workitems):
     """Progress, next ready item and replan flags (§7.1): computed, never stored."""
     rows = []  # (slug, state, after)
     for entry in plan["fm"].get("roadmap") or []:
@@ -52,9 +52,9 @@ def roadmap_lines(plan, features):
             rows.append((entry["dropped"], "dropped", after))
         elif "planned" in entry:
             rows.append((entry["planned"], "planned", after))
-        elif "feature" in entry:
-            fid = Path(entry["feature"]).name
-            f = features.get(fid)
+        elif WORKITEM in entry:
+            fid = Path(entry[WORKITEM]).name
+            f = workitems.get(fid)
             rows.append((slug_of(fid), f["fm"].get("status", "?") if f else "missing", after))
     finished = {s for s, state, _ in rows if state in ("done", "dropped")}
     dropped = {s for s, state, _ in rows if state == "dropped"}
@@ -88,19 +88,21 @@ def report(root):
         return ("run /pd:adopt: this project still uses the old layout "
                 "(docs/features/ without `sop: 1` in .claude/pd.local.md)")
     art = artifacts_dir(root, cfg)
+    old = old_names(root, cfg)
+    migrate = ["Migrate", *old, ""] if old else []  # first, and even with no items: pd can't see what it names
     items = load_items(art)
     if not items:
-        return f"no items under {art.relative_to(root)}"
+        return "\n".join(migrate + [f"no items under {art.relative_to(root)}"])
     rank = lambda v, order: order.index(v) if v in order else len(order)
     items.sort(key=lambda i: (rank(i["fm"].get("status"), STATUSES), rank(i["fm"].get("phase"), PHASES), i["id"]))
-    out = ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} NOW"]
+    out = migrate + ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} NOW"]
     for i in items:
         fm = i["fm"]
         out.append(f"{fm.get('status') or '?':<10} {fm.get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
 
-    features = {i["id"]: i for i in items if i["type"] == "feature"}
+    workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
     blocks = {"Plans": [l for i in items if i["type"] == "plan" and i["fm"].get("roadmap")
-                        for l in roadmap_lines(i, features)]}
+                        for l in roadmap_lines(i, workitems)]}
     blocks["Open blockers"] = [
         f"{i['label']}: {b['ref']} {b['file']}:{b['line']} — {b['claim']}"
         + ("  [rejection proposed — needs the user's decision]" if b["rejection_proposed"] else "")
@@ -113,7 +115,7 @@ def report(root):
         for line in e["body"] if line.startswith("A (conductor, on the user's behalf)")]
     blocks["Retros owed"] = [
         f"{i['label']}: {', '.join(t)}" for i in items
-        if i["type"] == "feature" and i["fm"].get("status") == "done"
+        if i["type"] == WORKITEM and i["fm"].get("status") == "done"
         and not (i["path"].parent / "retro.md").is_file()
         for t in [retro_triggers(i["entries"])] if t]
     for title, lines in blocks.items():
@@ -127,10 +129,10 @@ def report(root):
 S = "2026-10-14"
 
 
-def _feature(art, id_, status, phase, now="", log="", retro=False):
-    d = art / "features" / id_
+def _workitem(art, id_, status, phase, now="", log="", retro=False):
+    d = art / "workitems" / id_
     d.mkdir(parents=True)
-    (d / "README.md").write_text(f"---\nid: {id_}\ntype: feature\ntitle: {id_}\nstatus: {status}\n"
+    (d / "README.md").write_text(f"---\nid: {id_}\ntype: workitem\ntitle: {id_}\nstatus: {status}\n"
                                  f"phase: {phase}\nmode: standard\n---\n# {id_}\n\n## Now\n\n{now}\n\n## Links\n")
     (d / "log.md").write_text(log)
     if retro:
@@ -159,17 +161,17 @@ def _self_test():
             + h("12:30", "review") + f"Closes: capped@{S} 11:30+08:00#A1\n"
             + h("12:40", "decision") + f"Q: continue past the cap?\nA (user, verbatim): \"go\"\nanswers: capped@{S} 11:30+08:00\n"
             + h("12:50", "decision") + "Q: pick a port\nA (conductor, on the user's behalf): 8080\n")
-        _feature(art, f"{S}-alpha", "done", "finish", log=h("13:00", "defect") + "Fixed by: abc1234.\n")
-        _feature(art, f"{S}-beta", "active", "implement", now="next: task 2", log=beta_log)
-        _feature(art, f"{S}-kappa", "active", "specify")
-        _feature(art, f"{S}-gamma", "blocked", "design", now="waiting on the API owner")
-        _feature(art, f"{S}-delta", "abandoned", "specify")
-        _feature(art, f"{S}-omega", "done", "finish", log=h("13:00", "capped") + "Deferred: none\n", retro=True)
+        _workitem(art, f"{S}-alpha", "done", "finish", log=h("13:00", "defect") + "Fixed by: abc1234.\n")
+        _workitem(art, f"{S}-beta", "active", "implement", now="next: task 2", log=beta_log)
+        _workitem(art, f"{S}-kappa", "active", "specify")
+        _workitem(art, f"{S}-gamma", "blocked", "design", now="waiting on the API owner")
+        _workitem(art, f"{S}-delta", "abandoned", "specify")
+        _workitem(art, f"{S}-omega", "done", "finish", log=h("13:00", "capped") + "Deferred: none\n", retro=True)
         (art / "plans").mkdir()
         (art / "plans" / f"{S}-road.md").write_text(
             f"---\nid: {S}-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n"
-            f"  - feature: features/{S}-alpha\n  - planned: zeta\n    after: [eps]\n"
-            f"  - feature: features/{S}-beta\n    after: [alpha]\n"
+            f"  - workitem: workitems/{S}-alpha\n  - planned: zeta\n    after: [eps]\n"
+            f"  - workitem: workitems/{S}-beta\n    after: [alpha]\n"
             f"  - dropped: delta\n    reason: \"not needed\"\n  - planned: eps\n    after: [delta]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n")
         out = report(root)
         rows = [l.split()[3] for l in out.split("\n")[2:9]]
@@ -190,11 +192,17 @@ def _self_test():
         c.check(f"capped@{S} 11:30+08:00#A2 — no negative timeouts" in out and "#A1" not in out, "open assumptions")
         c.check("A (conductor, on the user's behalf): 8080" in out and "A (conductor): reject" not in out,
                 "on-behalf decisions listed")
-        c.check(f"features/{S}-alpha: defect" in out and f"features/{S}-omega" not in out.split("Retros owed")[-1],
-                "a done feature with a trigger and no retro.md owes a retro")
+        c.check(f"workitems/{S}-alpha: defect" in out and f"workitems/{S}-omega" not in out.split("Retros owed")[-1],
+                "a done work item with a trigger and no retro.md owes a retro")
         old = make_repo(Path(t) / "old")
         (old / "docs" / "features" / "001-x").mkdir(parents=True)
         c.check(report(old).startswith("run /pd:adopt"), "an unadopted project says run /pd:adopt")
+        mig = make_repo(Path(t) / "mig")
+        (mig / ".claude").mkdir()
+        (mig / ".claude" / "pd.local.md").write_text("---\nsop: 1\n---\n")
+        (artifacts_dir(mig, load_config(mig)) / OLD_ITEM_DIR).mkdir(parents=True)
+        c.check(report(mig).startswith("Migrate\n") and report(mig).endswith("no items under docs/dev_artifacts"),
+                "the guard's Migrate section comes first, even with no items")
     return c.done()
 
 

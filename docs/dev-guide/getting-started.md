@@ -1,6 +1,6 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Getting Started
@@ -42,11 +42,11 @@ Each project's settings live in `.claude/pd.local.md`, written by `/pd:init`. Ke
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `artifacts_root` | `docs/dev_artifacts` | Root for features, plans, brainstorms, rca items and the backlog |
+| `artifacts_root` | `docs/dev_artifacts` | Root for work items, plans, brainstorms, rca items and the backlog |
 | `base_branch` | `auto` | Merge target: origin's HEAD, else `main` |
 | `qa_battery` | none | The QA commands Verify requires; `phase-gate.sh verify` fails without it |
 | `workflow_output_cap` | none (`/pd:init` writes `2000000`) | Output tokens per workflow run |
-| `feature_token_budget` | unset | Tokens per feature, checked by the Stop hook |
+| `workitem_token_budget` | unset | Tokens per work item, checked by the Stop hook |
 
 ## Running Tests
 

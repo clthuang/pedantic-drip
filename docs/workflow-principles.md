@@ -326,7 +326,7 @@ It does not argue for iteration.
 Iterating a reviewer does not converge on correct. The research on self-refinement reports
 diminishing returns after the first round or two, and correction without outside feedback can make
 answers worse. Those results come from older models, but my own record points the same way: three to
-five review rounds per feature used to eat large parts of the context and the time. So every loop
+five review rounds per work item used to eat large parts of the context and the time. So every loop
 gets a budget, and the budget depends on what can judge the result:
 
 - **Before code: up to three cycles of review and revision.** In the criteria, the contracts and

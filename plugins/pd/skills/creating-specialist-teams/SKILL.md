@@ -37,7 +37,7 @@ Each template contains placeholders that are filled before injection:
 | `{SUCCESS_CRITERIA}` | What constitutes successful output |
 | `{OUTPUT_FORMAT}` | Required structure for findings |
 | `{SCOPE_BOUNDARIES}` | What the specialist should NOT do |
-| `{WORKFLOW_CONTEXT}` | Active feature state, current phase, next phase, available artifacts. "No active feature workflow." when standalone. |
+| `{WORKFLOW_CONTEXT}` | Active work item state, current phase, next phase, available artifacts. "No active work item workflow." when standalone. |
 
 ## Coordination Patterns
 

@@ -3,11 +3,11 @@ id: {{id}}
 type: {{type}}
 title: {{title}}
 status: {{status}}
-phase: {{phase}}  # features only
-mode: {{mode}}  # features only
+phase: {{phase}}  # workitems only
+mode: {{mode}}  # workitems only
 origin: {{origin}}  # optional
-branch: {{branch}}  # features only
-risk: {{risk}}  # features only, optional
+branch: {{branch}}  # workitems only
+risk: {{risk}}  # workitems only, optional
 issue: {{issue}}  # optional
 ---
 # {{title}}

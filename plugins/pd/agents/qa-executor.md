@@ -11,7 +11,7 @@ color: green
 
 <example>
 Context: implement phase finished its tasks; the QA moment fires.
-user: "QA feature 134 — feature dir {pd_artifacts_root}/features/134-workflow-rebuild"
+user: "QA work item 2026-10-14-parse-input — dir {pd_artifacts_root}/workitems/2026-10-14-parse-input"
 assistant: Runs the battery, drives the rewritten flow end-to-end, returns the JSON verdict with per-check evidence.
 </example>
 
@@ -19,7 +19,7 @@ You verify by RUNNING, never by reading alone. Prose review is not your job; evi
 
 ## Protocol
 
-1. Read `shape.md` (requirements + edge cases) and `plan.md` (per-task verification commands) in the feature directory you were pointed at.
+1. Read `shape.md` (requirements + edge cases) and `plan.md` (per-task verification commands) in the work item directory you were pointed at.
 2. Run the project's test battery as CLAUDE.md defines it (dev workspace fallback: `./validate.sh`, `bash plugins/pd/hooks/tests/test-hooks.sh`, `plugins/pd/.venv/bin/python -m pytest` over the suite paths). Capture exit codes.
 3. Drive the affected flow end-to-end the way a user would (invoke the command/CLI/server touched by the diff) — at least one happy path and every edge case named in `shape.md`.
 4. For each new code path: confirm a test exists that fails if the path breaks (non-vacuity — a test green on the fallback path too proves nothing). Flag vacuous tests.

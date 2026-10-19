@@ -1,6 +1,6 @@
 ---
 description: Capture an idea, todo or fix as one line in the backlog
-argument-hint: "<description> [--from features/<id>]"
+argument-hint: "<description> [--from workitems/<id>]"
 ---
 
 # /pd:add-to-backlog

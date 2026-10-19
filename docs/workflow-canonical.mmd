@@ -26,7 +26,7 @@ flowchart TD
     BUG["<b>Bug</b><br/>something broke"]
   end
 
-  TRI{{"<b>0 · Triage</b> · /pd:secretary<br/>picks the depth: <b>standard</b> · <b>small</b> (an estimate: ≤ small_feature_tasks tasks, default 3) · <b>express</b><br/>always standard for security, migrations, many files, areas new to the codebase,<br/>criteria hard to state as observable outcomes<br/>risk tags: security · migration"}}
+  TRI{{"<b>0 · Triage</b> · /pd:secretary<br/>picks the depth: <b>standard</b> · <b>small</b> (an estimate: ≤ small_workitem_tasks tasks, default 3) · <b>express</b><br/>always standard for security, migrations, many files, areas new to the codebase,<br/>criteria hard to state as observable outcomes<br/>risk tags: security · migration"}}
   IDEA --> TRI
   REQ --> TRI
   BUG --> TRI

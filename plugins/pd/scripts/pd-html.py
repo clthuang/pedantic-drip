@@ -25,7 +25,7 @@ from markdown_it.common import html_re
 from markdown_it.token import Token
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (EXPECTATION_RE, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
+from pd_common import (EXPECTATION_RE, WORKITEM, Checks, artifacts_dir, find_items, load_config,  # noqa: E402
                        make_repo, repo_root, split_frontmatter)
 
 CSS = Path(__file__).resolve().parent.parent / "templates" / "doc.css"
@@ -69,7 +69,7 @@ def _md():
         return self.renderToken(tokens, idx, options, env)
 
     def raw_html(tokens, idx, options, env):
-        """A placeholder such as <path> or <feature id> parses as a tag and would vanish: show it as text.
+        """A placeholder such as <path> or <item id> parses as a tag and would vanish: show it as text.
         A tag stays HTML when it names an HTML element and, unless void, the document also closes it."""
         # shortcut: a placeholder named like a tag the document also closes (<b> beside <b>x</b>) stays HTML;
         # pair the tags in document order if that ever bites.
@@ -211,8 +211,8 @@ def roadmap_table(roadmap, art):
         if not isinstance(item, dict):
             continue
         after = ", ".join(item.get("after") or [])
-        if "feature" in item:
-            path = item["feature"]
+        if WORKITEM in item:
+            path = item[WORKITEM]
             status = _status(art / path / "README.md")
             link = f'<a href="../{html.escape(path)}/README.html">{html.escape(path)}</a>'
             rows.append(f"<tr><td>{link}</td>{_cell(status, status if status in STATUS_CLASSES else None)}"
@@ -275,7 +275,7 @@ def targets(arg, root):
     found = [f for tier in ("user-guide", "dev-guide", "technical") for f in sorted((root / "docs" / tier).rglob("*.md"))]
     for type_, _, control in find_items(artifacts_dir(root, load_config(root))):
         if control.is_file() and _status(control) == "active":
-            found += sorted(control.parent.glob("*.md")) if type_ == "feature" else [control]
+            found += sorted(control.parent.glob("*.md")) if type_ == WORKITEM else [control]
     return found
 
 
@@ -284,13 +284,13 @@ def self_test():
     with tempfile.TemporaryDirectory() as t:
         root = make_repo(Path(t) / "repo").resolve()
         art = root / "docs" / "dev_artifacts"
-        (art / "features" / "2026-10-15-a").mkdir(parents=True)
-        (art / "features" / "2026-10-15-a" / "README.md").write_text("---\nid: 2026-10-15-a\nstatus: done\n---\n# A\n")
+        (art / "workitems" / "2026-10-15-a").mkdir(parents=True)
+        (art / "workitems" / "2026-10-15-a" / "README.md").write_text("---\nid: 2026-10-15-a\nstatus: done\n---\n# A\n")
         (art / "plans").mkdir()
         plan = art / "plans" / "2026-10-14-p.md"
         plan.write_text(
             "---\nid: 2026-10-14-p\ntype: plan\ntitle: P\nstatus: active\nissue: https://x.test/i/1\n"
-            "roadmap:\n  - feature: features/2026-10-15-a\n  - planned: b\n    after: [a]\n"
+            "roadmap:\n  - workitem: workitems/2026-10-15-a\n  - planned: b\n    after: [a]\n"
             "  - dropped: c\n    reason: \"not needed\"\n---\n# P\n\n| x | y |\n|---|---|\n| 1 | 2 |\n\n"
             "```python\nprint(1)\n```\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n"
             "See [other](other.md), [sec](other.md#s), [web](https://x.test/a.md).\n")
@@ -304,13 +304,13 @@ def self_test():
         c.check('href="https://x.test/a.md"' in page, "absolute URLs are left alone")
         c.check('<dl class="frontmatter">' in page and '<dd class="active">active</dd>' in page
                 and 'href="https://x.test/i/1"' in page, "frontmatter box with status class and issue link")
-        c.check('<td class="done">done</td>' in page, "roadmap shows the feature's live status")
+        c.check('<td class="done">done</td>' in page, "roadmap shows the work item's live status")
         c.check('<td class="draft">planned</td>' in page and "dropped: not needed" in page, "planned and dropped items")
         c.check("<th>x</th>" in page and "<td>1</td>" in page and "<pre><code" in page, "markdown tables and code render")
         c.check('<pre class="mermaid">flowchart LR' in page and "mermaid.esm.min.mjs" in page
                 and "language-mermaid" not in page, "mermaid block left for mermaid.js")
         c.check("mermaid.esm" not in render(art / "plans" / "plain.md", root).read_text(), "no mermaid script without a block")
-        shape = art / "features" / "2026-10-15-a" / "shape.md"
+        shape = art / "workitems" / "2026-10-15-a" / "shape.md"
         shape.write_text("# S\n\n**Apply**\n\nB1: `a -> b` on the file -> exit 0; prints `x -> y`\n"
                          "B2: no args -> usage, exit 2\n\nAfter.\n\n```\nB3: in a fence -> stays code\n```\n")
         page = render(shape, root).read_text()
@@ -328,22 +328,22 @@ def self_test():
         c.check("<p>Lead line</p>" in page and '<div class="given"><code>a -&gt; b</code></div>' in page
                 and 'ok, see <a href="other.html">spec</a>' in page,
                 "a lead line stays a paragraph; a double-backtick span keeps its arrow; reference links resolve")
-        shape.write_text("# S\n\nprints report: <abs path> for <feature id>, S1 <a> > S2 <b>, in <i>it</i>\n\n"
-                         "Text <path title=\"><img src=x onerror=alert(1)>\"> and <bold> after\n\n<!-- note -->\n\n<div>\n<feature id>\n</div>\n\nB1: run -> stdout <path>\n")
+        shape.write_text("# S\n\nprints report: <abs path> for <item id>, S1 <a> > S2 <b>, in <i>it</i>\n\n"
+                         "Text <path title=\"><img src=x onerror=alert(1)>\"> and <bold> after\n\n<!-- note -->\n\n<div>\n<item id>\n</div>\n\nB1: run -> stdout <path>\n")
         page = render(shape, root).read_text()
-        c.check("report: &lt;abs path&gt; for &lt;feature id&gt;, S1 &lt;a&gt; &gt; S2 &lt;b&gt;, in <i>it</i>" in page
-                and "<div>\n&lt;feature id&gt;\n</div>" in page and "stdout &lt;path&gt;" in page
+        c.check("report: &lt;abs path&gt; for &lt;item id&gt;, S1 &lt;a&gt; &gt; S2 &lt;b&gt;, in <i>it</i>" in page
+                and "<div>\n&lt;item id&gt;\n</div>" in page and "stdout &lt;path&gt;" in page
                 and "<!-- note -->" in page and "<img" not in page and "and &lt;bold&gt; after" in page,
                 "a <placeholder> shows as text, whole and in an HTML block too; closed real tags and comments stay HTML")
         shape.write_text("# S\n\n> B1: a -> b\n\n- one\n\n- B2: c -> d\n\n> Example `\n> B9: x -> y\n> ` end.\n")
         page = render(shape, root).read_text()
         shape.write_text("# S\n\nRun `pd-lint\n--strict` on each:\nB1: a -> b\nB2: run <span title=\"`\">x</span> -> ok\n\n"
-                         "<div x=a\"b>\n<script>alert(1)</script>\n\">\n</div>\n\n<div>\n<feature id's>\n</div>\n")
+                         "<div x=a\"b>\n<script>alert(1)</script>\n\">\n</div>\n\n<div>\n<item id's>\n</div>\n")
         page2 = render(shape, root).read_text()
         c.check("<p>Run <code>pd-lint --strict</code> on each:</p>" in page2 and 'id="B1"' in page2
                 and '<div class="given">run <span title="`">x</span></div>' in page2,
                 "a code span wrapped across a lead line, or a backtick in an attribute, still leaves cards")
-        c.check("<script>" not in page2 and "&lt;feature id's" in page2,
+        c.check("<script>" not in page2 and "&lt;item id's" in page2,
                 "a tag only parses whole by CommonMark's grammar; a stray <name in an HTML block shows as text")
         c.check('<blockquote>\n<div class="expectations"><div class="expectation" id="B1">' in page
                 and '<li>\n<div class="expectations"><div class="expectation" id="B2">' in page

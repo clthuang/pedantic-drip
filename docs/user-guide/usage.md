@@ -1,6 +1,6 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Usage
@@ -16,7 +16,7 @@ What `/pd:init` writes and proposes: [Set a Project Up](installation.md#set-a-pr
 
 ## Quick Start
 
-`/pd:secretary` triages a request — feature (at a depth), brainstorm, RCA or specialist — states why, and routes:
+`/pd:secretary` triages a request — work item (at a depth), brainstorm, RCA or specialist — states why, and routes:
 
 ```bash
 /pd:secretary "add email validation to the signup form"
@@ -27,14 +27,14 @@ Or start directly:
 ```bash
 /pd:brainstorm "your idea here"                          # Clarify: a PRD in brainstorms/<id>.md
 /pd:root-cause-analysis "the export drops the last row"  # Clarify for a bug: rca/<id>.md
-/pd:create-feature "add user auth"                       # a standard feature and its branch
-/pd:create-feature "fix the pagination off-by-one" --mode express
+/pd:create-workitem "add user auth"                      # a standard work item and its branch
+/pd:create-workitem "fix the pagination off-by-one" --mode express
 ```
 
-A finished brainstorm or RCA becomes a feature through promotion:
+A finished brainstorm or RCA becomes a work item through promotion:
 
 ```bash
-/pd:create-feature "<title>" --from brainstorms/<id>.md   # or --from rca/<id>.md
+/pd:create-workitem "<title>" --from brainstorms/<id>.md  # or --from rca/<id>.md
 ```
 
 ## The Standard Workflow
@@ -45,19 +45,19 @@ A finished brainstorm or RCA becomes a feature through promotion:
 /pd:create-plan    # plan.md: task blocks with test cases → test-case review
 /pd:implement      # implement-tasks: one implementer per task, the merger lands each
 /pd:verify         # verify-change: code review beside QA, then fix cycles
-/pd:finish-feature # security review, docs, metrics, retro if owed, merge, cleanup
+/pd:finish-workitem # security review, docs, metrics, retro if owed, merge, cleanup
 ```
 
-Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <feature-dir>` must pass, and every `git commit` Claude runs is checked by `pd-lint --staged` (commits you type in a terminal aren't).
+Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <workitem-dir>` must pass, and every `git commit` Claude runs is checked by `pd-lint --staged` (commits you type in a terminal aren't).
 
 - **calvin:** a separately installed skill ([Optional](installation.md#optional)) that questions the criteria at `/pd:specify`; without it, `/pd:specify` asks whether to sign off anyway.
 - **Small** (`--mode small`): design and plan are written in one sitting and reviewed in one joint call.
 - **Express** (`--mode express`): `shape.md` holds a mini-spec with one task block; `/pd:implement` runs that one task and Verify is lighter.
-- **Backward moves:** a wrong criterion or test case sends the feature back (`phase <from> -> <to> (back)` in `log.md`); merged tasks stay merged.
+- **Backward moves:** a wrong criterion or test case sends the work item back (`phase <from> -> <to> (back)` in `log.md`); merged tasks stay merged.
 
 ## Long Runs
 
-Start a `/goal` run on a feature; the main session (the conductor) writes `goal: <id> target <phase> session <id>` to the README's `## Now`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `feature_token_budget`.
+Start a `/goal` run on a work item; the main session (the conductor) writes `goal: <id> target <phase> session <id>` to the README's `## Now`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `workitem_token_budget`.
 
 ## Check Progress
 
@@ -69,9 +69,9 @@ At the start of each session, the SessionStart hook gives Claude the active and 
 
 | Command | What it does |
 |---------|-------------|
-| `/pd:add-to-backlog <idea>` | Add a line to `backlog.md` without starting a feature |
-| `/pd:retrospect` | Run a retro on a feature that owes one |
-| `/pd:abandon-feature` | Set a feature to `abandoned` |
+| `/pd:add-to-backlog <idea>` | Add a line to `backlog.md` without starting a work item |
+| `/pd:retrospect` | Run a retro on a work item that owes one |
+| `/pd:abandon-workitem` | Set a work item to `abandoned` |
 | `/pd:wrap-up` | End a session: commit WIP, write `## Now` and a handoff entry |
 
 Every command, with what it does: [README.md](../../README.md#commands).
@@ -82,13 +82,13 @@ pd's artifacts live under `{pd_artifacts_root}` (the `artifacts_root` key, defau
 
 ```
 {pd_artifacts_root}/
-├── features/<id>/        # one folder per feature; <id> is YYYY-MM-DD-slug
+├── workitems/<id>/       # one folder per work item; <id> is YYYY-MM-DD-slug
 │   ├── README.md         # frontmatter (status, phase, mode, branch, risk) and ## Now
 │   ├── log.md            # append-only entries: phase, review, qa, run, decision, …
 │   ├── shape.md          # ## Requirements + ## Design
 │   ├── plan.md           # ## Plan: waves of task blocks
 │   └── retro.md          # only when a retro trigger fired
-├── plans/<id>.md         # a multi-feature plan with its roadmap
+├── plans/<id>.md         # a multi-item plan with its roadmap
 ├── brainstorms/<id>.md   # a PRD, with its ## Log
 ├── rca/<id>.md           # a root-cause report, with its ## Log
 └── backlog.md            # one line per idea

@@ -19,6 +19,7 @@ fail() {
 # Canonical living-doc set (explicit include-list; historical trees are never scanned).
 LIVING_DOCS="README.md README_FOR_DEV.md CLAUDE.md plugins/pd/README.md \
 docs/user-guide docs/dev-guide plugins/pd/references \
+plugins/pd/skills plugins/pd/commands plugins/pd/agents plugins/pd/templates \
 docs/technical/architecture.md docs/technical/api-reference.md docs/technical/workflow-artifacts.md"
 
 # --- Check 1: counts -------------------------------------------------------
@@ -62,9 +63,11 @@ done
 
 # --- Check 3: stale-string blocklist ---------------------------------------
 # Strings that only ever appear in rotted docs. emit_hook_json needs a boundary
-# guard so the legitimate safe_emit_hook_json never matches.
-for pattern in 'meta-json-guard' 'code-simplifier' 'my-local-plugins' '(^|[^_[:alnum:]])emit_hook_json'; do
-    hits=$(grep -rnE "$pattern" $LIVING_DOCS 2>/dev/null || true)
+# guard so the legitimate safe_emit_hook_json never matches. The pd 7 names
+# (8.0.0 renamed feature to workitem) count too; -e keeps --feature= a pattern.
+for pattern in 'meta-json-guard' 'code-simplifier' 'my-local-plugins' '(^|[^_[:alnum:]])emit_hook_json' \
+    'create-feature' 'finish-feature' 'abandon-feature' '--feature=' 'small_feature_tasks' 'feature_token_budget' 'pd-new feature'; do
+    hits=$(grep -rnE -e "$pattern" $LIVING_DOCS 2>/dev/null || true)
     if [ -n "$hits" ]; then
         fail "stale string '$pattern' found in living docs:"
         echo "$hits" | head -5

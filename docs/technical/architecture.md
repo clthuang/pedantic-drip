@@ -1,13 +1,13 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Architecture
 
 ## Overview
 
-pd is a Claude Code plugin: commands, skills, agents, workflows, hooks and scripts (stdlib Python and bash; only `pd-html.py` needs a package, markdown-it-py, run through `uv`). It runs inside Claude Code sessions; there is no server and no database. A feature's state is committed markdown under `{pd_artifacts_root}` (default `docs/dev_artifacts/`), and everything derived — progress, open blockers, retros owed — is computed from those files on demand.
+pd is a Claude Code plugin: commands, skills, agents, workflows, hooks and scripts (stdlib Python and bash; only `pd-html.py` needs a package, markdown-it-py, run through `uv`). It runs inside Claude Code sessions; there is no server and no database. A work item's state is committed markdown under `{pd_artifacts_root}` (default `docs/dev_artifacts/`), and everything derived — progress, open blockers, retros owed — is computed from those files on demand.
 
 ## Component Map
 
@@ -23,7 +23,7 @@ User
  └── Hooks                    SessionStart, PreToolUse, Stop   plugins/pd/hooks/
 ```
 
-**The conductor** (the main session) owns every user decision (through AskUserQuestion), every state write (`README.md`, `log.md`) and the phase commits. Agents commit code only: implementers on their task branches, the merger and Verify's fixer on the feature branch. Workflows and agents return JSON results; the conductor writes `log.md` from them.
+**The conductor** (the main session) owns every user decision (through AskUserQuestion), every state write (`README.md`, `log.md`) and the phase commits. Agents commit code only: implementers on their task branches, the merger and Verify's fixer on the work item's branch. Workflows and agents return JSON results; the conductor writes `log.md` from them.
 
 ## Key Data Flows
 
@@ -32,19 +32,19 @@ Stage names map to `phase:` values: Criteria = `specify`, Contracts = `design`, 
 ### A phase, start to finish
 
 1. `/pd:<phase>` invokes its stage skill.
-2. Phase entry (`workflow-transitions`): resolve the feature, check out `feature/<id>`, read `README.md`, `## Now` and `pd-status`'s open blockers.
+2. Phase entry (`workflow-transitions`): resolve the work item, check out `workitem/<id>`, read `README.md`, `## Now` and `pd-status`'s open blockers.
 3. The skill writes its artifact (`shape.md` or `plan.md`) and, at Contracts and Plan, makes the review call; each review is a `review` entry in `log.md`.
 4. Exit: `phase-gate.sh <phase> <dir>` passes; `phase:` moves on; a `phase <from> -> <to>` entry is appended; the commit runs `pd-lint --staged` through `pd-commit-lint`.
 
 ### Execute: `implement-tasks`
 
 1. The conductor derives the args from `plan.md` (waves of task blocks) and writes `run in flight:` to `## Now`.
-2. Each task runs as one `implementer` in a Claude Code worktree (base: the feature branch's HEAD, via `worktree.baseRef: "head"`), committing its tests first on `pd/<id>/task-<n>`.
+2. Each task runs as one `implementer` in a Claude Code worktree (base: the work item's branch HEAD, via `worktree.baseRef: "head"`), committing its tests first on `pd/<id>/task-<n>`.
 3. The `merger` lands each task ([merger.md](../../plugins/pd/agents/merger.md)):
    - **First commit:** holds only test files, plus source additions; `pd-lint --isolation` passes over it.
    - **At the first commit:** `pd-proof first` rejects load or collection errors; each test should fail as a test, and one already green is reported (`greens`) for Verify's review rather than rejected.
    - **At HEAD:** `pd-proof head` sees them pass, and no later commit touches the test files the first commit added or changed.
-   - **Merge:** `git merge --no-ff` onto the feature branch; per wave, the parallel-safe tasks land first in plan order, then each sequential task, started from HEAD once the one before it landed. A conflict aborts the merge and stops the run for the user.
+   - **Merge:** `git merge --no-ff` onto the work item's branch; per wave, the parallel-safe tasks land first in plan order, then each sequential task, started from HEAD once the one before it landed. A conflict aborts the merge and stops the run for the user.
    - **After the merge:** every merged task's proving command and `pd-lint` re-run; a break fails the task just merged.
    - **`proof: green-only` tasks** (refactor, infra, fixture): skip the first-commit checks and the test-file check; the rest stays.
 4. A failed task gets up to three fix cycles (cycles 2 and 3 on opus), reusing its branch; still failing, the run stops for the user.
@@ -61,18 +61,18 @@ Stage names map to `phase:` values: Criteria = `specify`, Contracts = `design`, 
 
 `pd-stop-gate.sh` fires on every stop:
 
-- **Charge:** it adds the session's new token usage to the checked-out feature.
-- **Arm:** it acts only while a feature's `## Now` holds this session's `goal:` line.
+- **Charge:** it adds the session's new token usage to the checked-out work item.
+- **Arm:** it acts only while a work item's `## Now` holds this session's `goal:` line.
 - **Yield:** it lets the stop through while a background workflow or subagent is running.
 - **Block** (exit 2, one reason on stderr), checked in this order:
-  - **budget:** the feature has used its `feature_token_budget` (or the latest raise recorded in a `decision` entry): ask the user to continue or stop.
-  - **stuck:** no commit on the feature branch and no change to `log.md` or the README since the last block: ask the user.
+  - **budget:** the work item has used its `workitem_token_budget` (or the latest raise recorded in a `decision` entry): ask the user to continue or stop.
+  - **stuck:** no commit on the work item's branch and no change to `log.md` or the README since the last block: ask the user.
   - **unmet:** an open blocker, a `pd-lint` failure, or the target phase not reached: keep working.
   - **met:** clear the `goal:` line from `## Now`, commit, then stop.
 
 State, outside git:
 - `~/.claude/pd/gate/<session id>.json` — the progress snapshot and `calvin_ledger` (the one path `calvin-runner` may write, enforced by `pd-agent-write-guard.sh`).
-- `~/.claude/pd/gate/<repo key>/<feature id>.json` — the running token total and the original budget. `<repo key>` is the first 16 hex characters of the sha256 of the origin URL, or of the repository path when there is no origin.
+- `~/.claude/pd/gate/<repo key>/<id>.json` — the running token total and the original budget. `<repo key>` is the first 16 hex characters of the sha256 of the origin URL, or of the repository path when there is no origin.
 
 ## Module Interfaces
 

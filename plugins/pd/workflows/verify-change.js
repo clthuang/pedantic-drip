@@ -1,18 +1,18 @@
 export const meta = {
   name: 'verify-change',
   description: 'pd Verify: the review call beside QA, then up to three cycles of a separate fixer and a QA re-run',
-  whenToUse: 'Started by the pd verifying skill on a feature branch; never typed by the user',
+  whenToUse: 'Started by the pd verifying skill on a work item branch; never typed by the user',
   phases: [
     { title: 'Review and QA', detail: 'Codex first (one retry), else the Claude reviewer; QA runs the battery beside it' },
     { title: 'Fix', detail: 'a separate fixer, then a QA re-run; cycles 2 and 3 on the strongest model', model: 'opus' },
   ],
 }
 
-// args (plan §A4): {feature_id, base, shape, plan, checklist (the verifying skill's checklist, inline), qa_battery: [cmd],
-//   log (the feature's log.md: its run entries carry each task's case_map and greens), assumptions, codex (false when the user's toggle is off),
+// args (plan §A4): {workitem_id, base, shape, plan, checklist (the verifying skill's checklist, inline), qa_battery: [cmd],
+//   log (the work item's log.md: its run entries carry each task's case_map and greens), assumptions, codex (false when the user's toggle is off),
 //   codex_flags (the model and effort the user's CLAUDE.md names), reviewer (default pd:code-quality-reviewer), workflow_output_cap}
 if (!args || typeof args.workflow_output_cap !== 'number') throw new Error('verify-change needs args.workflow_output_cap (plan §A5 cap 1)')
-if (!args.log) throw new Error("verify-change needs args.log, the feature's log.md (its run entries carry each task's case_map)")
+if (!args.log) throw new Error("verify-change needs args.log, the work item's log.md (its run entries carry each task's case_map)")
 const START = budget.spent()
 let stopped = null, agentsUsed = 0, reviewedBy = null
 async function call(prompt, opts) {  // every agent passes the workflow cap first (§A5 cap 1); a dead agent is null
@@ -37,7 +37,7 @@ const RESULT = obj({
   cycles: { type: 'integer' }, flakes: arr(FLAKE),
 })
 
-const REVIEW_PROMPT = `Review the whole branch diff ${args.base}..HEAD of feature ${args.feature_id} against ${args.shape} and ${args.plan}.
+const REVIEW_PROMPT = `Review the whole branch diff ${args.base}..HEAD of work item ${args.workitem_id} against ${args.shape} and ${args.plan}.
 Checklist:
 ${args.checklist}
 Each task's case_map and the merger's tests already green at their test commit are the task lines and their case_map: lines of every run implement-tasks entry in ${args.log} (a resumed run lists only the tasks it landed; for a task listed twice, the later line) (claims, not evidence: check each at file:line).
@@ -52,7 +52,7 @@ async function review() {  // one agent call: Codex first with one retry, else t
   log(`review: ${reviewedBy}`)
   return call(REVIEW_PROMPT, { label: 'review:claude', phase: 'Review and QA', agentType: args.reviewer || 'pd:code-quality-reviewer', schema: REVIEW })
 }
-const QA_PROMPT = (run, fixes, last) => `QA run ${run} of feature ${args.feature_id} at the branch HEAD (base ${args.base}).
+const QA_PROMPT = (run, fixes, last) => `QA run ${run} of work item ${args.workitem_id} at the branch HEAD (base ${args.base}).
 Run each qa_battery command and report it as one ran line, the command verbatim, with the commit you ran against: ${J(args.qa_battery)}
 ran holds only these commands: anything else you run (pd-lint, probes, mutants) goes under issues or gaps.
 List under gaps what passing each criterion in ${args.shape} would still allow. Drive the flows that cross tasks.
@@ -92,7 +92,7 @@ const blockers = () => [...rv.issues.filter(i => !fixed(i.id)), ...((qa && qa.is
 let cycles = 0
 while (!stopped && cycles < 3 && blockers().length) {  // the bounded loop is the cycle rule (§A4)
   cycles++
-  const f = await call(`You are the fixer for feature ${args.feature_id}, a separate instance: you didn't write this code. Work on the feature branch in this checkout. Change code and tests only, never ${args.shape} or ${args.plan}: a fix that needs a criteria or contract change goes back as a rejection whose evidence names the change, for the user to rule on.
+  const f = await call(`You are the fixer for work item ${args.workitem_id}, a separate instance: you didn't write this code. Work on the work item's branch in this checkout. Change code and tests only, never ${args.shape} or ${args.plan}: a fix that needs a criteria or contract change goes back as a rejection whose evidence names the change, for the user to rule on.
 Findings are claims: check each against the source before acting. Fix a real one with a test that fails before the fix: commit the test, then the fix. A removal finding (code no contract asks for, or compatibility code with no external consumer in evidence even where a contract asks for it) is fixed by deleting that code: no new test, and its test is empty. When a contract asks for that code, propose the contract change as a rejection instead. For a wrong one, propose a rejection with file:line evidence instead.
 Open blockers: ${J(blockers())}
 QA's last run: ${J(qa)}`, { label: `fix:${cycles}`, phase: 'Fix', agentType: 'pd:implementer', schema: FIXED, ...(cycles >= 2 && { model: 'opus' }) })

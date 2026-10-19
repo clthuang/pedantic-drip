@@ -1,5 +1,5 @@
 ---
-description: Triage a request into a feature, brainstorm, RCA or specialist
+description: Triage a request into a work item, brainstorm, RCA or specialist
 argument-hint: "<request> [--standard|--small|--express]"
 ---
 
@@ -8,21 +8,21 @@ argument-hint: "<request> [--standard|--small|--express]"
 Triage: what kind of work this is, and how deep it must go. It creates the item for the way the work arrived, then routes. Files and commits follow the `pd:workflow-transitions` skill.
 
 **Kind:**
-- **A feature request** → `/pd:create-feature "<title>" --mode <depth>`.
+- **A feature request** → `/pd:create-workitem "<title>" --mode <depth>`.
 - **An idea that needs Clarify** (is this the right problem?) → `/pd:brainstorm`.
-- **A bug** → `/pd:root-cause-analysis`. A bug whose cause is already known goes to a feature instead, at express or standard depth.
-- **An existing feature named** → read `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and run its phase's command.
+- **A bug** → `/pd:root-cause-analysis`. A bug whose cause is already known goes to a work item instead, at express or standard depth.
+- **An existing work item named** → read `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and run its phase's command.
 - **A codebase question triage itself can't answer** → one `pd:investigation-agent` dispatch, then decide.
 
-**Depth, for a feature:**
-- **Standard is mandatory** with any of these: a security surface (tag `risk: security`), a schema or data migration (`risk: migration`), more than `many_files` files (`.claude/pd.local.md`, default 10), an area the codebase has no module or earlier feature for, or criteria that look hard to state as observable outcomes. When unsure, choose standard.
+**Depth, for a work item:**
+- **Standard is mandatory** with any of these: a security surface (tag `risk: security`), a schema or data migration (`risk: migration`), more than `many_files` files (`.claude/pd.local.md`, default 10), an area the codebase has no module or earlier work item for, or criteria that look hard to state as observable outcomes. When unsure, choose standard.
 - **Express:** a small diff on a known pattern, provable by one command. The mini-spec cites the existing example's path.
-- **Small:** an estimate of at most `small_feature_tasks` tasks (default 3), with its reason.
+- **Small:** an estimate of at most `small_workitem_tasks` tasks (default 3), with its reason.
 - **Record each skipped stage** as a `phase triage -> <first stage>` entry with the reason. Small mode's reason goes in that entry too.
 
 **Overrides:** `--standard`, `--small` and `--express` force the depth. A risk tag or a failed express assumption found later is a backward move to the earliest skipped stage at standard depth (`phase <from> -> specify (back)`).
 
-**Specialist fast path** (direct, no feature item):
+**Specialist fast path** (direct, no work item):
 
 | Request pattern | Route |
 |---|---|
@@ -34,4 +34,4 @@ Triage: what kind of work this is, and how deep it must go. It creates the item 
 | explore codebase | `pd:codebase-explorer` agent |
 | project state | `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` |
 
-**Output:** `Kind: {feature <depth>|brainstorm|rca|specialist} — {one-line rationale}. Routing to {command}.` Then invoke it.
+**Output:** `Kind: {workitem <depth>|brainstorm|rca|specialist} — {one-line rationale}. Routing to {command}.` Then invoke it.

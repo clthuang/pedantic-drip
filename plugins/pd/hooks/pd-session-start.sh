@@ -40,12 +40,12 @@ if [ -d "$top/docs/features" ] && [ "$adopted" = 0 ]; then
     [ "$declined" = 1 ] && exit 0
     text="pd: run /pd:adopt: this project still uses the old layout (docs/features/ without \`sop: 1\` in .claude/pd.local.md)."
 elif [ -f "$cfg" ]; then
-    # Keep pd-status's active and blocked rows, its roadmap lines and the retros owed.
+    # Keep pd-status's Migrate warning, active and blocked rows, roadmap lines and retros owed.
     summary=$(cd "$top" && "${SCRIPT_DIR}/../scripts/pd-status" 2>/dev/null | awk '
         /^$/ {sec = ""; next}
-        sec == "" {sec = $0; if (sec == "Plans" || sec == "Retros owed") print; next}
+        sec == "" {sec = $0; if (sec == "Migrate" || sec == "Plans" || sec == "Retros owed") print; next}
         sec == "Items" && ($1 == "active" || $1 == "blocked") {print}
-        sec == "Plans" || sec == "Retros owed" {print}')
+        sec == "Migrate" || sec == "Plans" || sec == "Retros owed" {print}')
     text="$vars"
     [ -n "$summary" ] && text+=$'\n'"pd: active and blocked items, next ready, retros owed (pd-status prints the rest)"$'\n'"$summary"
 else

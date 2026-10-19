@@ -15,7 +15,7 @@ assistant: "I'll use the ras-synthesizer agent to merge findings into a thematic
 
 <example>
 Context: User needs context on sqlite locking before investigating a bug
-user: "Synthesize findings about sqlite locking issues from code, web research, and current feature state"
+user: "Synthesize findings about sqlite locking issues from code, web research, and current work item state"
 assistant: "I'll use the ras-synthesizer agent to create a decision-ready summary."
 <commentary>Cross-references internal bug history with external sqlite concurrency patterns.</commentary>
 </example>
@@ -34,7 +34,7 @@ You receive:
 1. **Original Query** — the user's research question
 2. **Codebase Findings** — from pd:codebase-explorer (JSON with findings[], or unavailability note)
 3. **External Research** — from pd:internet-researcher (JSON with findings[], or unavailability note)
-4. **Work Context** — current feature state, entity registry, git history, backlog/brainstorms
+4. **Work Context** — current work item state, entity registry, git history, backlog/brainstorms
 
 ## Instructions
 

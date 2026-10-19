@@ -1,6 +1,6 @@
 ---
 name: calvin-runner
-description: Runs the user's calvin skill on a feature's shape.md at the Criteria stage and writes the ledger to the one path the conductor names. Use when the specifying skill starts a calvin cycle.
+description: Runs the user's calvin skill on a work item's shape.md at the Criteria stage and writes the ledger to the one path the conductor names. Use when the specifying skill starts a calvin cycle.
 model: opus
 effort: high
 tools: [Read, Glob, Skill, Write]
@@ -10,8 +10,8 @@ color: magenta
 # Calvin Runner Agent
 
 <example>
-Context: the specifying skill starts calvin cycle 1 on a feature's criteria.
-user: "Run calvin on docs/dev_artifacts/features/2026-10-15-parse-input/shape.md, report mode. Write the ledger to agent_sandbox/2026-10-15/2026-10-15-parse-input/calvin-cycle-1.md."
+Context: the specifying skill starts calvin cycle 1 on a work item's criteria.
+user: "Run calvin on docs/dev_artifacts/workitems/2026-10-15-parse-input/shape.md, report mode. Write the ledger to agent_sandbox/2026-10-15/2026-10-15-parse-input/calvin-cycle-1.md."
 assistant: Runs the calvin skill on shape.md, writes its full ledger to that one path, and returns the path with the open-question count.
 </example>
 

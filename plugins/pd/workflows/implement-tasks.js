@@ -3,16 +3,16 @@ export const meta = {
   description: 'pd Execute: each plan task as one implementer in its own worktree, landed in plan order by the merger, with up to three fix cycles',
   whenToUse: 'Started by the pd implementing skill with args derived from plan.md; never typed by the user',
   phases: [
-    { title: 'Implement', detail: 'one implementer per task, in worktree isolation, on branch pd/<feature id>/task-<n>' },
+    { title: 'Implement', detail: 'one implementer per task, in worktree isolation, on branch pd/<work item id>/task-<n>' },
     { title: 'Merge', detail: 'the merger checks each proof with pd-proof and lands the branch in plan order' },
     { title: 'Fix', detail: 'up to three fix cycles per task; cycles 2 and 3 on the strongest model', model: 'opus' },
   ],
 }
 
-// args (plan §A4, Part B §8): {feature_id, shape, plan, workflow_output_cap, waves: [[task]],
+// args (plan §A4, Part B §8): {workitem_id, shape, plan, workflow_output_cap, waves: [[task]],
 //   merged: [n] (already landed: skipped), finished: [{n, branch, head, first_commit, case_map}] (resume: straight to the merger)}
 // task: {n, title, parallel_safe, command, junit, green_only (reason or null)}. plan is null in express mode.
-// The main checkout must have the feature branch checked out: worktree.baseRef "head" makes it every worktree's base.
+// The main checkout must have the work item's branch checked out: worktree.baseRef "head" makes it every worktree's base.
 if (!args || typeof args.workflow_output_cap !== 'number') throw new Error('implement-tasks needs args.workflow_output_cap (plan §A5 cap 1)')
 const START = budget.spent()
 let stopped = null, agentsUsed = 0
@@ -40,22 +40,22 @@ const IMPL = obj({ branch: str, head: str, first_commit: str, worktree: str, cas
 const MERGED = obj({ status: { enum: ['merged', 'failed', 'conflict'] }, head: str, proof: PROOF,
   broke: arr({ type: 'integer' }), flakes: arr(FLAKE), reason: str })
 
-const branchOf = t => `pd/${args.feature_id}/task-${t.n}`
+const branchOf = t => `pd/${args.workitem_id}/task-${t.n}`
 // The executor reads its task block from the committed file in its worktree: the args stay small, and it gets the shared terms too.
 const TASK = t => args.plan
   ? `Your task is #### Task ${t.n} in ${args.plan}. Read ## Plan above ### Wave 1 first (the terms every task shares), then your task block. Its contract is in ${args.shape} ## Design.`
   : `Your task is the task block in ${args.shape} ## Requirements (express mode). Its contract is in ${args.shape} ## Design.`
-const IMPLEMENT = t => `Feature ${args.feature_id}, task ${t.n}. ${TASK(t)}
+const IMPLEMENT = t => `Work item ${args.workitem_id}, task ${t.n}. ${TASK(t)}
 You run in your own git worktree. Before your first commit, rename its branch: git branch -m ${branchOf(t)}.
 ${t.green_only ? `proof: green-only (${t.green_only}): no tests-first commit; the proving command's existing tests prove the task. Commit each meaningful step until it passes.` : 'Commit the tests first: one commit holding only the test files, plus new source files or added signatures that raise; every test fails as a test, with no load errors. Then commit each meaningful step until the proving command passes.'} Write the minimum code that meets the contract.
 Never change a test file after that first commit. If a test is wrong, stop and report error "transcription" (the case is right, its test code is wrong) or "wrong-test" (the case itself is wrong); otherwise error "none".
 Report your branch, HEAD, first commit, worktree path (pwd) and case_map: each test case id mapped to the test that encodes it.`
-const FIX = (t, s, cycle, failure) => `Fix cycle ${cycle} of 3 for feature ${args.feature_id}, task ${t.n}. ${TASK(t)}
+const FIX = (t, s, cycle, failure) => `Fix cycle ${cycle} of 3 for work item ${args.workitem_id}, task ${t.n}. ${TASK(t)}
 ${s.worktree ? `First remove the failed attempt's worktree, keeping its branch: git worktree remove --force ${s.worktree}. Then, in` : 'In'} your own worktree, check out ${branchOf(t)} and work there.
 Why it failed: ${J(failure)}
 ${s.error === 'transcription' ? 'It is a transcription error: rebuild the branch from its base with a corrected tests-first commit, then implement again.' : 'Fix the code only: the tests stay as the first commit left them.'} If the failure shows a test case itself is wrong, stop and report error "wrong-test".
 Report as the first attempt did: branch, HEAD, first commit, worktree path, case_map and error.`
-const MERGE = (t, s, landed) => `Merge task ${t.n} of feature ${args.feature_id} onto the feature branch checked out in this checkout.
+const MERGE = (t, s, landed) => `Merge task ${t.n} of work item ${args.workitem_id} onto the work item's branch checked out in this checkout.
 Branch: ${s.branch}. HEAD: ${s.head}. First commit: ${s.first_commit}. Proving command: \`${t.command}\`. JUnit: ${t.junit}.${t.green_only ? ` proof: green-only (${t.green_only}): skip steps 1 and 2 and step 3's test-file check; run pd-proof head without --first.` : ''}
 Already merged, whose proofs you re-run after this merge: ${J(landed.map(m => ({ task: m.n, command: m.command, junit: m.junit })))}.
 Report proof.first and proof.head as pd-proof's verdicts ("fail" at the first commit, "pass" at HEAD, or what it said).`

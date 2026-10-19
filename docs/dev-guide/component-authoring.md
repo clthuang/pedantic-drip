@@ -183,14 +183,14 @@ plugins/pd/
 **Location:** `commands/{command-name}.md`. Start from [command-template.md](templates/command-template.md).
 
 **Naming convention:** Use verbs and be explicit.
-* Bad: feature (ambiguous)
-* Good: create-feature
+* Bad: workitem (ambiguous)
+* Good: create-workitem
 
 **Required Structure:**
 ```markdown
 ---
 description: What this command does
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:<command-name>
@@ -264,7 +264,7 @@ argument-hint: "[--feature=<id>]"
 | Skill name | lowercase, hyphens; gerund preferred | `creating-tests`, `reviewing-code` |
 | Agent name | action/role, lowercase, hyphens | `code-reviewer`, `security-auditor` |
 | Plugin name | noun, lowercase, hyphens | `datascience-team`, `authoring-toolkit` |
-| Command name | verb, lowercase, hyphens | `create-feature`, `abandon-feature`, `add-to-backlog` |
+| Command name | verb, lowercase, hyphens | `create-workitem`, `abandon-workitem`, `add-to-backlog` |
 
 ---
 
@@ -318,7 +318,7 @@ Use these terms consistently across all skills, commands, agents, and documentat
 | Term | Meaning | Example |
 |------|---------|---------|
 | **Stage** | One part of pd's workflow, with its own command and stage skill: Clarify, Criteria, Contracts, Plan, Execute, Verify, Finish. | Contracts: `/pd:design` and the `designing` skill |
-| **Phase** | The value of `phase:` in a feature's README frontmatter: one of `PHASES` in `plugins/pd/scripts/pd_common.py` (`specify`, `design`, `create-plan`, `implement`, `verify`, `finish`). Clarify has none: it runs on a brainstorm or rca item, before the feature exists. | `phase: design` during Contracts |
+| **Phase** | The value of `phase:` in a work item's README frontmatter: one of `PHASES` in `plugins/pd/scripts/pd_common.py` (`specify`, `design`, `create-plan`, `implement`, `verify`, `finish`). Clarify has none: it runs on a brainstorm or rca item, before the work item exists. | `phase: design` during Contracts |
 | **Step** | A numbered item in a skill's `## Steps` section or in a command. | The `designing` skill's step 4, "Review" |
 
 **Why this matters:** Mixing these terms (calling a stage a "phase", or a phase value a "stage") creates ambiguity in prompts and documentation. Consistent terminology improves LLM instruction-following and reduces author confusion.

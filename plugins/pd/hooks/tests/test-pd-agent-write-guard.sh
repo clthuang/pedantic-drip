@@ -42,8 +42,8 @@ expect 2 "calvin-runner writing its ledger through a symlinked agent_sandbox" ca
 expect 0 "calvin-runner writing its ledger" calvin-runner "$R/$LEDGER"
 expect 0 "calvin-runner writing its ledger by a relative path" calvin-runner "$LEDGER"
 expect 2 "calvin-runner writing cycle 2's ledger" calvin-runner "$R/agent_sandbox/2026-10-15/2026-10-15-x/calvin-cycle-2.md"
-expect 2 "calvin-runner writing another feature's ledger" calvin-runner "$R/agent_sandbox/2026-10-15/2026-10-15-y/calvin-cycle-1.md"
-expect 2 "calvin-runner writing shape.md" calvin-runner "$R/docs/dev_artifacts/features/2026-10-15-x/shape.md"
+expect 2 "calvin-runner writing another work item's ledger" calvin-runner "$R/agent_sandbox/2026-10-15/2026-10-15-y/calvin-cycle-1.md"
+expect 2 "calvin-runner writing shape.md" calvin-runner "$R/docs/dev_artifacts/workitems/2026-10-15-x/shape.md"
 expect 2 "calvin-runner with no gate state file" calvin-runner "$R/$LEDGER" s2
 printf '{"other": 1}\n' > "$H/.claude/pd/gate/s3.json"
 expect 2 "calvin-runner with no calvin_ledger recorded" calvin-runner "$R/$LEDGER" s3
