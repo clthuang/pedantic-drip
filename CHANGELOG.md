@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-10-19
+
 ### Changed
 
 - **Breaking: the "feature" item is now a "work item".** pd tracks bug fixes, chores and docs changes in the same item, so the name no longer presumes product work. Every user-facing name moves:
