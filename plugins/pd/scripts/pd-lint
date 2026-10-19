@@ -715,6 +715,8 @@ def main(argv):
         print("pd-lint: not adopted: run /pd:adopt")
         return 0
     old = pc.old_names(root, cfg)  # before --staged and the target filter: a config-only commit trips it too
+    if args.staged:  # and the commit's own config, which can differ from the working tree's
+        old += [m for m in pc.old_names(root, cfg, pc.git(["show", f":{CFG}"], root, check=False) or "") if m not in old]
     for msg in old:
         print(f"pd-lint: ERROR {msg}")
     if old:
@@ -759,6 +761,7 @@ F = f"{ART}/workitems/2026-10-14-parse-input"
 P = f"{ART}/plans/2026-10-14-thin-pd.md"
 BL = f"{ART}/backlog.md"
 CFG = ".claude/pd.local.md"
+OLD_KEY = next(iter(pc.OLD_CONFIG_KEYS))
 CONFIG = ("---\nartifacts_root: docs/dev_artifacts\nsop: 1\nsource_paths: [src/]\ntest_paths: [tests/]\n"
           "fixture_paths: [tests/fixtures/]\nlanguages: [python]\nqa_battery:\n  - python3 -m pytest -q\n---\n")
 README = ("---\nid: 2026-10-14-parse-input\ntype: workitem\ntitle: Parse input\nstatus: done\nphase: finish\n"
@@ -920,6 +923,8 @@ def cases(code):
         ("the guard: an old item directory, even empty", lambda r: (r / ART / pc.OLD_ITEM_DIR).mkdir(), [], "error", f"{pc.OLD_ITEM_DIR}/: move its items"),
         ("the guard: an old key in a config-only staged commit", lambda r: (rw(r / CFG, "sop: 1\n", f"sop: 1\n{next(iter(pc.OLD_CONFIG_KEYS))}:\n"),
                                                                        pc.git(["add", CFG], r)), ["--staged"], "error", "rename"),
+        ("the guard: an old key staged, renamed only in the working tree", lambda r: (rw(r / CFG, "sop: 1\n", f"sop: 1\n{OLD_KEY}:\n"), pc.git(["add", CFG], r),
+                                                                       rw(r / CFG, f"{OLD_KEY}:", f"{pc.OLD_CONFIG_KEYS[OLD_KEY]}:")), ["--staged"], "error", "rename"),
         ("a pd-new single-file item passes", lambda r: subprocess.run([str(HERE / "pd-new"), "brainstorm", "Ship it"], cwd=r, check=True, capture_output=True), [], "ok", ""),
         ("a deleted roadmap plan keeps its items", lambda r: (r / P).unlink(), [], "error", "are gone"),
         ("a removed roadmap: field keeps its items", lambda r: rw(r / P, "roadmap:\n  - workitem: workitems/2026-10-14-parse-input\n  - planned: emit-output\n    after: [parse-input]\n", ""), [], "error", "are gone"),

@@ -164,15 +164,18 @@ def is_unadopted(root, cfg):
     return (Path(root) / "docs" / "features").is_dir() and str(cfg.get("sop")) != "1"
 
 
-def old_names(root, cfg):
-    """What an adopted project still carries under the pd 7 names; pd reads neither, so each one hides work."""
+def old_names(root, cfg, config_text=None):
+    """What an adopted project still carries under the pd 7 names; pd reads neither, so each one hides work.
+    config_text stands in for .claude/pd.local.md when given (pd-lint --staged passes the staged copy)."""
     if str(cfg.get("sop")) != "1":
         return []
     found, art = [], artifacts_dir(root, cfg)
     if (art / OLD_ITEM_DIR).is_dir():
         found.append(f"{(art / OLD_ITEM_DIR).relative_to(root)}/: move its items to {TYPE_DIRS[WORKITEM]}/ and remove it")
-    path = Path(root) / ".claude" / "pd.local.md"
-    fm = (split_frontmatter(path.read_text())[0] or {}) if path.is_file() else {}  # raw keys: load_config drops blank ones
+    if config_text is None:
+        path = Path(root) / ".claude" / "pd.local.md"
+        config_text = path.read_text() if path.is_file() else ""
+    fm = split_frontmatter(config_text)[0] or {}  # raw keys: load_config drops blank ones
     found += [f".claude/pd.local.md: rename {old}: to {new}:" for old, new in OLD_CONFIG_KEYS.items() if old in fm]
     return found
 

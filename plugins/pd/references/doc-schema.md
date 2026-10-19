@@ -4,7 +4,7 @@ Canonical file listings and metadata formats for each documentation tier. Used b
 
 ## user-guide
 
-- overview.md — Project name, description, key work items
+- overview.md — Project name, description, key features
 - installation.md — Prerequisites, install steps, verification
 - usage.md — Quick start, common workflows, configuration
 

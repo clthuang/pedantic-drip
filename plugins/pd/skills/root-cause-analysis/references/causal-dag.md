@@ -12,7 +12,7 @@ Use this checklist to ensure you've considered all potential cause categories:
 | Category | What to Check | Examples |
 |----------|---------------|----------|
 | **Code** | Logic errors, race conditions, edge cases | Off-by-one, null handling, async bugs |
-| **Config** | Settings, environment variables, work item flags | Wrong env, missing config, typos |
+| **Config** | Settings, environment variables, feature flags | Wrong env, missing config, typos |
 | **Data** | Input validation, data corruption, schema | Bad input, migration issues, encoding |
 | **Environment** | OS, runtime, network, resources | Memory, disk, network timeouts |
 | **Dependencies** | Libraries, APIs, services | Version mismatch, API changes, outages |
