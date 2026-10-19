@@ -178,15 +178,11 @@ Skills are instructions Claude follows. Each lives in `plugins/pd/skills/{name}/
 |-------|---------|
 | `systematic-debugging` | Four-phase root cause investigation |
 | `researching` | The dispatch contract for research subagents: one narrow question each, pointers back |
-| `promptimize` | Reviews a prompt against the guidelines and returns a scored assessment with an improved version |
 | `updating-docs` | The doc-sync checklist for component changes, publishing artifacts to the human docs, and the doc-writer dispatch |
 | `writing-skills` | A test-first approach to writing skills |
 | `creating-specialist-teams` | Ephemeral specialist teams through template injection into `generic-worker` |
-| `structured-problem-solving` | SCQA framing and type-specific decomposition |
-| `game-design`, `crypto-analysis`, `data-science-analysis` | Domain frameworks for a brainstorm PRD |
+| `data-science-analysis` | A standalone data science assessment of a concept; brainstorming's `data-science` advisor reads the same reference |
 | `writing-ds-python`, `structuring-ds-projects`, `spotting-ds-analysis-pitfalls`, `choosing-ds-modeling-approach` | Data science practice: code, project layout, statistical pitfalls, modeling choice |
-
-`structured-problem-solving` and the three domain-framework skills still describe being loaded by brainstorming's old stages; the current `brainstorming` playbook doesn't load them, so they run only when Claude picks them up from their descriptions.
 
 ## Commands
 
@@ -207,7 +203,7 @@ Agents are subagents, in `plugins/pd/agents/{name}.md`, dispatched by a command,
 Brainstorming's research step (§3) may start the `research-fanout` workflow. Its `lenses` arg carries one `{name, brief}` per advisor, the brief being the text of `plugins/pd/skills/brainstorming/references/advisors/<name>.advisor.md` plus the Clarify answers. Each lens runs as one `pd:advisor` agent beside the codebase, web and skill researchers.
 
 - **Default pair:** `pre-mortem` and `opportunity-cost`.
-- **The rest:** 11 more templates sit in that folder.
+- **The rest:** 9 more templates sit in that folder.
 - **To add an advisor:** add its `.advisor.md` file and name it in brainstorming's `SKILL.md` §3.
 
 ## Hooks
@@ -232,7 +228,7 @@ Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes i
 
 - **State lives in committed files:** a feature is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
 - **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
-- **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-html.py`, `pd-init`, `pd-adopt`, `batch-promptimize.sh`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
+- **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-html.py`, `pd-init`, `pd-adopt`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
 - **The workflows** (`plugins/pd/workflows/`) are the stages' only fan-outs:
   - **`implement-tasks`:** one implementer per task in its own worktree, the merger landing each wave's parallel-safe tasks, then its sequential ones; up to three fix cycles;
   - **`verify-change`:** the review call beside QA, then up to three fixer cycles;

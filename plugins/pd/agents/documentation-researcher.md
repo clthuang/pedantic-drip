@@ -258,8 +258,8 @@ Return structured JSON:
   "drift_detected": [
     {
       "type": "command",
-      "name": "promptimize",
-      "description": "Review a prompt against best practices and return an improved version",
+      "name": "add-to-backlog",
+      "description": "Capture an idea in the backlog",
       "status": "missing_from_readme",
       "readme": "README.md",
       "tier": "user-guide"

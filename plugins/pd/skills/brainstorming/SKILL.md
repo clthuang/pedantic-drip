@@ -22,7 +22,7 @@ Settle five things through AskUserQuestion, one question at a time: the problem,
 - **A question that spans many independent sources:** start the `research-fanout` workflow, only when you judge it does; the `run` entry records why (§A8.3 S5). Its args, from committed files:
   - `question`: the clarified question;
   - `source`: the brainstorm item's path;
-  - `lenses`: one `{name, brief}` per advisor, the brief being the verbatim text of `references/advisors/<name>.advisor.md` plus the Clarify answers. Default pair: `pre-mortem` and `opportunity-cost`. Swap in `feasibility` for build risk, `working-backwards` for a fuzzy deliverable, `first-principles` for open exploration. A missing template is skipped with a warning;
+  - `lenses`: one `{name, brief}` per advisor, the brief being the verbatim text of `references/advisors/<name>.advisor.md`, the line `Base directory: ${CLAUDE_PLUGIN_ROOT}/skills/brainstorming` (the domain advisors find their references from it), and the Clarify answers. Default pair: `pre-mortem` and `opportunity-cost`. Swap in `feasibility` for build risk, `working-backwards` for a fuzzy deliverable, `first-principles` for open exploration, `data-science` when the idea is a model, a metric, an experiment or an analysis. A missing template is skipped with a warning;
   - `workflow_output_cap`: from `.claude/pd.local.md`.
 - **Around the run:** the workflow-transitions protocol: the `run in flight:` line in the item's `## Now` before launch; after it, a `run` entry with `agents_used`, `tokens` and the reason, the line cleared, a commit. Its result is `findings[{claim, evidence, source}]` (`${CLAUDE_PLUGIN_ROOT}/references/workflow-results.md`).
 - **A failed agent** is a warning, not a stop.
@@ -35,7 +35,7 @@ Settle five things through AskUserQuestion, one question at a time: the problem,
 ## 5. Decide
 Ask through AskUserQuestion:
 - **Promote to a feature (Criteria):** run `/pd:create-feature "<title>" --from brainstorms/<id>.md`: it applies `/pd:secretary`'s depth rules (`mode`, any `risk:` tag), creates the branch and commits. Then continue with the specifying skill. On the brainstorm: `status: done`, a `note` entry `Promoted → features/<feature id>.`, one commit.
-- **Several features:** `pd-new plan "<title>" --from brainstorms/<id>.md`, its features listed as `planned:` roadmap items (Part B §7.1); then `/pd:create-feature --plan <plan> <slug> "<title>"` for the first one.
+- **Several features:** `pd-new plan "<title>" --from brainstorms/<id>.md`, its features listed as `planned:` roadmap items in the format `${CLAUDE_PLUGIN_ROOT}/templates/plan-roadmap.md` shows; then `/pd:create-feature --plan <plan> <slug> "<title>"` for the first one.
 - **Park it:** `## Now` names what would reopen it; a `note` entry; commit.
 - **Drop it:** `status: abandoned` with a `decision` entry giving the reason; commit.
 

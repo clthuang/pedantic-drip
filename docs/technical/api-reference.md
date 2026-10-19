@@ -5,7 +5,7 @@ source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 
 # API Reference
 
-The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usage below is the script's own docstring, minus its `--self-test` line: every script except `phase-gate.sh` (tested by `test-phase-gate.sh`) and `batch-promptimize.sh` takes `--self-test`. Skills call them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`.
+The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usage below is the script's own docstring, minus its `--self-test` line: every script except `phase-gate.sh` (tested by `test-phase-gate.sh`) takes `--self-test`. Skills call them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>`.
 
 ## pd-new — create an item
 
@@ -101,23 +101,6 @@ uv run pd-html.py --all [--open]
 ```
 
 Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it. `--all` renders `docs/user-guide/`, `docs/dev-guide/`, `docs/technical/` and every active item under the artifacts root (all of a feature's `.md` files; a plan, brainstorm or rca's one file).
-
-## batch-promptimize.sh — score every component prompt
-
-```
-Usage: batch-promptimize.sh [OPTIONS]
-
-Options:
-  --max-parallel N   Max concurrent scoring processes (default: 5)
-  --threshold N      Minimum passing score 0-100 (default: 80)
-  --help             Show this help message
-```
-
-- **What it scores:** every `skills/*/SKILL.md`, `agents/*.md` and `commands/*.md` under `plugins/pd/`, against `plugins/pd/skills/promptimize/references/scoring-rubric.md`'s ten dimensions.
-- **How:** one headless `claude -p --model sonnet` call per file, limited to `Read`, `Grep` and `Glob`, with a 120-second timeout; bash arithmetic turns the ten scores into a 0-100 score.
-- **Output:** one `[PASS]`, `[FAIL]`, `[ERROR]` or `[TIMEOUT]` line per file, then a summary with the counts and the mean score.
-- **Exit:** 0 when every file passes the threshold; 1 when any fails, errors or times out.
-- **Where:** the pd repository root (where `plugins/pd/` exists); anywhere else it stops, since it can't find the rubric.
 
 ## Shared formats
 
