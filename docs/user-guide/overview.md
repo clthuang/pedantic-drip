@@ -44,8 +44,6 @@ A retro runs only when `log.md` records a trigger (a second backward move, a cap
 
 ### Domain Knowledge
 
-- **Game design** — core loop analysis, engagement strategy, feasibility
-- **Crypto/DeFi** — protocol comparison, tokenomics, risk assessment
 - **Data science** — methodology assessment, pitfall analysis, modeling approach
 
 ## How the Workflow Fits Together

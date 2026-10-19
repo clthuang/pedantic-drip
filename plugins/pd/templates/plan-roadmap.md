@@ -10,7 +10,7 @@ roadmap:
 ---
 # {{title}}
 
-<!-- The roadmap holds only membership, order and dependencies; progress is computed by pd-status. Items are never deleted: mark one `dropped: <slug>` with a `reason:`. Format: plugins/pd/references/doc-format.md. -->
+<!-- The roadmap holds only membership, order and dependencies; progress is computed by pd-status. Each item is one of `planned: <slug>` (not created yet), `feature: features/<id>` (written by `/pd:create-feature --plan`) or `dropped: <slug>` with a `reason:`, and may carry `after: [<slug>, …]`. Items are never deleted: drop one instead. pd-lint checks the list. -->
 
 ## Now
 

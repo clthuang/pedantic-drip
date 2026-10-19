@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The security reviewer applies Anthropic's security-review criteria.** `pd:security-reviewer` now reads `references/security-review.md` for its categories, severity and confidence scoring and its false-positive filtering, and reports only findings at confidence 8/10 or higher. It drops its generic checklist and the rule to verify a claim with WebSearch or Context7, tools a reviewer doesn't have.
 - **Brainstorming offers the `data-science` lens,** and each advisor's brief carries the brainstorming base directory, so the domain advisors find their reference files in an installed plugin, not only in the pd repository. `data-science-analysis` becomes a standalone assessment; it no longer describes a brainstorming step that was removed.
+- **The roadmap template is the format spec brainstorming points to:** `templates/plan-roadmap.md` lists the item kinds (`planned:`, `feature:`, `dropped:` with `reason:`, and `after:`) instead of pointing at `doc-format.md`, which never described them, and brainstorming's several-features step links it.
 - **`updating-docs` passes the documentation agents what they expect:** the content of `references/doc-schema.md`, and `/pd:generate-docs`'s mode and tier timestamps.
 
 ### Removed
