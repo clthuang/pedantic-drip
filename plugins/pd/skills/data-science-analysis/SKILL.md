@@ -1,19 +1,15 @@
 ---
 name: data-science-analysis
-description: "Applies data science frameworks to enrich brainstorm PRDs with methodology assessment, pitfall analysis, and modeling approach recommendations. Use when brainstorming skill loads the data science domain in Stage 1 Step 10."
+description: "Assesses a data science idea or planned analysis: problem type, data requirements, pitfall risks and modeling approach. Use when the user asks for a data science assessment of a concept; inside a brainstorm, the data-science advisor reads the same reference."
 ---
 
 # Data Science Analysis
 
-Apply data science frameworks from reference files to the concept, producing a structured analysis for PRD insertion. This skill is invoked by the brainstorming skill (Stage 1, Step 10) — not standalone.
+Apply the frameworks in the reference file to the concept the user names and return the analysis below. Inside a brainstorm, brainstorming's `data-science` advisor reads the same file; this skill is the standalone path.
 
 ## Input
 
-From the brainstorming Stage 1 context:
-- **problem_statement** — the data science concept from Step 1 item 1
-- **target_user** — target audience from Step 1 item 2
-- **success_criteria** — from Step 1 item 3
-- **constraints** — known limitations from Step 1 item 4
+From the request: the concept, its users, its success criteria and its constraints. Ask for any that is missing.
 
 ## Process
 
@@ -35,11 +31,11 @@ Using loaded reference content, analyze the concept across four dimensions:
 
 ### 3. Produce Output
 
-Generate the Data Science Analysis section and domain review criteria list per the Output section below.
+Generate the Data Science Analysis section per the Output section below.
 
 ## Output
 
-Return a `## Data Science Analysis` section with 4 subsections for PRD insertion:
+Return a `## Data Science Analysis` section with 4 subsections:
 
 ```markdown
 ## Data Science Analysis
@@ -69,26 +65,7 @@ Return a `## Data Science Analysis` section with 4 subsections for PRD insertion
 - **Production Considerations:** {monitoring, drift detection, retraining cadence}
 ```
 
-Also return the domain review criteria list:
-
-```
-Domain Review Criteria:
-- Methodology type identified and justified?
-- Data requirements specified with quality concerns?
-- Relevant pitfalls identified with mitigations?
-- Modeling approach matched to problem type?
-```
-
-Insert the Data Science Analysis section in the PRD between `## Structured Analysis` and `## Review History`. If `## Structured Analysis` is absent, place after `## Research Summary` and before `## Review History`.
-
-## Stage 2 Research Context
-
-When this domain is active, append these lines to the internet-researcher dispatch:
-- Research current best practices for the data science methodology relevant to this concept
-- Evaluate data availability and quality for the problem domain
-- Research common pitfalls and failure modes in similar analyses
-- Find benchmark datasets or baseline results for comparison
-- Include current library/tool recommendations for the chosen approach
+In a brainstorm PRD, the section goes under Strategic Analysis, as the `data-science` advisor's subsection.
 
 ## Graceful Degradation
 

@@ -8,9 +8,9 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 | Type | Count |
 |------|-------|
-| Skills | 24 |
+| Skills | 20 |
 | Agents | 21 |
-| Commands | 24 |
+| Commands | 22 |
 
 ## Commands
 
@@ -41,8 +41,6 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:init-ds-project <name>` | Scaffold a new data science project |
-| `/pd:promptimize [file-path or inline text]` | Review a prompt against best practices and return an improved version |
-| `/pd:refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
 | `/pd:review-ds-analysis <file>` | Review data analysis for statistical pitfalls |
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |

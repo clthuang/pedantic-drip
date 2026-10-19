@@ -115,8 +115,6 @@ The full diagram, with every check and review, is the Mermaid source [docs/workf
 |---------|---------|
 | `/pd:create-specialist-team` | Assemble a temporary team of specialist agents for a complex task |
 | `/pd:subagent-ras` | Research, analyze and summarize a topic with parallel agents |
-| `/pd:promptimize` | Review a prompt and return an improved version |
-| `/pd:refresh-prompt-guidelines` | Update the prompt guidelines from current practice |
 | `/pd:init-ds-project <name>` | Scaffold a data science project |
 | `/pd:review-ds-analysis <file>` | Review a data analysis for statistical pitfalls |
 | `/pd:review-ds-code <file>` | Review data science Python for anti-patterns |
@@ -139,9 +137,9 @@ docs/dev_artifacts/            # artifacts_root in .claude/pd.local.md, set by /
 
 ## Reference
 
-pd includes 24 skills and 21 agents. Commands and agents load them; you don't call them directly.
+pd includes 20 skills and 21 agents. Commands and agents load them; you don't call them directly.
 - **Stage playbooks:** brainstorming, root-cause-analysis, specifying, designing, planning, implementing, verifying, finishing-branch, retrospecting, and workflow-transitions, the contract they share.
-- **Other skills:** systematic-debugging, structured-problem-solving, researching, promptimize, updating-docs, writing-skills, creating-specialist-teams, and domain knowledge for game design, crypto analysis and data science.
+- **Other skills:** systematic-debugging, researching, updating-docs, writing-skills, creating-specialist-teams, and domain knowledge for data science.
 - **Agents:** listed in [plugins/pd/README.md](plugins/pd/README.md#agents).
 
 ## For Developers

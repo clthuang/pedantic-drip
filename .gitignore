@@ -57,7 +57,6 @@ agent_sandbox/
 docs/_html/
 
 # pd parallel-dispatch worktrees (auto-managed)
-.pd-worktrees/
 
 # Playwright MCP output
 .playwright-mcp/

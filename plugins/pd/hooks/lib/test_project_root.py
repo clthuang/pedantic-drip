@@ -7,7 +7,7 @@ and its Tests ("Root detection").
 ``.git`` is a directory; a linked worktree's ``.git`` is a file naming
 ``<main>/.git/worktrees/<name>``. The worktrees are:
 
-- **nested:** under the main checkout, as ``.pd-worktrees/<name>`` and
+- **nested:** under the main checkout, as ``.claude/worktrees/<name>`` and
   ``claude --worktree``'s ``.claude/worktrees/<name>`` are;
 - **sibling:** beside the main checkout.
 
@@ -34,8 +34,6 @@ _COMMON_SH = os.path.join(_HOOKS_LIB, "common.sh")
 _W4_4_ROOT_FINDERS = (
     "hooks/lib/common.sh",
     "hooks/tests/test-hooks.sh",
-    "hooks/tests/test-promptimize-content.sh",
-    "hooks/tests/test-worktree-dispatch.sh",
 )
 
 # A bash test that accepts only a .git directory:
@@ -116,7 +114,7 @@ def repository(tmp_path, home) -> dict[str, str]:
     _git(env, "-C", main, "add", "sub")
     _git(env, "-C", main, "commit", "-q", "-m", "a checkout")
 
-    nested = os.path.join(main, ".pd-worktrees", "nested")
+    nested = os.path.join(main, ".claude", "worktrees", "nested")
     sibling = os.path.join(base, "sibling")
     _git(env, "-C", main, "worktree", "add", "-q", "-b", "nested", nested)
     _git(env, "-C", main, "worktree", "add", "-q", "-b", "sibling", sibling)

@@ -27,13 +27,11 @@ uv run --script plugins/pd/scripts/pd-html.py --self-test
 # Phase exit checks
 bash plugins/pd/scripts/test-phase-gate.sh
 
-# Hooks: each hook's own test, the promptimize content and git worktree suites, then the integration suite
+# Hooks: each hook's own test, then the integration suite
 bash plugins/pd/hooks/tests/test-pd-commit-lint.sh
 bash plugins/pd/hooks/tests/test-pd-stop-gate.sh
 bash plugins/pd/hooks/tests/test-pd-session-start.sh
 bash plugins/pd/hooks/tests/test-pd-agent-write-guard.sh
-bash plugins/pd/hooks/tests/test-promptimize-content.sh
-bash plugins/pd/hooks/tests/test-worktree-dispatch.sh
 bash plugins/pd/hooks/tests/test-hooks.sh
 
 # Workflow scripts: syntax, result shapes and stubbed runs

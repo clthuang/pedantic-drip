@@ -71,7 +71,7 @@ description: What the skill does, in one sentence. Use when [specific triggers].
 The stage skills put their work in `## Steps`; the ones that make the review call (`designing`, `planning`, `verifying`) add a `## Review checklist` that goes inline in the reviewer's prompt. [skill-template.md](templates/skill-template.md) follows that shape.
 
 **Authoring Rules:**
-1. **Name**: prefer the gerund form (`creating-tests`, `reviewing-code`). Not enforced: `promptimize`, `root-cause-analysis` and `game-design` are skills too. `validate.sh` errors on a name that isn't lowercase with hyphens.
+1. **Name**: prefer the gerund form (`creating-tests`, `reviewing-code`). Not enforced: `root-cause-analysis` and `data-science-analysis` are skills too. `validate.sh` errors on a name that isn't lowercase with hyphens.
 2. **Description**: include BOTH what it does AND when to use it, in the third person. `validate.sh` warns on a description under 50 characters, without "Use when" (or "Use for", "Triggered when"), or opening with "I ", "You can" or "This lets you".
 3. **Length**: keep SKILL.md under 500 lines (`validate.sh` warns past that). Use reference files for detailed content.
 4. **Progressive Disclosure**: SKILL.md = overview. Additional files = details loaded on-demand.
@@ -280,7 +280,7 @@ When referencing commands, skills, or agents within plugin files, always use the
 
 **Paths to plugin files:** pd runs from `~/.claude/plugins/cache/...`, so a skill, command or agent never names `plugins/pd/...` directly.
 - **Preferred:** `${CLAUDE_PLUGIN_ROOT}/...`, as in `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh` (`skills/workflow-transitions/SKILL.md`).
-- **Two-location Glob:** primary `~/.claude/plugins/cache/*/pd*/*/...`, then a line marked "Fallback (dev workspace)" with `plugins/*/...` (`skills/promptimize/SKILL.md`).
+- **Two-location Glob:** primary `~/.claude/plugins/cache/*/pd*/*/...`, then a line marked "Fallback (dev workspace)" with `plugins/*/...` (`agents/code-quality-reviewer.md`).
 
 ---
 
@@ -307,7 +307,6 @@ It warns on:
 - [ ] **hooks.json:** a command path without `${CLAUDE_PLUGIN_ROOT}`
 
 By hand:
-- [ ] **Prompt review:** run `/pd:promptimize` on new or changed component files
 - [ ] **Docs sync:** follow the `updating-docs` skill's checklist when adding, removing or renaming a component
 
 ---

@@ -14,10 +14,10 @@ assistant: "I'll use the advisor agent to apply the pre-mortem perspective to th
 </example>
 
 <example>
-Context: Brainstorm skill dispatches domain advisor for crypto project
-user: "Apply crypto domain analysis to this DeFi lending protocol idea"
-assistant: "I'll use the advisor agent with the crypto domain template to analyze the protocol."
-<commentary>Domain advisor template references crypto-analysis skill reference files for evidence-backed analysis.</commentary>
+Context: Brainstorm skill dispatches domain advisor for a data science project
+user: "Apply data science domain analysis to this churn-prediction idea"
+assistant: "I'll use the advisor agent with the data-science domain template to analyze the idea."
+<commentary>Domain advisor template references data-science-analysis skill reference files for evidence-backed analysis.</commentary>
 </example>
 
 # Advisor Agent

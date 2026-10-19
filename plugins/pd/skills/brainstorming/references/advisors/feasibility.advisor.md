@@ -20,12 +20,10 @@ Apply these to the problem context provided below:
 
 If the archetype or problem context mentions specific domains, read the corresponding reference files for domain-specific feasibility signals:
 
-- **If crypto/web3:** Read `skills/crypto-analysis/references/` — assess protocol viability, gas costs, audit needs
-- **If game design:** Read `skills/game-design/references/` — assess engine capabilities, performance, platform constraints
 - **If data science/ML:** Read `skills/data-science-analysis/references/` — assess data availability, model tractability, compute needs
 
 Derive the path from the brainstorming Base directory: replace `/brainstorming` with `/{domain}`, then Glob `{derived_path}/references/*.md`.
-Example: If Base directory is `~/.claude/plugins/cache/m/pd/v/skills/brainstorming`, replace `/brainstorming` with `/crypto-analysis` → `~/.claude/plugins/cache/m/pd/v/skills/crypto-analysis/references/*.md`.
+Example: If Base directory is `~/.claude/plugins/cache/m/pd/v/skills/brainstorming`, replace `/brainstorming` with `/data-science-analysis` → `~/.claude/plugins/cache/m/pd/v/skills/data-science-analysis/references/*.md`.
 Fallback: Glob `plugins/*/skills/{domain}/references/*.md` (dev workspace).
 
 ## What to Look For

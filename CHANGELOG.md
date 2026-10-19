@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The security reviewer applies Anthropic's security-review criteria.** `pd:security-reviewer` now reads `references/security-review.md` for its categories, severity and confidence scoring and its false-positive filtering, and reports only findings at confidence 8/10 or higher. It drops its generic checklist and the rule to verify a claim with WebSearch or Context7, tools a reviewer doesn't have.
+- **Brainstorming offers the `data-science` lens,** and each advisor's brief carries the brainstorming base directory, so the domain advisors find their reference files in an installed plugin, not only in the pd repository. `data-science-analysis` becomes a standalone assessment; it no longer describes a brainstorming step that was removed.
+- **`updating-docs` passes the documentation agents what they expect:** the content of `references/doc-schema.md`, and `/pd:generate-docs`'s mode and tier timestamps.
+
+### Removed
+
+- **Promptimize:** the `promptimize` skill, the `/pd:promptimize` and `/pd:refresh-prompt-guidelines` commands, `batch-promptimize.sh`, its content test and the edit reminder. No local session from 2026-09-18 to 2026-10-19 ran them, the rubric scored against the component style thin pd replaced, and `validate.sh` already covers part of it.
+- **Brainstorming domain skills:** `structured-problem-solving`, `crypto-analysis` and `game-design`, with the crypto and game-design advisors. No stage loaded them since the brainstorming rewrite; `data-science-analysis` stays.
+- **Leftovers:** `test-worktree-dispatch.sh` (git commands for the retired `.pd-worktrees/` dispatch), and unused fixtures, templates and an empty migration marker.
+
 ### Security
 
 - **`pre-commit-guard` no longer approves Bash commands.** It answered `permissionDecision: "allow"` on every Bash call, and a PreToolUse `allow` skips the user's permission prompt, so installing pd auto-approved every Bash command no settings deny or ask rule covered. It now prints nothing on pass-through, and its two commit reminders (a commit to `main`/`master`; run the tests) reach Claude as `additionalContext`, with no permission decision.
