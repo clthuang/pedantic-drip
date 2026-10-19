@@ -333,7 +333,7 @@ class Adopt:
     def by_uuid(self, uuid):
         return next((e for e in self.reg["entities"] if e["uuid"] == uuid), None) if uuid else None
 
-    def features(self):
+    def workitems(self):
         d = self.root / NEW / WI
         return sorted(p for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
 
@@ -482,7 +482,7 @@ class Adopt:
     def step2(self):
         self.project_groups()
         art, written, metas_read = self.root / NEW, [], 0
-        for d in self.features():
+        for d in self.workitems():
             fid, mp, meta = d.name, d / ".meta.json", None
             if mp.is_file():
                 try:
@@ -523,7 +523,7 @@ class Adopt:
             for f in sorted((art / sub).glob("*.md")) if (art / sub).is_dir() else []:
                 if not f.name.startswith(".") and self.single_file(type_, sub, f):
                     written.append(self.rel(f))
-        self.note(f"step 2: {len(self.features())} work item READMEs; frontmatter on {len(written) - len(self.features())} "
+        self.note(f"step 2: {len(self.workitems())} work item READMEs; frontmatter on {len(written) - len(self.workitems())} "
                   f"single-file items; deleted {metas_read} .meta.json")
         self.commit("pd-adopt step 2: README frontmatter from .meta.json and the registry", written)
 
@@ -668,7 +668,7 @@ class Adopt:
     def roadmap(self, nodes, edges, project_uuids):
         """`roadmap:` lines: the mermaid order and dependencies, work items resolved by the registry's parent links."""
         children = sorted(e["key"] for e in self.reg["entities"] if e["kind"] == "feature" and e.get("parent_uuid") in project_uuids)
-        dirs = [d.name for d in self.features()]
+        dirs = [d.name for d in self.workitems()]
 
         def resolve(key):
             label = nodes.get(key) or (key[1:] + "-" if re.fullmatch(r"F\d+", key) else key)
@@ -685,16 +685,16 @@ class Adopt:
             placed.add(free[0])
         items, slug_of = {}, {}
         for k in order:
-            slug, is_feature = resolve(k)
+            slug, is_workitem = resolve(k)
             slug_of[k] = slug
             if slug not in items:
-                items[slug] = [is_feature, []]
+                items[slug] = [is_workitem, []]
             items[slug][1] += [slug_of[a] for a in preds[k] if a in slug_of and slug_of[a] != slug and slug_of[a] not in items[slug][1]]
         for c in children:
             items.setdefault(c, [True, []])
         lines = []
-        for slug, (is_feature, after) in items.items():
-            lines.append(f"  - {pc.WORKITEM}: {WI}/{slug}" if is_feature else f"  - planned: {slug}")
+        for slug, (is_workitem, after) in items.items():
+            lines.append(f"  - {pc.WORKITEM}: {WI}/{slug}" if is_workitem else f"  - planned: {slug}")
             if after:
                 lines.append(f"    after: [{', '.join(after)}]")
         return lines
@@ -702,7 +702,7 @@ class Adopt:
     # step 4: legacy history into log.md
     def step4(self):
         written = []
-        for d in self.features():
+        for d in self.workitems():
             fid, entries = d.name, []
             ent = self.entity("feature", fid)
             entries += event_entries((self.reg["events"].get(ent["type_id"]) if ent else None) or meta_events(self.metas.get(fid, {})))
@@ -745,7 +745,7 @@ class Adopt:
 
     # step 5: content files stay; list what isn't done
     def step5(self):
-        for d in self.features():
+        for d in self.workitems():
             fm = pc.split_frontmatter((d / "README.md").read_text())[0] or {} if (d / "README.md").is_file() else {}
             if fm.get("status") not in ("done", "abandoned"):
                 self.note(f"NOT DONE: {WI}/{d.name} (status: {fm.get('status')}): convert it to shape.md and plan.md before work resumes")
@@ -881,7 +881,7 @@ def self_test():
                 "the dry run changes nothing")
         c.check("MAP BY HAND: workitems/003-gamma: status 'weird'" in out, "an unmapped status is listed, not guessed")
         c.check("NOT DONE: workitems/002-beta" in out and "NOT DONE: workitems/005-epsilon" not in out,
-                "a legacy feature not done is listed for conversion; an abandoned one isn't")
+                "a legacy work item not done is listed for conversion; an abandoned one isn't")
         c.check(f"RENAME BY HAND: git branch -m {fx.LEGACY_BRANCH} {pc.BRANCH_PREFIX}006-zeta" in out,
                 "an unfinished item's recorded branch that exists gets a rename note")
         c.check("UNCLASSIFIED: docs/dev_guides/" in out and "UNCLASSIFIED: docs/user-guide" not in out, "unclassified dirs are flagged")
@@ -966,7 +966,7 @@ def self_test():
                 and p1["status"] == "active" and "Why." in ptext and "Alpha first, then beta." in ptext and "graph TD" not in ptext
                 and not (art / "plans/005-alpha-evolution.md").exists() and not (repo / "docs/projects").exists(),
                 f"projects become plans with a roadmap; duplicates merged: {p1}")
-        c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no features is a plain plan")
+        c.check("roadmap" not in fm("plans/P002-empty.md") and fm("plans/P002-empty.md")["title"] == "Empty idea", "a project with no work items is a plain plan")
         bl = (art / "backlog.md").read_text()
         c.check("- [ ] 2026-01-05-flaky-ui-test — Flaky UI test\n" in bl and "- [x] 2026-01-06-gamma-cache — promoted → workitems/003-gamma\n" in bl
                 and "- [x] 2026-01-07-old-idea — dropped: superseded by 003\n" in bl
@@ -977,7 +977,7 @@ def self_test():
                 and "- [x] 2026-01-12-spaced-reason — dropped: spaced out\n" in bl
                 and "Not ours" not in bl and git("ls-files", f"{NEW}/backlog.md") == f"{NEW}/backlog.md", "the backlog is exported and committed")
         c.check("Convert it" in (art / "workitems/002-beta/README.md").read_text() and "Convert it" not in (art / "workitems/005-epsilon/README.md").read_text(),
-                "a not-done legacy feature's README asks for conversion; an abandoned one's doesn't")
+                "a not-done legacy work item's README asks for conversion; an abandoned one's doesn't")
         c.check(fm("brainstorms/20260101-000000-alpha.prd.md") == {"id": "20260101-000000-alpha.prd", "type": "brainstorm", "title": "Alpha", "status": "draft"}
                 and fm("rca/20260309-drift.md")["status"] == "done"
                 and fm("brainstorms/20260102-000000-beta.prd.md")["status"] == "abandoned" and fm("rca/20260311-gone.md")["status"] == "abandoned",

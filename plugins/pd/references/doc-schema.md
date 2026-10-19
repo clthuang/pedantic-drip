@@ -4,7 +4,7 @@ Canonical file listings and metadata formats for each documentation tier. Used b
 
 ## user-guide
 
-- overview.md — Project name, description, key features
+- overview.md — Project name, description, key work items
 - installation.md — Prerequisites, install steps, verification
 - usage.md — Quick start, common workflows, configuration
 
@@ -19,7 +19,7 @@ Canonical file listings and metadata formats for each documentation tier. Used b
 - architecture.md — Component map, data flow, module interfaces
 - decisions/ — ADR directory (ADR-{NNN}-{slug}.md files)
 - api-reference.md — Internal/external API contracts if applicable
-- workflow-artifacts.md — Index linking to feature artifacts
+- workflow-artifacts.md — Index linking to work item artifacts
 
 ## Project-Type Additions
 
@@ -61,7 +61,7 @@ Every generated documentation file should include YAML frontmatter tracking its 
 ```yaml
 ---
 last-updated: '2024-01-15T10:30:00Z'  # ISO 8601 with UTC Z suffix
-source-workitem: '{feature-id}-{slug}'
+source-workitem: '{workitem-id}-{slug}'
 ---
 ```
 
@@ -70,17 +70,17 @@ source-workitem: '{feature-id}-{slug}'
 Auto-generated sections within documentation files are delimited with HTML comments to enable safe regeneration without overwriting manual edits:
 
 ```
-<!-- AUTO-GENERATED: START - source: {feature-id} -->
+<!-- AUTO-GENERATED: START - source: {workitem-id} -->
 {auto-generated content}
 <!-- AUTO-GENERATED: END -->
 ```
 
 ## Workflow Artifacts Index Format
 
-The workflow-artifacts.md file uses a table format linking feature artifacts. References use the `{pd_artifacts_root}` config variable for project-aware path resolution:
+The workflow-artifacts.md file uses a table format linking work item artifacts. References use the `{pd_artifacts_root}` config variable for project-aware path resolution:
 
 ```
-| Feature | Status | Artifacts |
+| Work item | Status | Artifacts |
 |---------|--------|-----------|
 | {id}-{slug} | {status} | [{pd_artifacts_root}/workitems/{id}-{slug}/](link) |
 ```

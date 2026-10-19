@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Stop hook: the script gate under /goal (plan §A5, cap 3; ported from yolo-stop.sh).
-# On every stop it charges the session's new token usage to the checked-out feature. It blocks
-# (exit 2, the reason on stderr) only while a feature's `## Now` has a `goal: <id> target <phase>
+# On every stop it charges the session's new token usage to the checked-out work item. It blocks
+# (exit 2, the reason on stderr) only while a work item's `## Now` has a `goal: <id> target <phase>
 # session <this session>` line and the goal isn't met: target not reached, open blockers, or a
 # pd-lint failure. It yields to running background workflows and subagents, and at the token cap
 # or on a stuck loop it tells the conductor to ask the user, so nothing repeats a dead block.
 # State: ~/.claude/pd/gate/<session id>.json (the progress snapshot; other keys, such as
-# calvin_ledger, are kept) and ~/.claude/pd/gate/<repo key>/<feature id>.json (the running
+# calvin_ledger, are kept) and ~/.claude/pd/gate/<repo key>/<id>.json (the running
 # token total and the original budget).
 set -uo pipefail
 trap '' PIPE
@@ -72,7 +72,7 @@ def number(value):
 
 
 cfg = pc.load_config(root)
-features = []
+workitems = []
 for type_, fid, ctl in pc.find_items(pc.artifacts_dir(root, cfg)):
     try:
         fm, body, _ = pc.split_frontmatter(ctl.read_text()) if type_ == pc.WORKITEM else (None, "", 0)
@@ -80,23 +80,23 @@ for type_, fid, ctl in pc.find_items(pc.artifacts_dir(root, cfg)):
         continue
     if type_ == pc.WORKITEM:
         now = [l.strip() for l in pc.blank_fences(pc.sections(body).get("Now", "")).split("\n") if l.strip()]
-        features.append({"id": fid, "fm": fm or {}, "readme": ctl, "now": now})
+        workitems.append({"id": fid, "fm": fm or {}, "readme": ctl, "now": now})
 origin = pc.git(["remote", "get-url", "origin"], root, check=False)
 repo_key = hashlib.sha256((origin or str(root.resolve())).encode()).hexdigest()[:16]
 state = lambda f: gate / repo_key / f"{f['id']}.json"
 
-# 1. Count, on every stop: the usage since the previous count goes to the checked-out feature.
+# 1. Count, on every stop: the usage since the previous count goes to the checked-out work item.
 sess_path = gate / f"{sid}.json"
 sess = load(sess_path)
 total, counted = usage(inp.get("transcript_path")), int(sess.get("counted") or 0)
 delta = total - counted if total > counted else 0
 sess["counted"] = max(total, counted)
 branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], root, check=False) or ""
-here = next((f for f in features if branch in (f["fm"].get("branch"), f"{pc.BRANCH_PREFIX}{f['id']}")), None)
+here = next((f for f in workitems if branch in (f["fm"].get("branch"), f"{pc.BRANCH_PREFIX}{f['id']}")), None)
 if here and delta:
     p = state(here)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p.with_name(p.name + ".lock"), "w") as lock:  # sessions on one feature charge it in turn
+    with open(p.with_name(p.name + ".lock"), "w") as lock:  # sessions on one work item charge it in turn
         fcntl.flock(lock, fcntl.LOCK_EX)
         fs = load(p)
         fs["tokens"] = int(fs.get("tokens") or 0) + delta
@@ -112,7 +112,7 @@ def finish(code, reason=None):
 
 
 # 2. Only this session's goal line arms the gate.
-goal = next(((f, m) for f in features for l in f["now"] for m in [GOAL_RE.match(l)] if m and m.group(3) == sid), None)
+goal = next(((f, m) for f in workitems for l in f["now"] for m in [GOAL_RE.match(l)] if m and m.group(3) == sid), None)
 if not goal:
     finish(0)
 f, m = goal
@@ -142,7 +142,7 @@ if budget is not None and tokens >= budget:
               f"`Budget: {pc.BUDGET_KEY}={budget + increment}`; on stop, clear "
               "the goal: line from ## Now and commit.")
 
-# 5. Stuck: blocked last time and nothing moved (a commit on the feature branch, log.md or the README).
+# 5. Stuck: blocked last time and nothing moved (a commit on the work item's branch, log.md or the README).
 ref = f["fm"].get("branch") or f"{pc.BRANCH_PREFIX}{fid}"
 head = pc.git(["rev-parse", "-q", "--verify", ref], root, check=False) or pc.git(["rev-parse", "HEAD"], root, check=False)
 log = f["readme"].parent / "log.md"
@@ -152,7 +152,7 @@ if inp.get("stop_hook_active") and not moved:
     finish(2, f"pd gate: no progress on {fid} since the last check. Ask the user through AskUserQuestion: "
               "\"no progress since the last check: continue or stop?\". On stop, clear the goal: line from ## Now and commit.")
 
-# 6. The goal's conditions: open blockers, pd-lint on the feature's files, the target phase.
+# 6. The goal's conditions: open blockers, pd-lint on the work item's files, the target phase.
 reasons = [f"open blocker {b['ref']} {b['file']}:{b['line']} — {b['claim']}" for b in pc.open_blockers(entries)]
 lint = subprocess.run([str(scripts / "pd-lint"), str(f["readme"].parent)], cwd=root, capture_output=True, text=True)
 if lint.returncode == 1:

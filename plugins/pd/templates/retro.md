@@ -8,7 +8,7 @@
 
 ## Aims
 
-<what the feature set out to do>
+<what the work item set out to do>
 
 ## Outcomes
 

@@ -148,8 +148,8 @@ class Linter:
         if fm is None:
             self.err(p, 1, it["load_error"] or "no frontmatter (--- … ---)")
             return False
-        feature = t == pc.WORKITEM
-        required = ["id", "type", "title", "status"] + (["phase", "mode"] if feature and not it["legacy"] else [])
+        workitem = t == pc.WORKITEM
+        required = ["id", "type", "title", "status"] + (["phase", "mode"] if workitem and not it["legacy"] else [])
         for k in required:
             if not fm.get(k):
                 self.err(p, 1, f"missing required field: {k}")
@@ -164,7 +164,7 @@ class Linter:
         for r in pc.as_list(fm.get("risk")):
             if r not in pc.RISKS:
                 self.err(p, lineno(p, "risk:"), f"risk: {r} is not one of {', '.join(pc.RISKS)}")
-        if not feature:
+        if not workitem:
             for k in ("phase", "mode", "branch", "risk"):
                 if k in fm:
                     self.err(p, lineno(p, f"{k}:"), f"{k}: is for work items only")
@@ -173,7 +173,7 @@ class Linter:
         if t == "plan" and fm.get("roadmap") is not None and fm.get("status") not in ("draft", "active", "abandoned"):
             self.err(p, lineno(p, "status:"), "a plan with a roadmap: may not say done; pd computes it from the roadmap")
         branch = fm.get("branch")
-        if feature and branch:
+        if workitem and branch:
             if fm.get("status") == "done":
                 self.err(p, lineno(p, "branch:"), "branch: is removed at done")
             elif branch != f"{pc.BRANCH_PREFIX}{it['id']}":
@@ -373,7 +373,7 @@ class Linter:
                     [g for g in gates if g not in ("specify", "design", "create-plan")]
         def gate(g):
             return g, subprocess.run(["bash", str(GATE), g, str(it["dir"])], capture_output=True, text=True)
-        with ThreadPoolExecutor(6) as pool:  # a done feature re-runs five gates; in parallel they cost about one
+        with ThreadPoolExecutor(6) as pool:  # a done work item re-runs five gates; in parallel they cost about one
             results = list(pool.map(gate, gates))
         for g, r in results:
             if r.returncode != 0:
@@ -383,9 +383,9 @@ class Linter:
 
     # --- T3.5d: log.md ----------------------------------------------------------
     def check_log(self, it):
-        feature = it["type"] == pc.WORKITEM
-        logp = it["dir"] / "log.md" if feature else it["path"]
-        if feature and not logp.is_file():
+        workitem = it["type"] == pc.WORKITEM
+        logp = it["dir"] / "log.md" if workitem else it["path"]
+        if workitem and not logp.is_file():
             self.err(it["path"], 1, "a work item has a log.md")
             return
         text, first = pc.log_text(it["type"], it["path"])
@@ -419,7 +419,7 @@ class Linter:
             for i, l in enumerate(e["body"], 1):
                 self.commits += [(logp, ln + i, h) for h in COMMIT_RE.findall(l)]
         fm = it["fm"]
-        if feature and fm.get("status") == "done":
+        if workitem and fm.get("status") == "done":
             kinds = {e["kind"] for e in entries}
             if "metrics" not in kinds:
                 self.err(logp, 1, "a done work item needs a metrics entry")
@@ -546,7 +546,7 @@ class Linter:
             found = [default] if (self.root / default).is_dir() else []
         return [pc.dir_prefix(x) for x in found]
 
-    def branch_feature(self):
+    def branch_workitem(self):
         branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], self.root, check=False) or ""
         m = re.match(rf"^(?:{re.escape(pc.BRANCH_PREFIX)}|pd/)([^/]+)(?:/task-\d+)?$", branch)
         return next((it for it in self.items if it["type"] == pc.WORKITEM and m and it["id"] == m.group(1)), None)
@@ -557,7 +557,7 @@ class Linter:
             self.warn(self.root, 0, "isolation skipped: no source_paths/test_paths, and no src/ or tests/")
             return
         under = lambda f, ps: any(f.startswith(x) for x in ps)
-        feat = self.branch_feature()
+        feat = self.branch_workitem()
         allowed = None
         if feat and (feat["dir"] / "shape.md").is_file():
             design = pc.sections((feat["dir"] / "shape.md").read_text()).get("Design", "")
@@ -619,7 +619,7 @@ class Linter:
 
     def check_risk(self, rng):
         patterns = re.findall(r"^- (security|migration) (path|line): `(.+)`$", RISK_PATTERNS.read_text(), re.M)
-        feat = self.branch_feature()
+        feat = self.branch_workitem()
         tags = set(pc.as_list(((feat or {}).get("fm") or {}).get("risk")))
         diff = pc.git(["diff", "-U0", "--diff-filter=ACMR", rng], self.root)
         added, cur = {}, None
@@ -806,7 +806,7 @@ def build_base(base):
     return code
 
 
-def new_feature(r):
+def new_workitem(r):
     return next((r / ART / "workitems").glob("*-" + pc.slugify("Load the config")))
 
 
@@ -834,13 +834,13 @@ def commit(r, files):
 
 def cases(code):
     f = lambda r: r / F
-    nf = lambda r: new_feature(r)
+    nf = lambda r: new_workitem(r)
     rm_entry = lambda kind: lambda r: rw(f(r) / "log.md", re.search(rf"## [^\n]* {kind}\n(?:[^\n]+\n)*\n?", LOG.format(commit=code)).group(0), "")
     shape_express = "## Requirements\n\nB1: x -> y\n"
     return [
         # (label, mutate, args, kind: error|warn|ok|nowarn, substring)
         ("a clean repository passes", lambda r: None, [], "ok", ""),
-        ("a feature directory has its README", lambda r: (nf(r) / "README.md").unlink(), [], "error", "has no README.md"),
+        ("a work item directory has its README", lambda r: (nf(r) / "README.md").unlink(), [], "error", "has no README.md"),
         ("frontmatter parses", lambda r: rw(f(r) / "README.md", "title: Parse input", "title Parse input"), [], "error", "frontmatter does not parse"),
         ("required fields", lambda r: rw(f(r) / "README.md", "title: Parse input\n", ""), [], "error", "missing required field: title"),
         ("id equals name", lambda r: rw(f(r) / "README.md", "id: 2026-10-14-parse-input", "id: 2026-10-14-parse-inputs"), [], "error", "does not match its name"),
@@ -849,7 +849,7 @@ def cases(code):
         ("phase vocabulary", lambda r: rw(f(r) / "README.md", "phase: finish", "phase: review"), [], "error", "phase: review is not one of"),
         ("mode vocabulary", lambda r: rw(f(r) / "README.md", "mode: standard", "mode: fast"), [], "error", "mode: fast is not one of"),
         ("risk vocabulary", lambda r: rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nrisk: [perf]\n"), [], "error", "risk: perf is not one of"),
-        ("features-only fields", lambda r: rw(r / P, "status: active\n", "status: active\nphase: design\n"), [], "error", "is for work items only"),
+        ("work-item-only fields", lambda r: rw(r / P, "status: active\n", "status: active\nphase: design\n"), [], "error", "is for work items only"),
         ("a roadmap plan may not say done", lambda r: rw(r / P, "status: active", "status: done"), [], "error", "may not say done"),
         ("branch removed at done", lambda r: rw(f(r) / "README.md", "mode: standard\n", "mode: standard\nbranch: workitem/2026-10-14-parse-input\n"), [], "error", "removed at done"),
         ("ids unique", lambda r: (r / ART / "plans" / "2026-10-14-other.md").write_text(ROADMAP.split("roadmap:")[0] + "---\n# x\n\n## Now\n\n## Log\n"), [], "error", "duplicate id 2026-10-14-thin-pd"),
@@ -862,7 +862,7 @@ def cases(code):
         ("cited commits exist", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 note\nCommit: deadbeef1\n"), [], "error", "cited commit deadbeef1"),
         ("goal: line format", lambda r: rw(nf(r) / "README.md", "Created by pd-new.", "goal: x target nowhere session s1"), [], "error", "`goal:` line not"),
         ("run in flight: line format", lambda r: rw(nf(r) / "README.md", "Created by pd-new.", "run in flight: implement-tasks"), [], "error", "`run in flight:` line not"),
-        ("feature README sections", lambda r: add(f(r) / "README.md", "\n## Status\n\nx\n"), [], "error", "exactly ## Now and ## Links"),
+        ("work item README sections", lambda r: add(f(r) / "README.md", "\n## Status\n\nx\n"), [], "error", "exactly ## Now and ## Links"),
         ("one fact, one place", lambda r: rw(f(r) / "shape.md", "## Design\n", "status: active\n\n## Design\n"), [], "error", "outside the frontmatter"),
         ("duplicate contract block", lambda r: add(f(r) / "plan.md", "\n```text\n" + SHAPE.split("```text\n")[1].split("```")[0] + "```\n"), [], "error", "duplicate contract block"),
         ("forbidden files under sop: 1", lambda r: (f(r) / ".meta.json").write_text("{}"), [], "error", "forbidden file"),
@@ -870,7 +870,7 @@ def cases(code):
         ("ticked backlog lines say promoted or dropped", lambda r: add(r / BL, "- [x] 2026-10-14-foo — done\n"), [], "error", "backlog line not"),
         ("backlog ids unique", lambda r: add(r / BL, "- [ ] 2026-10-10-parse-input — again\n"), [], "error", "duplicate backlog id"),
         ("a single-file item ends with ## Log", lambda r: rw(r / P, "\n## Log\n", "\n"), [], "error", "ends with ## Log"),
-        ("branch names the feature", lambda r: rw(nf(r) / "README.md", "branch: workitem/", "branch: feat/"), [], "error", "branch: must be workitem/"),
+        ("branch names the work item", lambda r: rw(nf(r) / "README.md", "branch: workitem/", "branch: feat/"), [], "error", "branch: must be workitem/"),
         ("backlog past 300 lines warns", lambda r: add(r / BL, "".join(f"- [ ] 2026-10-14-item-{i} — x\n" for i in range(300))), [], "warn", "run pd-lint --archive"),
         ("expectation format", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1 empty -> error\n"), [], "error", "expectation not `B<n>:"),
         ("expectation ids unique", lambda r: (nf(r) / "shape.md").write_text("## Requirements\n\nB1: x -> y\nB1: z -> w\n"), [], "error", "duplicate expectation id B1"),
@@ -889,13 +889,13 @@ def cases(code):
         ("a small plan over the cap warns", lambda r: (rw(f(r) / "README.md", "mode: standard", "mode: small"), rw(r / CFG, "sop: 1\n", "sop: 1\nsmall_workitem_tasks: 0\n")), [], "warn", "small_workitem_tasks"),
         ("express mini-spec", lambda r: (rw(nf(r) / "README.md", "mode: standard", "mode: express"), rw(nf(r) / "README.md", "phase: specify", "phase: verify"),
                                          (nf(r) / "shape.md").write_text(shape_express)), [], "error", "phase-gate express"),
-        ("roadmap feature exists", lambda r: rw(r / P, "  - planned: emit", "  - workitem: workitems/2026-10-14-nope\n  - planned: emit"), [], "error", "roadmap work item workitems/2026-10-14-nope does not exist"),
-        ("no feature in two roadmaps", lambda r: (r / ART / "plans" / "2026-10-14-second.md").write_text(ROADMAP.replace("2026-10-14-thin-pd", "2026-10-14-second").replace("emit-output", "other")), [], "error", "is in two roadmaps"),
+        ("roadmap work item exists", lambda r: rw(r / P, "  - planned: emit", "  - workitem: workitems/2026-10-14-nope\n  - planned: emit"), [], "error", "roadmap work item workitems/2026-10-14-nope does not exist"),
+        ("no work item in two roadmaps", lambda r: (r / ART / "plans" / "2026-10-14-second.md").write_text(ROADMAP.replace("2026-10-14-thin-pd", "2026-10-14-second").replace("emit-output", "other")), [], "error", "is in two roadmaps"),
         ("after: names a slug", lambda r: rw(r / P, "after: [parse-input]", "after: [nope]"), [], "error", "after: nope names no item"),
         ("after: has no cycle", lambda r: rw(r / P, "workitems/2026-10-14-parse-input\n", "workitems/2026-10-14-parse-input\n    after: [emit-output]\n"), [], "error", "has a cycle"),
         ("dropped needs a reason", lambda r: rw(r / P, "  - planned: emit", "  - dropped: old-idea\n  - planned: emit"), [], "error", "needs a reason"),
-        ("a dropped feature is abandoned", lambda r: rw(r / P, "  - workitem: workitems/2026-10-14-parse-input\n", "  - dropped: parse-input\n    reason: \"cut\"\n"), [], "error", "must be abandoned first"),
-        ("planned slug already a feature", lambda r: rw(r / P, "  - planned: emit", "  - planned: " + pc.slugify("Load the config") + "\n  - planned: emit"), [], "error", "already exists as a work item"),
+        ("a dropped work item is abandoned", lambda r: rw(r / P, "  - workitem: workitems/2026-10-14-parse-input\n", "  - dropped: parse-input\n    reason: \"cut\"\n"), [], "error", "must be abandoned first"),
+        ("planned slug already a work item", lambda r: rw(r / P, "  - planned: emit", "  - planned: " + pc.slugify("Load the config") + "\n  - planned: emit"), [], "error", "already exists as a work item"),
         ("no HEAD roadmap item removed", lambda r: rw(r / P, "  - planned: emit-output\n    after: [parse-input]\n", ""), [], "error", "items are never deleted"),
         ("entry headings carry the offset", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00 note\nx\n"), [], "error", "entry heading not"),
         ("entry kinds", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 retro\nx\n"), [], "error", "entry kind retro"),
@@ -904,14 +904,14 @@ def cases(code):
         ("capped has its four lists", lambda r: add(f(r) / "log.md", "\n" + CAPPED.replace("Assumptions: none\n", "")), [], "error", "no `Assumptions:` list"),
         ("each follow-up has a backlog line", lambda r: add(f(r) / "log.md", "\n" + CAPPED.replace("Follow-ups: none", "Follow-ups:\n- 2026-10-14-retry")), [], "error", "follow-up 2026-10-14-retry"),
         ("decision answer forms", lambda r: add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 decision\nQ: x?\nA: yes\n"), [], "error", "a decision's answer line"),
-        ("a done feature has metrics", rm_entry("metrics"), [], "error", "needs a metrics entry"),
+        ("a done work item has metrics", rm_entry("metrics"), [], "error", "needs a metrics entry"),
         ("a retro trigger needs retro.md", lambda r: add(f(r) / "log.md", "\n" + CAPPED), [], "error", "retro.md missing"),
         ("no trigger needs finish's note", rm_entry("note"), [], "error", "needs a note entry"),
-        ("a defect on a done feature only warns", lambda r: add(f(r) / "log.md", f"\n## 2026-10-20 10:00+08:00 defect\nFixed by: {code}\n"), [], "warn", "a retro is owed"),
+        ("a defect on a done work item only warns", lambda r: add(f(r) / "log.md", f"\n## 2026-10-20 10:00+08:00 defect\nFixed by: {code}\n"), [], "warn", "a retro is owed"),
         ("earlier phases' exit checks", rm_entry("decision"), [], "error", "phase-gate specify"),
         ("a done legacy item is exempt", lambda r: put(r, {f"{ART}/workitems/134-old/README.md": LEGACY}), [], "ok", ""),
-        ("a legacy feature not done warns", lambda r: put(r, {f"{ART}/workitems/134-old/README.md": LEGACY.replace("done", "active")}), [], "warn", "/pd:adopt"),
-        ("an abandoned legacy feature doesn't warn", lambda r: put(r, {f"{ART}/workitems/134-old/README.md": LEGACY.replace("done", "abandoned")}), [], "nowarn", "/pd:adopt"),
+        ("a legacy work item not done warns", lambda r: put(r, {f"{ART}/workitems/134-old/README.md": LEGACY.replace("done", "active")}), [], "warn", "/pd:adopt"),
+        ("an abandoned legacy work item doesn't warn", lambda r: put(r, {f"{ART}/workitems/134-old/README.md": LEGACY.replace("done", "abandoned")}), [], "nowarn", "/pd:adopt"),
         ("--staged lints only staged items", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), add(f(r) / "log.md", "\n## 2026-10-14 17:00+08:00 handoff\nNext: none.\n"),
                                                         pc.git(["add", F], r)), ["--staged"], "ok", ""),
         ("--staged reports a staged item", lambda r: (rw(nf(r) / "README.md", "status: active", "status: bogus"), pc.git(["add", "-A"], r)), ["--staged"], "error", "status: bogus"),
@@ -923,7 +923,7 @@ def cases(code):
         ("a pd-new single-file item passes", lambda r: subprocess.run([str(HERE / "pd-new"), "brainstorm", "Ship it"], cwd=r, check=True, capture_output=True), [], "ok", ""),
         ("a deleted roadmap plan keeps its items", lambda r: (r / P).unlink(), [], "error", "are gone"),
         ("a removed roadmap: field keeps its items", lambda r: rw(r / P, "roadmap:\n  - workitem: workitems/2026-10-14-parse-input\n  - planned: emit-output\n    after: [parse-input]\n", ""), [], "error", "are gone"),
-        ("a done feature isn't re-verified", lambda r: commit(r, {"src/pkg/parse.py": "def parse(text):\n    return []\n"}), [], "ok", ""),
+        ("a done work item isn't re-verified", lambda r: commit(r, {"src/pkg/parse.py": "def parse(text):\n    return []\n"}), [], "ok", ""),
         ("isolation on a task branch", lambda r: (pc.git(["checkout", "-q", "-b", "pd/2026-10-14-parse-input/task-1"], r),
                                                   commit(r, {"src/pkg/io.py": "x = 1\n", "tests/test_io.py": "from pkg.io import x\n"})), ["--isolation", "HEAD~1..HEAD"], "error", "no contract's modules: line"),
         ("a path narrows the run", lambda r: rw(nf(r) / "README.md", "status: active", "status: bogus"), [F], "ok", ""),

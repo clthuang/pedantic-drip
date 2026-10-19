@@ -15,13 +15,13 @@ The main session is the conductor. It owns every decision that needs the user, a
 - **Config:** `.claude/pd.local.md` (`artifacts_root`, `base_branch`, `qa_battery`, the path lists, the budgets).
 
 ## Phase entry
-1. **Resolve the feature:** the `--workitem=<id>` argument, else the checked-out `workitem/<id>` branch, else `pd-status`'s active features. None or several: ask.
+1. **Resolve the work item:** the `--workitem=<id>` argument, else the checked-out `workitem/<id>` branch, else `pd-status`'s active work items. None or several: ask.
 2. **Check out its branch** (the README's `branch:`). If another branch is checked out with changes, ask before switching.
-3. **Read** the README, `## Now` and `pd-status`'s open blockers for the feature before any work.
+3. **Read** the README, `## Now` and `pd-status`'s open blockers for the work item before any work.
 4. **A backward move** sets `phase:` back and appends `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`, committed before the work starts.
 
 ## Phase exit
-1. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh <phase> <feature dir>`. Fix each `GATE FAIL` line and re-run until it passes.
+1. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh <phase> <work item dir>`. Fix each `GATE FAIL` line and re-run until it passes.
 2. **Move on:** set `phase:` to the next phase, append `phase <from> -> <to>`, and overwrite `## Now` with the next step.
 3. **Commit** the phase's artifacts with `log.md` and the README: `<phase>: <summary>`. The commit hook runs `pd-lint --staged`; fix what it reports, never bypass it.
 4. **Report** one line: the phase, its review and fix cycles, open blockers, the next phase.
@@ -41,7 +41,7 @@ The main session is the conductor. It owns every decision that needs the user, a
 - **A fresh session finding `run in flight:`** relaunches with args re-derived from the files; `implement-tasks` takes the `pd/<id>/task-*` branches as its resume list.
 
 ## Goal runs
-- **`/goal` drives; the `Stop` gate decides.** On start, write `goal: <id> target <phase> session ${CLAUDE_SESSION_ID}` to `## Now`, commit, and print the goal: `/goal pd-status prints feature <id> as <target> with no open blockers, or the user has said to stop`.
+- **`/goal` drives; the `Stop` gate decides.** On start, write `goal: <id> target <phase> session ${CLAUDE_SESSION_ID}` to `## Now`, commit, and print the goal: `/goal pd-status prints workitem <id> as <target> with no open blockers, or the user has said to stop`.
 - **Every hard stop is an AskUserQuestion,** never a question in prose: a merge conflict, a cap, a finding with no testable check, the token cap, no progress, a criterion with no observable outcome, the criteria sign-off.
 - **Content past half a terminal opens in the browser.** When the user must read more than about 20 lines to answer (a long `shape.md`, PRD or report), run `uv run ${CLAUDE_PLUGIN_ROOT}/scripts/pd-html.py <file> --open` first (fix the source for each `pd-html: WARN` line, then render again), name the file in the question, and keep the preview to a summary under 20 lines: the terminal cuts longer previews. Shorter content stays in the question. If the render fails, ask anyway and say so.
 - **At the token cap,** the gate blocks with "budget spent: continue or stop?". Continue is a `decision` entry with `Budget: workitem_token_budget=<current + budget_increment>`.

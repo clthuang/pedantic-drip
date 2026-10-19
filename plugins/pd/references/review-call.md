@@ -21,7 +21,7 @@ One agent call, not a workflow (plan §A4, D14). The conductor makes it at Contr
    | Plan (the test-case review) | `pd:plan-reviewer` |
    | Verify (the code review) | `pd:code-quality-reviewer` |
 
-   A small feature's joint review of contracts and test cases (§A2) is one call carrying both checklists; its fallback is `pd:design-reviewer`.
+   A small work item's joint review of contracts and test cases (§A2) is one call carrying both checklists; its fallback is `pd:design-reviewer`.
 5. **Toggle off goes straight to Claude:** when step 1 reads `DISABLED`, skip step 3; the call is step 4 alone, and the `review` entry names the reviewer with `(codex off)`.
 
 ## The two schemas

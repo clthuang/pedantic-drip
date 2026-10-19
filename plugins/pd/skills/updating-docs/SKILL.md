@@ -6,7 +6,7 @@ description: Documentation sync checklist for plugin component changes, publishi
 # Updating Docs
 
 ## Component sync checklist
-Adding, removing, or renaming a plugin component means updating each line below in the same change. These counts and tables have drifted silently across past features; walk the list rather than guessing which entries moved.
+Adding, removing, or renaming a plugin component means updating each line below in the same change. These counts and tables have drifted silently across past work items; walk the list rather than guessing which entries moved.
 
 - **Repo `README.md`** — skill, agent, and command tables plus their headline counts.
 - **Repo `README_FOR_DEV.md`** — the same tables and counts, plus the hooks table when a hook is added or removed.

@@ -1,5 +1,5 @@
 ---
-description: Execute a feature's plan through the implement-tasks workflow
+description: Execute a work item's plan through the implement-tasks workflow
 argument-hint: "[--workitem=<id>]"
 ---
 

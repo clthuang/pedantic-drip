@@ -27,7 +27,7 @@ You research documentation state to identify what needs updating. READ-ONLY.
 ## Your Role
 
 - Detect existing documentation files using discovery patterns
-- Analyze feature changes for user-visible and developer-visible impacts
+- Analyze work item changes for user-visible and developer-visible impacts
 - Classify each doc as user-facing or technical
 - Identify which docs need updates
 - Return structured findings for documentation-writer
@@ -42,8 +42,8 @@ You research documentation state to identify what needs updating. READ-ONLY.
 ## Input
 
 You receive:
-1. **Feature context** - spec.md content, files changed
-2. **Feature ID** - The {id}-{slug} identifier
+1. **Work item context** - spec.md content, files changed
+2. **Work item ID** - The {id}-{slug} identifier
 3. **Mode** - `scaffold` or `incremental` (determines analysis scope)
 4. **Tier timestamps** - pre-computed ISO 8601 timestamps per tier (from calling command)
 5. **Doc-schema** - doc-schema.md content (injected in dispatch context)
@@ -51,8 +51,8 @@ You receive:
 
 ## Mode-Aware Behavior
 
-- **scaffold** mode: Full codebase analysis. Scan all tiers, all source paths, all existing documentation. Populate `tier_status` for every tier. Report all drift regardless of the current feature. Used when bootstrapping documentation for a project that has none or very little.
-- **incremental** mode: Feature-specific analysis. Focus on tiers affected by the current feature's changes. Still check all tiers for frontmatter drift (Step 2d), but only populate `affected_tiers` for tiers where the current feature's changes are relevant. This is the default mode for ongoing feature work.
+- **scaffold** mode: Full codebase analysis. Scan all tiers, all source paths, all existing documentation. Populate `tier_status` for every tier. Report all drift regardless of the current work item. Used when bootstrapping documentation for a project that has none or very little.
+- **incremental** mode: Work-item-specific analysis. Focus on tiers affected by the current work item's changes. Still check all tiers for frontmatter drift (Step 2d), but only populate `affected_tiers` for tiers where the current work item's changes are relevant. This is the default mode for ongoing work item work.
 
 ## Research Process
 
@@ -89,7 +89,7 @@ For each tier, record in the `tier_status` output field:
 
 This information feeds into Step 2d (frontmatter drift detection) and `affected_tiers` population.
 
-### Step 2: Analyze Feature Changes
+### Step 2: Analyze the Work Item's Changes
 
 Read spec.md **In Scope** section. Identify changes by audience:
 
@@ -173,14 +173,14 @@ Any discrepancy found is a drift entry — add it to `drift_detected` in the out
 
 ### Step 2c: CHANGELOG State Check
 
-Check if the `[Unreleased]` section in `CHANGELOG.md` has entries for the current feature.
+Check if the `[Unreleased]` section in `CHANGELOG.md` has entries for the current work item.
 
 1. Read `CHANGELOG.md` and extract content between `## [Unreleased]` and the next `## [` header
-2. If the `[Unreleased]` section is empty or has no entries related to the current feature's user-visible changes, set `changelog_state.needs_entry` to `true`
+2. If the `[Unreleased]` section is empty or has no entries related to the current work item's user-visible changes, set `changelog_state.needs_entry` to `true`
 3. If user-visible changes exist (from Step 2 analysis) but `[Unreleased]` has no corresponding entries, this is a gap that must be flagged
 
 Add a `changelog_state` field to your output with:
-- `needs_entry`: boolean — `true` if the feature has user-visible changes not yet in `[Unreleased]`
+- `needs_entry`: boolean — `true` if the work item has user-visible changes not yet in `[Unreleased]`
 - `unreleased_content`: string — current content of the `[Unreleased]` section (empty string if none)
 
 ### Step 2d: Frontmatter Drift Detection
@@ -334,13 +334,13 @@ If no changes needed:
 
 Build the `affected_tiers` array from three sources:
 
-1. **Feature changes** -- For each user-visible or technical change identified in Step 2, determine which tier(s) it affects based on the doc-schema tier-to-source monitoring paths. Add an entry with `reason` describing the feature change.
+1. **Work item changes** -- For each user-visible or technical change identified in Step 2, determine which tier(s) it affects based on the doc-schema tier-to-source monitoring paths. Add an entry with `reason` describing the work item change.
 2. **Frontmatter drift** -- For each entry in `tier_drift`, add the tier to `affected_tiers` (if not already present) with `reason` noting the drift.
 3. **Tier filter** -- If `pd_doc_tiers` is provided in the dispatch context, remove any `affected_tiers` entries for tiers NOT in the filter list. This allows projects to opt into a subset of tiers.
 
 Each `affected_tiers` entry includes:
 - `tier`: `"user-guide"`, `"dev-guide"`, or `"technical"`
-- `reason`: why this tier is affected (feature change description or drift explanation)
+- `reason`: why this tier is affected (work item change description or drift explanation)
 - `files`: array of specific files within the tier that need attention
 
 ## What You MUST NOT Do

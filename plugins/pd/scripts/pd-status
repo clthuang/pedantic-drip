@@ -6,7 +6,7 @@
 
 Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and
 next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and
-done features owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
+done work items owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
 """
 import re
 import sys
@@ -36,11 +36,11 @@ def load_items(art):
     return items
 
 
-def slug_of(feature_id):
-    return feature_id[11:] if ID_RE.match(feature_id) else feature_id
+def slug_of(workitem_id):
+    return workitem_id[11:] if ID_RE.match(workitem_id) else workitem_id
 
 
-def roadmap_lines(plan, features):
+def roadmap_lines(plan, workitems):
     """Progress, next ready item and replan flags (§7.1): computed, never stored."""
     rows = []  # (slug, state, after)
     for entry in plan["fm"].get("roadmap") or []:
@@ -54,7 +54,7 @@ def roadmap_lines(plan, features):
             rows.append((entry["planned"], "planned", after))
         elif WORKITEM in entry:
             fid = Path(entry[WORKITEM]).name
-            f = features.get(fid)
+            f = workitems.get(fid)
             rows.append((slug_of(fid), f["fm"].get("status", "?") if f else "missing", after))
     finished = {s for s, state, _ in rows if state in ("done", "dropped")}
     dropped = {s for s, state, _ in rows if state == "dropped"}
@@ -100,9 +100,9 @@ def report(root):
         fm = i["fm"]
         out.append(f"{fm.get('status') or '?':<10} {fm.get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
 
-    features = {i["id"]: i for i in items if i["type"] == WORKITEM}
+    workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
     blocks = {"Plans": [l for i in items if i["type"] == "plan" and i["fm"].get("roadmap")
-                        for l in roadmap_lines(i, features)]}
+                        for l in roadmap_lines(i, workitems)]}
     blocks["Open blockers"] = [
         f"{i['label']}: {b['ref']} {b['file']}:{b['line']} — {b['claim']}"
         + ("  [rejection proposed — needs the user's decision]" if b["rejection_proposed"] else "")
@@ -129,7 +129,7 @@ def report(root):
 S = "2026-10-14"
 
 
-def _feature(art, id_, status, phase, now="", log="", retro=False):
+def _workitem(art, id_, status, phase, now="", log="", retro=False):
     d = art / "workitems" / id_
     d.mkdir(parents=True)
     (d / "README.md").write_text(f"---\nid: {id_}\ntype: workitem\ntitle: {id_}\nstatus: {status}\n"
@@ -161,12 +161,12 @@ def _self_test():
             + h("12:30", "review") + f"Closes: capped@{S} 11:30+08:00#A1\n"
             + h("12:40", "decision") + f"Q: continue past the cap?\nA (user, verbatim): \"go\"\nanswers: capped@{S} 11:30+08:00\n"
             + h("12:50", "decision") + "Q: pick a port\nA (conductor, on the user's behalf): 8080\n")
-        _feature(art, f"{S}-alpha", "done", "finish", log=h("13:00", "defect") + "Fixed by: abc1234.\n")
-        _feature(art, f"{S}-beta", "active", "implement", now="next: task 2", log=beta_log)
-        _feature(art, f"{S}-kappa", "active", "specify")
-        _feature(art, f"{S}-gamma", "blocked", "design", now="waiting on the API owner")
-        _feature(art, f"{S}-delta", "abandoned", "specify")
-        _feature(art, f"{S}-omega", "done", "finish", log=h("13:00", "capped") + "Deferred: none\n", retro=True)
+        _workitem(art, f"{S}-alpha", "done", "finish", log=h("13:00", "defect") + "Fixed by: abc1234.\n")
+        _workitem(art, f"{S}-beta", "active", "implement", now="next: task 2", log=beta_log)
+        _workitem(art, f"{S}-kappa", "active", "specify")
+        _workitem(art, f"{S}-gamma", "blocked", "design", now="waiting on the API owner")
+        _workitem(art, f"{S}-delta", "abandoned", "specify")
+        _workitem(art, f"{S}-omega", "done", "finish", log=h("13:00", "capped") + "Deferred: none\n", retro=True)
         (art / "plans").mkdir()
         (art / "plans" / f"{S}-road.md").write_text(
             f"---\nid: {S}-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n"
@@ -193,7 +193,7 @@ def _self_test():
         c.check("A (conductor, on the user's behalf): 8080" in out and "A (conductor): reject" not in out,
                 "on-behalf decisions listed")
         c.check(f"workitems/{S}-alpha: defect" in out and f"workitems/{S}-omega" not in out.split("Retros owed")[-1],
-                "a done feature with a trigger and no retro.md owes a retro")
+                "a done work item with a trigger and no retro.md owes a retro")
         old = make_repo(Path(t) / "old")
         (old / "docs" / "features" / "001-x").mkdir(parents=True)
         c.check(report(old).startswith("run /pd:adopt"), "an unadopted project says run /pd:adopt")

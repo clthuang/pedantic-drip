@@ -1,5 +1,5 @@
 ---
-description: Write a feature's plan.md — waves, tasks and their test cases, reviewed once
+description: Write a work item's plan.md — waves, tasks and their test cases, reviewed once
 argument-hint: "[--workitem=<id>]"
 ---
 

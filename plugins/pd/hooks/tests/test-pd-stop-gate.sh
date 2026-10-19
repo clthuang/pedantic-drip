@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-pd-stop-gate.sh — the Stop gate fed hook JSON (build-tasks T4.6): when it blocks, when it
-# yields to background work, the stuck question, and the token count per feature and repository.
+# yields to background work, the stuck question, and the token count per work item and repository.
 # Each case asserts the exit code AND the reason only its own path prints.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -30,7 +30,7 @@ hook() {
   printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s","stop_hook_active":%s%s}' \
     "$2" "$1" "$TMP/t-$2.jsonl" "${3:-false}" "$bg"
 }
-# mkrepo <dir> [config lines]: an adopted repo, one pd-new feature, its branch checked out.
+# mkrepo <dir> [config lines]: an adopted repo, one pd-new work item, its branch checked out.
 mkrepo() {
   mkdir -p "$1/.claude"
   ( cd "$1" && git init -q -b main && git config user.email t@t && git config user.name t &&
@@ -107,7 +107,7 @@ STATE_A=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json")
 usage 30 0 0 >> "$TMP/t-S1.jsonl"
 run "$(hook "$A" S1)"
 [ "$(tokens "$STATE_A" tokens)" = 200 ] && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: only new usage is charged: $(cat "$STATE_A")"; }
-# A second session holding the feature's lock: this charge waits for it, so neither is lost.
+# A second session holding the work item's lock: this charge waits for it, so neither is lost.
 python3 - "$STATE_A" <<'PY' &
 import fcntl, json, sys, time
 p = sys.argv[1]
@@ -122,12 +122,12 @@ while [ ! -e "$STATE_A.held" ]; do sleep 0.1; done
 usage 30 0 0 >> "$TMP/t-S1.jsonl"
 run "$(hook "$A" S1)"
 wait "$HOLDER"; rm -f "$STATE_A.held"
-[ "$(tokens "$STATE_A" tokens)" = 1030 ] && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: a charge waits for the feature lock: $(cat "$STATE_A")"; }
+[ "$(tokens "$STATE_A" tokens)" = 1030 ] && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: a charge waits for the work item lock: $(cat "$STATE_A")"; }
 python3 -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); d["calvin_ledger"] = "x.md"; json.dump(d, open(p, "w"))' "$HOME/.claude/pd/gate/S1.json"
 run "$(hook "$A" S1)"
 grep -q '"calvin_ledger": "x.md"' "$HOME/.claude/pd/gate/S1.json" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the session state keeps keys it doesn't own"; }
 
-# Two repositories with the same feature id keep separate totals and budgets.
+# Two repositories with the same work item id keep separate totals and budgets.
 B="$TMP/b"; mkrepo "$B" $'workitem_token_budget: 100\n'
 FB="$B/docs/dev_artifacts/workitems/$FID"
 now "$B" "goal: $FID target finish session S3"

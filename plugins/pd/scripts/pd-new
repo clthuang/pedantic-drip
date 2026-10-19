@@ -86,12 +86,12 @@ def find_plan(art, ref):
     raise Refused(f"no plan found for {ref!r}")
 
 
-def fill_planned(plan, slug, feature_id):
+def fill_planned(plan, slug, workitem_id):
     """The plan's text with its `planned: <slug>` line turned into a `workitem:` line."""
     text = plan.read_text()
     end = text.index("\n---", 4) if text.startswith("---\n") else 0
     new_fm, n = re.subn(rf"^(\s*)- planned:\s*{re.escape(slug)}[ \t]*(#.*)?$",
-                        rf"\1- {WORKITEM}: {TYPE_DIRS[WORKITEM]}/{feature_id}", text[:end], flags=re.M)
+                        rf"\1- {WORKITEM}: {TYPE_DIRS[WORKITEM]}/{workitem_id}", text[:end], flags=re.M)
     if n != 1:
         raise Refused(f"{plan.name} has no roadmap line `planned: {slug}`")
     return new_fm + text[end:]
@@ -148,15 +148,15 @@ def create(root, item_type, title, origin=None, mode=None, plan_slug=None):
     elif origin and not (art / origin).exists():
         raise Refused(f"--from {origin} does not exist under {art}")
     issue, note = make_issue(cfg, item_type, title, f"{art.relative_to(root)}/{rel}")
-    feature = item_type == WORKITEM
+    workitem = item_type == WORKITEM
     mode = mode or "standard"
     values = {"id": item_id, "type": item_type, "title": title, "status": "active",
-              "phase": ("implement" if mode == "express" else "specify") if feature else "",
-              "mode": mode if feature else "", "branch": f"{BRANCH_PREFIX}{item_id}" if feature else "",
+              "phase": ("implement" if mode == "express" else "specify") if workitem else "",
+              "mode": mode if workitem else "", "branch": f"{BRANCH_PREFIX}{item_id}" if workitem else "",
               "origin": origin or "", "risk": "", "issue": issue,
               "now": "Created by pd-new." + (f" {note}" if note else "")}
-    readme = render((TEMPLATES / "README.md").read_text(), values, single_file=not feature)
-    if feature:
+    readme = render((TEMPLATES / "README.md").read_text(), values, single_file=not workitem)
+    if workitem:
         target.mkdir(parents=True)
         (target / "README.md").write_text(readme)
         (target / "log.md").write_text(render((TEMPLATES / "log.md").read_text(), values))
@@ -218,7 +218,7 @@ def self_test():
         r = run("workitem", "A Quick Fix of the Flaky UI PID File Test")
         fid = f"{today}-quick-fix-flaky-ui-pid"
         fdir = art / "workitems" / fid
-        c.check(r.returncode == 0 and fdir.is_dir(), f"feature created at workitems/{fid} ({r.stderr.strip()})")
+        c.check(r.returncode == 0 and fdir.is_dir(), f"work item created at workitems/{fid} ({r.stderr.strip()})")
         c.check(ID_RE.match(fid) is not None and fdir.name.startswith(today), "id is YYYY-MM-DD-<slug>")
         # collisions
         before = (fdir / "README.md").read_text()
@@ -227,13 +227,13 @@ def self_test():
                 "same-day same-slug refused")
         # the four item types
         f = fm(fdir / "README.md")
-        c.check(f["id"] == fid and f["type"] == "workitem" and f["status"] == "active", "feature frontmatter")
+        c.check(f["id"] == fid and f["type"] == "workitem" and f["status"] == "active", "work item frontmatter")
         c.check(f["phase"] == "specify" and f["mode"] == "standard" and f["branch"] == f"workitem/{fid}",
-                "feature phase, mode and branch")
+                "work item phase, mode and branch")
         text = (fdir / "README.md").read_text()
         c.check("{{" not in text and "# workitems only" not in text and "origin" not in f and "issue" not in f,
                 "placeholders filled, comments stripped, empty optional fields dropped")
-        c.check("## Now" in text and "## Links" in text and (fdir / "log.md").is_file(), "feature README and log.md")
+        c.check("## Now" in text and "## Links" in text and (fdir / "log.md").is_file(), "work item README and log.md")
         for kind, title in (("brainstorm", "Better onboarding"), ("rca", "Crash #12: empty input"),
                             ("plan", "Thin pd")):
             r = run(kind, title)
@@ -243,19 +243,19 @@ def self_test():
                 f, body, _ = split_frontmatter(p.read_text())
                 c.check(f["id"] == p.stem and f["type"] == kind and f["title"] == title,
                         f"{kind} frontmatter, title round-trips")
-                c.check(not {"phase", "mode", "branch"} & set(f), f"{kind} has no feature-only fields")
+                c.check(not {"phase", "mode", "branch"} & set(f), f"{kind} has no work item-only fields")
                 c.check("## Now" in body and body.rstrip().endswith("## Log") and "log.md" not in body,
                         f"{kind} has ## Now and a final ## Log")
         r = run("workitem", "Express fix", "--mode", "express")
         c.check(fm(art / "workitems" / f"{today}-express-fix" / "README.md")["phase"] == "implement",
-                "an express feature starts at implement")
+                "an express work item starts at implement")
         # --from sets origin
         bs = f"brainstorms/{today}-better-onboarding.md"
         r = run("workitem", "Onboarding wizard", "--from", bs)
         c.check(r.returncode == 0 and fm(art / "workitems" / f"{today}-onboarding-wizard" / "README.md")["origin"] == bs,
                 "--from sets origin")
         c.check(run("workitem", "Ghost", "--from", "brainstorms/nope.md").returncode == 1, "--from must exist")
-        # --plan turns the planned line into a feature line
+        # --plan turns the planned line into a work item line
         plan = art / "plans" / "2026-01-01-roadmap.md"
         plan.write_text("---\nid: 2026-01-01-roadmap\ntype: plan\ntitle: R\nstatus: active\nroadmap:\n"
                         "  - planned: pd-lint\n  - planned: pd-adopt   # later\n    after: [pd-lint]\n---\n# R\n")
@@ -263,7 +263,7 @@ def self_test():
         road = fm(plan)["roadmap"]
         c.check(r.returncode == 0 and (art / "workitems" / f"{today}-pd-adopt").is_dir(), "--plan creates <date>-<slug>")
         c.check(road == [{"planned": "pd-lint"}, {"workitem": f"workitems/{today}-pd-adopt", "after": ["pd-lint"]}],
-                "--plan turns the planned line into a feature line, keeping after:")
+                "--plan turns the planned line into a work item line, keeping after:")
         c.check(run("workitem", "--plan", "2026-01-01-roadmap", "nosuch", "X").returncode == 1,
                 "--plan refuses a slug with no planned line")
         # pd-new backlog, and promoting from it

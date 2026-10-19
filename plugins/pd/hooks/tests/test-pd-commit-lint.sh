@@ -14,7 +14,7 @@ ok() { PASSED=$((PASSED + 1)); }
 bad() { FAILED=$((FAILED + 1)); echo "FAIL: $1"; }
 hook_json() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$1" "$2"; }
 
-# An adopted fixture repo with one feature made by pd-new, committed.
+# An adopted fixture repo with one work item made by pd-new, committed.
 R="$TMP/my repo"
 mkdir -p "$R/.claude"
 ( cd "$R" && git init -q -b main && git config user.email t@t && git config user.name t &&

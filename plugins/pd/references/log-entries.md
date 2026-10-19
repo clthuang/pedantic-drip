@@ -1,6 +1,6 @@
 # `log.md` entry shapes
 
-One block per entry kind (plan Part B §6). A feature's entries go in its `log.md`; a single-file item's go under its `## Log` section, which is the file's last section. `pd-lint`, `pd-status` and `phase-gate.sh` parse these shapes; change them here first.
+One block per entry kind (plan Part B §6). A work item's entries go in its `log.md`; a single-file item's go under its `## Log` section, which is the file's last section. `pd-lint`, `pd-status` and `phase-gate.sh` parse these shapes; change them here first.
 
 ## The rules every entry follows
 
@@ -17,7 +17,7 @@ One block per entry kind (plan Part B §6). A feature's entries go in its `log.m
 ## The kinds
 
 ### decision
-A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`. A "continue" at the token cap raises the feature's budget with `Budget: workitem_token_budget=<n>` (the latest such line counts).
+A ruling. The answer line is `A (user, verbatim): "<quote>"`, `A (conductor): <ruling>`, or `A (conductor, on the user's behalf): <ruling>` in a print-mode run. Criteria's sign-off asks exactly `Q: criteria signed off?`. A decision answering a cap stop adds `answers: capped@<YYYY-MM-DD> <HH:MM±hh:mm>`. A "continue" at the token cap raises the work item's budget with `Budget: workitem_token_budget=<n>` (the latest such line counts).
 
 ```markdown
 ## 2026-10-14 09:12+08:00 decision
@@ -88,7 +88,7 @@ Next: run /pd:verify. Open: R1 waits on the user's ruling.
 ```
 
 ### replan
-At finish, for a feature listed in a roadmap: the plan still holds, or what changed (the roadmap edit lands in the same commit).
+At finish, for a work item listed in a roadmap: the plan still holds, or what changed (the roadmap edit lands in the same commit).
 
 ```markdown
 ## 2026-10-14 18:30+08:00 replan
@@ -96,7 +96,7 @@ Plan: plans/2026-10-14-thin-pd.md — still holds.
 ```
 
 ### metrics
-Written once, at finish: the mode, and the `Stop` gate's token total for the feature.
+Written once, at finish: the mode, and the `Stop` gate's token total for the work item.
 
 ```markdown
 ## 2026-10-14 19:00+08:00 metrics
@@ -104,7 +104,7 @@ Mode: standard. Tokens: 1210000 (source: ~/.claude/pd/gate/0b5e….json).
 ```
 
 ### defect
-A defect found after the merge, naming the commit that fixed it. On a done feature, a retro is owed until `retro.md` exists.
+A defect found after the merge, naming the commit that fixed it. On a done work item, a retro is owed until `retro.md` exists.
 
 ```markdown
 ## 2026-10-20 10:00+08:00 defect
@@ -112,7 +112,7 @@ The parser accepted a trailing comma. Fixed by: 9f2c1a7e.
 ```
 
 ### note
-Anything else worth keeping: a flaky test, a small feature's overrun, finish's no-retro note.
+Anything else worth keeping: a flaky test, a small work item's overrun, finish's no-retro note.
 
 ```markdown
 ## 2026-10-14 13:00+08:00 note

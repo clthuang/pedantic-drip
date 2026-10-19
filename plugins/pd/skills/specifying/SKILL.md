@@ -1,6 +1,6 @@
 ---
 name: specifying
-description: The Criteria stage's playbook — shape.md ## Requirements as observable expectations, calvin cycles through calvin-runner, and the user's sign-off; also an express feature's mini-spec. Use when a feature is in phase specify, or an express feature needs its mini-spec.
+description: The Criteria stage's playbook — shape.md ## Requirements as observable expectations, calvin cycles through calvin-runner, and the user's sign-off; also an express work item's mini-spec. Use when a work item is in phase specify, or an express work item needs its mini-spec.
 ---
 
 # Specifying
@@ -9,18 +9,18 @@ The Criteria stage (`phase: specify`) removes one unknown: how will anyone know 
 
 ## Steps
 
-1. **Phase entry** per `workflow-transitions`. A feature that doesn't exist yet, promoted work included, is created first through `/pd:create-workitem` (`--from <brainstorm or rca>`, or `--plan <plan> <slug>` for a roadmap's `planned:` line), which sets its depth and creates its branch.
+1. **Phase entry** per `workflow-transitions`. A work item that doesn't exist yet, promoted work included, is created first through `/pd:create-workitem` (`--from <brainstorm or rca>`, or `--plan <plan> <slug>` for a roadmap's `planned:` line), which sets its depth and creates its branch.
 2. **A direct request** first gets Clarify's two questions, through AskUserQuestion: is this the right problem, and what would success look like?
 3. **Write `## Requirements`** in `{pd_artifacts_root}/workitems/<id>/shape.md` from the PRD, RCA report or request, using `${CLAUDE_PLUGIN_ROOT}/templates/shape.md`. The bar is below. Ask the user only about contradictions and decisions the source can't answer.
 4. **Calvin cycles,** up to three (below).
 5. **Sign-off:** ask through AskUserQuestion whether the criteria are signed off, showing the expectations (past half a terminal, `shape.md` opens in the browser per `workflow-transitions`). Write the answer as a `decision` entry: `Q: criteria signed off?` and `A (user, verbatim): "<quote>"`. This is a hard stop in every mode: never answered on the user's behalf. A criterion nobody can state as an observable outcome is a hard stop too.
-6. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh specify <feature dir>` (the expectations' format, and the user's sign-off). Then phase exit per `workflow-transitions` (`phase specify -> design`).
+6. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh specify <work item dir>` (the expectations' format, and the user's sign-off). Then phase exit per `workflow-transitions` (`phase specify -> design`).
 
 **Entries this stage writes:** `review` (one per calvin cycle), `decision` (the sign-off, and each user ruling), `capped` (at the cap), `phase`.
 
 ## Calvin cycles
 
-1. **Name the ledger:** `agent_sandbox/<YYYY-MM-DD>/<feature id>/calvin-cycle-<n>.md`.
+1. **Name the ledger:** `agent_sandbox/<YYYY-MM-DD>/<id>/calvin-cycle-<n>.md`.
 2. **Record it before the dispatch,** in the session's gate state file, keeping its other keys (the agent write hook allows `calvin-runner` that one path and nothing else):
 
    ```bash
@@ -40,7 +40,7 @@ If `calvin-runner` returns `calvin skill not installed`, tell the user (`/pd:ini
 
 ## Express: the mini-spec
 
-For `mode: express` (a small diff on a known pattern, provable by one command), `## Requirements` holds only the mini-spec: one or more expectation lines, and one task block in `plan.md`'s task format (`${CLAUDE_PLUGIN_ROOT}/templates/plan.md`) with `files:`, `uses:`, `command:` (writing its `junit:` path) and test cases. Cite the existing example of the same change shape by path. No calvin and no sign-off: run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh express <feature dir>`, then move `phase:` to `implement` per `workflow-transitions` (Triage has already recorded each skipped stage).
+For `mode: express` (a small diff on a known pattern, provable by one command), `## Requirements` holds only the mini-spec: one or more expectation lines, and one task block in `plan.md`'s task format (`${CLAUDE_PLUGIN_ROOT}/templates/plan.md`) with `files:`, `uses:`, `command:` (writing its `junit:` path) and test cases. Cite the existing example of the same change shape by path. No calvin and no sign-off: run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh express <work item dir>`, then move `phase:` to `implement` per `workflow-transitions` (Triage has already recorded each skipped stage).
 
 ## The bar for `## Requirements`
 
@@ -52,6 +52,6 @@ For `mode: express` (a small diff on a known pattern, provable by one command), 
 
 **Edge cases, named, not gestured at.** Invalid input, absent or empty state, concurrent access, and the failure mode of each external dependency, each with its expected behavior, as an expectation where it is observable. Complex branching goes in a truth table instead of a linear list.
 
-**Must-nots:** what the feature must not do, each with the harm it avoids.
+**Must-nots:** what the work item must not do, each with the harm it avoids.
 
 **What, never how.** Anything verifiable only by reading a diff belongs in `## Design`. Where a requirement names test symbols or existing test classes, say whether the scope is production behavior or test-only hardening.

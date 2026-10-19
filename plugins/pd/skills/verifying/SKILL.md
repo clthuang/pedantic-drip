@@ -1,6 +1,6 @@
 ---
 name: verifying
-description: The Verify stage's playbook — launch the verify-change workflow (the code review beside QA, then bounded fix cycles), record its review and qa entries, and settle rejections and risk tags with the user. Use when a feature is in phase verify, or when reviewing a feature's whole branch diff.
+description: The Verify stage's playbook — launch the verify-change workflow (the code review beside QA, then bounded fix cycles), record its review and qa entries, and settle rejections and risk tags with the user. Use when a work item is in phase verify, or when reviewing a work item's whole branch diff.
 ---
 
 # Verifying
@@ -9,15 +9,15 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
 
 ## Steps
 
-1. **Phase entry** per `workflow-transitions`, on the feature branch with a clean tree.
+1. **Phase entry** per `workflow-transitions`, on the work item's branch with a clean tree.
 2. **Derive the args** for `verify-change` from the committed files:
    - `workitem_id`; `shape` and `plan` (the files' paths); `base`: `git merge-base HEAD <base_branch>`;
    - `checklist`: this skill's `## Review checklist` section, verbatim;
-   - `qa_battery` from `.claude/pd.local.md` (none set: stop and ask the user to set it; `phase-gate.sh verify` fails without it), plus the migration's up-and-down commands on a fixture database when the feature has `risk: migration`;
-   - `log`: the feature's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from the `run implement-tasks` entries (all of them: a resumed run lists only the tasks it landed), so the args stay small enough to pass inline;
-   - `assumptions`: this feature's open assumptions from `pd-status`;
+   - `qa_battery` from `.claude/pd.local.md` (none set: stop and ask the user to set it; `phase-gate.sh verify` fails without it), plus the migration's up-and-down commands on a fixture database when the work item has `risk: migration`;
+   - `log`: the work item's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from the `run implement-tasks` entries (all of them: a resumed run lists only the tasks it landed), so the args stay small enough to pass inline;
+   - `assumptions`: this work item's open assumptions from `pd-status`;
    - `codex`: `false` when the user's CLAUDE.md says `**Codex reviewer: DISABLED**`; `codex_flags`: the `--model <m> --effort <e>` its `**Codex reviewer model:**` line names (`references/review-call.md`);
-   - `workflow_output_cap` from the config, raised by any `decision` entry that raised it for this feature.
+   - `workflow_output_cap` from the config, raised by any `decision` entry that raised it for this work item.
 3. **Launch `verify-change`** per `workflow-transitions` "Workflow runs". Its first QA run also runs the risk scan and the isolation check over `<base>..HEAD` (`pd-lint --risk`, `pd-lint --isolation`), once; their errors and unmatched risk signals come back as `qa` issues. Don't run them again.
 4. **Record the result** (`references/workflow-results.md`, `verify-change`) in the shapes of `references/log-entries.md`, then clear `run in flight:` and commit:
    - **`run`:** the launch, with `Agents:`, `Tokens:` and the fix `cycles`;
@@ -33,9 +33,9 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
 6. **Risk tags.** A risk signal with no matching tag: decide the tag with the user (a `decision` entry), then set `risk:` in the README. The question quotes each signal's hit verbatim, with its file:line from the `qa` issue, never a summary of what it might mean.
    - **`security`:** the security review at finish becomes mandatory (`finishing-branch`).
    - **`migration`:** re-run this stage with the migration's up and down in the battery.
-   - **On a small or express feature,** a tag set here moves the feature back: express to `specify`, small to `design`, each then at standard depth (`phase verify -> <stage> (back)`).
+   - **On a small or express work item,** a tag set here moves the work item back: express to `specify`, small to `design`, each then at standard depth (`phase verify -> <stage> (back)`).
    - **Only the user clears a tag,** with a `decision` entry.
-7. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh verify <feature dir>`: every `qa_battery` command passing in the latest `qa` entry, no source, test or fixture change since its commit, no open blocker. Then phase exit per `workflow-transitions` (`phase verify -> finish`).
+7. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh verify <work item dir>`: every `qa_battery` command passing in the latest `qa` entry, no source, test or fixture change since its commit, no open blocker. Then phase exit per `workflow-transitions` (`phase verify -> finish`).
 
 **Entries this stage writes:** `run`, `review`, `qa`, `note` (flakes), `decision` (rulings, accepted rejections, tags), `capped` (at the cap), `phase`.
 

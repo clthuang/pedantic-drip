@@ -51,7 +51,7 @@ RUN='## 2026-10-14 14:00+08:00 run implement-tasks — finished
 - task 1: merged, proof pass, cycles 0, branch pd/x/task-1
 - task 2: merged, proof pass, cycles 1, branch pd/x/task-2'
 
-feature() {  # feature <name> <shape body> [log body] — a feature dir with README, shape.md, log.md
+workitem() {  # workitem <name> <shape body> [log body] — a work item dir with README, shape.md, log.md
   local d="$TMP/$1"; mkdir -p "$d"
   printf -- '---\nid: %s\ntype: workitem\nstatus: active\nmode: standard\n---\n# x\n' "$1" > "$d/README.md"
   printf '%s\n' "$2" > "$d/shape.md"
@@ -60,35 +60,35 @@ feature() {  # feature <name> <shape body> [log body] — a feature dir with REA
 }
 
 # --- specify: the sign-off decision entry, and the expectation format ----------------
-expect 0 "specify passes" specify "$(feature s-ok "$REQS" "$SIGNOFF")"
-expect 1 "specify fails without the sign-off" specify "$(feature s-nosign "$REQS")"
+expect 0 "specify passes" specify "$(workitem s-ok "$REQS" "$SIGNOFF")"
+expect 1 "specify fails without the sign-off" specify "$(workitem s-nosign "$REQS")"
 expect 1 "specify fails when the sign-off is the conductor's" specify \
-  "$(feature s-cond "$REQS" "${SIGNOFF/A (user, verbatim): \"Yes.\"/A (conductor): yes}")"
-expect 1 "specify fails on a malformed expectation" specify "$(feature s-bad "$REQS
+  "$(workitem s-cond "$REQS" "${SIGNOFF/A (user, verbatim): \"Yes.\"/A (conductor): yes}")"
+expect 1 "specify fails on a malformed expectation" specify "$(workitem s-bad "$REQS
 B3: no arrow here" "$SIGNOFF")"
-expect 1 "specify fails with no expectation" specify "$(feature s-none "## Requirements
+expect 1 "specify fails with no expectation" specify "$(workitem s-none "## Requirements
 
 Goals only." "$SIGNOFF")"
-expect 1 "specify fails on a duplicate expectation id" specify "$(feature s-dup "$REQS
+expect 1 "specify fails on a duplicate expectation id" specify "$(workitem s-dup "$REQS
 B2: again -> twice" "$SIGNOFF")"
 
 # --- design: the diagram and ### Test strategy ---------------------------------------
-expect 0 "design passes" design "$(feature d-ok "$REQS
+expect 0 "design passes" design "$(workitem d-ok "$REQS
 
 $DESIGN")"
-expect 1 "design fails without the diagram" design "$(feature d-nomer "$REQS
+expect 1 "design fails without the diagram" design "$(workitem d-nomer "$REQS
 
 ${DESIGN/mermaid/text}")"
-expect 1 "design fails without ### Test strategy" design "$(feature d-nots "$REQS
+expect 1 "design fails without ### Test strategy" design "$(workitem d-nots "$REQS
 
 ${DESIGN/Test strategy/Notes}")"
-expect 1 "design fails without ## Design" design "$(feature d-none "$REQS")"
+expect 1 "design fails without ## Design" design "$(workitem d-none "$REQS")"
 
 # --- create-plan ----------------------------------------------------------------------
-d=$(feature p-ok "$REQS"); printf -- '---\nfrom_shape: x\n---\n## Plan\n\n### Wave 1\n\n%s\n' "$TASKS" > "$d/plan.md"
+d=$(workitem p-ok "$REQS"); printf -- '---\nfrom_shape: x\n---\n## Plan\n\n### Wave 1\n\n%s\n' "$TASKS" > "$d/plan.md"
 expect 0 "create-plan passes" create-plan "$d"
-expect 1 "create-plan fails without plan.md" create-plan "$(feature p-none "$REQS")"
-d=$(feature p-nosec "$REQS"); printf '# Plan\n' > "$d/plan.md"
+expect 1 "create-plan fails without plan.md" create-plan "$(workitem p-none "$REQS")"
+d=$(workitem p-nosec "$REQS"); printf '# Plan\n' > "$d/plan.md"
 expect 1 "create-plan fails without ## Plan" create-plan "$d"
 
 # --- implement: a run entry recording every plan task merged with its proof passing ------
@@ -100,19 +100,19 @@ $TASKS
 
 #### Task 2: io
 - files: src/io.py"
-d=$(feature i-ok "$REQS" "$RUN"); printf '%s\n' "$TWO" > "$d/plan.md"
+d=$(workitem i-ok "$REQS" "$RUN"); printf '%s\n' "$TWO" > "$d/plan.md"
 # A staged log.md or README change passes: the old entry-time dirty-tree check is gone (codex C6).
 ( cd "$d" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -qm x &&
   echo "## Now" >> README.md && echo "" >> log.md && git add README.md log.md )
 expect 0 "implement passes, with log.md and README changes staged" implement "$d"
-d=$(feature i-miss "$REQS" "${RUN%$'\n'- task 2*}"); printf '%s\n' "$TWO" > "$d/plan.md"
+d=$(workitem i-miss "$REQS" "${RUN%$'\n'- task 2*}"); printf '%s\n' "$TWO" > "$d/plan.md"
 expect 1 "implement fails when a task has no merged run line" implement "$d"
-d=$(feature i-fail "$REQS" "${RUN/task 2: merged, proof pass/task 2: failed}"); printf '%s\n' "$TWO" > "$d/plan.md"
+d=$(workitem i-fail "$REQS" "${RUN/task 2: merged, proof pass/task 2: failed}"); printf '%s\n' "$TWO" > "$d/plan.md"
 expect 1 "implement fails when a task's proof didn't pass" implement "$d"
 
 # --- verify: a qa entry, every qa_battery command passing at its commit, nothing changed since,
 # no open blockers ----------------------------------------------------------------------
-repo() {  # repo <name> <qa_battery yaml lines> — a git repo with src/, tests/ and one feature
+repo() {  # repo <name> <qa_battery yaml lines> — a git repo with src/, tests/ and one work item
   local r="$TMP/$1"; mkdir -p "$r/.claude" "$r/src" "$r/tests" "$r/docs/dev_artifacts/workitems/f"
   printf -- '---\nartifacts_root: docs/dev_artifacts\nsource_paths: [src/]\ntest_paths: [tests/]\n%s---\n' "$2" > "$r/.claude/pd.local.md"
   echo 'x = 1' > "$r/src/a.py"; echo 'def test(): pass' > "$r/tests/test_a.py"
@@ -161,30 +161,30 @@ Deferred: none
 Follow-ups: none
 Decisions: none
 Assumptions: none'
-expect 0 "finish passes with no trigger and no retro.md" finish "$(feature f-none "$REQS" "$SIGNOFF")"
-expect 1 "finish fails on a trigger without retro.md" finish "$(feature f-trig "$REQS" "$CAPPED")"
-d=$(feature f-retro "$REQS" "$CAPPED"); echo "# retro" > "$d/retro.md"
+expect 0 "finish passes with no trigger and no retro.md" finish "$(workitem f-none "$REQS" "$SIGNOFF")"
+expect 1 "finish fails on a trigger without retro.md" finish "$(workitem f-trig "$REQS" "$CAPPED")"
+d=$(workitem f-retro "$REQS" "$CAPPED"); echo "# retro" > "$d/retro.md"
 expect 0 "finish passes on a trigger with retro.md" finish "$d"
 
 # --- express: the mini-spec task block ----------------------------------------------------
 MINI="$REQS
 
 $TASKS"
-expect 0 "express passes" express "$(feature e-ok "$MINI")"
-expect 1 "express fails with no task block" express "$(feature e-none "$REQS")"
-expect 1 "express fails with no expectation" express "$(feature e-nob "## Requirements
+expect 0 "express passes" express "$(workitem e-ok "$MINI")"
+expect 1 "express fails with no task block" express "$(workitem e-none "$REQS")"
+expect 1 "express fails with no expectation" express "$(workitem e-nob "## Requirements
 
 $TASKS")"
-expect 1 "express fails when the task has no command" express "$(feature e-nocmd "${MINI/- command:*xml\`/}")"
-d=$(feature e-impl "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
+expect 1 "express fails when the task has no command" express "$(workitem e-nocmd "${MINI/- command:*xml\`/}")"
+d=$(workitem e-impl "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
 expect 0 "implement on mode: express takes its task from shape.md" implement "$d"
-d=$(feature e-quote "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: "express"/' "$d/README.md"
+d=$(workitem e-quote "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: "express"/' "$d/README.md"
 expect 0 "implement on a quoted mode: \"express\" takes its task from shape.md" implement "$d"
 # A log checker that exits 0 without finishing (a broken import, an empty heredoc) fails the gate.
 mkdir -p "$TMP/broken" && cp "$GATE" "$TMP/broken/" && echo 'import sys; sys.exit(0)' > "$TMP/broken/pd_common.py"
-d=$(feature e-crash "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
+d=$(workitem e-crash "$MINI" "${RUN%$'\n'- task 2*}"); perl -pi -e 's/mode: standard/mode: express/' "$d/README.md"
 GATE="$TMP/broken/phase-gate.sh" expect 1 "a log checker that never finishes fails the gate" implement "$d"
-expect 1 "implement on an express feature still needs the run line" implement "$(feature e-impl2 "$MINI")" --express
+expect 1 "implement on an express work item still needs the run line" implement "$(workitem e-impl2 "$MINI")" --express
 
 echo "test-phase-gate: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

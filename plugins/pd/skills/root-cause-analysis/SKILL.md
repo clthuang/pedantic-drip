@@ -69,7 +69,7 @@ Then the rca item takes `status: done` and a `note` entry naming where the fix w
 - **MUST** reproduce before analyzing, or record the failed attempts.
 - **MUST** explore at least three hypothesis paths.
 - **MUST NOT** modify production code: `agent_sandbox/` and the rca item only.
-- **MUST NOT** propose fixes in the report: causes only; the fix is a feature.
+- **MUST NOT** propose fixes in the report: causes only; the fix is a work item.
 
 ## Related
 - [systematic-debugging](../systematic-debugging/SKILL.md): the Iron Law ("NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST") and the 3-fix rule.

@@ -1,6 +1,6 @@
 ---
 name: planning
-description: The Plan stage's playbook — plan.md's waves of tasks, each with its contract, files, uses:, proving command and test cases, reviewed by the test-case review. Use when a feature is in phase create-plan, or when writing or reviewing `## Plan`.
+description: The Plan stage's playbook — plan.md's waves of tasks, each with its contract, files, uses:, proving command and test cases, reviewed by the test-case review. Use when a work item is in phase create-plan, or when writing or reviewing `## Plan`.
 ---
 
 # Planning
@@ -11,14 +11,14 @@ The Plan stage (`phase: create-plan`) removes one unknown: in what order, and ho
 
 1. **Phase entry** per `workflow-transitions`.
 2. **Write `plan.md`** beside `shape.md`, using `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`, with `from_shape:` set to `git hash-object shape.md`. The bar is the checklist below.
-3. **Check it mechanically:** `pd-lint <feature dir>` (expectation coverage, task fields, JUnit paths, wave bases, disjoint `[parallel-safe]` file sets, `from_shape:`). Fix every error before the review.
+3. **Check it mechanically:** `pd-lint <work item dir>` (expectation coverage, task fields, JUnit paths, wave bases, disjoint `[parallel-safe]` file sets, `from_shape:`). Fix every error before the review.
 4. **The test-case review:** the review call per `${CLAUDE_PLUGIN_ROOT}/references/review-call.md`, with this skill's `## Review checklist` inline, given `shape.md`, `plan.md` and read access to the code. Up to three review-revise cycles:
    - **revise** for each blocker; a finding you can refute at file:line gets a `Rejects:` line instead, and only the user accepts it;
    - **re-review scoped** to the earlier findings and the edit that answered them (`pd-review-filter --range <reviewed commit>..HEAD`);
    - **the loop ends** at the first pass with no blocker. Still open after the third: a `capped` entry, then ask the user.
-5. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh create-plan <feature dir>`, and `pd-lint` clean. Then phase exit per `workflow-transitions` (`phase create-plan -> implement`).
+5. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh create-plan <work item dir>`, and `pd-lint` clean. Then phase exit per `workflow-transitions` (`phase create-plan -> implement`).
 
-**Entries this stage writes:** `review` (one per review call), `decision` (each user ruling, each accepted rejection, a re-confirmed plan), `capped` (at the cap), `note` (a small feature's overrun), `phase`.
+**Entries this stage writes:** `review` (one per review call), `decision` (each user ruling, each accepted rejection, a re-confirmed plan), `capped` (at the cap), `note` (a small work item's overrun), `phase`.
 
 **Small mode:** the joint review made at the end of the `designing` skill covers this plan too; don't make a second call. When the plan has more tasks than `small_workitem_tasks`, `pd-lint` warns: record the overrun as a `note` entry and carry on with the single review.
 
@@ -52,7 +52,7 @@ Add `- proof: green-only (refactor|infra|fixture)` only for a task whose tests c
 - **Non-vacuity:** a case for a new path beside an existing fallback asserts a fact true only on the new path.
 - **Dispatchable tasks:** each has its contract pointer, file set, `uses:`, and a proving command that writes its `junit:` path; a task no command can prove is split or sharpened.
 - **Order:** waves in dependency order; a task's `uses:` modules exist at its wave's base. `[parallel-safe]` only when the task's file set is disjoint from every other parallel task in its wave, and it is big enough for running in parallel to pay.
-- **Shared config:** a task that changes a repo-wide value (a version floor, a pin, a default path) lists every consumer of the old value across the repository (CI, scripts, docs), not only those in the feature's diff.
+- **Shared config:** a task that changes a repo-wide value (a version floor, a pin, a default path) lists every consumer of the old value across the repository (CI, scripts, docs), not only those in the work item's diff.
 - **`green-only` is earned:** the reason is `refactor` (existing tests prove it), `infra` or `fixture`, and true of the task.
 
 A blocker is an item above that the plan fails, or a `B<n>`, edge case or must-not with no faithful case, shown by the case, task or `B<n>` at fault. A "what if" that names none of these is a note. Every finding cites file:line.

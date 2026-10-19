@@ -1,5 +1,5 @@
 ---
-description: Verify a feature's whole change — code review beside QA, then bounded fix cycles
+description: Verify a work item's change — code review beside QA, then bounded fix cycles
 argument-hint: "[--workitem=<id>]"
 ---
 

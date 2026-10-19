@@ -1,6 +1,6 @@
 ---
 name: merger
-description: Lands one finished task branch on the feature branch after checking its proof with pd-proof. Use when the implement-tasks workflow has a task branch to merge.
+description: Lands one finished task branch on the work item's branch after checking its proof with pd-proof. Use when the implement-tasks workflow has a task branch to merge.
 model: sonnet
 effort: medium
 tools: [Bash, Read, Glob, Grep]
@@ -24,7 +24,7 @@ Run each proving command yourself; read only its JUnit XML, through `pd-proof` (
 1. **The first commit holds only test files, plus source additions.** New source files, or lines added to existing ones: on an existing source file, no line changes or goes. Then `pd-lint --isolation <first commit>^..<first commit>`.
 2. **At the first commit, unless the task is `proof: green-only`:** check it out in a detached worktree under `agent_sandbox/`, run the proving command, then `pd-proof first <junit>`. Every test fails as a test, with no load or collection errors. Pass on the `greens` and `skipped` lists by name.
 3. **At HEAD:** run the command, then `pd-proof head <junit> --first <first junit>`. Then check that no commit after the first touches the test files the first commit added or changed (`git diff --name-only <first>..HEAD`).
-4. **Merge** onto the feature branch, in plan order (`git merge --no-ff`). On a conflict, abort the merge and report it: never resolve one.
+4. **Merge** onto the work item's branch, in plan order (`git merge --no-ff`). On a conflict, abort the merge and report it: never resolve one.
 5. **After the merge:** re-run the proving command of every task merged so far, and `pd-lint`. A break fails the task just merged, naming the proof it broke.
 
 **`proof: green-only`** (a refactor, infra or fixture task): skip step 1, step 2 and step 3's test-file check; at HEAD run `pd-proof head <junit>` without `--first`. Steps 4 and 5 stay.
