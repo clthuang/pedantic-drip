@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-Claude Code plugin providing a structured feature development workflow—skills, commands, agents, and hooks that guide methodical development from ideation to implementation.
+Claude Code plugin providing a structured development workflow—skills, commands, agents, and hooks that guide methodical development from ideation to implementation.
 
 ## Key Principles
 
 - **No backward compatibility** - This is private tooling with no external users. Delete old code, don't maintain compatibility shims.
-- **Branches for all modes** - All workflow modes (standard, small, express) create feature branches. Branches are lightweight.
+- **Branches for all modes** - All workflow modes (standard, small, express) create a `workitem/<id>` branch. Branches are lightweight.
 - **Retro before cleanup** - Retrospective runs BEFORE branch deletion so context is still available.
 - **Plugin portability** - Never use hardcoded `plugins/pd/` paths in agent, skill, or command files. Use two-location Glob: primary `~/.claude/plugins/cache/*/pd*/*/...`, fallback `plugins/*/...` (dev workspace). Mark fallback lines with "Fallback" or "dev workspace" so `validate.sh` can distinguish them from violations.
 - **Project-aware design** - pd is used across multiple projects. Paths resolution, configs, and state must be relative to the current project context — never assume a specific project root.
@@ -29,7 +29,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 
 **Plans from any source:** When the user provides a plan (via CC plan mode, pasted in chat, or from a file), always dispatch plan-reviewer before implementing. No hook enforces this since thin pd deleted the ExitPlanMode hook (T2.1); do it by hand for every plan.
 
-**Worktree directory:** `implement-tasks` runs each task in a Claude Code worktree under `.claude/worktrees/` (`isolation: 'worktree'`), branched from the feature branch's HEAD by the `worktree.baseRef: "head"` setting. It is gitignored; Claude Code removes clean ones itself. Never commit inside `.claude/worktrees/` or treat it as source of truth — the merger lands each `pd/<id>/task-<n>` branch on the feature branch.
+**Worktree directory:** `implement-tasks` runs each task in a Claude Code worktree under `.claude/worktrees/` (`isolation: 'worktree'`), branched from the work item's branch HEAD by the `worktree.baseRef: "head"` setting. It is gitignored; Claude Code removes clean ones itself. Never commit inside `.claude/worktrees/` or treat it as source of truth — the merger lands each `pd/<id>/task-<n>` branch on the work item's branch.
 
 **Worktree includes (`.worktreeinclude`):** Projects whose tests need gitignored files (e.g., `.env`, build outputs, local config) list them in a `.worktreeinclude` at the project root (`.gitignore` syntax); Claude Code copies them into every worktree it creates, subagent worktrees included (code.claude.com/docs/en/worktrees). Omit it when tests need no gitignored files.
 
@@ -60,14 +60,14 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Enforced by:* Reviewer-claim verification practice; `pd-lint` catches a duplicated contract block, not a drifted literal.
 *Stays because:* which artifact holds the canonical literal takes judgment.
 
-**Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (the feature's `log.md` entries and git; pre-thin-pd features used `.meta.json` and `.review-history.md`) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
+**Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (the work item's `log.md` entries and git; pre-thin-pd items used `.meta.json` and `.review-history.md`) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
 *Why:* Feature 130's retro briefing carried three source-contradicting figures (an iteration count, a swapped campaign trajectory, a reviewer-breakdown miscount) — the 119 author-restated-literal class, one layer up at the briefing↔artifact boundary. The retro-facilitator caught all three only because it re-derived. Superlative self-labels ("campaign-first", "Nth consecutive") are the same class: before an artifact ships, grep it for EVERY first/only/Nth/consecutive/highest claim and chain-verify each against the prior-retro record — checking one streak is not checking them all (119's battery label, 120's design-gate label, and 126's "first spec-layer self-inflicted" all needed dated corrections; 126's slipped while the battery streak WAS being checked).
 *Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
 *Stays because:* briefings are prose the conductor writes; no check reads them.
 
 **Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `validate.sh`, `scripts/release-pr.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
-*Also-why:* Feature 121's specify iter-1 fix pulled the project-creation command in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of the feature's 10 blockers came from that one unchecked scope-widening.
-*Why:* Feature 118's Python-floor bump left the bootstrap and health-check scripts and CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
+*Also-why:* Feature 121's specify iter-1 fix pulled the project-creation command in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of its 10 blockers came from that one unchecked scope-widening.
+*Why:* Feature 118's Python-floor bump left the bootstrap and health-check scripts and CI enforcing 3.12 — every reviewer was scoped to the work item's diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
 *Enforced by:* `planning`'s review checklist ("Shared config"), which the Plan review applies.
 *Stays because:* the scope pull-in half has no checklist line, and work here doesn't always run through pd's workflow.
 
@@ -156,12 +156,12 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 **Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
 **Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`, still pending here):
-- `artifacts_root` (default: `docs/dev_artifacts`) — root directory for features, plans, brainstorms, rca and backlog items
+- `artifacts_root` (default: `docs/dev_artifacts`) — root directory for work items, plans, brainstorms, rca and backlog items
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
 
 Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{pd_release_script}`.
 
-**Base branch for this repo is `main`** — `base_branch: auto` resolves to it from the remote HEAD. Feature branches merge to `main` through PRs; releases go through `scripts/release-pr.sh`.
+**Base branch for this repo is `main`** — `base_branch: auto` resolves to it from the remote HEAD. Branches merge to `main` through PRs; releases go through `scripts/release-pr.sh`.
 
 **Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/backlog-manual.md](docs/backlog-manual.md) is the historical detail annex for pre-134 items.

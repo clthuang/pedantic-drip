@@ -1,6 +1,6 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # API Reference
@@ -10,10 +10,10 @@ The command-line interfaces of pd's scripts, in `plugins/pd/scripts/`. Each usag
 ## pd-new — create an item
 
 ```
-pd-new <feature|plan|brainstorm|rca> "<title>" [--from <path under the artifacts root | backlog#<id>>]
-       [--mode standard|small|express]                       (--mode: features only)
-pd-new feature --plan <plan id or path> <slug> "<title>"     (fills that roadmap's `planned: <slug>`)
-pd-new backlog "<title>" [--from features/<id>]
+pd-new <workitem|plan|brainstorm|rca> "<title>" [--from <path under the artifacts root | backlog#<id>>]
+       [--mode standard|small|express]                       (--mode: work items only)
+pd-new workitem --plan <plan id or path> <slug> "<title>"     (fills that roadmap's `planned: <slug>`)
+pd-new backlog "<title>" [--from workitems/<id>]
 ```
 
 Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOAL_RUN=1`, so a `tracker: github` item records `issue: pending` instead of publishing an issue.
@@ -24,16 +24,16 @@ Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOA
 pd-status              # print the state
 ```
 
-Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done features owing a retro. Takes no other argument.
+Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done work items owing a retro. Takes no other argument.
 
 ## phase-gate.sh — a phase's exit check
 
 ```
-phase-gate.sh <phase> <feature-dir> [--express]
+phase-gate.sh <phase> <workitem-dir> [--express]
   phase ∈ specify|design|create-plan|implement|verify|finish|express
 ```
 
-Checks artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. `express` is the mini-spec check (one task block in `shape.md` `## Requirements`), which replaces specify, design and create-plan for a `mode: express` feature. Exit 0 passes and prints `GATE PASS [<phase>] <feature-dir>`; 1 prints each failure on its own line (`GATE FAIL [<phase>]: …`); 2 is a usage error.
+Checks artifacts, sections, the design's diagram and test strategy, duplicate contract blocks, and the `log.md` entries the phase owes. `express` is the mini-spec check (one task block in `shape.md` `## Requirements`), which replaces specify, design and create-plan for a `mode: express` work item. Exit 0 passes and prints `GATE PASS [<phase>] <workitem-dir>`; 1 prints each failure on its own line (`GATE FAIL [<phase>]: …`); 2 is a usage error.
 
 ## pd-lint — the artifact checks
 
@@ -100,7 +100,7 @@ uv run pd-html.py <file.md | dir> [--open]
 uv run pd-html.py --all [--open]
 ```
 
-Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it. `--all` renders `docs/user-guide/`, `docs/dev-guide/`, `docs/technical/` and every active item under the artifacts root (all of a feature's `.md` files; a plan, brainstorm or rca's one file).
+Output goes to `<repo>/docs/_html/`, mirroring the source paths. Never commit it. `--all` renders `docs/user-guide/`, `docs/dev-guide/`, `docs/technical/` and every active item under the artifacts root (all of a work item's `.md` files; a plan, brainstorm or rca's one file).
 
 ## Shared formats
 

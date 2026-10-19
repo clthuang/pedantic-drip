@@ -13,7 +13,7 @@ When Claude Code installs a plugin, it copies files to a cache directory:
 
 Hooks receive `CLAUDE_PLUGIN_ROOT` pointing to this cached location. However:
 - **Static plugin assets** (scripts, templates): Use PLUGIN_ROOT
-- **Dynamic project state** (features, source code): Use PROJECT_ROOT
+- **Dynamic project state** (work items, source code): Use PROJECT_ROOT
 
 ### The Solution
 
@@ -45,7 +45,7 @@ A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detec
 | Variable | Use For | Example |
 |----------|---------|---------|
 | `PLUGIN_ROOT` | Static plugin files | Template files, reference docs |
-| `PROJECT_ROOT` | Dynamic project state | Feature metadata, test files, source code |
+| `PROJECT_ROOT` | Dynamic project state | Work item metadata, test files, source code |
 | `PWD` | User's current directory | Relative path display |
 
 ## Hook Output Format

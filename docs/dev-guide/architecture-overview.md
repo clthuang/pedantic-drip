@@ -1,6 +1,6 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Architecture Overview
@@ -41,12 +41,12 @@ The component counts live in [plugins/pd/README.md](../../plugins/pd/README.md#c
 Clarify (brainstorm | rca) → specify → design → create-plan → implement → verify → finish
 ```
 
-A feature's README frontmatter holds `phase:`, one of `specify`, `design`, `create-plan`, `implement`, `verify`, `finish`. Clarify happens on a brainstorm or rca item, before the feature exists.
+A work item's README frontmatter holds `phase:`, one of `specify`, `design`, `create-plan`, `implement`, `verify`, `finish`. Clarify happens on a brainstorm or rca item, before the work item exists.
 
 `workflow-transitions` is the contract every stage skill shares:
 
-- **Phase entry:** resolve the feature (argument, branch, or `pd-status`), check out its branch, read the README, `## Now` and the open blockers.
-- **Phase exit:** `phase-gate.sh <phase> <feature dir>` passes; set `phase:` to the next phase, append a `phase <from> -> <to>` entry, overwrite `## Now`, commit `<phase>: <summary>`.
+- **Phase entry:** resolve the work item (argument, branch, or `pd-status`), check out its branch, read the README, `## Now` and the open blockers.
+- **Phase exit:** `phase-gate.sh <phase> <work item dir>` passes; set `phase:` to the next phase, append a `phase <from> -> <to>` entry, overwrite `## Now`, commit `<phase>: <summary>`.
 - **Backward move:** set `phase:` back and append `phase <from> -> <to> (back)` with `Reason:` and `Invalidates:`.
 - **Review call** (`references/review-call.md`): Codex first with one retry unless the user's CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer; one pass, up to three fix cycles against runnable checks, then the user.
 - **Workflow runs:** write `run in flight:` to `## Now` before launching; append the `run`, `review`, `qa` and `gate` entries from the result.

@@ -8,7 +8,7 @@ All work lands on `main` through pull requests. A script opens each release as a
 |--------|---------|
 | `main` | Trunk and GitHub's default; every change lands here through a PR, merged as a merge commit |
 | `stable` | Release channel that installs follow; by convention only the Publish workflow moves it, fast-forward only |
-| `feature/<id>` | A feature's branch, created by `/pd:create-feature` (`<id>` is `YYYY-MM-DD-slug`) |
+| `workitem/<id>` | A work item's branch, created by `/pd:create-workitem` (`<id>` is `YYYY-MM-DD-slug`) |
 | `pd/<id>/task-<n>` | One plan task's branch inside `implement-tasks` |
 | `release/vX.Y.Z` | A release PR's branch, opened by `scripts/release-pr.sh` |
 
@@ -23,7 +23,7 @@ All plugin code lives in `plugins/pd/`.
 
 1. Create a feature branch from `main`
 2. Add your entries under `## [Unreleased]` in `CHANGELOG.md`
-3. Open a PR into `main` (or run `/pd:finish-feature`) and merge once CI passes
+3. Open a PR into `main` (or run `/pd:finish-workitem`) and merge once CI passes
 4. Release when ready using the release script
 
 [docs/dev-guide/contributing.md](docs/dev-guide/contributing.md) covers the checks a change must pass and where new components go.
@@ -95,7 +95,7 @@ The installed copy changes only through a release, which reaches installs throug
 
 ## Architecture
 
-Commands invoke skills. A skill dispatches agents directly, or launches a workflow script that dispatches them. Hooks fire on session start, before tool calls and at each stop. The secretary is triage, not a pipeline: it picks the kind of work and, for a feature, its depth, then creates the item through the routed command.
+Commands invoke skills. A skill dispatches agents directly, or launches a workflow script that dispatches them. Hooks fire on session start, before tool calls and at each stop. The secretary is triage, not a pipeline: it picks the kind of work and, for a work item, its depth, then creates the item through the routed command.
 
 ```mermaid
 flowchart TD
@@ -104,7 +104,7 @@ flowchart TD
 
     subgraph SEC["Secretary triage"]
         direction TB
-        S1["1. ASSESS<br/>kind and risk signals"] --> S2["2. KIND + DEPTH<br/>feature (standard · small · express)<br/>brainstorm · rca · specialist"]
+        S1["1. ASSESS<br/>kind and risk signals"] --> S2["2. KIND + DEPTH<br/>work item (standard · small · express)<br/>brainstorm · rca · specialist"]
         S2 --> S3["3. ROUTE<br/>the routed command creates the item"]
     end
 
@@ -164,7 +164,7 @@ Skills are instructions Claude follows. Each lives in `plugins/pd/skills/{name}/
 |-------|---------|
 | `brainstorming` | Clarify for an idea: the brainstorm item, the Clarify questions, the optional `research-fanout`, the PRD, and promotion at Criteria |
 | `root-cause-analysis` | Clarify for a bug: the rca item, reproduction, 3+ hypotheses, the `rca-fanout` workflow with its refuters, the causal DAG and the RCA report, then the fix's entry depth |
-| `specifying` | Criteria: B-numbered expectations in `shape.md`, calvin cycles, the user's sign-off; also an express feature's mini-spec |
+| `specifying` | Criteria: B-numbered expectations in `shape.md`, calvin cycles, the user's sign-off; also an express work item's mini-spec |
 | `designing` | Contracts: `shape.md` `## Design` with its diagram, contracts and test strategy, then the review call |
 | `planning` | Plan: `plan.md` task blocks with test cases, then the test-case review |
 | `implementing` | Execute: launches `implement-tasks` from `plan.md` and records each task's merge and proof |
@@ -196,7 +196,7 @@ Agents are subagents, in `plugins/pd/agents/{name}.md`, dispatched by a command,
 - **Workers:** `implementer` (one plan task in its own worktree, tests first; also the fixer in fix cycles), `qa-executor` (runs the QA battery and drives affected flows; fixes nothing), `documentation-writer`, `generic-worker`, `ras-synthesizer`.
 - **Researchers:** `codebase-explorer`, `internet-researcher`, `skill-searcher`, `investigation-agent`, `documentation-researcher`, and `rca-investigator` (in `rca-fanout`, it investigates one hypothesis or tries to refute one cause).
 - **Advisory:** `advisor` applies one advisory lens inside `research-fanout`.
-- **Orchestration:** `merger` (checks a task's proof with `pd-proof` and lands its branch; no Write or Edit), `calvin-runner` (runs the calvin skill on a feature's criteria; writes only its ledger path), `retro-facilitator`.
+- **Orchestration:** `merger` (checks a task's proof with `pd-proof` and lands its branch; no Write or Edit), `calvin-runner` (runs the calvin skill on a work item's criteria; writes only its ledger path), `retro-facilitator`.
 
 ### Advisors
 
@@ -218,7 +218,7 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
 | `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
-| `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-feature token cap |
+| `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-work-item token cap |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py`, a worker the wrapper calls; it isn't registered on its own. Writing a hook: [docs/dev-guide/hook-development.md](docs/dev-guide/hook-development.md).
 
@@ -226,7 +226,7 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 
 Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/plans/2026-10-14-thin-pd-native-design.md`.
 
-- **State lives in committed files:** a feature is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
+- **State lives in committed files:** a work item is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
 - **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
 - **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-html.py`, `pd-init`, `pd-adopt`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
 - **The workflows** (`plugins/pd/workflows/`) are the stages' only fan-outs:
@@ -236,7 +236,7 @@ Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes i
 
   Each pins its result schema, restated in `plugins/pd/references/workflow-results.md`; the conductor writes `log.md` from them.
 - **Reviews:** one review call per stage that has one (`plugins/pd/references/review-call.md`). Codex goes first with one retry unless CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
-- **Long runs:** `/goal` drives a feature. The Stop gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per feature (`feature_token_budget`).
+- **Long runs:** `/goal` drives a work item. The Stop gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per work item (`workitem_token_budget`).
 
 ## Knowledge Bank
 

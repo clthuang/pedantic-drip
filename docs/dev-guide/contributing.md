@@ -1,11 +1,11 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-feature: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Contributing
 
-How to work on pedantic-drip: starting and finishing a feature, commit conventions, checks and PRs.
+How to work on pedantic-drip: starting and finishing a work item, commit conventions, checks and PRs.
 
 ## Branches and Releases
 
@@ -14,13 +14,13 @@ How to work on pedantic-drip: starting and finishing a feature, commit conventio
 - **Branch model and the `main` ruleset:** ["Branch Structure"](../../README_FOR_DEV.md#branch-structure).
 - **Release steps:** ["Release Process"](../../README_FOR_DEV.md#release-process).
 
-## Starting a Feature
+## Starting a Work Item
 
 ```
-/pd:create-feature "<title>"
+/pd:create-workitem "<title>"
 ```
 
-`pd-new feature` creates `{pd_artifacts_root}/features/<id>/` with `README.md` and `log.md`; the command then branches `feature/<id>` from `main` and commits the item.
+`pd-new workitem` creates `{pd_artifacts_root}/workitems/<id>/` with `README.md` and `log.md`; the command then branches `workitem/<id>` from `main` and commits the item.
 
 **Adoption is pending here:** this repo's `.claude/pd.local.md` sets `artifacts_root: docs` and has no `sop: 1`, so `pd-status` and `pd-lint` tell you to run `/pd:adopt` and check nothing until it runs.
 
@@ -36,17 +36,17 @@ Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore
 - **`pd-commit-lint`** (PreToolUse hook on Claude's Bash tool) — runs `pd-lint --staged` before each `git commit` Claude runs; commits you type in a terminal aren't checked. An error blocks the commit: fix it, never bypass it. In this repo it checks nothing until adoption, because `pd-lint` exits 0 with "not adopted".
 - **`pre-commit-guard`** (PreToolUse hook on Claude's Bash tool) — never blocks or approves a call. On a commit to `main`/`master`, or a commit in a project with test files, it adds a reminder to Claude's context.
 
-## Finishing a Feature
+## Finishing a Work Item
 
 ```
-/pd:finish-feature
+/pd:finish-workitem
 ```
 
 It runs the security review, docs, the `metrics` entry and the retro check, then merges to `main` (here through a PR, as `main`'s ruleset requires) and cleans up the branches. A retro, when one is owed, runs before cleanup: the branches are its input.
 
 ## PR Process
 
-Solo work merges through `/pd:finish-feature`. For collaborative changes, push the feature branch, open a PR against `main`, run `./validate.sh`, and merge after review. Add your entries under `## [Unreleased]` in `CHANGELOG.md`; released sections are frozen, and CI fails a PR that changes them.
+Solo work merges through `/pd:finish-workitem`. For collaborative changes, push the work item's branch, open a PR against `main`, run `./validate.sh`, and merge after review. Add your entries under `## [Unreleased]` in `CHANGELOG.md`; released sections are frozen, and CI fails a PR that changes them.
 
 ## Adding Components
 

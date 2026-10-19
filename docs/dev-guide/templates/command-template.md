@@ -1,6 +1,6 @@
 ---
 description: What this command does (concise, <=80 chars)
-argument-hint: "[--feature=<id>]"
+argument-hint: "[--workitem=<id>]"
 ---
 
 # /pd:<command-name>
