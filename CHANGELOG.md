@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A finished roadmap plan reads `done`.** `pd-status` lists an active plan as `done` once every roadmap entry is done or dropped, since `pd-lint` keeps `done` out of a roadmap plan's `status:`; session start leaves such plans out, rows and roadmap lines alike, instead of listing them as active work in every session.
+
 ## [8.0.0] - 2026-10-19
 
 ### Changed
