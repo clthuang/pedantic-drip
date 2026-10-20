@@ -142,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The README describes thin pd.** The seven stages, the three depths, `/pd:init` and `/pd:adopt`, the current commands and where state lives, with a simplified workflow diagram; `docs/workflow-canonical.mmd` stays the full reference. `plugins/pd/README.md` now gives the old-layout test as `docs/features/` without `sop: 1`, and adds the marketplace from GitHub.
+- **The README describes thin pd.** The seven stages, the three depths, `/pd:init` and `/pd:adopt`, the current commands and where state lives, with a simplified workflow diagram; `docs/workflow-canonical.mmd` stays the full reference. `plugins/pd/README.md` now gives the old-layout test as `docs/dev_artifacts/workitems/` without `sop: 1`, and adds the marketplace from GitHub.
 
 ## [7.0.0] - 2026-10-15
 
@@ -159,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The entity registry** (`entities.db`) and every MCP server, the engine, the UI server and Kanban board, YOLO mode, `/pd:doctor`, `.meta.json` state files, and the skills, agents, commands and hooks that served them. An old-layout project (`docs/features/` without `sop: 1`) is told to run `/pd:adopt`; until then `pd-lint` leaves it alone.
+- **The entity registry** (`entities.db`) and every MCP server, the engine, the UI server and Kanban board, YOLO mode, `/pd:doctor`, `.meta.json` state files, and the skills, agents, commands and hooks that served them. An old-layout project (`docs/dev_artifacts/workitems/` without `sop: 1`) is told to run `/pd:adopt`; until then `pd-lint` leaves it alone.
 
 ## [6.0.0] - 2026-07-25
 
@@ -261,7 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Note
 
-- The retrospective process is preserved but now writes a plain-markdown `retro.md` artifact only (no DB/MCP/influence persistence). `docs/knowledge-bank/*.md` are retained as inert reference markdown with no tooling reading or writing them. The cross-project `~/.claude/pd/memory/memory.db` store is left in place — remove it manually (`rm -rf ~/.claude/pd/memory`) if desired.
+- The retrospective process is preserved but now writes a plain-markdown `retro.md` artifact only (no DB/MCP/influence persistence). `docs/dev_artifacts/knowledge-bank/*.md` are retained as inert reference markdown with no tooling reading or writing them. The cross-project `~/.claude/pd/memory/memory.db` store is left in place — remove it manually (`rm -rf ~/.claude/pd/memory`) if desired.
 
 ### Fixed
 
@@ -378,7 +378,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `.gitignore:63` line `docs/features/**/.qa-gate.json` (FR-1.4 — QA-gate JSON files are now committable evidence at `docs/features/{id}-{slug}/.qa-gate.json`). Existing `.qa-gate.json` files for features 096, 108, 112 added to git in their legacy schemas (informational only; not migrated to canonical schema per design TD-8).
+- `.gitignore:63` line `docs/dev_artifacts/workitems/**/.qa-gate.json` (FR-1.4 — QA-gate JSON files are now committable evidence at `docs/dev_artifacts/workitems/{id}-{slug}/.qa-gate.json`). Existing `.qa-gate.json` files for features 096, 108, 112 added to git in their legacy schemas (informational only; not migrated to canonical schema per design TD-8).
 
 ## [4.17.1] - 2026-05-12
 
@@ -465,7 +465,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **SessionStart hook broken-pipe failure** (feature 107) — `plugins/pd/hooks/session-start.sh` no longer surfaces `SessionStart:startup hook error / Failed with non-blocking status code: No stderr output` when Claude Code closes the hook's stdout (during `/clear`, `/compact`, or specific bootstrap paths in CC v2.1.x). The two `cat <<EOF` heredoc emission sites are replaced with the new `safe_emit_hook_json` helper (printf-based, EPIPE-guarded via `{ ...; } 2>/dev/null || true`), and `install_session_start_traps` adds an EXIT trap that emits a fallback `{}` only on failure paths. `trap '' PIPE` is retained at line 13 (now documented as co-load-bearing). RCA: `docs/rca/20260508-110928-sessionstart-skills.md`. Performance: 42 ms FASTER than baseline (escape_json skipped on jq path).
+- **SessionStart hook broken-pipe failure** (feature 107) — `plugins/pd/hooks/session-start.sh` no longer surfaces `SessionStart:startup hook error / Failed with non-blocking status code: No stderr output` when Claude Code closes the hook's stdout (during `/clear`, `/compact`, or specific bootstrap paths in CC v2.1.x). The two `cat <<EOF` heredoc emission sites are replaced with the new `safe_emit_hook_json` helper (printf-based, EPIPE-guarded via `{ ...; } 2>/dev/null || true`), and `install_session_start_traps` adds an EXIT trap that emits a fallback `{}` only on failure paths. `trap '' PIPE` is retained at line 13 (now documented as co-load-bearing). RCA: `docs/dev_artifacts/rca/20260508-110928-sessionstart-skills.md`. Performance: 42 ms FASTER than baseline (escape_json skipped on jq path).
 
 ### Added
 
@@ -666,7 +666,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upstream rigor traded against test-debt; live FR-2 rebuild verified
   end-to-end on user's DB). FR-1 sidecar JSONL capture mechanism not yet
   wired in the 14 prose blocks (audit chain follow-up). All deferred items
-  documented in `docs/features/101-memory-flywheel/qa-override.md`.
+  documented in `docs/dev_artifacts/workitems/101-memory-flywheel/qa-override.md`.
 
 ## [4.16.10] - 2026-04-30
 
@@ -757,7 +757,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`_run_maintenance_fault_test` helper** extracted in `test-hooks.sh` — consolidates ~55 lines of duplicated scaffold between AC-22b (SyntaxError) and AC-22c (ImportError). Parametrized by `inject_mode` (append/prepend) + payload (feature:092 FR-7, #00199).
 - **AC-22b/c PASS markers**: test-hooks.sh now emits explicit `AC-22b PASS: ...` / `AC-22c PASS: ...` lines from inside the subshell (where `raw_exit` is in scope) so grep-based DoD checks match actual output (feature:092 FR-9, #00201).
-- **Feature 091 spec clamp values corrected** from stale `[1000, 500000]` to actual `[1000, 10_000_000]` at two locations in `docs/features/091-082-qa-residual-cleanup/spec.md` (feature:092 FR-6, #00198).
+- **Feature 091 spec clamp values corrected** from stale `[1000, 500000]` to actual `[1000, 10_000_000]` at two locations in `docs/dev_artifacts/workitems/091-082-qa-residual-cleanup/spec.md` (feature:092 FR-6, #00198).
 
 ## [4.16.0] - 2026-04-20
 
@@ -1703,12 +1703,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All skills, commands, and agents now use `{iflow_artifacts_root}` instead of hardcoded `docs/` paths
 - All merge/branch operations now use `{iflow_base_branch}` instead of hardcoded `develop`
 - Release script invocation now conditional on `{iflow_release_script}` config
-- `detect_project_root()` simplified to use only `.git/` as project marker (removed `docs/features/` check)
+- `detect_project_root()` simplified to use only `.git/` as project marker (removed `docs/dev_artifacts/workitems/` check)
 - `sync-cache.sh` exits gracefully when plugin not found (no more stale fallback path)
 - Backfill scan directories now configurable via `backfill_scan_dirs` config field
 
 ### Fixed
-- Plugin could create unwanted `docs/features/` directories in non-iflow projects
+- Plugin could create unwanted `docs/dev_artifacts/workitems/` directories in non-iflow projects
 - Config file auto-provisioned even in projects without `.claude/` directory
 
 ## [3.0.25] - 2026-02-25

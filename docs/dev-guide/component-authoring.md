@@ -292,7 +292,7 @@ Before merging any component, `./validate.sh` passes with 0 errors and 0 warning
 - [ ] **Frontmatter:** a skill or agent without the opening `---`, `name` or `description`, or with a `name` that isn't lowercase with hyphens
 - [ ] **Agent fields:** a `model` value with characters other than letters, digits, `-`, `_`, `.` and `/`; a `color` outside the six; a YAML `examples:` key; or a break of the role rules
 - [ ] **Plugin paths:** `plugins/pd/` in an agent, skill or command file, unless that line or the one before it says "Fallback", "dev workspace" or "If ... exists" (README and plan files are skipped)
-- [ ] **Artifact paths:** `docs/features/`, `docs/brainstorms/`, `docs/projects/`, `docs/backlog` or `docs/rca/` in a SKILL.md, command or agent; write `{pd_artifacts_root}` instead
+- [ ] **Artifact paths:** `docs/dev_artifacts/workitems/`, `docs/dev_artifacts/brainstorms/`, `docs/projects/`, `docs/backlog` or `docs/dev_artifacts/rca/` in a SKILL.md, command or agent; write `{pd_artifacts_root}` instead
 - [ ] **Branch targets:** a `develop` checkout, pull or merge in a SKILL.md or command; write `{pd_base_branch}` instead
 - [ ] **Includes:** an `@plugins/` include in a command; read the file through the two-location Glob instead
 - [ ] **Subjective adjectives:** "appropriate", "sufficient", "robust", "thorough", "proper", "adequate" or "reasonable" in an agent, skill or command outside `references/`; replace each with a measurable criterion
