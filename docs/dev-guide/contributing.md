@@ -22,7 +22,7 @@ How to work on pedantic-drip: starting and finishing a work item, commit convent
 
 `pd-new workitem` creates `{pd_artifacts_root}/workitems/<id>/` with `README.md` and `log.md`; the command then branches `workitem/<id>` from `main` and commits the item.
 
-**Adoption is pending here:** this repo's `.claude/pd.local.md` sets `artifacts_root: docs` and has no `sop: 1`, so `pd-status` and `pd-lint` tell you to run `/pd:adopt` and check nothing until it runs.
+**This repo is adopted:** its `.claude/pd.local.md` sets `artifacts_root: docs/dev_artifacts` and `sop: 1`, so `pd-lint` checks every item.
 
 ## Commit Conventions
 
@@ -33,7 +33,7 @@ Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore
 ## Checks Before Committing
 
 - **`./validate.sh`** — component validation; 0 errors expected.
-- **`pd-commit-lint`** (PreToolUse hook on Claude's Bash tool) — runs `pd-lint --staged` before each `git commit` Claude runs; commits you type in a terminal aren't checked. An error blocks the commit: fix it, never bypass it. In this repo it checks nothing until adoption, because `pd-lint` exits 0 with "not adopted".
+- **`pd-commit-lint`** (PreToolUse hook on Claude's Bash tool) — runs `pd-lint --staged` before each `git commit` Claude runs; commits you type in a terminal aren't checked. An error blocks the commit: fix it, never bypass it.
 - **`pre-commit-guard`** (PreToolUse hook on Claude's Bash tool) — never blocks or approves a call. On a commit to `main`/`master`, or a commit in a project with test files, it adds a reminder to Claude's context.
 
 ## Finishing a Work Item

@@ -155,7 +155,7 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 
 **Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
-**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`, still pending here):
+**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`):
 - `artifacts_root` (default: `docs/dev_artifacts`) — root directory for work items, plans, brainstorms, rca and backlog items
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
