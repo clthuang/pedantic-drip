@@ -28,7 +28,8 @@ roadmap:
     after: [001-entity-uuid-primary-key-migrat, 009-state-engine-mcp-tools-phase-r]
   - workitem: workitems/011-reconciliation-mcp-tool
     after: [003-bidirectional-uuid-sync-betwee, 009-state-engine-mcp-tools-phase-r]
-  - planned: 019-kanban-board-view
+  - dropped: 019-kanban-board-view
+    reason: the Kanban UI was removed in thin pd
     after: [004-status-taxonomy-design-and-sch, 018-unified-iflow-ui-server-with-s]
   - workitem: workitems/010-graceful-degradation-to-metajs
     after: [008-workflowstateengine-core]
@@ -44,7 +45,8 @@ roadmap:
     after: [018-unified-iflow-ui-server-with-s]
   - workitem: workitems/021-lineage-dag-visualization
     after: [020-entity-list-and-detail-views]
-  - planned: 022-kanban-card-click-through
+  - dropped: 022-kanban-card-click-through
+    reason: the Kanban UI was removed in thin pd
     after: [019-kanban-board-view, 021-lineage-dag-visualization]
 ---
 # iflow Architectural Evolution — Deterministic State Engine, Kanban UI, Entity Consolidation
