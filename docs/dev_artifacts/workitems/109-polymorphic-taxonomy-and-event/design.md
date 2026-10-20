@@ -8,7 +8,7 @@
 - **Created:** 2026-05-12
 - **Last updated:** 2026-05-12
 - **Spec reference:** `docs/dev_artifacts/workitems/109-polymorphic-taxonomy-and-event/spec.md`
-- **PRD reference:** `docs/projects/P003-entity-system-redesign/prd.md`
+- **PRD reference:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
 - **Migration version:** **12** (current schema_version = 11 at `database.py:2630`, last migration is `_migration_11_workspace_identity` from feature 108)
 - **Depends on:** Feature 108-workspace-identity-foundation (completed, v4.17.0)
 

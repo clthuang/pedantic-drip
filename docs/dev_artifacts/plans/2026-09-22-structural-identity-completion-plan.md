@@ -808,7 +808,7 @@ Apply **correction 3**: re-derive the four pair groups at execution time. Neithe
 | `P002` / `P003` / `P001-agent-orchestrator` | mixed | 12 | 5 |
 | 9 backlog + brainstorm parents | pedantic-drip | 10 | 1 |
 
-After C22, this effort's own replacement project is an empty row with an empty directory while all 16 of its features — and `docs/projects/P004-entity-db-redesign/` — stay on the archived row. C22's Verify checks re-parenting only *"after the pair collapse"*, and `P004` is in no pair. Re-parenting 16 children by uuid is exactly the *"bespoke insert"* C22's Interface forbids.
+After C22, this effort's own replacement project is an empty row with an empty directory while all 16 of its features — and `docs/dev_artifacts/plans/P004-entity-db-redesign.md/` — stay on the archived row. C22's Verify checks re-parenting only *"after the pair collapse"*, and `P004` is in no pair. Re-parenting 16 children by uuid is exactly the *"bespoke insert"* C22's Interface forbids.
 
 **44 of the 79 are unreachable.** cast-below's 29 and terry_agent's 15 sit in repos where C22's "ordinary creation paths" — which run in the current project's context — cannot execute. cast-below's `project:P001` is `is_legacy=1, is_archived=0, completed, 29 children` and is invisible to C22 by construction.
 

@@ -6,7 +6,7 @@
 
 | Phase | Duration | Iterations | Notes |
 |-------|----------|------------|-------|
-| brainstorm | 4 s | 1 | Reused parent PRD `docs/projects/P003-entity-system-redesign/prd.md` — no fresh brainstorm |
+| brainstorm | 4 s | 1 | Reused parent PRD `docs/dev_artifacts/plans/P003-entity-system-redesign.md` — no fresh brainstorm |
 | specify | 29 min | **5** (3 spec-reviewer + 2 phase-reviewer) | 9 blockers + 17 warnings cumulative; iter-2 SUT-verification unmasked 5 NEW blockers |
 | design | 23 min | **4** (3 design-reviewer cap-3 + 1 phase-reviewer) | 2 cumulative blockers + 5 warnings resolved inline in rev 4; cross-phase spec patch FR-4↔AC-4.4 |
 | create-plan | 30 min | **5** (2 plan-reviewer + 1 task-reviewer + 1 phase-reviewer + plan rev 5) | 6+1 plan blockers, 5 task blockers, 3 phase blockers cumulative; Group 11 REMOVED into Group 3 mid-flight |

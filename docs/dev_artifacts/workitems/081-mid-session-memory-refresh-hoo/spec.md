@@ -190,7 +190,7 @@ Revert the single feature commit. The two config fields are additive and silentl
 
 ## References
 
-- P002 PRD: `docs/projects/P002-memory-flywheel/prd.md` (Rescope Notes, 2026-04-15, item 4 "Orchestrator Mid-Session Refresh")
+- P002 PRD: `docs/dev_artifacts/plans/P002-memory-flywheel.md` (Rescope Notes, 2026-04-15, item 4 "Orchestrator Mid-Session Refresh")
 - 080 (completed, v4.15.1): `docs/dev_artifacts/workitems/080-influence-wiring/spec.md` — this feature reuses 080's `INFLUENCE_DEBUG_LOG_PATH`, debug-flag pattern, bool-rejection pattern, and dedup-warning pattern
 - Existing enrichment precedent: 65+ call sites across 17 commands in `plugins/pd/commands/*.md` calling `search_memory` before Task dispatches
 - `plugins/pd/mcp/workflow_state_server.py:665-778` (`_process_complete_phase`) — injection point

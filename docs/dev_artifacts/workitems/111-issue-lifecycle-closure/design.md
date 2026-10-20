@@ -1,7 +1,7 @@
 # Design — Feature 111: Issue Lifecycle Closure
 
 - **Spec:** [spec.md](./spec.md) revision 3.5
-- **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
+- **Parent PRD:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md` (M4 — Phase 4 Lifecycle Closure)
 - **Status:** revision 2.7 (rev 2.6 fixed task-reviewer iter 2 nits; rev 2.7 fixes phase-reviewer iter 1 stale documentation residuals: spec rev cross-ref bumped to 3.5, §1 architecture diagram corrected to ENTITY_MACHINES UNCHANGED, F10 dependency cell clarified as "NOT F9", TD-8 snippet target_files extended to 3 paths.)
 
 ## §0 Prior Art Research

@@ -7,7 +7,7 @@
 - **Created:** 2026-05-10
 - **Spec:** [`spec.md`](spec.md) (41 ACs, 18 FRs, 8 NFRs)
 - **Design:** [`design.md`](design.md) (12 decisions, 13 components, full DDL)
-- **PRD:** [`docs/projects/P003-entity-system-redesign/prd.md`](../../../projects/P003-entity-system-redesign/prd.md)
+- **PRD:** [`docs/dev_artifacts/plans/P003-entity-system-redesign.md`](../../plans/P003-entity-system-redesign.md)
 
 ---
 
@@ -21,7 +21,7 @@ This plan sequences the work that lands an explicit, file-stamped workspace UUID
 
 - `docs/dev_artifacts/workitems/108-workspace-identity-foundation/spec.md` — 18 FRs, 8 NFRs, 41 ACs, 17-step Migration 11 (forward) + 16-step reverse, 10 EC scenarios, 10 risks.
 - `docs/dev_artifacts/workitems/108-workspace-identity-foundation/design.md` — 12 technical decisions, 13 components, complete DDL for forward + reverse migration, 10 design-level test deliverables, AC→test coverage matrix.
-- `docs/projects/P003-entity-system-redesign/prd.md` — 12-fix union; this feature delivers F1 (workspace UUID) + F5 (drop `parent_type_id`) + F6 (UUIDv7, conditional).
+- `docs/dev_artifacts/plans/P003-entity-system-redesign.md` — 12-fix union; this feature delivers F1 (workspace UUID) + F5 (drop `parent_type_id`) + F6 (UUIDv7, conditional).
 - Existing code anchors (verified in spec/design): `database.py:1396-1418` (concurrent re-check guard), `database.py:1604-1640` (in-tx schema stamp + MIGRATIONS dict), `feature_lifecycle.py:30-49` (`_atomic_json_write`), `project_identity.py:90-235` (current `detect_project_id`), `mcp/entity_server.py:124` (`_upsert_project` caller).
 
 ---

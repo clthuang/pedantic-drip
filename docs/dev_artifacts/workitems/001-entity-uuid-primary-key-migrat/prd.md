@@ -6,8 +6,8 @@ Extracted from Project P001 (iflow Architectural Evolution) PRD and Roadmap.
 
 *Source: Backlog #00024*
 
-- Project PRD: `docs/projects/P001-iflow-arch-evolution/prd.md`
-- Roadmap: `docs/projects/P001-iflow-arch-evolution/roadmap.md`
+- Project PRD: `docs/dev_artifacts/plans/P001-iflow-arch-evolution.md`
+- Roadmap: `docs/dev_artifacts/plans/P001-iflow-arch-evolution.md`
 
 ## Problem Statement
 

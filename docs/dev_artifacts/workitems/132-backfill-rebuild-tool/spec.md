@@ -68,4 +68,4 @@ Doctor check retirement (133); v1 access-layer retirement beyond the FR132-5 inv
 
 - **OQ-1:** New file path/name (`entities-v2.db` beside the old vs a versioned dir) and how the `ENTITY_DB_PATH` default flips — env-var precedence must keep tests hermetic.
 - **OQ-2:** Whether `entities_fts` rebuilds at import or lazily on first search on the new file.
-- **OQ-3:** Report artifact home (`docs/projects/P004-entity-db-redesign/` vs `~/.claude/pd/migrations/`) — it contains live-DB census data; repo placement must not leak private entity names into git if the repo ever publishes.
+- **OQ-3:** Report artifact home (`docs/dev_artifacts/plans/P004-entity-db-redesign.md/` vs `~/.claude/pd/migrations/`) — it contains live-DB census data; repo placement must not leak private entity names into git if the repo ever publishes.

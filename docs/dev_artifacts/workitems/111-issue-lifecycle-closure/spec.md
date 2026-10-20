@@ -2,7 +2,7 @@
 
 - **Project:** P003-entity-system-redesign — Milestone M4 (Phase 4 — Lifecycle Closure) — final feature in P003
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline; `entity_type` column DROPPED, `type`/`kind`/`lifecycle_class` triple ACTIVE); 110-markdown-projections-and-gener (post-migration-13 `entity_display` + projection sealed write path)
-- **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
+- **Brainstorm source:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
 - **Status:** revision 3.5 (rev 3.4 addressed design-reviewer iter 1; rev 3.5 patches in plan-reviewer iter 2 Pin G trigger: 5th parser site at reconciliation_orchestrator/entity_status.py added to cleanup scope — FR-CL.1b added; FR-CL.3 path corrected; FR-CL.4 target_files expanded to 3 paths; AC-CL.1 grep target expanded; Pin G enumerates 3 production sites.)
 
 ## §1 Background and SUT-Verified Baseline

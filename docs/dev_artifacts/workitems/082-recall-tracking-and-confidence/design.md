@@ -931,7 +931,7 @@ All three are text-only additions (spec FR-3 / AC-25 / AC-26). See spec for exac
 ## References
 
 - Spec: `docs/dev_artifacts/workitems/082-recall-tracking-and-confidence/spec.md`
-- P002 PRD: `docs/projects/P002-memory-flywheel/prd.md`
+- P002 PRD: `docs/dev_artifacts/plans/P002-memory-flywheel.md`
 - 080 (shipped v4.15.1-v4.15.2): `plugins/pd/mcp/memory_server.py` — stderr prefix, `_resolve_float_config`, `INFLUENCE_DEBUG_LOG_PATH` declaration, `_warned_fields` set precedent
 - 081 (shipped v4.15.3): `plugins/pd/hooks/lib/semantic_memory/refresh.py` + `test_refresh.py` — `_resolve_int_config` template, autouse reset fixture, TD-4 duplication comment, `_emit_refresh_diagnostic` shape
 - Promotion path (for NFR-4 asymmetry): `plugins/pd/hooks/lib/semantic_memory/database.py:463-538` (`merge_duplicate`)

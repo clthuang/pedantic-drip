@@ -6,7 +6,7 @@
 - **Status:** Draft
 - **Created:** 2026-05-10
 - **Spec:** [`spec.md`](spec.md) (41 ACs, 18 FRs, 8 NFRs)
-- **PRD:** [`docs/projects/P003-entity-system-redesign/prd.md`](../../../projects/P003-entity-system-redesign/prd.md)
+- **PRD:** [`docs/dev_artifacts/plans/P003-entity-system-redesign.md`](../../plans/P003-entity-system-redesign.md)
 
 ---
 
@@ -1090,6 +1090,6 @@ These are flagged for the plan/implement phases.
 This design is derived from:
 
 - **Spec:** [`spec.md`](spec.md) (41 ACs, 18 FRs, 8 NFRs).
-- **PRD:** [`docs/projects/P003-entity-system-redesign/prd.md`](../../../projects/P003-entity-system-redesign/prd.md) §"Solution Approach" Feature 1.
+- **PRD:** [`docs/dev_artifacts/plans/P003-entity-system-redesign.md`](../../plans/P003-entity-system-redesign.md) §"Solution Approach" Feature 1.
 - **Codebase references** (cited inline): `database.py:120-276` (Migration 2 template), `database.py:1396-1418` (concurrent re-check guard), `database.py:1604-1618` (in-tx schema stamp), `database.py:1629-1640` (MIGRATIONS dict), `database.py:3951-3964` (upsert_project), `feature_lifecycle.py:30-49` (atomic JSON write), `project_identity.py:90-235` (detect_project_id).
 - **External references**: CPython issue #102461 (uuid.uuid7 in Python 3.14); RFC 9562 §6.2 (UUIDv7 monotonicity); RFC 4122 §4.4 (v4 nibble forcing); SQLite atomic rename(2) docs.

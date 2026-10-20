@@ -6,8 +6,8 @@
 - **Status:** Draft
 - **Created:** 2026-05-10
 - **Last updated:** 2026-05-10
-- **PRD reference:** `docs/projects/P003-entity-system-redesign/prd.md`
-- **Roadmap reference:** `docs/projects/P003-entity-system-redesign/roadmap.md`
+- **PRD reference:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
+- **Roadmap reference:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
 - **Fixes delivered (per PRD union-of-fixes):** F1 (workspace UUID identity), F5 (drop `parent_type_id`), F6 (UUIDv7 — conditional on Python 3.14+ stdlib `uuid.uuid7`)
 - **Constraint:** No backward compatibility. All `project_id` reader call sites get rewritten — old code paths are deleted.
 
@@ -776,8 +776,8 @@ These are flagged for the design phase and must be resolved before plan creation
 
 This spec is derived from:
 
-- **PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (sections "Solution Approach" Feature 1, "User Story 1", "Inter-Feature Dependencies", "Constraints").
-- **Roadmap:** `docs/projects/P003-entity-system-redesign/roadmap.md` (Execution Order item 1, M1 milestone).
+- **PRD:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md` (sections "Solution Approach" Feature 1, "User Story 1", "Inter-Feature Dependencies", "Constraints").
+- **Roadmap:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md` (Execution Order item 1, M1 milestone).
 - **Live DB verification (2026-05-10):**
   - `sqlite3 ~/.claude/pd/entities/entities.db "SELECT DISTINCT project_id, COUNT(*) FROM entities GROUP BY project_id"` → 3 workspaces, 452 entities.
   - `sqlite3 ... "SELECT 'only_uuid', COUNT(*) FROM entities WHERE parent_uuid IS NOT NULL AND parent_type_id IS NULL UNION ALL SELECT 'both', COUNT(*) FROM entities WHERE parent_uuid IS NOT NULL AND parent_type_id IS NOT NULL UNION ALL SELECT 'only_type_id', COUNT(*) FROM entities WHERE parent_uuid IS NULL AND parent_type_id IS NOT NULL"` → 22 / 88 / 0.

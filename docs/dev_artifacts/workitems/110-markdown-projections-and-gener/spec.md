@@ -2,7 +2,7 @@
 
 - **Project:** P003-entity-system-redesign — Milestone M3 (Phase 3 — Projections and Guards)
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline)
-- **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
+- **Brainstorm source:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
 - **Status:** revision 4 (iter-3 cap-reached: 3 blockers fixed inline post-iter-3 — pathlib.match Python 3.12 gap, phase_events CHECK violation, NOT NULL column gaps)
 
 ## §1 Background and SUT-Verified Baseline

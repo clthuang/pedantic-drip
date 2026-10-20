@@ -137,7 +137,7 @@ Revert the single feature commit. The 14 command-file `threshold=0.70` restorati
 
 ## References
 
-- P002 PRD: `docs/projects/P002-memory-flywheel/prd.md` (Rescope Notes, 2026-04-15)
+- P002 PRD: `docs/dev_artifacts/plans/P002-memory-flywheel.md` (Rescope Notes, 2026-04-15)
 - Original investigation finding: `record_influence_by_content` fires at 14 call sites; `_influence_score` already in `rank()` — nothing to "wire", only to tune and observe
 - Call site inventory: `plugins/pd/commands/create-plan.md:169,327` (+12 others across specify/design/implement)
 - MCP stdio constraint: `plugins/pd/mcp/memory_server.py:3-4` — diagnostics must not go to stdout; dedicated log file chosen over stderr to give operators a deterministic capture point

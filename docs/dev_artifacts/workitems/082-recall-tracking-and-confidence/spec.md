@@ -345,7 +345,7 @@ Revert the single feature commit. The 5 config fields are additive and silently 
 
 ## References
 
-- P002 PRD: `docs/projects/P002-memory-flywheel/prd.md` — Success Criterion 3 (Confidence decay), rescope note item 2 ("confidence promotion exists but decay does not")
+- P002 PRD: `docs/dev_artifacts/plans/P002-memory-flywheel.md` — Success Criterion 3 (Confidence decay), rescope note item 2 ("confidence promotion exists but decay does not")
 - 080 (shipped v4.15.1 + v4.15.2): `docs/dev_artifacts/workitems/080-influence-wiring/spec.md` — source of `_resolve_float_config` / bool-rejection / dedup-warn pattern, `INFLUENCE_DEBUG_LOG_PATH`, `_warned_fields`
 - 081 (shipped v4.15.3): `docs/dev_artifacts/workitems/081-mid-session-memory-refresh-hoo/spec.md` — source of `_resolve_int_config` helper reused here, `_emit_refresh_diagnostic` pattern
 - Promotion path: `plugins/pd/hooks/lib/semantic_memory/database.py:463-538` (`merge_duplicate` — auto-promote branch at 512-531)

@@ -4,7 +4,7 @@ Snapshot artifact — NOT a gate. Captured 2026-07-12 on branch `feature/120-sta
 
 ## Scope statement
 
-This measures the **empty-HOME fixed session-start overhead, median-only** (the bench isolates `HOME` to a temp dir, so no populated workspace state is read). It is **NOT** PRD NFR-3's populated p50/p95 read-latency baseline — that CAPTURE is assigned to feature 126 and its verification to feature 127, per `docs/projects/P004-entity-db-redesign/roadmap.md:42`. Feature 120's views ship dark (guard-enforced unimported), so both medians below estimate the same quantity on this branch; the value of this artifact is the recorded reference point and the reproduction recipe.
+This measures the **empty-HOME fixed session-start overhead, median-only** (the bench isolates `HOME` to a temp dir, so no populated workspace state is read). It is **NOT** PRD NFR-3's populated p50/p95 read-latency baseline — that CAPTURE is assigned to feature 126 and its verification to feature 127, per `docs/dev_artifacts/plans/P004-entity-db-redesign.md/roadmap.md:42`. Feature 120's views ship dark (guard-enforced unimported), so both medians below estimate the same quantity on this branch; the value of this artifact is the recorded reference point and the reproduction recipe.
 
 ## Results
 

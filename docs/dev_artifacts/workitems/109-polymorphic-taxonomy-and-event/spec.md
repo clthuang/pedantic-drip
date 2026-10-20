@@ -7,8 +7,8 @@
 - **Status:** Draft (revision 4 — clean approval after spec-reviewer iterations 1 + 2 + 3)
 - **Created:** 2026-05-12
 - **Last updated:** 2026-05-12
-- **PRD reference:** `docs/projects/P003-entity-system-redesign/prd.md` (brainstorm-equivalent source — project decomposition crystallized scope)
-- **Roadmap reference:** `docs/projects/P003-entity-system-redesign/roadmap.md`
+- **PRD reference:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md` (brainstorm-equivalent source — project decomposition crystallized scope)
+- **Roadmap reference:** `docs/dev_artifacts/plans/P003-entity-system-redesign.md`
 - **Fixes delivered (per PRD union):** F11 (6-type taxonomy with `kind` + `lifecycle_class`), F2 (`phase_events` as sole state-change primitive via Python-layer enforcement), F3 (atomic promotion via single UPDATE + event append; drop `enforce_immutable_entity_type` AND `enforce_immutable_type_id` triggers at all 12 source-code definition sites), F12 (split `register_entity` raises-on-conflict from `upsert_entity` idempotent; audit 10 INSERT OR IGNORE SQL sites AND 17+ production Python caller sites)
 - **Constraint:** No backward compatibility on code paths. Append-only event log preservation is the one exception (legacy `phase_events` rows must remain valid post-CHECK-expansion; this is data preservation, not code-path compatibility).
 - **Depends on:** Feature 108-workspace-identity-foundation (completed, v4.17.0)

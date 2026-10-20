@@ -213,7 +213,7 @@ Rebuild, don't migrate. New DB file; backfill by replaying: existing entities â†
 - Live DB census + schema: `plugins/pd/hooks/lib/entity_registry/database.py` (DDL, migrations 9-17, `next_sequence_value:9360`, shim `:5902`), `~/.claude/pd/entities/entities.db`
 - Conflation sites: `plugins/pd/hooks/lib/workflow_engine/kanban.py:25`, `engine.py:214-272`, `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py:18`, `plugins/pd/hooks/lib/transition_gate/models.py:13`
 - Rotted checks: `plugins/pd/hooks/lib/doctor/checks.py:709,988,1083,1391-1403`
-- Prior work folded in: `docs/projects/P003-entity-system-redesign/`, features 108-111 specs/retros, `docs/dev_artifacts/brainstorms/20260320-050414-reactive-entity-consistency.prd.md`, `20260308-204500-enforced-state-machine.prd.md`, `20260324-153947-sqlite-concurrency-defense.prd.md`, `docs/dev_artifacts/rca/20260318-meta-json-guard-deadlock.md`
+- Prior work folded in: `docs/dev_artifacts/plans/P003-entity-system-redesign.md/`, features 108-111 specs/retros, `docs/dev_artifacts/brainstorms/20260320-050414-reactive-entity-consistency.prd.md`, `20260308-204500-enforced-state-machine.prd.md`, `20260324-153947-sqlite-concurrency-defense.prd.md`, `docs/dev_artifacts/rca/20260318-meta-json-guard-deadlock.md`
 - Companion track: `docs/dev_artifacts/brainstorms/20260710-153500-workflow-rebuild.prd.md`
 
 ## Review History
