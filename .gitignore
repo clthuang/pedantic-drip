@@ -20,10 +20,6 @@ Thumbs.db
 .claude/pd/workspace.json.lock
 .claude/pd/migrations/
 
-# Feature 101 FR-1: per-feature influence-log sidecar (diagnostic)
-docs/features/*/.influence-log.jsonl
-docs/features/*/.influence-log.jsonl.pre-cutover
-
 # Logs
 *.log
 firebase-debug.log
@@ -61,11 +57,6 @@ docs/_html/
 # Playwright MCP output
 .playwright-mcp/
 *.db
-
-# Feature 094: pre-release adversarial QA gate runtime sidecars
-# (.qa-gate.json removed from gitignore by feature 113 FR-1.4 — committable evidence)
-docs/features/**/.qa-gate.log
-docs/features/**/.qa-gate-low-findings.md
 
 # Feature 110: markdown projections — generated artifacts, never tracked
 pd-state.diff.md
