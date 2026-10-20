@@ -2,14 +2,15 @@
 id: 062-sqlite-concurrency-defense
 type: workitem
 title: SQLite Concurrency Defense
+status: done
+phase: finish
 mode: standard
-branch: workitem/062-sqlite-concurrency-defense
 ---
 # SQLite Concurrency Defense
 
 ## Now
 
-Legacy work item, adopted by pd-adopt on 2026-10-21. Convert it to shape.md and plan.md before work on it resumes.
+Legacy work item, adopted by pd-adopt on 2026-10-21.
 
 ## Links
 

@@ -98,7 +98,7 @@ test_detect_project_root_nested() {
 
     source "${HOOKS_DIR}/lib/common.sh"
 
-    cd "${PROJECT_ROOT}/docs/features"
+    cd "${PROJECT_ROOT}/plugins/pd/hooks/lib"
     local detected
     detected=$(detect_project_root)
 

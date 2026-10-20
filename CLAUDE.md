@@ -164,4 +164,4 @@ Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{
 
 **Base branch for this repo is `main`** — `base_branch: auto` resolves to it from the remote HEAD. Branches merge to `main` through PRs; releases go through `scripts/release-pr.sh`.
 
-**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/backlog-manual.md](docs/dev_artifacts/backlog-manual.md) is the historical detail annex for pre-134 items.
+**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/dev_artifacts/backlog-manual.md](docs/dev_artifacts/backlog-manual.md) is the historical detail annex for pre-134 items.

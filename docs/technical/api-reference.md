@@ -48,7 +48,7 @@ pd-lint --sweep              list agent_sandbox/ dirs to clean; never deletes
 
 Errors print `pd-lint: ERROR <path>:<line>: <message>` and exit 1; warnings never change the exit.
 
-- **Not adopted:** in an old-layout project (`docs/dev_artifacts/workitems/` without `sop: 1`), every mode except `--self-test` prints `pd-lint: not adopted: run /pd:adopt` and exits 0.
+- **Not adopted:** in an old-layout project (`docs/features/` without `sop: 1`), every mode except `--self-test` prints `pd-lint: not adopted: run /pd:adopt` and exits 0.
 - **`--staged` and unstaged changes:** a staged item with unstaged or untracked changes is an error, so the lint checks exactly what will be committed.
 
 ## pd-proof — judge a task's JUnit XML
@@ -77,7 +77,7 @@ pd-init --apply-settings   write that proposed settings.json, once the user appr
 pd-init --decline          record this repository in ~/.claude/pd/init-declined ("never ask again")
 ```
 
-Refuses an old-layout project (`docs/dev_artifacts/workitems/` without `sop: 1`): that one runs `pd-adopt`.
+Refuses an old-layout project (`docs/features/` without `sop: 1`): that one runs `pd-adopt`.
 
 ## pd-adopt — migrate an old-layout project, once
 

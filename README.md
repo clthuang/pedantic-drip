@@ -24,7 +24,7 @@ In a Claude Code session (`#stable` follows releases):
 
 Then, once per project:
 - **A new project:** run `/pd:init` before the first work item: it writes `.claude/pd.local.md`, which every pd workflow reads (`workflow_output_cap`; Verify also needs `qa_battery`), and proposes `.claude/settings.json` entries as a diff. Approve at least `worktree.baseRef: "head"`, so each task's worktree starts from the work item's branch. [Set a Project Up](docs/user-guide/installation.md#set-a-project-up) explains each entry.
-- **A project used with an older pd** (it has a `docs/dev_artifacts/workitems/` folder): run `/pd:adopt`. It shows a dry run, then migrates the project on a `pd-adopt` branch for you to review and merge. Its last step adds `sop: 1` to `.claude/pd.local.md`, which marks the project as adopted.
+- **A project used with an older pd** (it has a `docs/features/` folder): run `/pd:adopt`. It shows a dry run, then migrates the project on a `pd-adopt` branch for you to review and merge. Its last step adds `sop: 1` to `.claude/pd.local.md`, which marks the project as adopted.
 
 To check the setup, follow [Check It Works](docs/user-guide/installation.md#check-it-works).
 
