@@ -1,6 +1,6 @@
 {
   "name": "pd",
-  "version": "8.0.0",
+  "version": "8.0.1",
   "description": "Structured development workflow with skills, agents, and commands for methodical development from ideation to implementation",
   "author": {
     "name": "clthuang"
