@@ -68,8 +68,6 @@ docs/features/**/.qa-gate.log
 docs/features/**/.qa-gate-low-findings.md
 
 # Feature 110: markdown projections — generated artifacts, never tracked
-**/.meta.json
-docs/backlog.md
 pd-state.diff.md
 
 # Test-run pollution: workspace-mapping migration writer creates nested
