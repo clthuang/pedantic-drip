@@ -9,4 +9,5 @@ release_script:
 # Comma-separated documentation tiers: user-guide, dev-guide, technical
 doc_tiers: user-guide,dev-guide,technical
 
+sop: 1
 ---
