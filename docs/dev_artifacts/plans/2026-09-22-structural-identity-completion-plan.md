@@ -1,3 +1,9 @@
+---
+id: 2026-09-22-structural-identity-completion-plan
+type: plan
+title: Structural Identity — Completion Plan
+status: done
+---
 # Structural Identity — Completion Plan
 
 **Parent plan:** [2026-09-20-display-id-ownership-implementation.md](./2026-09-20-display-id-ownership-implementation.md) — the Contract/Interface/Verify text for **C1–C23** lives there and is **not restated here**. This document sequences what is left, records the corrections found while scoping it, and closes the one question the parent plan left open.
@@ -910,3 +916,9 @@ Each one behaves the same on the develop that preceded it; none is a Release C r
 - **C11 (path-based):** four rounds on `si-c11`, then escalated to the user, who chose the redesign.
 - **C22:** two fix rounds.
 Every other task and phase finished within one fix round, followed by independent QA.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

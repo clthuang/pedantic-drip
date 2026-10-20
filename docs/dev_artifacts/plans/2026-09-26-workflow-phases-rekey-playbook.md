@@ -1,3 +1,9 @@
+---
+id: 2026-09-26-workflow-phases-rekey-playbook
+type: plan
+title: "Re-key `workflow_phases` per entity: playbook and operator manual (Phase R, step R2)"
+status: done
+---
 # Re-key `workflow_phases` per entity: playbook and operator manual (Phase R, step R2)
 
 - **Status:** R2's playbook with R3's one revision applied (2026-09-26; plan:313: "At most one revision absorbs their findings; remaining blockers go to the user"). R3 ran a premortem, a code verification that built these changes on a scratch export and ran G1–G5, a blast-radius census of the strict rule, and a live-copy rehearsal with a rollback drill. Every finding's disposition is in the R3 revision record at the end, and no blocker remains for the user. Next: the user's first question batch (section 0.4), then R4.
@@ -2534,3 +2540,9 @@ The criteria are plan:279-290. Each row names the task that lands the evidence, 
 | S4 | None here: 1.12 already greps `.get('uuid')`, and the design now does too. | none |
 | S5 | None here (the design's code-comment grep hits). | none |
 | S6 | Precondition 11 keeps R3's two scripts as the rehearsal report cites them: S1 copies them to `$SCRIPTS` first, and the orchestrator brings the copies to 2.5's and 2.6's queries. Swept: S1's row, and found-while-applying note 3. | 2230; 2236, 2506 |
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

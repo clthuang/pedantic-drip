@@ -1,3 +1,9 @@
+---
+id: 20260419-105300-memory-server-hardening.prd
+type: brainstorm
+title: Memory Server Hardening (Feature 080 QA Bundle)
+status: abandoned
+---
 # PRD: Memory Server Hardening (Feature 080 QA Bundle)
 
 ## Status

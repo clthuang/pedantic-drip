@@ -1,3 +1,9 @@
+---
+id: 2026-01-28-superpowers-patterns-design
+type: plan
+title: Superpowers Patterns Integration - Design
+status: done
+---
 # Superpowers Patterns Integration - Design
 
 ## Overview
@@ -218,3 +224,9 @@ After implementation:
 2. Each skill has proper frontmatter (name, description)
 3. Descriptions follow "Use when..." pattern
 4. No broken cross-references
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

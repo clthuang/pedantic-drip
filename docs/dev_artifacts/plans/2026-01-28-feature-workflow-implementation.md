@@ -1,3 +1,9 @@
+---
+id: 2026-01-28-feature-workflow-implementation
+type: plan
+title: Feature Development Workflow - Implementation Plan
+status: done
+---
 # Feature Development Workflow - Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
@@ -2425,3 +2431,9 @@ Specialist agents (frontend-specialist, api-specialist, database-specialist) are
 - YAGNI: Don't build until needed
 
 Add specialist agents in a future iteration when specific domain patterns are identified through use.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

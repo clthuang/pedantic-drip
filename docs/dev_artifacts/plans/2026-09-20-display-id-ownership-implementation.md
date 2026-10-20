@@ -1,3 +1,9 @@
+---
+id: 2026-09-20-display-id-ownership-implementation
+type: plan
+title: Structural Identity — Implementation Plan
+status: done
+---
 # Structural Identity — Implementation Plan
 
 **Design:** [2026-09-20-display-id-ownership-design.md](./2026-09-20-display-id-ownership-design.md) (rev 3 — clean break)
@@ -493,3 +499,9 @@ C6 is now a predecessor of C3, C15 and C18 — the three hazards the Release C p
 - **Release B has no rollback.** There is no `V2_MIGRATIONS_DOWN` (only the v1 chain's, `database.py:5944`). Un-archiving is a *forward compensating write* — sanctioned, since `update_entity` routes through `append_phase_event` and neither the lifecycle machine nor a status CHECK blocks the reverse — but it costs ~360 permanently immutable `events` rows for a fully-reverted operation, and nothing can ever be deleted, so a B-then-rollback leaves both the archived originals and C22's recreations forever. `.backup` is **not** a rollback: it is one shared file across 7 workspaces with entities, so restoring it reverts six unrelated repos, and it violates this plan's own monotonicity rule by resetting counters below numbers already on disk as directories and branches. Release B needs an explicit compensating-write procedure and a statement of the event-log cost it accepts.
 - **C5 and C7 must land together.** The largest single unit; rehearse on a copy.
 - **Ordering violations are silent.** Release C before B leaves an under-populated census; monotonic `max(stored, …)` limits the damage but does not license skipping the order.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

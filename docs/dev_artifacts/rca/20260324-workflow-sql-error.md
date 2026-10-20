@@ -1,3 +1,9 @@
+---
+id: 20260324-workflow-sql-error
+type: rca
+title: Workflow MCP Tools Return SQL Errors During Feature 055
+status: done
+---
 # RCA: Workflow MCP Tools Return SQL Errors During Feature 055
 
 **Date:** 2026-03-24

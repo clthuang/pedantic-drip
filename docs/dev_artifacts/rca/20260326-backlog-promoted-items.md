@@ -1,3 +1,9 @@
+---
+id: 20260326-backlog-promoted-items
+type: rca
+title: Promoted Backlog Items Still Visible in docs/backlog.md
+status: done
+---
 # RCA: Promoted Backlog Items Still Visible in docs/backlog.md
 
 **Date:** 2026-03-26

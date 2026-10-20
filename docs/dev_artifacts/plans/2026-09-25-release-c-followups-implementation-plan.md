@@ -1,3 +1,9 @@
+---
+id: 2026-09-25-release-c-followups-implementation-plan
+type: plan
+title: "Release C follow-ups: implementation plan (from design rev 2.1)"
+status: done
+---
 # Release C follow-ups: implementation plan (from design rev 2.1)
 
 - **Status:** plan rev 2.
@@ -665,3 +671,9 @@ Calvin swept plan rev 1 (lines L1–L196 below are rev 1's) and asked 73 questio
 | 73 | doc | assumption · minor | Who cuts, merges, fast-forwards and runs F1–F3? | RESOLVED | The orchestrator. Rev 2: Roles and locations. |
 
 ☑ 73 resolved · 0 open · 0 dismissed
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

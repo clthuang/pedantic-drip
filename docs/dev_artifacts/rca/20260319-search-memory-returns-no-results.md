@@ -1,3 +1,9 @@
+---
+id: 20260319-search-memory-returns-no-results
+type: rca
+title: search_memory MCP tool returns "No matching memories found" for all queries
+status: done
+---
 # RCA: search_memory MCP tool returns "No matching memories found" for all queries
 
 **Date:** 2026-03-19

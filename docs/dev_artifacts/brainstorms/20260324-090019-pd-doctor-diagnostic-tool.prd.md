@@ -1,3 +1,9 @@
+---
+id: 20260324-090019-pd-doctor-diagnostic-tool.prd
+type: brainstorm
+title: pd:doctor — Unified Diagnostic & Auto-Fix Tool
+status: abandoned
+---
 # PRD: pd:doctor — Unified Diagnostic & Auto-Fix Tool
 
 ## Problem Statement

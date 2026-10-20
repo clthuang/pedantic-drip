@@ -1,3 +1,9 @@
+---
+id: 20260324-100000-memory-feedback-loop-completion.prd
+type: brainstorm
+title: Memory System Feedback Loop Completion
+status: abandoned
+---
 # PRD: Memory System Feedback Loop Completion
 
 ## Problem Statement

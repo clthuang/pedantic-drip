@@ -1,3 +1,9 @@
+---
+id: 20260412-134500-cc-native-integration.prd
+type: brainstorm
+title: CC Native Feature Integration for pd Plugin
+status: abandoned
+---
 # PRD: CC Native Feature Integration for pd Plugin
 
 ## Status

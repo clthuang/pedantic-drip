@@ -1,3 +1,9 @@
+---
+id: 2026-01-29-hooks-implementation
+type: plan
+title: Hooks Implementation Plan
+status: done
+---
 # Hooks Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
@@ -596,3 +602,9 @@ git commit -m "feat(hooks): complete hooks implementation" --allow-empty
 | 5 | End-to-end testing | (none) |
 
 After completing all tasks, restart Claude Code to activate the hooks.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

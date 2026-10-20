@@ -1,3 +1,9 @@
+---
+id: 20260317-103037-yolo-dependency-aware-feature-selection.prd
+type: brainstorm
+title: Dependency-Aware YOLO Feature Selection
+status: abandoned
+---
 # PRD: Dependency-Aware YOLO Feature Selection
 
 ## Status

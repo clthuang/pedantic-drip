@@ -1,3 +1,9 @@
+---
+id: 2026-09-26-workflow-phases-rekey-design
+type: plan
+title: "Re-key `workflow_phases` per entity: design (Phase R, step R1)"
+status: done
+---
 # Re-key `workflow_phases` per entity: design (Phase R, step R1)
 
 - **Status:** R1 draft, revised once for calvin's ledger (its section holds the author's answers), then once for R3's independent verification (premortem, code verification, live-copy rehearsal, blast radius). That R3 revision is the plan's one revision (plan:313); the last section records it, disposition by disposition.
@@ -1663,3 +1669,9 @@ The tasks follow expand, migrate, contract, an order chosen so that each merge c
 | S4 | The per-rebase checklist greps `.get('uuid')` beside `row['type_id']`, as the playbook's 1.12 does. Swept: 6.2's pointer to that checklist says the same. | :1321; :633 |
 | S5 | The code-comment grep's hits at `c1bbfae0` are listed in full, each confirmed by re-running the grep there. | :1240 |
 | S6 | None here (the playbook's precondition 11). | none |
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

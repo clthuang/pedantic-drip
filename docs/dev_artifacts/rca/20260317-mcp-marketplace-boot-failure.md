@@ -1,3 +1,9 @@
+---
+id: 20260317-mcp-marketplace-boot-failure
+type: rca
+title: MCP Servers Fail on Marketplace Installation
+status: done
+---
 # RCA: MCP Servers Fail on Marketplace Installation
 
 **Date:** 2026-03-17

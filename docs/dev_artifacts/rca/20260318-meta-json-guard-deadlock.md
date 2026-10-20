@@ -1,3 +1,9 @@
+---
+id: 20260318-meta-json-guard-deadlock
+type: rca
+title: meta-json-guard Deadlock and Multi-System Errors
+status: done
+---
 # RCA: meta-json-guard Deadlock and Multi-System Errors
 
 **Date:** 2026-03-18

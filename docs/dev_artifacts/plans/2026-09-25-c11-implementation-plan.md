@@ -1,3 +1,9 @@
+---
+id: 2026-09-25-c11-implementation-plan
+type: plan
+title: C11 implementation plan (from design rev 3.1)
+status: done
+---
 # C11 implementation plan (from design rev 3.1)
 
 **Design.** `docs/dev_artifacts/plans/2026-09-25-c11-name-not-path-design.md`, rev 3 plus its "Rev 3.1" amendments; where they conflict, the amendments win.
@@ -157,3 +163,9 @@ The 44 questions are in `agent_sandbox/2026-09-24/structural-identity-orchestrat
   - **#41:** any other test is fixed and listed.
 - **Timing (#40):** the orchestrator's checks come after QA and before the merge.
 - **The problem C11 solves (#44):** stated at the top.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

@@ -1,3 +1,9 @@
+---
+id: 2026-01-28-feature-workflow-design
+type: plan
+title: Feature Development Workflow Design
+status: done
+---
 # Feature Development Workflow Design
 
 A structured workflow for Claude Code combining spec-kit's methodical documentation with superpowers' interactive approach.
@@ -489,3 +495,9 @@ Suggest > Enforce           Verification suggested, human decides to skip or pro
 - [Component Authoring Guide](../guides/component-authoring.md)
 - [Superpowers](https://github.com/obra/superpowers) - Skill patterns
 - [Spec-kit](https://github.com/github/spec-kit) - Documentation workflow
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

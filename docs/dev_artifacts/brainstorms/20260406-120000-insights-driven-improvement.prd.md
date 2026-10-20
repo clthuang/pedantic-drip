@@ -1,3 +1,9 @@
+---
+id: 20260406-120000-insights-driven-improvement.prd
+type: brainstorm
+title: Insights-Driven Workflow & Environment Hardening
+status: abandoned
+---
 # PRD: Insights-Driven Workflow & Environment Hardening
 
 ## Status

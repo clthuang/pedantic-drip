@@ -1,3 +1,9 @@
+---
+id: 2026-09-25-c11-name-not-path-design
+type: plan
+title: "C11 redesign: a feature's directory is named by its row's `entity_id` column"
+status: done
+---
 # C11 redesign: a feature's directory is named by its row's `entity_id` column
 
 **Status:** rev 3.1 (2026-09-25).
@@ -212,3 +218,9 @@ These amend D1–D7; where they conflict, the amendment wins.
 - **What C11 solves** (calvin #44). No reader derives a feature's directory by decomposing type_id text.
   - Why it matters: the display-id work (the parent plan) is about to let a feature's display id and its type_id text diverge. After that, text-derived directories are wrong in exactly the cases a rename creates.
   - How to tell it is solved: the inventory scanner detects 0 C11 sites (the detected set is the 8 sanctioned); the disagreeing-column tests pass for every reader; and live outputs are unchanged (D6.10).
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

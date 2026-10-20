@@ -1,3 +1,9 @@
+---
+id: 20260318-041527-state-consistency-consolidation.prd
+type: brainstorm
+title: State Consistency Consolidation
+status: abandoned
+---
 # PRD: State Consistency Consolidation
 
 ## Status

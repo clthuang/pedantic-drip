@@ -1,3 +1,9 @@
+---
+id: 2026-10-19-workitem-rename
+type: plan
+title: Rename "feature" to "work item" (pd 8.0.0)
+status: done
+---
 # Rename "feature" to "work item" (pd 8.0.0)
 
 Plan of 2026-10-19. The surveys behind it are in `agent_sandbox/2026-10-19/workitem-rename/` (`survey-code.md`, `survey-prose.md`, `survey-outside.md`).
@@ -365,3 +371,9 @@ One branch (`chore/workitem-rename`) and one PR into main, in three commits. Thi
 - **Scan (Q7, Q8, Q20, Q22, Q23, Q40):** I write the script before commit 1; the pd records are outside the scan set; the data-science files are named; ids match case-insensitively; every retained phrase has its paths.
 - **Commit scoping (Q25-28):** commit 1 carries every D1 token under `plugins/pd/` (except its README), including the markdown the model reads, `source-workitem:` and the secretary's `Kind:` value.
 - **Smaller fixes:** the goal's purpose (Q45), CLAUDE.md lines (Q21), the owner's untracked files (Q24), the bake-off and T6.1 named (Q33, Q34), the HTML copy (Q35), the planted line's file (Q36), the counts (Q37, Q38), the 80-character limit (Q41), the migration's docs and comments (Q42), my-finance-management if declined (Q43), and the stale D2 (b) clause (Q44).
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

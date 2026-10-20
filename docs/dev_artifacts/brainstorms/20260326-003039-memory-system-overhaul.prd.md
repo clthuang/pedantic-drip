@@ -1,3 +1,9 @@
+---
+id: 20260326-003039-memory-system-overhaul.prd
+type: brainstorm
+title: Memory System Overhaul — Closing the Feedback Loop
+status: abandoned
+---
 # PRD: Memory System Overhaul — Closing the Feedback Loop
 
 ## Status

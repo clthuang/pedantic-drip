@@ -1,3 +1,9 @@
+---
+id: 20260325-entity-mcp-connection-failure
+type: rca
+title: Entity MCP Server Connection Failure After v4.13.22 Release
+status: done
+---
 # RCA: Entity MCP Server Connection Failure After v4.13.22 Release
 
 **Date:** 2026-03-25

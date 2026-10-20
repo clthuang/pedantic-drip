@@ -1,3 +1,9 @@
+---
+id: 116-f115-qa-deferred-source
+type: brainstorm
+title: "Feature 116 Brainstorm Source: F115 QA-Gate Deferred Hardening"
+status: done
+---
 # Feature 116 Brainstorm Source: F115 QA-Gate Deferred Hardening
 
 **Source:** 8 HIGH findings deferred to F116 carry-forward, documented in

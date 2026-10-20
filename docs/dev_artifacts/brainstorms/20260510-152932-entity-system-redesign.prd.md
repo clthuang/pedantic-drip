@@ -1,3 +1,9 @@
+---
+id: 20260510-152932-entity-system-redesign.prd
+type: brainstorm
+title: Entity System Redesign — Robust SoT, Workspace Identity, Polymorphic Taxonomy
+status: abandoned
+---
 # PRD: Entity System Redesign — Robust SoT, Workspace Identity, Polymorphic Taxonomy
 
 ## Status

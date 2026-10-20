@@ -1,3 +1,9 @@
+---
+id: 20260920-display-id-ownership
+type: rca
+title: display identity is inferred from text instead of read from structure
+status: done
+---
 # RCA: display identity is inferred from text instead of read from structure
 
 **Date:** 2026-09-20

@@ -1,9 +1,11 @@
 ---
+id: 20260318-register-entity-metadata-dict
+type: rca
 title: "RCA: register_entity fails when LLM passes metadata as dict"
 date: 2026-03-18
 slug: register-entity-metadata-dict
 severity: low
-status: analyzed
+status: abandoned
 ---
 
 # RCA: register_entity metadata dict validation error

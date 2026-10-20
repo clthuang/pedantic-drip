@@ -1,3 +1,9 @@
+---
+id: 20260327-040000-reviewer-token-efficiency.prd
+type: brainstorm
+title: Reviewer Token Efficiency
+status: abandoned
+---
 # PRD: Reviewer Token Efficiency
 
 ## Status

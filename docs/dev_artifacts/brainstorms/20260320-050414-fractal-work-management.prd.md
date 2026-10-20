@@ -1,3 +1,9 @@
+---
+id: 20260320-050414-fractal-work-management.prd
+type: brainstorm
+title: Fractal Work Management for Agent-Native Development
+status: abandoned
+---
 # PRD: Fractal Work Management for Agent-Native Development
 
 **Date:** 2026-03-20

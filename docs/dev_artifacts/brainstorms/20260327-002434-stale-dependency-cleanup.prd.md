@@ -1,3 +1,9 @@
+---
+id: 20260327-002434-stale-dependency-cleanup.prd
+type: brainstorm
+title: Stale Dependency Cleanup
+status: abandoned
+---
 # PRD: Stale Dependency Cleanup
 
 ## Status

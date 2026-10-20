@@ -1,3 +1,9 @@
+---
+id: 2026-01-29-hooks-implementation-design
+type: plan
+title: Hooks Implementation Design
+status: done
+---
 # Hooks Implementation Design
 
 ## Overview
@@ -191,3 +197,9 @@ hooks/
 | UserPromptSubmit | Every prompt | Inject active feature reminder |
 
 Only add these if specific problems arise that skills can't address.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

@@ -1,3 +1,9 @@
+---
+id: 20260710-153500-workflow-rebuild.prd
+type: brainstorm
+title: Workflow Rebuild — Lean Canonical Workflow + Express Mode
+status: abandoned
+---
 # PRD: Workflow Rebuild — Lean Canonical Workflow + Express Mode
 
 ## Status

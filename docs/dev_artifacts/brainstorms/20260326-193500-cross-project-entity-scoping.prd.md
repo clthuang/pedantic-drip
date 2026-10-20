@@ -1,3 +1,9 @@
+---
+id: 20260326-193500-cross-project-entity-scoping.prd
+type: brainstorm
+title: Cross-Project Entity Scoping
+status: abandoned
+---
 # PRD: Cross-Project Entity Scoping
 
 ## Status

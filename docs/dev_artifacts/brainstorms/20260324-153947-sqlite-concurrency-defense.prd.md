@@ -1,3 +1,9 @@
+---
+id: 20260324-153947-sqlite-concurrency-defense.prd
+type: brainstorm
+title: SQLite Concurrency Defense
+status: abandoned
+---
 # PRD: SQLite Concurrency Defense
 
 ## Status

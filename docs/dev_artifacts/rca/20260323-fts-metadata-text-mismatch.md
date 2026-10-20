@@ -1,3 +1,9 @@
+---
+id: 20260323-fts-metadata-text-mismatch
+type: rca
+title: FTS5 entities_fts metadata_text Column Mismatch
+status: done
+---
 # RCA: FTS5 entities_fts metadata_text Column Mismatch
 
 **Date:** 2026-03-23

@@ -1,3 +1,9 @@
+---
+id: 20260327-030000-simplify-secretary-modes.prd
+type: brainstorm
+title: Simplify Secretary Modes
+status: abandoned
+---
 # PRD: Simplify Secretary Modes
 
 ## Status

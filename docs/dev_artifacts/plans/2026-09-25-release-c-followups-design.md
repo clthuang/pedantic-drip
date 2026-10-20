@@ -1,3 +1,9 @@
+---
+id: 2026-09-25-release-c-followups-design
+type: plan
+title: "Release C follow-ups: triage and design"
+status: done
+---
 # Release C follow-ups: triage and design
 
 - **Date:** 2026-09-25. **Base:** develop `84fc9376`.
@@ -677,3 +683,9 @@ Each has a recommended default. The plan follows the default unless the user rul
 - the three docs list `update_entity`'s parameters;
 - the W3–W5 prototype failed `test_cross_workspace_parent_spawn_succeeds` with `workspace_unresolved`, not on policy (`design-review/verify-rest/runs/proto/failed-tbline.txt:221`);
 - the error mapping sends every unmatched `ValueError` to `invalid_transition` (`workflow_state_server.py:885-921`).
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

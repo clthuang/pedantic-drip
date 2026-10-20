@@ -1,3 +1,9 @@
+---
+id: 2026-09-22-soft-delete-design-and-plan
+type: plan
+title: Soft Delete — Design and Plan
+status: done
+---
 # Soft Delete — Design and Plan
 
 **Closes:** backlog `#081` — *v2 hard-delete vs append-only history: entity_deleted events are structurally impossible*
@@ -167,3 +173,9 @@ deleted. **Verify.** `grep` for archival-as-deletion in commands and skills;
   silent one.
 - **No hard delete means the file only grows.** Accepted: the ledger is the
   point, and 579 entities is not a size problem.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

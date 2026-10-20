@@ -1,3 +1,9 @@
+---
+id: 20260516-184258-pd-data-model-hardening.prd
+type: brainstorm
+title: pd Data-Model + Memory Hardening (Feature 112)
+status: abandoned
+---
 # PRD: pd Data-Model + Memory Hardening (Feature 112)
 
 ## Status

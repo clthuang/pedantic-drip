@@ -1,3 +1,9 @@
+---
+id: 2026-09-20-display-id-ownership-design
+type: plan
+title: Structural Identity — Design
+status: done
+---
 # Structural Identity — Design
 
 **RCA:** [docs/rca/20260920-display-id-ownership.md](../rca/20260920-display-id-ownership.md)
@@ -158,3 +164,9 @@ D0 deliberately leaves **four** live children attached to archived parents that 
 - **D0 is still a data migration**, just a far smaller one. Same discipline: `.backup` snapshot (not `cp` — the DB is in WAL mode), `PRAGMA integrity_check` and `foreign_key_check` after, and a recount of the other six workspaces holding entities (seven hold `sequences` rows; 24 workspace rows exist in total).
 - **Archival must exclude from projections without excluding from the census.** These pull in opposite directions; D2 pins the resolution and it must not be "simplified" later.
 - **D3 changes a public signature** used across fixtures and must land atomically — the largest single unit of work, and the main argument for rehearsing on a copy.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

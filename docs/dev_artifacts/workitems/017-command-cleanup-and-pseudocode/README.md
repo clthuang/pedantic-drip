@@ -1,0 +1,21 @@
+---
+id: 017-command-cleanup-and-pseudocode
+type: workitem
+title: Command Cleanup and Pseudocode Removal
+status: done
+phase: finish
+mode: standard
+---
+# Command Cleanup and Pseudocode Removal
+
+## Now
+
+Legacy work item, adopted by pd-adopt on 2026-10-21.
+
+## Links
+
+- [design](design.md)
+- [plan](plan.md)
+- [retro](retro.md)
+- [spec](spec.md)
+- [tasks](tasks.md)

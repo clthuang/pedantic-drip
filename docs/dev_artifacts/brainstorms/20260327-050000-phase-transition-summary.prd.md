@@ -1,3 +1,9 @@
+---
+id: 20260327-050000-phase-transition-summary.prd
+type: brainstorm
+title: Phase Transition Summary
+status: abandoned
+---
 # PRD: Phase Transition Summary
 
 ## Status

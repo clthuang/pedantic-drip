@@ -1,3 +1,9 @@
+---
+id: 20260321-memory-server-mcp-fails-to-load
+type: rca
+title: Memory Server MCP Fails to Load in Claude Code Sessions
+status: done
+---
 # RCA: Memory Server MCP Fails to Load in Claude Code Sessions
 
 **Date:** 2026-03-21

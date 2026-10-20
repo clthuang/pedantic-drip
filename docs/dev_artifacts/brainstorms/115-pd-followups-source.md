@@ -1,3 +1,9 @@
+---
+id: 115-pd-followups-source
+type: brainstorm
+title: "Feature 115 Brainstorm Source: pd Data-Model + Memory Followups"
+status: done
+---
 # Feature 115 Brainstorm Source: pd Data-Model + Memory Followups
 
 **Source:** Deferred clusters from feature 114 (`docs/dev_artifacts/workitems/114-pd-data-model-hardening/`). 114 landed Clusters A, D, B-H2 (the production blockers); 115 picks up the remaining 5 sub-clusters that were deferred for risk/triage reasons. All evidence, repro, and design contracts are already in 114's spec.md and design.md — 115 should reuse them as the canonical reference rather than re-deriving.

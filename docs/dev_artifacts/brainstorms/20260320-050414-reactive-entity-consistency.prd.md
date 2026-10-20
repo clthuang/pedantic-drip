@@ -1,3 +1,9 @@
+---
+id: 20260320-050414-reactive-entity-consistency.prd
+type: brainstorm
+title: Reactive Entity Consistency Engine
+status: done
+---
 # PRD: Reactive Entity Consistency Engine
 
 **Date:** 2026-03-20

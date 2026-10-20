@@ -1,3 +1,9 @@
+---
+id: 20260501-192713-memory-capture-closure.prd
+type: brainstorm
+title: Memory Pipeline Capture Closure
+status: abandoned
+---
 # PRD: Memory Pipeline Capture Closure
 
 *Source: Backlog #00052 + #00064 + #00065 + #00066*

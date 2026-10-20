@@ -1,3 +1,9 @@
+---
+id: 20260401-230441-turbo-mode-phase-merge.prd
+type: brainstorm
+title: YOLO Relevance Gate & Plan+Tasks Phase Evaluation
+status: abandoned
+---
 # PRD: YOLO Relevance Gate & Plan+Tasks Phase Evaluation
 
 ## Status

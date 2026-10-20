@@ -1,3 +1,9 @@
+---
+id: 112-pd-data-model-hardening-source
+type: brainstorm
+title: "Feature 112 Brainstorm Source: pd Data-Model + Memory Hardening"
+status: done
+---
 # Feature 112 Brainstorm Source: pd Data-Model + Memory Hardening
 
 **Source:** Deep-dive review conducted 2026-05-16 covering the memory system, data-model schema, and runtime behavior of pd. 4 parallel reviewer agents surfaced 13 HIGH findings; deep-investigation phase recalibrated 7 to HIGH after concrete reproduction and production-data verification.

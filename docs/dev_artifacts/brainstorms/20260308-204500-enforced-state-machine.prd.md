@@ -1,3 +1,9 @@
+---
+id: 20260308-204500-enforced-state-machine.prd
+type: brainstorm
+title: Enforced Workflow State Machine via CQRS
+status: abandoned
+---
 # PRD: Enforced Workflow State Machine via CQRS
 
 ## Status

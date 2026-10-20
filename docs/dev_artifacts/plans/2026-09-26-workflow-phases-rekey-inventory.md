@@ -1,3 +1,9 @@
+---
+id: 2026-09-26-workflow-phases-rekey-inventory
+type: plan
+title: Inventory for the `workflow_phases` re-key (Phase R, step R0)
+status: done
+---
 # Inventory for the `workflow_phases` re-key (Phase R, step R0)
 
 Merged from four read-only surveys of `develop` at `77f06efb`, 2026-09-26. Facts only; no design choices.
@@ -1850,3 +1856,9 @@ Answered by this inventory (not open): the "39 `get_entity` reads" count (sectio
   - `.pd-worktrees/followups-1a` was not touched;
   - the live registry was opened only with `immutable=1`.
 - **Live fingerprint after this round:** `1790286038 4083712`, sha256 prefix `2814bb4434e8faa0`, no `-wal` or `-shm` file. This is unchanged.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

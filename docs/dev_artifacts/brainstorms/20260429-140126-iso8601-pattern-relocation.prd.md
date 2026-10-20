@@ -1,3 +1,9 @@
+---
+id: 20260429-140126-iso8601-pattern-relocation.prd
+type: brainstorm
+title: Relocate `_ISO8601_Z_PATTERN` to `_config_utils.py`
+status: abandoned
+---
 # PRD: Relocate `_ISO8601_Z_PATTERN` to `_config_utils.py`
 
 *Source: Backlog #00277*

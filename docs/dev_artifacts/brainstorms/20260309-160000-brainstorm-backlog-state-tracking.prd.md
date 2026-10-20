@@ -1,3 +1,9 @@
+---
+id: 20260309-160000-brainstorm-backlog-state-tracking.prd
+type: brainstorm
+title: Brainstorm & Backlog State Tracking
+status: abandoned
+---
 # PRD: Brainstorm & Backlog State Tracking
 
 ## Status

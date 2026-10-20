@@ -1,3 +1,9 @@
+---
+id: 20260508-110928-sessionstart-skills
+type: rca
+title: SessionStart hook error + 61 skill descriptions dropped
+status: done
+---
 # RCA: SessionStart hook error + 61 skill descriptions dropped
 
 - **Date:** 2026-05-08

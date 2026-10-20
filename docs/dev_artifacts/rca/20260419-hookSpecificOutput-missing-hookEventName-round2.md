@@ -1,3 +1,9 @@
+---
+id: 20260419-hookSpecificOutput-missing-hookEventName-round2
+type: rca
+title: "RCA Round 2: hookSpecificOutput missing required field hookEventName"
+status: done
+---
 # RCA Round 2: hookSpecificOutput missing required field hookEventName
 
 **Date:** 2026-04-19

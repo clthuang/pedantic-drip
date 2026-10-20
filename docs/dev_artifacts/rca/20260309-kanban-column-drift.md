@@ -1,3 +1,9 @@
+---
+id: 20260309-kanban-column-drift
+type: rca
+title: Feature kanban_column Never Updates from "backlog"
+status: done
+---
 # RCA: Feature kanban_column Never Updates from "backlog"
 
 **Date:** 2026-03-09

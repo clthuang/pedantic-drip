@@ -1,3 +1,9 @@
+---
+id: 2026-10-14-thin-pd-native-design
+type: plan
+title: Thin pd on Claude Code's native features (design)
+status: done
+---
 # Thin pd on Claude Code's native features (design)
 
 **Status:** calvin'd twice on 2026-10-14 (D16, D17), then reviewed by Codex for implementation readiness in three cycles, ending READY (annex `reviews/`); ready for the build (§16), which `build-tasks.md` breaks into tasks.
@@ -1197,3 +1203,9 @@ These are tracker features. Build each one only when a real project asks for it;
 **How the rollout is judged** (D16, the user: "Bake-off + 5 features (Recommended)"; D17, the user: "Drop the token test"):
 - **Thin pd works** if, in the bake-off, every §A7 check passes and every question is answered, and then the next five real features run with `pd-lint` clean and no registry. Tokens are recorded and decide nothing.
 - **It fails** if a §A7 item can't be fixed. A failed rollout is fixed forward, or restored from git history (step 3).
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

@@ -1,3 +1,9 @@
+---
+id: 20260429-024953-pre-release-qa-gate.prd
+type: brainstorm
+title: Pre-Release Adversarial QA Gate in /pd:finish-feature
+status: abandoned
+---
 # PRD: Pre-Release Adversarial QA Gate in /pd:finish-feature
 
 *Source: Backlog #00217*

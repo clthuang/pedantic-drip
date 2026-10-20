@@ -1,3 +1,9 @@
+---
+id: 20260402-081126-phase-context-accumulation.prd
+type: brainstorm
+title: Phase Context Accumulation
+status: abandoned
+---
 # PRD: Phase Context Accumulation
 
 *Source: Backlog #00044*

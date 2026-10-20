@@ -1,3 +1,9 @@
+---
+id: 20260318-mcp-bootstrap-python-discovery
+type: rca
+title: MCP Servers Fail to Start on Fresh Install Due to Python Discovery and Silent Failure
+status: done
+---
 # RCA: MCP Servers Fail to Start on Fresh Install Due to Python Discovery and Silent Failure
 
 **Date:** 2026-03-18

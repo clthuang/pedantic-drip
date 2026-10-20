@@ -1,3 +1,9 @@
+---
+id: 2026-09-24-wave2-cutover-runbook
+type: plan
+title: "Wave 2 cutover: applying registry migration 7"
+status: done
+---
 # Wave 2 cutover: applying registry migration 7
 
 **Status, 2026-09-24: done.**
@@ -120,3 +126,9 @@ This page is the whole remaining procedure. The history is in the [completion pl
   - the worktree `.pd-worktrees/wave2` and the merged branch `wave2-core` are removed;
   - `agent_sandbox/2026-09-24/wave2-gate/` and `agent_sandbox/2026-09-23/wave2-step4-backfill-snapshot/` are deleted.
 - **Kept:** the rollback snapshot `~/.claude/pd/entities/entities.db.pre-wave2-20260924`.
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

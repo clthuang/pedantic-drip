@@ -1,3 +1,9 @@
+---
+id: 2026-01-28-superpowers-patterns-implementation
+type: plan
+title: Superpowers Patterns Integration - Implementation Plan
+status: done
+---
 # Superpowers Patterns Integration - Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
@@ -1411,3 +1417,9 @@ If clean: Done!
 
 **Restructured:**
 - agents/ flattened (removed workers/ and specialists/)
+
+## Now
+
+Legacy item, adopted by pd-adopt on 2026-10-21.
+
+## Log

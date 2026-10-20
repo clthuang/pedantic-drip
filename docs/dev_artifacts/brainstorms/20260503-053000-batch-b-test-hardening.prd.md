@@ -1,3 +1,9 @@
+---
+id: 20260503-053000-batch-b-test-hardening.prd
+type: brainstorm
+title: Batch B Test-Hardening for Feature 102
+status: abandoned
+---
 # PRD: Batch B Test-Hardening for Feature 102
 
 *Source: Backlog #00298 + #00299 + #00300 + #00301 + #00302 + #00303 + #00304 + #00305 + #00306*

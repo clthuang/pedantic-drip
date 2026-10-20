@@ -1,3 +1,9 @@
+---
+id: 117-pd-post-f116-hygiene-source
+type: brainstorm
+title: "Feature 117 Brainstorm Source: pd Post-F116 Production Hygiene"
+status: done
+---
 # Feature 117 Brainstorm Source: pd Post-F116 Production Hygiene
 
 **Source:** Empirically-discovered open work items from doctor + entity DB survey conducted 2026-05-18 after F116 merge. Three themes bundled into one feature for atomic landing — they share a common root (state reconciliation + version-pin debt from F108-F116 sequence) and small-fix character (no new functional surface).

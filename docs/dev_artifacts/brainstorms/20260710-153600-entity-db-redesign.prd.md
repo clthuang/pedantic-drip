@@ -1,3 +1,9 @@
+---
+id: 20260710-153600-entity-db-redesign.prd
+type: brainstorm
+title: Entity DB Redesign — Single-Truth, Event-Sourced, Multi-Workspace
+status: abandoned
+---
 # PRD: Entity DB Redesign — Single-Truth, Event-Sourced, Multi-Workspace
 
 ## Status
