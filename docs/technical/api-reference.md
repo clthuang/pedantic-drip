@@ -24,7 +24,7 @@ Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOA
 pd-status              # print the state
 ```
 
-Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done work items owing a retro. Takes no other argument.
+Read-only, caches nothing. Prints the items by status and phase (an active plan reads `done` once its roadmap is), each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done work items owing a retro. Takes no other argument.
 
 ## phase-gate.sh — a phase's exit check
 
