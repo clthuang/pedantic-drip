@@ -22,3 +22,4 @@ Legacy work item, adopted by pd-adopt on 2026-10-21.
 - [spec](spec.md)
 - [spike-results](spike-results.md)
 - [tasks](tasks.md)
+- [log](log.md)

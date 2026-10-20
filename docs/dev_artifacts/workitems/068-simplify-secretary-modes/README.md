@@ -16,3 +16,4 @@ Legacy work item, adopted by pd-adopt on 2026-10-21.
 
 - [prd](prd.md)
 - [spec](spec.md)
+- [log](log.md)

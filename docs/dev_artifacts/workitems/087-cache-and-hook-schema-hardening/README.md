@@ -15,3 +15,4 @@ Legacy work item, adopted by pd-adopt on 2026-10-21.
 ## Links
 
 - [spec-plan](spec-plan.md)
+- [log](log.md)
