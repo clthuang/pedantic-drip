@@ -40,6 +40,8 @@ workitem "$ART" 2026-10-14-gamma done "Done." $'## 2026-10-14 13:00+08:00 defect
 workitem "$ART" 2026-10-14-delta abandoned "Dropped by the user."
 printf -- '---\nid: 2026-10-14-road\ntype: plan\ntitle: road\nstatus: active\nroadmap:\n  - workitem: workitems/2026-10-14-gamma\n  - planned: emit\n    after: [gamma]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n' \
   > "$ART/plans/2026-10-14-road.md"
+printf -- '---\nid: 2026-10-14-fin\ntype: plan\ntitle: fin\nstatus: active\nroadmap:\n  - workitem: workitems/2026-10-14-gamma\n---\n# fin\n\n## Now\n\n## Links\n\n## Log\n' \
+  > "$ART/plans/2026-10-14-fin.md"
 for src in startup compact; do
   out=$(ctx "$A" "$src")
   check "adopted ($src): active item and its ## Now" has "$out" "next: task 2"
@@ -47,9 +49,18 @@ for src in startup compact; do
   check "adopted ($src): the next ready item" has "$out" "next ready: emit"
   check "adopted ($src): the retro owed" has "$out" "workitems/2026-10-14-gamma: defect"
   check "adopted ($src): done and abandoned rows left out" lacks "$out" "Dropped by the user."
+  check "adopted ($src): a finished plan left out, its row and its roadmap line" lacks "$out" "2026-10-14-fin"
   check "adopted ($src): no /pd:init offer" lacks "$out" "/pd:init"
   check "adopted ($src): the {pd_*} values" eval 'has "$out" "pd_artifacts_root: docs/dev_artifacts" && has "$out" "pd_base_branch: main"'
 done
+
+# Only finished plans: no Plans heading left on its own.
+F=$(repo "$TMP/finished"); mkdir -p "$F/.claude" "$F/docs/dev_artifacts/plans"
+printf -- '---\nsop: 1\n---\n' > "$F/.claude/pd.local.md"
+workitem "$F/docs/dev_artifacts" 2026-10-14-gamma done "Done."
+cp "$ART/plans/2026-10-14-fin.md" "$F/docs/dev_artifacts/plans/"
+out=$(ctx "$F" compact)
+check "only finished plans: no Plans heading" eval 'lacks "$out" "Plans" && lacks "$out" "plan done"'
 
 # A configured repo with no items still gets the values; base_branch auto follows origin's HEAD;
 # release_script keeps its spaces.

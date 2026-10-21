@@ -4,9 +4,9 @@
   pd-status              # print the state
   pd-status --self-test
 
-Read-only, caches nothing. Prints the items by status and phase, each roadmap's progress and
-next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and
-done work items owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
+Read-only, caches nothing. Prints the items by status and phase (an active plan reads done once its
+roadmap is), each roadmap's progress and next ready item, open blockers, cap stops answered, open
+assumptions, on-behalf decisions and done work items owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
 """
 import re
 import sys
@@ -41,9 +41,9 @@ def slug_of(workitem_id):
 
 
 def roadmap_lines(plan, workitems):
-    """Progress, next ready item and replan flags (§7.1): computed, never stored."""
-    rows = []  # (slug, state, after)
-    for entry in plan["fm"].get("roadmap") or []:
+    """Whether the roadmap is done, then its progress, next ready item and replan flags (§7.1): computed, never stored."""
+    rows, entries = [], plan["fm"].get("roadmap") or []  # rows: (slug, state, after)
+    for entry in entries:
         if not isinstance(entry, dict):
             continue
         after = entry.get("after") or []
@@ -59,13 +59,14 @@ def roadmap_lines(plan, workitems):
     finished = {s for s, state, _ in rows if state in ("done", "dropped")}
     dropped = {s for s, state, _ in rows if state == "dropped"}
     ready = next((s for s, state, after in rows if s not in finished and all(a in finished for a in after)), None)
-    head = f"{plan['label']}: {len(finished)}/{len(rows)} done"
-    head += "; plan done" if len(finished) == len(rows) else f"; next ready: {ready or 'none'}"
+    done = len(finished) == len(entries)  # an entry pd can't read (pd-lint errors on it) is never finished
+    head = f"{plan['label']}: {len(finished)}/{len(entries)} done"
+    head += "; plan done" if done else f"; next ready: {ready or 'none'}"
     lines = [head]
     for s, state, after in rows:
         if s not in finished and dropped.intersection(after):
             lines.append(f"  replan: {s} (after dropped {', '.join(sorted(dropped.intersection(after)))})")
-    return lines
+    return done, lines
 
 
 def capped_links(entries):
@@ -93,16 +94,20 @@ def report(root):
     items = load_items(art)
     if not items:
         return "\n".join(migrate + [f"no items under {art.relative_to(root)}"])
+    workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
+    for i in items:
+        i["status"], i["roadmap"] = i["fm"].get("status"), []
+        if i["type"] == "plan" and i["fm"].get("roadmap"):
+            done, i["roadmap"] = roadmap_lines(i, workitems)
+            if done and i["status"] == "active":  # pd-lint keeps done out of a roadmap plan's status: pd computes it
+                i["status"] = "done"
     rank = lambda v, order: order.index(v) if v in order else len(order)
-    items.sort(key=lambda i: (rank(i["fm"].get("status"), STATUSES), rank(i["fm"].get("phase"), PHASES), i["id"]))
+    items.sort(key=lambda i: (rank(i["status"], STATUSES), rank(i["fm"].get("phase"), PHASES), i["id"]))
     out = migrate + ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} NOW"]
     for i in items:
-        fm = i["fm"]
-        out.append(f"{fm.get('status') or '?':<10} {fm.get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
+        out.append(f"{i['status'] or '?':<10} {i['fm'].get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
 
-    workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
-    blocks = {"Plans": [l for i in items if i["type"] == "plan" and i["fm"].get("roadmap")
-                        for l in roadmap_lines(i, workitems)]}
+    blocks = {"Plans": [l for i in items for l in i["roadmap"]]}
     blocks["Open blockers"] = [
         f"{i['label']}: {b['ref']} {b['file']}:{b['line']} — {b['claim']}"
         + ("  [rejection proposed — needs the user's decision]" if b["rejection_proposed"] else "")
@@ -173,10 +178,22 @@ def _self_test():
             f"  - workitem: workitems/{S}-alpha\n  - planned: zeta\n    after: [eps]\n"
             f"  - workitem: workitems/{S}-beta\n    after: [alpha]\n"
             f"  - dropped: delta\n    reason: \"not needed\"\n  - planned: eps\n    after: [delta]\n---\n# road\n\n## Now\n\n## Links\n\n## Log\n")
+        (art / "plans" / f"{S}-fin.md").write_text(
+            f"---\nid: {S}-fin\ntype: plan\ntitle: fin\nstatus: active\nroadmap:\n  - workitem: workitems/{S}-alpha\n"
+            f"  - dropped: delta\n    reason: \"not needed\"\n---\n# fin\n\n## Now\n\n## Links\n\n## Log\n")
         out = report(root)
-        rows = [l.split()[3] for l in out.split("\n")[2:9]]
-        c.check(rows == [f"{S}-kappa", f"{S}-beta", f"{S}-road", f"{S}-gamma", f"{S}-alpha", f"{S}-omega", f"{S}-delta"],
-                "items sorted by status then phase")
+        rows = [l.split() for l in out.split("\n")[2:10]]
+        c.check([r[3] for r in rows] == [f"{S}-kappa", f"{S}-beta", f"{S}-road", f"{S}-gamma", f"{S}-alpha", f"{S}-omega",
+                                         f"{S}-fin", f"{S}-delta"], "items sorted by status then phase")
+        status = {r[3]: r[0] for r in rows}
+        c.check(status[f"{S}-fin"] == "done" and status[f"{S}-road"] == "active",
+                "a roadmap plan says done once its roadmap is, active until then")
+        bad = art / "plans" / f"{S}-fin.md"
+        bad.write_text(bad.read_text().replace("roadmap:\n", "roadmap:\n  - unfinished-work\n"))
+        out = report(root)
+        status = {l.split()[3]: l.split()[0] for l in out.split("\n")[2:10]}
+        c.check(f"plans/{S}-fin: 2/3 done; next ready: none" in out and status[f"{S}-fin"] == "active",
+                "an entry pd can't read keeps its plan unfinished")
         c.check("next: task 2" in out and "waiting on the API owner" in out, "the table shows ## Now's first line")
         c.check(f"plans/{S}-road: 2/5 done; next ready: beta" in out, "plan progress: dropped counts as done; next ready")
         c.check("replan: eps (after dropped delta)" in out and "replan: zeta" not in out, "a dropped item's dependents flagged")
