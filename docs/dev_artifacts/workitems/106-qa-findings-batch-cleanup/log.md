@@ -1,0 +1,126 @@
+<!-- Append-only history of 106-qa-findings-batch-cleanup. Entry shapes: plugins/pd/references/log-entries.md. The entries below were converted from legacy files by pd-adopt. -->
+
+## 2026-05-06 00:00+00:00 review legacy — Step 1: Spec-Reviewer Review - Iteration 1 - 2026-05-06
+Status: closed (legacy)
+**Reviewer:** pd:spec-reviewer (skeptic)
+**Decision:** Needs Revision (2 blockers + 4 warnings)
+
+**Issues addressed in iter 2:**
+
+- [blocker/traceability] FR-3 factual error: described `test_session_start_cleanup.sh` as covering `cleanup_stale_correction_buffers` (broader coverage) when it actually covers `cleanup_stale_mcp_servers` (5 tests for PID/orphan-process cleanup). AC-3.1 only checked correction_buffers, would have passed trivially without preserving MCP-server coverage. Fix: rewrote Decision 2 to acknowledge the two files cover **different functions** in the same source script; FR-3 now merges BOTH (1 correction-buffers test + 5 MCP-server tests = 6 total) with sed-extract applied to both. Added AC-3.3 counting test functions ≥6 to catch lost coverage. Verified by spec author at spec time: `grep "log_test\|cleanup_stale" test_session_start_cleanup.sh` → 5 MCP-server tests; `test-session-start.sh` → 1 correction-buffers test.
+- [blocker/testability] AC-8.1 grep regex `\(closed:|fixed in feature:106|wontfix` had unbalanced parens. Fix: added closing `)` to make a proper alternation group `(\(closed:|fixed in feature:106|wontfix)`.
+- [warning/testability] AC-2.1 grep too loose (matched filenames in comments/banners). Fix: tightened to anchor on invocation patterns (`bash`, `./`, `"$SCRIPT_DIR"/`) at line start.
+- [warning/clarity] FR-1b dev_guide ambiguity. Fix: pinned target to `docs/dev_guides/component-authoring.md` (no implementer choice).
+- [warning/testability] AC-5.1 `grep -B 2` too tight for guard placement. Fix: replaced with awk-based section extraction between the test-injection comment and next blank line; checks for `CLAUDE_CODE_DEV_MODE` anywhere in the seam block. Spec also documents acceptable guard forms ((a) inline `&&` per env-var line, or (b) wrapping `if [[ ... DEV_MODE ... ]]; then` block).
+- [warning/traceability] FR-4 vs backlog #00313 file-attribution mismatch. Fix: added one-line note in FR-4 acknowledging the backlog typo (function lives in `test-capture-on-stop.sh:188`, not `test-tag-correction.sh`).
+
+## 2026-05-06 00:00+00:00 review-2 legacy — Reviewer 1: Plan Review - Iteration 1 - 2026-05-06
+Status: closed (legacy)
+**Reviewer:** pd:plan-reviewer
+**Decision:** approved=false (1 blocker + 3 warnings — fixed in iter 2)
+
+**Issues addressed:**
+- [blocker/dependency] T1 FR-5 guard breaks existing test-capture-on-stop.sh unless `CLAUDE_CODE_DEV_MODE=1` is exported. No task owned this. Fix: T1 now has 2 edits — production hook guard AND `export CLAUDE_CODE_DEV_MODE=1` at top of `test-capture-on-stop.sh`. T1 DoD now includes AC-5.2 (test-capture-on-stop.sh exits 0).
+- [warning/tdd-order] T9 (backlog annotations) ran BEFORE T10 (validation). If T10 fails, backlog already annotated as closed but changes rolled back. Fix: swapped — T10 validation now in Phase 4 (before annotations); T9 annotations in Phase 5 (only if T10 passes). Dependency graph updated. T9 task explicitly checks "Confirm T10 passed; if not STOP and rollback."
+- [warning/feasibility] Time estimates throughout (5 min, 3 min, etc) violate the project's complexity-level convention. Fix: replaced all `Time: N min` with `Complexity: Simple/Medium/Complex`.
+- [warning/tdd-order] Tasks lacked explicit "Why this item" / "Why this order" rationales. Fix: added both bullets to each of T1-T10. Each "Why this order" references either Group A independence, T3+T4 → T2 dependency, or T1-T8 → T10 → T9 sequencing.
+
+## 2026-05-06 00:00+00:00 review-3 legacy — Reviewer 2: Task Review - Iteration 1 + Reviewer 3: Phase Review - Iteration 1 - 2026-05-06
+Status: closed (legacy)
+**Reviewers:** pd:task-reviewer (1 blocker + 1 warning) + pd:phase-reviewer (1 blocker + 1 warning, same issues identified independently)
+**Decision:** approved=false. Both reviewers found same 2 issues; iter 2 fixes:
+
+- [blocker] T4 AC-4.1 regex `^test_category_(anti_patterns|preference)\(\)` does not match design I-4 function names `test_category_mapping_anti_patterns()` / `test_category_mapping_preference()`. Would always return 0 matches → false FAIL. Fix: regex now `^test_category_mapping_(anti_patterns|preference)\(\)` matching the design names exactly.
+- [blocker→warning] T1 (Phase 1) and T4 (Phase 2) both modify `plugins/pd/hooks/tests/test-capture-on-stop.sh` but were marked parallelizable with no sequencing. Fix: T4's "Why this order" now explicitly states "depends on T1 (shared file...)"; Parallel Execution Groups summary updated to "T4 (after T1)"; Dependency Graph updated to label T4 as "DEPENDS ON T1 (shared file)".
+
+## 2026-05-06 02:06+00:00 phase start -> specify
+Status: closed (legacy)
+
+## 2026-05-06 02:06+00:00 review specify — legacy
+Status: closed (legacy)
+Iterations: 2
+
+## 2026-05-06 02:11+00:00 review design — legacy
+Status: closed (legacy)
+Iterations: 2
+
+## 2026-05-06 02:22+00:00 review create-plan — legacy
+Status: closed (legacy)
+Iterations: 3
+
+## 2026-05-06 10:34+08:00 note legacy implementation-log.md
+Status: closed (legacy)
+Direct-orchestrator pattern (6th consecutive feature: 101, 102, 104, 105, 106). Heavy upstream review (specify 2 + design 1 + create-plan 3 = 6 iterations) enabled single-pass implementation.
+
+### Summary
+
+All 10 tasks executed; all 18 ACs verified PASS.
+
+| Task | FR | Backlog | Status | Notes |
+|------|-----|---------|--------|-------|
+| T1 | FR-5 | #00315 | PASS | guard added inline; CLAUDE_CODE_DEV_MODE=1 exported in test-capture-on-stop.sh |
+| T2 | FR-2 | #00311 | PASS | 3 test scripts wired into test-hooks.sh; commands-reference.md updated |
+| T3 | FR-3 | #00312 | PASS | 6 tests in consolidated test-session-start.sh (1 corr + 5 mcp); sed-extract for both |
+| T4 | FR-4 | #00313 | PASS | test_category_mapping → 2 functions; bottom invocation updated |
+| T5 | FR-6 | #00316 | PASS | log_info lines swapped in validate.sh |
+| T6 | FR-7 | #00318 | PASS | "(line 726)" dropped from secretary.md R-8 note |
+| T7 | FR-1a | #00310 | PASS | TD-2 amendment appended to feature 104 design.md |
+| T8 | FR-1b | #00319 | PASS | "Committed vs gitignored evidence paths" subsection added to component-authoring.md |
+| T10 | — | — | PASS | validate.sh exit 0; test-hooks.sh 114/114 + 6/6 external = 120 tests; pattern_promotion 226/226 |
+| T9 | FR-8 | #00310-#00319 | PASS | all 10 backlog rows annotated with (closed: ...) |
+
+### Verification Outputs
+
+### T1 (FR-5)
+- AC-5.1 PASS: guard `CLAUDE_CODE_DEV_MODE` present in seam section
+- AC-5.2 PASS: `test-capture-on-stop.sh` 10/10 tests pass after guard + export
+
+### T3 (FR-3)
+- AC-3.1 PASS: hyphenated file exists, underscored deleted, both function refs present
+- AC-3.2 PASS: sed-extract for both `cleanup_stale_correction_buffers` and `cleanup_stale_mcp_servers`
+- AC-3.3 PASS: 6 test functions in consolidated file
+- AC-3.4 PASS: `test-session-start.sh` 6/6 tests pass
+
+### T4 (FR-4)
+- AC-4.1 PASS: 2 functions matching `^test_category_mapping_(anti_patterns|preference)\(\)`
+- AC-4.2 PASS: `test-capture-on-stop.sh` 11/11 tests pass after refactor
+
+### T2 (FR-2)
+- AC-2.1 PASS: 3 invocation lines for the 3 external scripts in test-hooks.sh
+- AC-2.2 PASS: `test-hooks.sh` 114/114 + 6 external = 120 tests pass; exit 0
+- AC-2.3 PASS: commands-reference.md references test-hooks.sh
+
+### T10 (Final validation)
+- `./validate.sh` exit 0 (Errors: 0, Warnings: 5)
+- `bash plugins/pd/hooks/tests/test-hooks.sh` exit 0 (114/114 internal + 6/6 external)
+- `cd plugins/pd && PYTHONPATH=hooks/lib .venv/bin/python -m pytest hooks/lib/pattern_promotion/ -q` → 226 passed
+
+### T9 (FR-8)
+- AC-8.1 PASS: all 10 rows (#00310-#00319) annotated with (closed: ...) text
+
+### Files Changed
+
+10 modifies + 1 delete:
+- plugins/pd/hooks/capture-on-stop.sh
+- plugins/pd/hooks/tests/test-capture-on-stop.sh
+- plugins/pd/hooks/tests/test-session-start.sh
+- plugins/pd/hooks/tests/test-hooks.sh
+- plugins/pd/commands/secretary.md
+- validate.sh
+- docs/features/104-batch-b-test-hardening/design.md (TD-2 amendment)
+- docs/dev_guides/component-authoring.md (new subsection)
+- docs/dev_guides/commands-reference.md (test-hooks.sh comment)
+- docs/backlog.md (10 row annotations)
+- DELETE: plugins/pd/hooks/tests/test_session_start_cleanup.sh
+
+## 2026-05-06 02:37+00:00 review implement — legacy
+Status: closed (legacy)
+Iterations: 1
+
+## 2026-05-06 02:44+00:00 review finish — legacy
+Status: closed (legacy)
+
+## 2026-05-17 04:34+00:00 note entity_status_changed
+Status: closed (legacy)
+- old_status: completed
+- new_status: archived

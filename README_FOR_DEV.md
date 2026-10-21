@@ -224,7 +224,7 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 
 ## Workflow Mechanics
 
-Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/plans/2026-10-14-thin-pd-native-design.md`.
+Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes its stage skill, which is the conductor's playbook for that stage. `workflow-transitions` is the contract every playbook shares. The design is `docs/dev_artifacts/plans/2026-10-14-thin-pd-native-design.md`.
 
 - **State lives in committed files:** a work item is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
 - **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed.
@@ -240,7 +240,7 @@ Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes i
 
 ## Knowledge Bank
 
-`docs/knowledge-bank/` is a frozen, read-only archive of lessons from before thin pd; no stage reads or writes it (`/pd:adopt` moves it and rewrites its links). New lessons land where they act: a check, a line in CLAUDE.md, or a skill edit.
+`docs/dev_artifacts/knowledge-bank/` is a frozen, read-only archive of lessons from before thin pd; no stage reads or writes it (`/pd:adopt` moves it and rewrites its links). New lessons land where they act: a check, a line in CLAUDE.md, or a skill edit.
 
 - **constitution.md:** core principles (KISS, YAGNI, etc.)
 - **patterns.md:** approaches that worked

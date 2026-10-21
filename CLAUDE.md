@@ -127,7 +127,7 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 
 ## Gotchas
 
-- **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — inert reference markdown (no tooling reads/writes it)
+- **Knowledge bank:** `docs/dev_artifacts/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — inert reference markdown (no tooling reads/writes it)
 - **Helper dispatch isolation:** When a function orchestrates N independent helpers, wrap each in its own `try/except`. List-literal dispatch (`[helper1(), helper2()]`) means one exception blocks all subsequent helpers.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Hook EPIPE safety (feature 107):** Hooks emitting structured output via printf/cat MUST keep `trap '' PIPE` AND wrap writes with `{ ...; } 2>/dev/null || true`. The trap is co-load-bearing — without it, the bash process is SIGPIPE-killed before `|| true` can run. Use `safe_emit_hook_json` from `lib/session-start-helpers.sh`. See `docs/dev-guide/hook-development.md` "Broken-pipe handling".
@@ -155,7 +155,7 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 
 **Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
-**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`, still pending here):
+**Project-aware config:** `.claude/pd.local.md` fields (injected at session start by `pd-session-start.sh` once the repo is adopted: `/pd:adopt` sets `sop: 1`):
 - `artifacts_root` (default: `docs/dev_artifacts`) — root directory for work items, plans, brainstorms, rca and backlog items
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
@@ -164,4 +164,4 @@ Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{
 
 **Base branch for this repo is `main`** — `base_branch: auto` resolves to it from the remote HEAD. Branches merge to `main` through PRs; releases go through `scripts/release-pr.sh`.
 
-**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/backlog-manual.md](docs/backlog-manual.md) is the historical detail annex for pre-134 items.
+**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. [docs/dev_artifacts/backlog-manual.md](docs/dev_artifacts/backlog-manual.md) is the historical detail annex for pre-134 items.
