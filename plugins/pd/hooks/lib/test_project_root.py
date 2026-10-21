@@ -1,6 +1,6 @@
 """W4.4 tests: root detection accepts a ``.git`` file.
 
-Design: ``docs/plans/2026-09-25-release-c-followups-design.md``, W4 change 4,
+Design: ``docs/dev_artifacts/plans/2026-09-25-release-c-followups-design.md``, W4 change 4,
 and its Tests ("Root detection").
 
 **The layouts.** Each test builds a temp git repository. Its main checkout's

@@ -1,6 +1,6 @@
 ---
 last-updated: 2026-10-18T06:00:00Z
-source-workitem: thin-pd (docs/plans/2026-10-14-thin-pd-native-design.md)
+source-workitem: thin-pd (docs/dev_artifacts/plans/2026-10-14-thin-pd-native-design.md)
 ---
 
 # Workflow Artifacts
