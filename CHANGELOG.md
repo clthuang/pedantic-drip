@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The conductor offers a goal run once the plan is approved.** The planning stage's exit asks whether to run the work item to `finish` under `/goal`; on yes, the conductor writes the `goal:` line and prints the `/goal` command. Before, nothing offered one, so a goal run started only when the user asked.
+
 ### Fixed
 
 - **The commit reminder judges the branch the commit lands on.** `pre-commit-guard` read the branch before the command ran, so `git checkout -b workitem/<id> main && git commit`, as every new work item does, drew "Committing directly to 'main'", while `git checkout main && git commit` from a work item branch drew nothing. It also took the text `git commit` in a grep pattern or a quoted string for a commit. It now shares `pd-commit-lint`'s shell-word parser (`hooks/lib/commit_target.py`), which also follows a `git checkout` or `git switch` earlier in the command.
