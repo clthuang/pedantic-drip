@@ -16,8 +16,7 @@ The Plan stage (`phase: create-plan`) removes one unknown: in what order, and ho
    - **revise** for each blocker; a finding you can refute at file:line gets a `Rejects:` line instead, and only the user accepts it;
    - **re-review scoped** to the earlier findings and the edit that answered them (`pd-review-filter --range <reviewed commit>..HEAD`);
    - **the loop ends** at the first pass with no blocker. Still open after the third: a `capped` entry, then ask the user.
-5. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh create-plan <work item dir>`, and `pd-lint` clean. Then phase exit per `workflow-transitions` (`phase create-plan -> implement`).
-6. **Offer a goal run:** ask through AskUserQuestion whether to run the work item to `finish` under `/goal`. On yes, start it per `workflow-transitions` "Goal runs". Skip the offer in print mode, or when this session's `goal:` line is already in `## Now`.
+5. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh create-plan <work item dir>`, and `pd-lint` clean. Then phase exit per `workflow-transitions` (`phase create-plan -> implement`), and offer a goal run: ask through AskUserQuestion whether to run the work item to `finish` under `/goal`; on yes, start it per `workflow-transitions` "Goal runs". Skip the offer in print mode, or when this session's `goal:` line is already in `## Now`.
 
 **Entries this stage writes:** `review` (one per review call), `decision` (each user ruling, each accepted rejection, a re-confirmed plan), `capped` (at the cap), `note` (a small work item's overrun), `phase`.
 

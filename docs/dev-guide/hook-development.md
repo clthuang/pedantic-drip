@@ -38,7 +38,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 ```
 
-A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead, which walks up from the working directory (`pre-commit-guard.sh` reads stdin only for `tool_input.command`).
+A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead, which walks up from the working directory (`pre-commit-guard.sh` does so for its test-file check; the commit's own directory comes from `cwd`, through `lib/commit_target.py`).
 
 ### When to Use Each
 
@@ -89,8 +89,8 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 
 ### `hooks/lib/commit_target.py`
 
-- **Where a Bash command commits:** reads the PreToolUse hook JSON on stdin and prints `<dir>\t<branch>` for a command whose `git commit` runs in `<dir>`, or nothing for a command that doesn't commit. It reads shell words, not a regex: quoted prose isn't a command, and `cd dir &&`, `git -C dir` and `--no-pager` count.
-- **`<branch>`:** the branch an earlier `git checkout` or `git switch` in the same command moved `<dir>` to; `?` when that can't be known (`-`, `--detach`); empty when nothing switched it, so the caller reads HEAD.
+- **Where a Bash command commits:** reads the PreToolUse hook JSON on stdin and prints `<dir>\t<branch>` for a command whose `git commit` runs in `<dir>`, or nothing for a command that doesn't commit. It reads shell words, not a regex: quoted prose and heredoc bodies aren't commands, newlines separate commands, and `cd dir &&`, `git -C dir`, `--no-pager` and a leading `if`/`then`/`!` count.
+- **`<branch>`:** the branch an earlier `git checkout` or `git switch` in the same command moved `<dir>` to; `?` when that can't be known (`-`, `--detach`, no name after `-b`/`-c`); empty when nothing switched it, so the caller reads HEAD. `git checkout [<branch>] [--] <paths>` restores files, so it isn't a switch.
 - **Used by** `pre-commit-guard` (the branch) and `pd-commit-lint` (the directory).
 
 ### `hooks/lib/session-start-helpers.sh`

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The commit reminder judges the branch the commit lands on.** `pre-commit-guard` read the branch before the command ran, so `git checkout -b workitem/<id> main && git commit`, as every new work item does, drew "Committing directly to 'main'", while `git checkout main && git commit` from a work item branch drew nothing. It also took the text `git commit` in a grep pattern or a quoted string for a commit. It now shares `pd-commit-lint`'s shell-word parser (`hooks/lib/commit_target.py`), which also follows a `git checkout` or `git switch` earlier in the command.
+- **`pd-commit-lint` lints commits it used to miss.** Its parser ignored a `git commit` after a newline or inside `if …; then`, and gave up on any command whose heredoc held an apostrophe, such as a commit message saying "don't", so `pd-lint --staged` never ran on those commits. The shared parser drops heredoc bodies, treats newlines as separators and skips a leading `if`, `then` or `!`.
 
 ## [8.0.1] - 2026-10-21
 

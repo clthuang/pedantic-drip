@@ -221,18 +221,32 @@ test_pre_commit_guard_compound_commands() {
     git -C "$repo" branch workitem/x
 
     # Each case: the branch checked out, the command, and whether "Committing directly to 'main'" is right.
-    local failures="" branch cmd want got output
-    while IFS='|' read -r branch cmd want; do
+    # The hook runs from another directory with the repo as stdin's `cwd`, as Claude Code sends it.
+    local cases=(
+        "main|git checkout -b workitem/y main && git add . && git commit -m t|no"
+        "main|git switch -c workitem/z && git commit -m t|no"
+        "main|git switch --create=workitem/q && git commit -m t|no"
+        "main|grep -n 'git commit' README.md|no"
+        "workitem/x|git checkout main && git commit -m t|yes"
+        "workitem/x|git checkout main -- README.md && git commit -m t|no"
+        "main|git checkout README.md && git commit -m t|yes"
+        "main|git checkout - && git commit -m t|no"
+        "main|if ! git diff --quiet; then git commit -m t; fi|yes"
+        "main|"$'git add .\ngit commit -m t'"|yes"
+        "main|"$'git commit -F - <<\'EOF\'\nfix: don\'t break\nEOF'"|yes"
+        "main|"$'cat > n.md <<\'EOF\'\nstep; git commit -m x\nEOF'"|no"
+    )
+    local failures="" case branch rest cmd want got output elsewhere
+    elsewhere=$(mktemp -d)
+    for case in "${cases[@]}"; do
+        branch=${case%%|*} rest=${case#*|}
+        cmd=${rest%|*} want=${rest##*|}
         git -C "$repo" checkout -q "$branch"
-        output=$(cd "$repo" && python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}))' "$cmd" </dev/null | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || true
+        output=$(cd "$elsewhere" && python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))' "$cmd" "$repo" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || true
         if [[ "$output" == *"Committing directly to 'main'"* ]]; then got=yes; else got=no; fi
-        [[ "$got" == "$want" ]] || failures+=" [on $branch: $cmd -> reminder $got]"
-    done <<'CASES'
-main|git checkout -b workitem/y main && git add . && git commit -m t|no
-main|git switch -c workitem/z && git commit -m t|no
-main|grep -n 'git commit' README.md|no
-workitem/x|git checkout main && git commit -m t|yes
-CASES
+        [[ "$got" == "$want" ]] || failures+=" [on $branch: ${cmd//$'\n'/⏎} -> reminder $got]"
+    done
+    rm -rf "$elsewhere"
     rm -rf "$repo"
 
     if [[ -z "$failures" ]]; then

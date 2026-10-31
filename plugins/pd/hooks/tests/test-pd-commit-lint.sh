@@ -41,6 +41,11 @@ code=0; hook_json "git --no-pager -C \\\"$R\\\" commit -m x" "$TMP" | bash "$HOO
 code=0; hook_json "echo \\\"run git commit -m x\\\"" "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
 [ "$code" = 0 ] && ok || bad "quoted prose naming git commit: exit $code"
 
+# A commit on its own line, its message in a heredoc with an apostrophe: still linted.
+code=0; python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))' \
+    $'git add -A\ngit commit -F - <<\'EOF\'\nfix: don\'t skip lint\nEOF' "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+[ "$code" = 2 ] && ok || bad "newline and heredoc commit: exit $code"
+
 # 2. A clean commit.
 perl -pi -e 's/^status: finished$/status: active/' "$README"
 git -C "$R" add -A
