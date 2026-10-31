@@ -12,39 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 install_err_trap
 
-# The directory a `git commit` in the command runs in, or nothing when the command doesn't commit.
-# Shell words, not a regex: quoted prose isn't a command, and `git -C dir` / `--no-pager` / `cd dir &&` count.
-dir=$(printf '%s' "$input" | python3 -c 'import json, os, re, shlex, sys
-d = json.load(sys.stdin)
-here, cmd = d.get("cwd") or ".", d.get("tool_input", {}).get("command", "")
-try:
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()")
-    lex.whitespace_split = True
-    words = list(lex)
-except ValueError:
-    sys.exit(0)
-seps, takes_arg = {";", "&&", "||", "|", "&", "(", ")"}, {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
-start = True
-for i, w in enumerate(words):
-    if w in seps:
-        start = True
-        continue
-    if not start:
-        continue
-    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):  # an env assignment before the command
-        continue
-    start = False
-    if w == "cd" and i + 1 < len(words) and words[i + 1] not in seps:
-        here = os.path.join(here, os.path.expanduser(words[i + 1]))
-    elif os.path.basename(w) == "git":
-        j, at = i + 1, here
-        while j < len(words) and words[j].startswith("-"):
-            if words[j] == "-C" and j + 1 < len(words):
-                at = os.path.join(at, os.path.expanduser(words[j + 1]))
-            j += 2 if words[j] in takes_arg else 1
-        if j < len(words) and words[j] == "commit":
-            print(at)
-            break' 2>/dev/null) || exit 0
+# The directory a `git commit` in the command runs in, or nothing when the command doesn't commit (lib/commit_target.py).
+target=$(printf '%s' "$input" | python3 "${SCRIPT_DIR}/lib/commit_target.py" 2>/dev/null) || exit 0
+dir=${target%%$'\t'*}
 [ -n "$dir" ] || exit 0
 top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -n "$top" ] || exit 0

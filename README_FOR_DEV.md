@@ -213,7 +213,7 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 | Hook | Trigger | Purpose |
 |------|---------|---------|
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions other than the active one, except one a running session still uses (Claude Code's `.in_use/<pid>` marker) |
-| `pre-commit-guard` | PreToolUse (Bash) | Reminders only, never a permission decision: on a `git commit` to `main`/`master`, or when the project has test files, it adds a reminder to Claude's context; every other Bash call passes through silently |
+| `pre-commit-guard` | PreToolUse (Bash) | Reminders only, never a permission decision: on a `git commit` that lands on `main`/`master` (after any checkout or switch earlier in the command), or when the project has test files, it adds a reminder to Claude's context; every other Bash call passes through silently |
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit` Claude runs; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
