@@ -388,7 +388,7 @@ def retro_triggers(entries):
         found.append("capped")
     if any(e.get("kind") == "defect" for e in entries):
         found.append("defect")
-    budget = next((m.group(1) for e in entries if e.get("kind") == "run" for l in e["body"]
+    budget = next((m.group(1) for e in entries if e.get("kind") in ("run", "metrics") for l in e["body"]
                    for m in [re.search(rf"\bBudget: {BUDGET_KEY}=(\d+|unset)\b", l)] if m), None)
     tokens = next((int(m.group(1)) for e in reversed(entries) if e.get("kind") == "metrics" for l in e["body"]
                    for m in [re.search(r"\bTokens: (\d+)\b", l)] if m), None)
@@ -503,8 +503,11 @@ def _self_test():
                      "## 2026-10-14 11:00+08:00 phase verify -> design (back)\n"
                      "## 2026-10-14 12:00+08:00 phase verify -> design (back)\n"
                      "## 2026-10-14 13:00+08:00 metrics\nMode: standard. Tokens: 150 (source: x).\n")
+    from_metrics = parse_log("## 2026-10-14 13:00+08:00 metrics\nMode: small. Tokens: 3070148 (source: x).\n"
+                             f"Budget: {BUDGET_KEY}=50000\n")
     c.check(retro_triggers(trig) == ["second backward move", "cost overrun"]
             and retro_triggers(trig[:2] + trig[3:]) == ["cost overrun"]
+            and retro_triggers(from_metrics) == ["cost overrun"]
             and retro_triggers(parse_log("## 2026-10-14 10:00+08:00 defect\n")) == ["defect"], "retro triggers")
     with tempfile.TemporaryDirectory() as t:
         r = make_repo(Path(t) / "r")

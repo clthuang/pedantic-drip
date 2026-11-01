@@ -96,11 +96,12 @@ Plan: plans/2026-10-14-thin-pd.md — still holds.
 ```
 
 ### metrics
-Written once, at finish: the mode, and the `Stop` gate's token total for the work item.
+Written once, at finish: the mode, and the `Stop` gate's token total and original budget for the work item. `retro_triggers` compares the two, so a cost overrun counts even when no goal run wrote a `run` entry's `Budget:` line.
 
 ```markdown
 ## 2026-10-14 19:00+08:00 metrics
 Mode: standard. Tokens: 1210000 (source: ~/.claude/pd/gate/0b5e….json).
+Budget: workitem_token_budget=unset
 ```
 
 ### defect
