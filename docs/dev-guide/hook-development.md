@@ -89,8 +89,8 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 
 ### `hooks/lib/commit_target.py`
 
-- **Where a Bash command commits:** reads the PreToolUse hook JSON on stdin and prints `<dir>\t<branch>` for a command whose `git commit` runs in `<dir>`, or nothing for a command that doesn't commit. It reads shell words, not a regex: quoted prose and heredoc bodies aren't commands, newlines separate commands, and `cd dir &&`, `git -C dir`, `--no-pager` and a leading `if`/`then`/`!` count.
-- **`<branch>`:** the branch an earlier `git checkout` or `git switch` in the same command moved `<dir>` to; `?` when that can't be known (`-`, `--detach`, no name after `-b`/`-c`); empty when nothing switched it, so the caller reads HEAD. `git checkout [<branch>] [--] <paths>` restores files, so it isn't a switch.
+- **Where a Bash command commits:** reads the PreToolUse hook JSON on stdin and prints `<dir>\t<branch>` for a command whose `git commit` runs in `<dir>`, or nothing for a command that doesn't commit. It reads shell words, not a regex: quoted prose (punctuation included), comments and heredoc bodies aren't commands, newlines separate commands, and `cd dir &&` (scoped to its subshell), `git -C dir`, `--no-pager` and a leading `if`/`then`/`!` count.
+- **`<branch>`:** the branch an earlier `git checkout` or `git switch` in the same command moved `<dir>`'s repository to (`--track origin/x` counts as `x`); `?` when that can't be known (`-`, `--detach`, a detached commit, no name after `-b`/`-c`); empty when nothing switched it, so the caller reads HEAD. `git checkout [<branch>] [--] <paths>` restores files, so it isn't a switch.
 - **Used by** `pre-commit-guard` (the branch) and `pd-commit-lint` (the directory).
 
 ### `hooks/lib/session-start-helpers.sh`

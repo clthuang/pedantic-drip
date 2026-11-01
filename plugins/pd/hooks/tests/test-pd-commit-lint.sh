@@ -46,6 +46,11 @@ code=0; python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "too
     $'git add -A\ngit commit -F - <<\'EOF\'\nfix: don\'t skip lint\nEOF' "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
 [ "$code" = 2 ] && ok || bad "newline and heredoc commit: exit $code"
 
+# A comment on the line before the commit doesn't hide it.
+code=0; python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))' \
+    $'# stage and commit\ngit commit -m x' "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+[ "$code" = 2 ] && ok || bad "comment line, then commit: exit $code"
+
 # 2. A clean commit.
 perl -pi -e 's/^status: finished$/status: active/' "$README"
 git -C "$R" add -A

@@ -7,7 +7,7 @@ description: The retro playbook — on a retro trigger, one retro-facilitator di
 
 A full retro runs only on a trigger: a second backward move, a `capped` entry, a cost overrun, or a post-merge `defect`. `phase-gate.sh finish` names the triggers, and `pd-status` lists done work items that owe a retro. Without a trigger, finish writes one `note` entry instead (`finishing-branch` skill).
 
-It runs while the branch and the task branches still exist, because they are inputs; only a post-merge `defect`'s retro runs after them (step 1). Entry and commits follow the `workflow-transitions` skill.
+It runs while the branch and the task branches still exist, because they are inputs; only a post-merge `defect`'s retro runs after them (step 1): it skips phase entry's branch checkout and commits `retro.md` on the branch checked out. Entry and commits follow the `workflow-transitions` skill.
 
 ## Steps
 

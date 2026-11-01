@@ -219,6 +219,7 @@ test_pre_commit_guard_compound_commands() {
         log_fail "setup: couldn't commit in a throwaway repo"; rm -rf "$repo"; return
     fi
     git -C "$repo" branch workitem/x
+    mkdir "$repo/sub"
 
     # Each case: the branch checked out, the command, and whether "Committing directly to 'main'" is right.
     # The hook runs from another directory with the repo as stdin's `cwd`, as Claude Code sends it.
@@ -235,6 +236,15 @@ test_pre_commit_guard_compound_commands() {
         "main|"$'git add .\ngit commit -m t'"|yes"
         "main|"$'git commit -F - <<\'EOF\'\nfix: don\'t break\nEOF'"|yes"
         "main|"$'cat > n.md <<\'EOF\'\nstep; git commit -m x\nEOF'"|no"
+        "main|"$'# prepare\ngit commit -m t'"|yes"
+        "workitem/x|"$'git status # look\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|"$'printf \'%s\\n\' \'<<EOF\'\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|"$'cat <<\'EOF-1\'\ndon\'t\nEOF-1\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|printf '%s\\n' ';' git switch main ';' git commit|no"
+        "workitem/x|git -C sub switch main && git commit -m t|yes"
+        "workitem/x|git switch main && git checkout HEAD~0 && git commit -m t|no"
+        "main|cd -- sub && git commit -m t|yes"
+        "main|(cd /; true); git commit -m t|yes"
     )
     local failures="" case branch rest cmd want got output elsewhere
     elsewhere=$(mktemp -d)

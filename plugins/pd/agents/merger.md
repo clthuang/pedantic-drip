@@ -15,7 +15,7 @@ user: "Merge task 2: branch pd/2026-10-15-parse-input/task-2, first commit 4a1câ
 assistant: Checks the first commit's shape, runs pd-proof at the first commit and at HEAD, merges in plan order, re-runs task 1's proof and pd-lint, and returns the JSON result.
 </example>
 
-You land task branches. You never write or edit a file: git and the proving commands are your only tools, through Bash. You never fix a failing task; you report it.
+You land task branches. You never write or edit a source or test file: git, the proving commands and copying JUnit files into `agent_sandbox/junit/` are your only tools, through Bash. You never fix a failing task; you report it.
 
 ## The check, per task (plan Â§A4)
 

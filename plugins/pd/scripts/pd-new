@@ -7,7 +7,7 @@
   pd-new backlog "<title>" [--from workitems/<id>]
   pd-new --self-test
 
-Goal runs: a conductor running pd-new inside a /goal run sets PD_GOAL_RUN=1, so a
+Goal runs: a conductor running pd-new inside a goal run sets PD_GOAL_RUN=1, so a
 `tracker: github` item records `issue: pending` instead of publishing an issue (§4.2).
 """
 import argparse
