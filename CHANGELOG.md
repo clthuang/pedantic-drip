@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The conductor offers a goal run once the plan is approved.** The planning stage's exit asks whether to run the work item to `finish` under `/goal`; on yes, the conductor writes the `goal:` line and prints the `/goal` command. Before, nothing offered one, so a goal run started only when the user asked.
+- **The conductor offers a goal run once the plan is approved.** The planning stage's exit asks whether to run the work item to `finish` as a goal run; on yes, the conductor writes the `goal:` line. Before, nothing offered one, so a goal run started only when the user asked.
+
+### Changed
+
+- **The `Stop` gate drives goal runs; pd prints no `/goal` command.** The gate arms as soon as the `goal:` line is committed and holds every stop from then on, so the user never got the prompt back to type the printed `/goal`.
+- **A work item's title is a name of at most 80 characters.** `pd-new` refuses a longer one, and `/pd:create-workitem` keeps a longer request verbatim as `log.md`'s first `note` entry. Before, the whole request became the title and heading (about 500 characters in the bake-off probe).
 
 ### Fixed
 

@@ -57,7 +57,7 @@ Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <
 
 ## Long Runs
 
-Start a `/goal` run on a work item: the main session (the conductor) offers one once the plan is approved, or ask for one. It writes `goal: <id> target <phase> session <id>` to the README's `## Now`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `workitem_token_budget`.
+Start a goal run on a work item: the main session (the conductor) offers one once the plan is approved, or ask for one. It writes `goal: <id> target <phase> session <id>` to the README's `## Now`; you don't type `/goal`. The Stop hook holds the run until the target is reached with no open blocker, and asks "continue or stop?" at `workitem_token_budget`.
 
 ## Check Progress
 

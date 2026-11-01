@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop hook: the script gate under /goal (plan §A5, cap 3; ported from yolo-stop.sh).
+# Stop hook: the script gate that drives goal runs (plan §A5, cap 3; ported from yolo-stop.sh).
 # On every stop it charges the session's new token usage to the checked-out work item. It blocks
 # (exit 2, the reason on stderr) only while a work item's `## Now` has a `goal: <id> target <phase>
 # session <this session>` line and the goal isn't met: target not reached, open blockers, or a

@@ -25,9 +25,9 @@ pd is a Claude Code plugin that turns an idea into a merged change through fixed
 
 `/pd:verify` runs `verify-change`: the code review and `qa-executor` (which runs your `qa_battery` and reports, fixing nothing) side by side, then up to three cycles of a separate fixer and a QA re-run.
 
-### Long runs with `/goal`
+### Long runs: goal runs
 
-A `/goal` run drives a work item to a target phase. The Stop hook (`pd-stop-gate.sh`) holds the run until the target is reached with no open blocker and `pd-lint` passing, yields to running workflows, and asks "continue or stop?" at the per-work-item token budget.
+A goal run drives a work item to a target phase. The Stop hook (`pd-stop-gate.sh`) holds the run until the target is reached with no open blocker and `pd-lint` passing, yields to running workflows, and asks "continue or stop?" at the per-work-item token budget.
 
 ### Security review at finish
 
