@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.2] - 2026-11-02
+
 ### Added
 
 - **The conductor offers a goal run once the plan is approved.** The planning stage's exit asks whether to run the work item to `finish` as a goal run; on yes, the conductor writes the `goal:` line. Before, nothing offered one, so a goal run started only when the user asked.
