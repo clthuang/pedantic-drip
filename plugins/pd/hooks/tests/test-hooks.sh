@@ -248,6 +248,7 @@ test_pre_commit_guard_compound_commands() {
         "workitem/x|git checkout main 2>&1 && git commit -m t|yes"
         "workitem/x|"$'git checkout main >/dev/null 2>&1\ngit commit -m t'"|yes"
         "main|"$'echo $((1<<2))\ngit commit -m t'"|yes"
+        "main|"$'git commit -m "$(cat <<\'EOF\'\nfix: say "hi, don\'t\nEOF\n)"'"|yes"
     )
     local failures="" case branch rest cmd want got output elsewhere
     elsewhere=$(mktemp -d)

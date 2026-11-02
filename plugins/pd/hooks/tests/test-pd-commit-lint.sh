@@ -56,6 +56,11 @@ code=0; python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "too
     $'echo $((1<<2))\ngit commit -m x' "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
 [ "$code" = 2 ] && ok || bad "arithmetic shift, then commit: exit $code"
 
+# Claude Code's commit form: a heredoc inside "$( … )", its body holding an odd `"`.
+code=0; python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))' \
+    $'git commit -m "$(cat <<\'EOF\'\nfix: say "hi\nEOF\n)"' "$R" | bash "$HOOK" >/dev/null 2>&1 || code=$?
+[ "$code" = 2 ] && ok || bad "heredoc inside \"\$( … )\": exit $code"
+
 # 2. A clean commit.
 perl -pi -e 's/^status: finished$/status: active/' "$README"
 git -C "$R" add -A

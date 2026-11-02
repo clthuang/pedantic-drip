@@ -37,8 +37,15 @@ def shell_text(cmd):
     newlines turned into ` ; `, quoted punctuation masked. Heredoc bodies are data, and an apostrophe in
     one breaks shlex."""
     out, heredocs, quote, arith, i, n = [], [], None, 0, 0, len(cmd)
+    subst = []  # per `$(` opened inside double quotes: its open-paren depth, so its `)` returns to the quotes
     while i < n:
         c = cmd[i]
+        if quote == '"' and cmd.startswith("$(", i) and not cmd.startswith("$((", i):  # `"$(cat <<'EOF' …)"` is code
+            subst.append(0)
+            quote = None
+            out.append("$(")
+            i += 2
+            continue
         if quote:
             if c == quote:
                 quote = None
@@ -49,6 +56,16 @@ def shell_text(cmd):
             out.append(QUOTED_PUNCT.get(c, c))
             i += 1
             continue
+        if subst and c == "(":
+            subst[-1] += 1
+        elif subst and c == ")":
+            if subst[-1] == 0:
+                subst.pop()
+                quote = '"'
+                out.append(c)
+                i += 1
+                continue
+            subst[-1] -= 1
         if c in "'\"":
             quote = c
         elif c == "\\" and i + 1 < n:
