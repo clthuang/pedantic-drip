@@ -151,7 +151,7 @@ def switch_target(sub, args, at):
         return names[0] if names else None
     # `git checkout <x>` switches only when <x> is its one name; `checkout [<x>] [--] <paths>` restores files
     # (shortcut: a remote branch checked out by name, or a branch made earlier in the same command, counts as no switch; resolve those if they show up)
-    if len(names) != 1 or "--" in words:
+    if len(names) != 1 or "--" in words or names[0] in ("HEAD", "@"):  # `checkout HEAD` stays on the branch
         return None
     git = ["git", "-C", at]
     if subprocess.run(git + ["show-ref", "--verify", "--quiet", f"refs/heads/{names[0]}"], capture_output=True).returncode == 0:

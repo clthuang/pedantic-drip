@@ -231,6 +231,7 @@ test_pre_commit_guard_compound_commands() {
         "workitem/x|git checkout main && git commit -m t|yes"
         "workitem/x|git checkout main -- README.md && git commit -m t|no"
         "main|git checkout README.md && git commit -m t|yes"
+        "main|git checkout HEAD && git commit -m t|yes"
         "main|git checkout - && git commit -m t|no"
         "main|if ! git diff --quiet; then git commit -m t; fi|yes"
         "main|"$'git add .\ngit commit -m t'"|yes"
