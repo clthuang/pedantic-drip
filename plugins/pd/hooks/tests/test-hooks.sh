@@ -245,6 +245,9 @@ test_pre_commit_guard_compound_commands() {
         "workitem/x|git switch main && git checkout HEAD~0 && git commit -m t|no"
         "main|cd -- sub && git commit -m t|yes"
         "main|(cd /; true); git commit -m t|yes"
+        "workitem/x|git checkout main 2>&1 && git commit -m t|yes"
+        "workitem/x|"$'git checkout main >/dev/null 2>&1\ngit commit -m t'"|yes"
+        "main|"$'echo $((1<<2))\ngit commit -m t'"|yes"
     )
     local failures="" case branch rest cmd want got output elsewhere
     elsewhere=$(mktemp -d)

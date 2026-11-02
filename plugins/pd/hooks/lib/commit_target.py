@@ -24,6 +24,7 @@ UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
 QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT)}  # quoted punctuation is data, not a separator
 UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
+REDIRECT = re.compile(r"^\d*(?:<<?|>>?|<>)")  # a word that starts with a redirection operator
 
 
 def is_sep(w):
@@ -35,7 +36,7 @@ def shell_text(cmd):
     """`cmd` as one line for shlex: comments, line continuations and heredoc bodies dropped, unquoted
     newlines turned into ` ; `, quoted punctuation masked. Heredoc bodies are data, and an apostrophe in
     one breaks shlex."""
-    out, heredocs, quote, i, n = [], [], None, 0, len(cmd)
+    out, heredocs, quote, arith, i, n = [], [], None, 0, 0, len(cmd)
     while i < n:
         c = cmd[i]
         if quote:
@@ -55,6 +56,13 @@ def shell_text(cmd):
                 out.append(cmd[i:i + 2])
             i += 2
             continue
+        elif cmd.startswith("((", i):  # `$(( … ))` and `(( … ))`: `<<` in there is a shift
+            arith += 1
+        elif cmd.startswith("))", i) and arith:
+            arith -= 1
+        elif c == "&" and ((out and out[-1][-1] in "<>") or cmd.startswith(">", i + 1)):  # `2>&1`, `&>f`: a redirect, not a separator
+            i += 1
+            continue
         elif c == "#" and (not out or out[-1][-1] in " \t" + PUNCT):  # a comment runs to the end of its line
             j = cmd.find("\n", i)
             i = n if j < 0 else j
@@ -63,7 +71,7 @@ def shell_text(cmd):
             out.append("<<<")
             i += 3
             continue
-        elif cmd.startswith("<<", i) and (m := DELIM.match(cmd, i + 2)):
+        elif not arith and cmd.startswith("<<", i) and (m := DELIM.match(cmd, i + 2)):
             heredocs.append((re.sub(r"""['"\\]""", "", m.group(2)), m.group(1) == "-"))
             out.append(cmd[i:m.end()])
             i = m.end()
@@ -82,6 +90,19 @@ def shell_text(cmd):
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def drop_redirects(args):
+    """The words of a command without its redirections (`2>/dev/null`, `> out`): they aren't names."""
+    out, target = [], False
+    for a in args:
+        if target:
+            target = False
+        elif m := REDIRECT.match(a):
+            target = m.end() == len(a)  # `> file`: the file is the next word
+        else:
+            out.append(a)
+    return out
 
 
 def repo_of(at):
@@ -149,7 +170,7 @@ def main():
             continue
         start = False
         if w == "cd":
-            args = list(itertools.takewhile(lambda x: not is_sep(x), words[i + 1:]))
+            args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[i + 1:]))
             dirs = [a for a in args if not a.startswith("-")]  # `cd -- dir`, `cd -P dir`; `cd -` stays put
             if dirs or not args:
                 here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
@@ -164,7 +185,7 @@ def main():
                 print(f"{at}\t{switched.get(repo_of(at), '') if switched else ''}")
                 return
             if sub in NEW_BRANCH:
-                args = list(itertools.takewhile(lambda x: not is_sep(x), words[j + 1:]))
+                args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[j + 1:]))
                 target = switch_target(sub, args, at)
                 if target is not None:
                     switched[repo_of(at)] = target
