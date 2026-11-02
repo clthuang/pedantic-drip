@@ -1,0 +1,199 @@
+# Backlog archive
+- [x] 2026-03-26-add-product-manager-product-owner — dropped: no reason recorded
+- [x] 2026-03-26-fix-secretary-askuserquestion-formatting-user — dropped: no reason recorded
+- [x] 2026-03-26-security-scanning-static-rule-based — dropped: no reason recorded
+- [x] 2026-03-26-cross-platform-hooks-port-bash — dropped: no reason recorded
+- [x] 2026-03-26-unified-central-context-management-expand — dropped: no reason recorded
+- [x] 2026-03-26-knowledge-bank-auto-logging-upgrade — dropped: no reason recorded
+- [x] 2026-03-26-consider-renaming-plugin-repository-pedantic — promoted → (no work item recorded): Consider renaming the plugin/repository to `pedantic-drips` for the public MIT…
+- [x] 2026-03-26-add-remove-entry-method-entity — dropped: no reason recorded
+- [x] 2026-03-26-add-feature-subfiles-entity-db — dropped: no reason recorded
+- [x] 2026-03-26-simplify-secretary-removing-aware-orchestrate — promoted → (no work item recorded): Simplify secretary by removing aware and orchestrate mode. Autonomy is fully…
+- [x] 2026-03-26-add-software-architect-product-manager — dropped: no reason recorded
+- [x] 2026-03-26-remove-project-lifetime-soft-constraint — dropped: no reason recorded
+- [x] 2026-03-26-fix-register-entity-mcp-tool — dropped: no reason recorded
+- [x] 2026-03-26-handle-db-write-lock-concurrent — promoted → (no work item recorded): Handle DB write lock and concurrent write — ensure entity registry handles…
+- [x] 2026-03-26-fix-workflow-progression-such-if — dropped: no reason recorded
+- [x] 2026-03-26-reduce-diff-comparison-deploying-reviewers — promoted → (no work item recorded): Reduce diff comparison for deploying reviewers. Phase-specific reviewers should…
+- [x] 2026-03-26-update-code-simplifier-use-claude — promoted → (no work item recorded): Update code simplifier to use Claude Code's native simplify command instead of…
+- [x] 2026-03-26-enrich-secretary-problem-solving-frameworks — dropped: no reason recorded
+- [x] 2026-03-26-add-system-design-architect-solution — dropped: no reason recorded
+- [x] 2026-03-26-knowledge-bank-markdown-db-sync — promoted → (no work item recorded): Knowledge bank markdown-to-DB sync gap — markdown KB (docs/knowledge-bank/) has…
+- [x] 2026-03-26-show-status-list-features-should — dropped: no reason recorded
+- [x] 2026-03-26-close-entity-registry-status-tracking — promoted → (no work item recorded): Close entity registry status tracking gaps — project completion doesn't update…
+- [x] 2026-03-26-5d-stage-context-accumulation-each — promoted → (no work item recorded): 5D stage context accumulation: Each 5D stage (discover/define/deliver/debrief)…
+- [x] 2026-03-26-fix-pd-sqlite-db-locking — promoted → (no work item recorded): Fix pd SQLite DB locking bugs: (1) MemoryDatabase migration race condition —…
+- [x] 2026-03-26-add-brainstorm-review-cycle-brainstorm — dropped: no reason recorded
+- [x] 2026-03-26-reconciliation-orchestrator-does-not-detect — promoted → (no work item recorded): reconciliation_orchestrator does not detect stale blocked_by entries for…
+- [x] 2026-03-26-release-sh-add-pre-push — dropped: no reason recorded
+- [x] 2026-03-30-phase-transition-summary-reviewer-feedback — promoted → workitems/070-phase-transition-summary
+- [x] 2026-04-01-extract-workflow-execution-data-metadata — promoted → (no work item recorded): Extract workflow execution data from metadata JSON blob into structured DB tables
+- [x] 2026-04-02-add-lightweight-pre-push-git — dropped: no reason recorded
+- [x] 2026-04-06-active-real-time-mistake-monitor — promoted → (no work item recorded): Active real-time mistake monitor — Add a PostToolUse or conversation-analyzing hook that automatically detects mistakes, user corrections, and error patterns as they happen, rather than relying on mod
+- [x] 2026-04-15-memory-flywheel-close-self-improvement — promoted → (no work item recorded): Memory flywheel — close the self-improvement loop. Candidate project scope (5 leverage items from 2026-04-15 memory-system review via /pd:subagent-ras): (1) **Influence wiring** — `record_influence_by
+- [x] 2026-04-15-pre-review-lint-curly-brace — dropped: tasks.md is gone (plan.md replaced it) and pd-html warns on <placeholders>
+- [x] 2026-04-15-structured-git-operations-reference-design — dropped: the merger and workflow-transitions own git operations in thin pd
+- [x] 2026-04-15-entity-rename-tooling-convention-scope — dropped: the entity registry is gone; a work item's id is its directory name
+- [x] 2026-04-16-pd-promote-pattern-classifier-too — promoted → (no work item recorded): /pd:promote-pattern classifier is too keyword-heavy. Dogfood run (v4.15.0) found 3 of 4 "reviewer"-mentioning entries classified as `agent` even when the underlying pattern belongs elsewhere (e.g., "T
+- [x] 2026-04-16-add-enforceability-filter-pd-promote — promoted → (no work item recorded): Add "enforceability" filter to /pd:promote-pattern enumerate. Dogfood run surfaced 4 qualifying entries but only 1 was genuinely enforceable; others were descriptive observations ("Heavy Upfront Revie
+- [x] 2026-04-16-pd-promote-pattern-bare-cli — promoted → (no work item recorded): /pd:promote-pattern bare-CLI ergonomics: arg mismatches easy to hit outside the skill orchestrator. Dogfood run hit `generate --entries <path>` (not a valid arg — generate reads from sandbox by conven
+- [x] 2026-04-16-security-entry-name-not-sanitized — dropped: no reason recorded
+- [x] 2026-04-16-security-claude-pd-memory-influence — dropped: no reason recorded
+- [x] 2026-04-16-operability-influence-debug-log-has — dropped: no reason recorded
+- [x] 2026-04-16-code-quality-warn-default-ranker — dropped: no reason recorded
+- [x] 2026-04-16-code-quality-emit-influence-diagnostic — dropped: no reason recorded
+- [x] 2026-04-16-code-quality-mcp-wrapper-record — dropped: no reason recorded
+- [x] 2026-04-16-code-quality-hook-generator-test — dropped: no reason recorded
+- [x] 2026-04-16-testability-ac-7-ac-7b — dropped: no reason recorded
+- [x] 2026-04-20-no-timeout-cap-when-gtimeout — dropped: no reason recorded
+- [x] 2026-04-20-equal-decay-thresholds-rapid-sequential — dropped: no reason recorded
+- [x] 2026-04-20-ac-22-test-covers-file — dropped: no reason recorded
+- [x] 2026-04-20-select-candidates-accesses-db-conn — dropped: no reason recorded
+- [x] 2026-04-20-updated-null-guard-execute-chunk — dropped: no reason recorded
+- [x] 2026-04-20-unknown-project-id-sentinel-record — dropped: no reason recorded
+- [x] 2026-04-20-unknown-query-type-query-phase — dropped: no reason recorded
+- [x] 2026-04-20-missing-negative-tests-check-constraint — dropped: no reason recorded
+- [x] 2026-04-20-compute-durations-silently-drops-timestamp — dropped: no reason recorded
+- [x] 2026-04-20-ac-16-only-tests-transition — dropped: no reason recorded
+- [x] 2026-04-20-high-security-redos — dropped: no reason recorded
+- [x] 2026-04-20-high-concurrency-async-coroutine-umask — dropped: no reason recorded
+- [x] 2026-04-20-high-testability-fr-6-caller — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-missing-json-escaping — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-rotation-failure-permanently — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-pytest-global-state — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-fr-4-completeness — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-10-mb-rotation — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-shell-vs-python — dropped: no reason recorded
+- [x] 2026-04-20-low-observation-sc-9-source — dropped: no reason recorded
+- [x] 2026-04-20-high-security-python-heredoc-injection — dropped: no reason recorded
+- [x] 2026-04-20-high-security-overflowerror-escape-timedelta — dropped: no reason recorded
+- [x] 2026-04-20-high-security-symlink-clobber-influence — dropped: no reason recorded
+- [x] 2026-04-20-high-quality-resolve-int-config — dropped: no reason recorded
+- [x] 2026-04-20-high-correctness-isoformat-vs-strftime — dropped: no reason recorded
+- [x] 2026-04-20-high-implementation-ac-11-spec — dropped: no reason recorded
+- [x] 2026-04-20-high-implementation-ac-10-spec — dropped: no reason recorded
+- [x] 2026-04-20-med-security-memory-decay-config — dropped: no reason recorded
+- [x] 2026-04-20-med-security-cli-project-root — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-test-file-test — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-duplicate-warn-default — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-dead-now-iso — dropped: no reason recorded
+- [x] 2026-04-20-med-security-unbounded-select-select — dropped: no reason recorded
+- [x] 2026-04-20-med-implementation-ac-20b-1 — dropped: no reason recorded
+- [x] 2026-04-20-med-implementation-fr-2-spec — dropped: no reason recorded
+- [x] 2026-04-20-med-implementation-retro-eqp-file — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-module-level-now — dropped: no reason recorded
+- [x] 2026-04-20-med-security-run-memory-decay — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-boundary-equality-last — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-tz-naive-now — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-zero-cross-feature — dropped: no reason recorded
+- [x] 2026-04-20-low-testability-additional-gaps-empty — dropped: no reason recorded
+- [x] 2026-04-20-high-security-cross-project-data — dropped: no reason recorded
+- [x] 2026-04-20-high-security-migration-10-concurrent — dropped: no reason recorded
+- [x] 2026-04-20-high-security-record-backward-event — dropped: no reason recorded
+- [x] 2026-04-20-high-quality-both-record-backward — dropped: no reason recorded
+- [x] 2026-04-20-high-quality-query-phase-events — dropped: no reason recorded
+- [x] 2026-04-20-high-implementation-skill-md-402 — dropped: no reason recorded
+- [x] 2026-04-20-high-implementation-compute-durations-1752 — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-dual-write-insert — dropped: no reason recorded
+- [x] 2026-04-20-med-security-unbounded-json-round — dropped: no reason recorded
+- [x] 2026-04-20-med-security-raw-str-e — dropped: no reason recorded
+- [x] 2026-04-20-med-security-migration-10-backfill — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-compute-durations-1737 — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-migration-10-top — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-test-workflow-state — dropped: no reason recorded
+- [x] 2026-04-20-med-implementation-ac-19-test — dropped: no reason recorded
+- [x] 2026-04-20-med-implementation-iteration-summary-applies — dropped: no reason recorded
+- [x] 2026-04-20-low-suggestion-phase-duration-backward — dropped: no reason recorded
+- [x] 2026-04-20-high-testability-insert-phase-event — dropped: no reason recorded
+- [x] 2026-04-20-high-testability-reconciliation-phase-events — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-additional-gaps-meta — dropped: no reason recorded
+- [x] 2026-04-20-med-process-feature-084-has — dropped: no reason recorded
+- [x] 2026-04-20-deferred-082-084-test-gap — dropped: no reason recorded
+- [x] 2026-04-20-high-security-coerce-bool-config — dropped: no reason recorded
+- [x] 2026-04-20-high-security-execute-test-sql — dropped: no reason recorded
+- [x] 2026-04-20-high-correctness-iso-utc-dt — dropped: no reason recorded
+- [x] 2026-04-20-high-correctness-migration-10-database — dropped: no reason recorded
+- [x] 2026-04-20-high-security-query-phase-analytics — dropped: no reason recorded
+- [x] 2026-04-20-high-correctness-execute-test-sql — dropped: no reason recorded
+- [x] 2026-04-20-high-spec-drift-ac-23 — dropped: no reason recorded
+- [x] 2026-04-20-high-correctness-bundle-l-detect — dropped: no reason recorded
+- [x] 2026-04-20-med-consistency-backward-frequency-query — dropped: no reason recorded
+- [x] 2026-04-20-med-duplication-refresh-py-180 — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-true-values-false — dropped: no reason recorded
+- [x] 2026-04-20-med-performance-detect-phase-events — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-entity-get-project — dropped: no reason recorded
+- [x] 2026-04-20-med-consistency-migration-10-writes — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-path-pinning-run — dropped: no reason recorded
+- [x] 2026-04-20-med-security-o-nofollow-fchmod — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-warn-default-module — dropped: no reason recorded
+- [x] 2026-04-20-med-spec-drift-ac-10 — dropped: no reason recorded
+- [x] 2026-04-20-med-spec-drift-ac-34b — dropped: no reason recorded
+- [x] 2026-04-20-med-spec-drift-ac-22 — dropped: no reason recorded
+- [x] 2026-04-20-med-quality-plugins-pd-mcp — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-coerce-bool-tested — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-iso-utc-dt — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-scan-limit-0 — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-run-memory-decay — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-record-backward-event — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-dual-write-retry — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-migration-10-concurrent — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-reconcile-check-manual — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-warn-unknown-keys — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-detect-phase-events — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-reviewer-notes-boundary — dropped: no reason recorded
+- [x] 2026-04-20-med-testability-bundle-l-bundle — dropped: no reason recorded
+- [x] 2026-04-20-high-implementation-ac-21-test — dropped: no reason recorded
+- [x] 2026-04-20-med-security-assert-testing-context — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-migration-10-schema — dropped: no reason recorded
+- [x] 2026-04-20-med-correctness-query-phase-events — dropped: no reason recorded
+- [x] 2026-04-20-med-test-drift-ac-22 — dropped: no reason recorded
+- [x] 2026-04-20-low-security-resolve-project-id — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-04-20-low-security-reset-warning-state — dropped: no reason recorded
+- [x] 2026-04-20-low-security-trap-export-path — dropped: no reason recorded
+- [x] 2026-04-20-low-correctness-detect-phase-events — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-04-20-low-quality-coerce-bool-int — dropped: no reason recorded
+- [x] 2026-04-20-low-quality-test-parametrize-sentinel — dropped: no reason recorded
+- [x] 2026-04-20-low-implementation-ac-5-allowlist — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-04-20-low-implementation-ac-7-test — dropped: no reason recorded
+- [x] 2026-04-20-low-implementation-ac-10 — dropped: no reason recorded
+- [x] 2026-04-20-low-implementation-ac-1-test — dropped: no reason recorded
+- [x] 2026-04-20-low-test-gap-ac-28 — dropped: no reason recorded
+- [x] 2026-04-20-low-test-gap-ac-18 — dropped: no reason recorded
+- [x] 2026-04-20-low-test-gap-ac-7 — dropped: no reason recorded
+- [x] 2026-04-20-low-test-gap-ac-5 — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-04-20-low-test-gap-fixture-asymmetry — dropped: no reason recorded
+- [x] 2026-04-28-backlog-00217 — promoted → (no work item recorded): Backlog #00217
+- [x] 2026-04-29-backlog-00246 — promoted → (no work item recorded): Backlog #00246
+- [x] 2026-04-29-backlog-00277 — promoted → (no work item recorded): Backlog #00277
+- [x] 2026-07-25-063-watch-code-quality-reviewer — dropped: the UI track it watches was deleted in thin pd (v7)
+- [x] 2026-07-25-064-sentinel-workspace-renders-cryptic — dropped: the UI switcher was deleted in thin pd (v7)
+- [x] 2026-07-25-065-claude-mem-observation-hook — dropped: claude-mem's hook, not pd's code
+- [x] 2026-07-25-066-workspace-mapping-migration-writer — dropped: no reason recorded
+- [x] 2026-07-25-067-carry-nested-view-scale — dropped: no reason recorded
+- [x] 2026-07-25-068-insert-replace-bypasses-events — dropped: no reason recorded
+- [x] 2026-07-25-069-data-file-guard-dispatcher — dropped: the data-file-guard hook was deleted in thin pd (v7)
+- [x] 2026-07-25-070-project-meta-json-assert — dropped: _project_meta_json and .meta.json projection were deleted in thin pd (v7)
+- [x] 2026-07-25-071-consolidate-duplicate-seed-workflow — dropped: _seed_workflow_row and its DB tests were deleted in thin pd (v7)
+- [x] 2026-07-25-072-generic-mcp-error-handler — dropped: the MCP servers were deleted in thin pd (v7)
+- [x] 2026-07-25-073-extend-cross-contract-collision — dropped: landed in designing's review checklist (One design, no contradictions)
+- [x] 2026-07-25-074-promote-mechanized-cross-restatement — dropped: covered by pd-lint, which fails a duplicated contract block
+- [x] 2026-07-25-075-132-handoff-rewire-lifecyclemachine — dropped: no reason recorded
+- [x] 2026-07-25-076-doctor-check-leaked-teammate — dropped: the doctor check and the MCP servers were deleted in thin pd (v7)
+- [x] 2026-07-25-077-collision-guardrail-variant-3 — dropped: no live DB schema is left to collide with since thin pd (v7)
+- [x] 2026-07-25-078-call-graph-first-enumeration — dropped: folded into 2026-11-01-pd-codebase-explorer-uses-codegraph
+- [x] 2026-07-25-079-absence-assertions-require-their — dropped: landed in planning's review checklist (Absence claims are proven)
+- [x] 2026-07-25-080-double-cascade-fire-trigger — dropped: no reason recorded
+- [x] 2026-07-25-081-v2-hard-delete-vs — dropped: closed as completed in the registry, with no work item: #081 v2 hard-delete vs append-only history: entity_deleted events are structurally impossible
+- [x] 2026-07-25-082-legacy-project-id-kwarg — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-07-25-083-ui-test-concurrent-requests — dropped: the UI server and its tests were deleted in thin pd (v7)
+- [x] 2026-07-25-084-v2-read-cutover-prerequisites — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-07-25-086-skipped-phases-char-explosion — dropped: closed as completed in the registry, with no work item: #086 skipped_phases char-explosion writer: root-caused and guard-fixed at 132 QA
+- [x] 2026-07-25-087-check-missed-cascade-silently — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7)
+- [x] 2026-07-25-088-fresh-file-concurrent-bootstrap — dropped: the DB and its migration chain were deleted in thin pd (v7)
+- [x] 2026-09-18-entity-rename-tooling-convention-scope — dropped: the entity registry is gone; a work item's id is its directory name; also a copy of the 2026-04-15 line
+- [x] 2026-09-24-pre-review-lint-curly-brace — dropped: tasks.md is gone (plan.md replaced it) and pd-html warns on <placeholders>; also a copy of the 2026-04-15 line
+- [x] 2026-09-24-structured-git-operations-reference-design — dropped: the merger and workflow-transitions own git operations in thin pd; also a copy of the 2026-04-15 line
+- [x] 2026-09-24-low-security-resolve-project-id — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
+- [x] 2026-09-24-low-correctness-detect-phase-events — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
+- [x] 2026-09-24-low-implementation-ac-5-allowlist — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
+- [x] 2026-09-24-low-test-gap-ac-5 — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
