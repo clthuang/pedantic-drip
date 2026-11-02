@@ -53,7 +53,7 @@ Run `/pd:init` once per project, before the first work item: every pd workflow n
 
 - **`worktree.baseRef: "head"`:** each task's worktree starts from the work item's branch, not the default branch.
 - **`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`:** agents can't spawn agents.
-- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
+- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended goal run isn't stopped by a permission prompt.
 
 An old-layout pd project (`docs/features/` without `sop: 1` in `.claude/pd.local.md`) runs `/pd:adopt` instead.
 

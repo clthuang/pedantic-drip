@@ -16,7 +16,7 @@ pd-new workitem --plan <plan id or path> <slug> "<title>"     (fills that roadma
 pd-new backlog "<title>" [--from workitems/<id>]
 ```
 
-Ids are local `YYYY-MM-DD-slug`. Inside a `/goal` run the conductor sets `PD_GOAL_RUN=1`, so a `tracker: github` item records `issue: pending` instead of publishing an issue.
+Ids are local `YYYY-MM-DD-slug`. Inside a goal run the conductor sets `PD_GOAL_RUN=1`, so a `tracker: github` item records `issue: pending` instead of publishing an issue.
 
 ## pd-status — the repository's state
 

@@ -213,12 +213,12 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 | Hook | Trigger | Purpose |
 |------|---------|---------|
 | `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions other than the active one, except one a running session still uses (Claude Code's `.in_use/<pid>` marker) |
-| `pre-commit-guard` | PreToolUse (Bash) | Reminders only, never a permission decision: on a `git commit` to `main`/`master`, or when the project has test files, it adds a reminder to Claude's context; every other Bash call passes through silently |
+| `pre-commit-guard` | PreToolUse (Bash) | Reminders only, never a permission decision: on a `git commit` that lands on `main`/`master` (after any checkout or switch earlier in the command), or when the project has test files, it adds a reminder to Claude's context; every other Bash call passes through silently |
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit` Claude runs; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
 | `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
-| `pd-stop-gate` | Stop | Holds a `/goal` run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-work-item token cap |
+| `pd-stop-gate` | Stop | Holds a goal run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-work-item token cap |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py`, a worker the wrapper calls; it isn't registered on its own. Writing a hook: [docs/dev-guide/hook-development.md](docs/dev-guide/hook-development.md).
 
@@ -236,7 +236,7 @@ Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes i
 
   Each pins its result schema, restated in `plugins/pd/references/workflow-results.md`; the conductor writes `log.md` from them.
 - **Reviews:** one review call per stage that has one (`plugins/pd/references/review-call.md`). Codex goes first with one retry unless CLAUDE.md says `**Codex reviewer: DISABLED**`, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then the user. The security review at finish is dispatched directly, on Anthropic models.
-- **Long runs:** `/goal` drives a work item. The Stop gate (`pd-stop-gate.sh`) decides whether it may stop, and caps tokens per work item (`workitem_token_budget`).
+- **Long runs:** a goal run drives a work item. The Stop gate (`pd-stop-gate.sh`) holds each stop until the goal is met, and caps tokens per work item (`workitem_token_budget`).
 
 ## Knowledge Bank
 

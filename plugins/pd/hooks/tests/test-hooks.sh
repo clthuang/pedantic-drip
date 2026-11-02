@@ -207,6 +207,70 @@ test_pre_commit_guard_reminds_tests() {
     fi
 }
 
+# Test 10c: pre-commit-guard.sh judges the branch a commit lands on, and only a real commit
+test_pre_commit_guard_compound_commands() {
+    log_test "pre-commit-guard.sh judges the branch a compound command commits to"
+
+    # A throwaway repo on main with a work item branch.
+    local repo
+    repo=$(mktemp -d)
+    git -C "$repo" init -q -b main
+    if ! git -C "$repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty --no-verify -m init; then
+        log_fail "setup: couldn't commit in a throwaway repo"; rm -rf "$repo"; return
+    fi
+    git -C "$repo" branch workitem/x
+    mkdir "$repo/sub"
+
+    # Each case: the branch checked out, the command, and whether "Committing directly to 'main'" is right.
+    # The hook runs from another directory with the repo as stdin's `cwd`, as Claude Code sends it.
+    local cases=(
+        "main|git checkout -b workitem/y main && git add . && git commit -m t|no"
+        "main|git switch -c workitem/z && git commit -m t|no"
+        "main|git switch --create=workitem/q && git commit -m t|no"
+        "main|grep -n 'git commit' README.md|no"
+        "workitem/x|git checkout main && git commit -m t|yes"
+        "workitem/x|git checkout main -- README.md && git commit -m t|no"
+        "main|git checkout README.md && git commit -m t|yes"
+        "main|git checkout HEAD && git commit -m t|yes"
+        "main|git checkout - && git commit -m t|no"
+        "main|if ! git diff --quiet; then git commit -m t; fi|yes"
+        "main|"$'git add .\ngit commit -m t'"|yes"
+        "main|"$'git commit -F - <<\'EOF\'\nfix: don\'t break\nEOF'"|yes"
+        "main|"$'cat > n.md <<\'EOF\'\nstep; git commit -m x\nEOF'"|no"
+        "main|"$'# prepare\ngit commit -m t'"|yes"
+        "workitem/x|"$'git status # look\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|"$'printf \'%s\\n\' \'<<EOF\'\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|"$'cat <<\'EOF-1\'\ndon\'t\nEOF-1\ngit switch main && git commit -m t'"|yes"
+        "workitem/x|printf '%s\\n' ';' git switch main ';' git commit|no"
+        "workitem/x|git -C sub switch main && git commit -m t|yes"
+        "workitem/x|git switch main && git checkout HEAD~0 && git commit -m t|no"
+        "main|cd -- sub && git commit -m t|yes"
+        "main|(cd /; true); git commit -m t|yes"
+        "workitem/x|git checkout main 2>&1 && git commit -m t|yes"
+        "workitem/x|"$'git checkout main >/dev/null 2>&1\ngit commit -m t'"|yes"
+        "main|"$'echo $((1<<2))\ngit commit -m t'"|yes"
+        "main|"$'git commit -m "$(cat <<\'EOF\'\nfix: say "hi, don\'t\nEOF\n)"'"|yes"
+    )
+    local failures="" case branch rest cmd want got output elsewhere
+    elsewhere=$(mktemp -d)
+    for case in "${cases[@]}"; do
+        branch=${case%%|*} rest=${case#*|}
+        cmd=${rest%|*} want=${rest##*|}
+        git -C "$repo" checkout -q "$branch"
+        output=$(cd "$elsewhere" && python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))' "$cmd" "$repo" | "${HOOKS_DIR}/pre-commit-guard.sh" 2>/dev/null) || true
+        if [[ "$output" == *"Committing directly to 'main'"* ]]; then got=yes; else got=no; fi
+        [[ "$got" == "$want" ]] || failures+=" [on $branch: ${cmd//$'\n'/⏎} -> reminder $got]"
+    done
+    rm -rf "$elsewhere"
+    rm -rf "$repo"
+
+    if [[ -z "$failures" ]]; then
+        log_pass
+    else
+        log_fail "Wrong main reminder:$failures"
+    fi
+}
+
 # Test 11: pre-commit-guard.sh works from subdirectory
 test_pre_commit_guard_from_subdirectory() {
     log_test "pre-commit-guard.sh works from subdirectory"
@@ -552,6 +616,7 @@ main() {
     test_pre_commit_guard_allows_non_git
     test_pre_commit_guard_warns_main
     test_pre_commit_guard_reminds_tests
+    test_pre_commit_guard_compound_commands
     test_pre_commit_guard_from_subdirectory
     test_finish_workitem_contract_present
     test_finish_workitem_under_600_lines

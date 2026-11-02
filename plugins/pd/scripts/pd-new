@@ -7,7 +7,7 @@
   pd-new backlog "<title>" [--from workitems/<id>]
   pd-new --self-test
 
-Goal runs: a conductor running pd-new inside a /goal run sets PD_GOAL_RUN=1, so a
+Goal runs: a conductor running pd-new inside a goal run sets PD_GOAL_RUN=1, so a
 `tracker: github` item records `issue: pending` instead of publishing an issue (§4.2).
 """
 import argparse
@@ -25,6 +25,7 @@ from pd_common import (BRANCH_PREFIX, ID_RE, TYPE_DIRS, WORKITEM, Checks, artifa
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+TITLE_MAX = 80  # a work item's title is a name; a longer request goes to log.md
 
 
 class Refused(Exception):
@@ -128,6 +129,9 @@ def create(root, item_type, title, origin=None, mode=None, plan_slug=None):
         return add_backlog(art, title, origin)
     if mode and item_type != WORKITEM:
         raise Refused("--mode applies to work items only")
+    if item_type == WORKITEM and len(title) > TITLE_MAX:
+        raise Refused(f"title is {len(title)} characters (at most {TITLE_MAX}): pass a short name, "
+                      "and keep the full request as log.md's first note entry")
     plan, slug = (plan_slug or (None, None))
     slug = slug or slugify(title)
     if not SLUG_RE.match(slug):
@@ -225,6 +229,9 @@ def self_test():
         r = run("workitem", "A quick fix of the flaky UI PID file test")
         c.check(r.returncode == 1 and "refused" in r.stderr and (fdir / "README.md").read_text() == before,
                 "same-day same-slug refused")
+        r = run("workitem", "probe " + "x" * 80)
+        c.check(r.returncode == 1 and "at most 80" in r.stderr and len(list((art / "workitems").iterdir())) == 1,
+                "a work item title over 80 characters refused, nothing written")
         # the four item types
         f = fm(fdir / "README.md")
         c.check(f["id"] == fid and f["type"] == "workitem" and f["status"] == "active", "work item frontmatter")

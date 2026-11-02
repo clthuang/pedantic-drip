@@ -95,6 +95,6 @@ Then, once per project, run `/pd:init`. It writes `.claude/pd.local.md` (paths, 
 
 - **`worktree.baseRef: "head"`:** without it, each task's worktree starts from the default branch instead of the work item's branch.
 - **The env cap** `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`: agents can't spawn agents.
-- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended `/goal` run isn't stopped by a permission prompt.
+- **Allow rules** for `git merge`, `git worktree` and the `qa_battery` commands, so an unattended goal run isn't stopped by a permission prompt.
 
 An old-layout pd project (`docs/features/` without `sop: 1` in `.claude/pd.local.md`) runs `/pd:adopt` instead. The budgets in `.claude/pd.local.md`: `workflow_output_cap` (output tokens per workflow run, default 2,000,000), `workitem_token_budget` (tokens per work item, unset by default) and `budget_increment`.

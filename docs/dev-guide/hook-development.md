@@ -38,7 +38,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 ```
 
-A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead, which walks up from the working directory (`pre-commit-guard.sh` reads stdin only for `tool_input.command`).
+A hook that doesn't take its root from stdin's `cwd` uses `PROJECT_ROOT="$(detect_project_root)"` from `lib/common.sh` instead, which walks up from the working directory (`pre-commit-guard.sh` does so for its test-file check; the commit's own directory comes from `cwd`, through `lib/commit_target.py`).
 
 ### When to Use Each
 
@@ -82,12 +82,16 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 ### `hooks/lib/common.sh`
 
 - **`detect_project_root`:** walks up from PWD to the nearest `.git` (a directory in a main checkout, a file in a linked worktree); falls back to PWD. So a session in a linked worktree roots at the worktree, not the main checkout. A git submodule's `.git` is a file too, so a session inside a submodule roots at the submodule. An orphaned worktree (its `.git` file names a pruned `.git/worktrees/<name>`) also roots at itself.
-- **`extract_command_workdir "$command"`:** the directory a Bash command string runs in (`cd dir && …`, `(cd dir && …)`, `git -C dir …`), or empty for PWD.
-- **`run_git_in_command_context "$command" <git args>`:** runs git in that directory, with stderr suppressed.
 - **`escape_json "$string"`:** escapes backslashes, double quotes, newlines, carriage returns and tabs for a JSON string value.
 - **`read_local_md_field "$file" "$field" "$default" [preserve_spaces]`:** reads a frontmatter field from a `.local.md` file, such as `.claude/pd.local.md`; returns the default when the file or field is missing.
 - **`read_hook_state` / `write_hook_state`:** read and write one key in a `key=value` state file.
 - **`install_err_trap`:** an ERR trap that prints `{}` and exits 0, so an unexpected failure never breaks the session. Required in every hook that sources `common.sh`.
+
+### `hooks/lib/commit_target.py`
+
+- **Where a Bash command commits:** reads the PreToolUse hook JSON on stdin and prints `<dir>\t<branch>` for a command whose `git commit` runs in `<dir>`, or nothing for a command that doesn't commit. It reads shell words, not a regex: quoted prose (punctuation included), comments and heredoc bodies aren't commands, newlines separate commands, and `cd dir &&` (scoped to its subshell), `git -C dir`, `--no-pager` and a leading `if`/`then`/`!` count.
+- **`<branch>`:** the branch an earlier `git checkout` or `git switch` in the same command moved `<dir>`'s repository to (`--track origin/x` counts as `x`); `?` when that can't be known (`-`, `--detach`, a detached commit, no name after `-b`/`-c`); empty when nothing switched it, so the caller reads HEAD. `git checkout [<branch>] [--] <paths>` restores files, so it isn't a switch.
+- **Used by** `pre-commit-guard` (the branch) and `pd-commit-lint` (the directory).
 
 ### `hooks/lib/session-start-helpers.sh`
 

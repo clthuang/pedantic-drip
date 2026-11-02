@@ -46,7 +46,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
     if (l.startsWith('implement') || l.startsWith('fix')) return IMPL(l)
     const n = l.split(':')[1]; merges[n] = (merges[n] || 0) + 1
     const ok = n === '1' || (n === '2' && merges[n] === 2)
-    return { status: ok ? 'merged' : 'failed', head: 'h2', proof: { first: 'fail', head: ok ? 'pass' : 'fail', greens: [], skipped: [] }, broke: [], flakes: [], reason: ok ? '' : 'head fails' }
+    return { status: ok ? 'merged' : 'failed', head: 'h2', proof: { first: 'fail', head: ok ? 'pass' : 'fail', greens: [], skipped: [] }, broke: [], flakes: [], reason: ok ? `runs of ${n}` : 'head fails' }
   }
   const t = (n, ps) => ({ n, title: `t${n}`, parallel_safe: ps, command: `cmd ${n}`, junit: `j${n}.xml`, green_only: null })
   const a = { workitem_id: 'f', shape: 's', plan: 'p', workflow_output_cap: 1e9, waves: [[t(1, true), t(2, true)], [t(3, false)], [t(4, false)]] }
@@ -56,6 +56,7 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(keys(r.tasks[0]) === keys(impl.tasks[0]) && keys(r.tasks[0].proof) === keys(impl.tasks[0].proof)
     && keys(globalThis.__RESULT.properties.tasks.items.properties) === keys(impl.tasks[0]), 'implement-tasks: task fields equal')
   check(r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`).join(' ') === '1:merged:0 2:merged:1 3:failed:3', `implement-tasks: statuses ${r.tasks.map(x => `${x.id}:${x.status}:${x.cycles}`)}`)
+  check(r.tasks.map(x => x.reason).join() === 'runs of 1,runs of 2,head fails', `implement-tasks: each row carries the merger's reason: ${r.tasks.map(x => x.reason)}`)
   check(!s.calls.some(c => c.label === 'implement:4'), 'implement-tasks: the run stops after a failed task')
   const p1 = s.calls.find(c => c.label === 'implement:1').prompt, f3 = s.calls.find(c => c.label === 'fix:3:1').prompt
   check(p1.includes('#### Task 1 in p.') && f3.includes('#### Task 3 in p.') && [p1, f3].every(p => p.includes('Read ## Plan above ### Wave 1 first') && !p.includes('undefined')),

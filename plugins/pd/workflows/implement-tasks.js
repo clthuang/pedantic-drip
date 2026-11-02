@@ -33,7 +33,7 @@ const CASE_MAP = { type: 'object', additionalProperties: str }
 const RESULT = obj({
   stopped: { type: ['string', 'null'] }, agents_used: { type: 'integer' }, tokens: { type: 'integer' },
   tasks: arr(obj({ id: { type: 'integer' }, branch: str, head: str, case_map: CASE_MAP, proof: PROOF,
-    cycles: { type: 'integer' }, flakes: arr(FLAKE), status: { enum: ['merged', 'failed', 'wrong-test'] } })),
+    cycles: { type: 'integer' }, flakes: arr(FLAKE), reason: str, status: { enum: ['merged', 'failed', 'wrong-test'] } })),
 })
 const IMPL = obj({ branch: str, head: str, first_commit: str, worktree: str, case_map: CASE_MAP,
   error: { enum: ['none', 'transcription', 'wrong-test'] }, report: str })
@@ -72,7 +72,7 @@ async function land(t, s) {  // the merger, then up to three fix cycles (§A2's 
   }
   if (m && m.status === 'conflict') log(`task ${t.n}: merge conflict, a hard stop for the user: ${m.reason}`)
   return { id: t.n, branch: (s && s.branch) || branchOf(t), head: (m && m.head) || (s && s.head) || '', case_map: (s && s.case_map) || {},
-    proof: (m && m.proof) || { first: '', head: '', greens: [], skipped: [] }, cycles, flakes: (m && m.flakes) || [],
+    proof: (m && m.proof) || { first: '', head: '', greens: [], skipped: [] }, cycles, flakes: (m && m.flakes) || [], reason: (m && m.reason) || (s && s.report) || '',
     status: m && m.status === 'merged' ? 'merged' : s && s.error === 'wrong-test' ? 'wrong-test' : 'failed' }
 }
 

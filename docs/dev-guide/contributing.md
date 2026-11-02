@@ -34,7 +34,7 @@ Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore
 
 - **`./validate.sh`** — component validation; 0 errors expected.
 - **`pd-commit-lint`** (PreToolUse hook on Claude's Bash tool) — runs `pd-lint --staged` before each `git commit` Claude runs; commits you type in a terminal aren't checked. An error blocks the commit: fix it, never bypass it.
-- **`pre-commit-guard`** (PreToolUse hook on Claude's Bash tool) — never blocks or approves a call. On a commit to `main`/`master`, or a commit in a project with test files, it adds a reminder to Claude's context.
+- **`pre-commit-guard`** (PreToolUse hook on Claude's Bash tool) — never blocks or approves a call. On a commit that lands on `main`/`master`, or a commit in a project with test files, it adds a reminder to Claude's context.
 
 ## Finishing a Work Item
 

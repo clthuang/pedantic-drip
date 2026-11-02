@@ -12,10 +12,10 @@ source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
 install_err_trap
 PROJECT_ROOT="$(detect_project_root)"
 
-# Read tool input from stdin (with timeout to prevent indefinite blocking)
+# Read the hook JSON from stdin (with timeout to prevent indefinite blocking)
 # Uses gtimeout (macOS with coreutils) or timeout (Linux), falls back to cat
 read_tool_input() {
-    local input timeout_cmd=""
+    local timeout_cmd=""
 
     # Find available timeout command
     if command -v gtimeout &>/dev/null; then
@@ -25,30 +25,11 @@ read_tool_input() {
     fi
 
     if [[ -n "$timeout_cmd" ]]; then
-        input=$($timeout_cmd cat || echo '{}')
+        $timeout_cmd cat || echo '{}'
     else
         # Fallback: read without timeout (stdin from Claude should close promptly)
-        input=$(cat)
+        cat
     fi
-
-    # Extract command from JSON input
-    # Input format: {"tool_name": "Bash", "tool_input": {"command": "..."}}
-    echo "$input" | python3 -c "
-import json
-import sys
-try:
-    data = json.load(sys.stdin)
-    cmd = data.get('tool_input', {}).get('command', '')
-    print(cmd)
-except:
-    print('')
-" 2>/dev/null
-}
-
-# Get git branch for the command's target directory
-get_branch_for_command() {
-    local command="$1"
-    run_git_in_command_context "$command" rev-parse --abbrev-ref HEAD || echo ""
 }
 
 # Check if on protected branch
@@ -96,21 +77,20 @@ remind() {
 }
 
 main() {
-    local command
-    command=$(read_tool_input) || exit 0  # unreadable input: no opinion, the normal permission flow decides
+    local input target dir branch
+    input=$(read_tool_input) || exit 0  # unreadable input: no opinion, the normal permission flow decides
+    case "$input" in *commit*) ;; *) exit 0 ;; esac
 
-    # Only process git commit commands
-    # shortcut: a quoted -C path with spaces isn't matched (extract_command_workdir can't parse one either); quote-aware parsing if pd agents start using such paths
-    if [[ ! "$command" =~ git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+commit ]]; then
-        exit 0
-    fi
-
-    # Check branch for the command's target directory
-    local branch
-    branch=$(get_branch_for_command "$command")
+    # Where the command's `git commit` runs and the branch it lands on, after any checkout or switch
+    # earlier in the command (lib/commit_target.py); nothing means it doesn't commit.
+    target=$(printf '%s' "$input" | python3 "${SCRIPT_DIR}/lib/commit_target.py" 2>/dev/null) || exit 0
+    [[ -n "$target" ]] || exit 0
+    dir=${target%%$'\t'*}
+    branch=${target#*$'\t'}
+    [[ -n "$branch" ]] || branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
     if is_protected_branch "$branch"; then
-        remind "Reminder: Committing directly to '${branch}'. Consider using a feature branch for larger changes."
+        remind "Reminder: Committing directly to '${branch}'. Consider using a work item branch for larger changes."
     elif has_test_files; then
         remind "Reminder: Test files exist in this project. Have you run the tests?"
     fi

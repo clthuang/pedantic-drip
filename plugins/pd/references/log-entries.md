@@ -67,7 +67,7 @@ G1 4920/2, G2 51/1, G3 0/0. Raw logs: agent_sandbox/2026-10-14/m1/.
 ```
 
 ### run
-A workflow launched or finished. A finished `implement-tasks` run lists each task it landed (a resumed run, only the ones it ran), each followed by an indented `case_map:` line; `phase-gate.sh implement` and Verify's reviewer read the task lines across every `run` entry, and a resumed run reads them back. A goal's first `run` entry records the original `workitem_token_budget` (or `unset`).
+A workflow launched or finished. A finished `implement-tasks` run lists each task it landed (a resumed run, only the ones it ran), each followed by an indented `case_map:` line and a `runs:` line (the merger's account of each proving run); `phase-gate.sh implement` and Verify's reviewer read the task lines across every `run` entry, and a resumed run reads them back. A goal's first `run` entry records the original `workitem_token_budget` (or `unset`).
 
 ```markdown
 ## 2026-10-14 14:00+08:00 run implement-tasks — finished
@@ -75,6 +75,7 @@ Session: 0b5e…  Agents: 6. Tokens: 412000. Journal: ~/.claude/projects/…/jou
 Budget: workitem_token_budget=unset
 - task 1: merged, proof pass, cycles 0, branch pd/2026-10-14-x/task-1
   case_map: C1=tests/test_parse.py::test_empty_input; greens: none; skipped: none
+  runs: first 3f2a…: fail (agent_sandbox/junit/task-1-first.xml, NotImplementedError); head 6ccfa3a5: pass
 - task 2: merged, proof pass, cycles 1, branch pd/2026-10-14-x/task-2
   case_map: C2=tests/test_io.py::test_round_trip; greens: none; skipped: none
 ```
@@ -96,11 +97,12 @@ Plan: plans/2026-10-14-thin-pd.md — still holds.
 ```
 
 ### metrics
-Written once, at finish: the mode, and the `Stop` gate's token total for the work item.
+Written once, at finish: the mode, and the `Stop` gate's token total and original budget for the work item. `retro_triggers` compares the two, so a cost overrun counts even when no goal run wrote a `run` entry's `Budget:` line.
 
 ```markdown
 ## 2026-10-14 19:00+08:00 metrics
 Mode: standard. Tokens: 1210000 (source: ~/.claude/pd/gate/0b5e….json).
+Budget: workitem_token_budget=unset
 ```
 
 ### defect

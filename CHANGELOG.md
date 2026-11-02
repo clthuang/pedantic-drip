@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The conductor offers a goal run once the plan is approved.** The planning stage's exit asks whether to run the work item to `finish` as a goal run; on yes, the conductor writes the `goal:` line. Before, nothing offered one, so a goal run started only when the user asked.
+
+### Changed
+
+- **The `Stop` gate drives goal runs; pd prints no `/goal` command.** The gate arms as soon as the `goal:` line is committed and holds every stop from then on (it yields only while a workflow or subagent runs in the background), so the user never got the prompt back to type the printed `/goal`.
+- **A work item's title is a name of at most 80 characters.** `pd-new` refuses a longer one, and `/pd:create-workitem` keeps a longer request verbatim, quoted line by line, as `log.md`'s first `note` entry. Before, the whole request became the title and heading (about 500 characters in the bake-off probe).
+
+### Fixed
+
+- **The commit reminder judges the branch the commit lands on.** `pre-commit-guard` read the branch before the command ran, so `git checkout -b workitem/<id> main && git commit`, as every new work item does, drew "Committing directly to 'main'", while `git checkout main && git commit` from a work item branch drew nothing. It also took the text `git commit` in a grep pattern or a quoted string for a commit. It now shares `pd-commit-lint`'s shell-word parser (`hooks/lib/commit_target.py`), which also follows a `git checkout` or `git switch` earlier in the command, in the same repository.
+- **`pd-commit-lint` lints commits it used to miss.** Its parser ignored a `git commit` after a newline or inside `if …; then`, and gave up on any command whose heredoc held an apostrophe, such as a commit message saying "don't", so `pd-lint --staged` never ran on those commits. A comment line, or an arithmetic `$((1<<2))` read as a heredoc, before the commit also hid it. The parser also reads a heredoc inside `"$( … )"`, Claude Code's usual commit form, so a `"` in the message doesn't hide the commit. The shared parser drops comments and heredoc bodies, treats newlines as separators and skips a leading `if`, `then` or `!`.
+- **The merger never moves the main checkout.** It ran a task's HEAD by checking it out in the main checkout, detaching the conductor's working tree for a few seconds. Every run before the merge now goes in a detached worktree under `agent_sandbox/`. It also lost the first commit's JUnit when it removed that worktree: it now copies each run's JUnit into `agent_sandbox/junit/task-<n>-<first|head>.xml`, and its `reason` names each run with its result and first failure message.
+- **A cost overrun counts at finish without a goal run.** `retro_triggers` read the original budget only from a goal's first `run` entry, so a work item that spent 3,070,148 tokens against a 50,000 budget passed finish with "No retro trigger". The `metrics` entry now records the gate's original budget as `Budget: workitem_token_budget=<n|unset>`, and `retro_triggers` reads it there too.
+- **Finish removes task worktrees before deleting their branches.** `git branch -d` refuses a branch a leftover `.claude/worktrees/` worktree has checked out.
+- **A retro on a post-merge defect reads the merge commit.** The work item's branch is deleted by then, so `retrospecting` uses `<merge>^1..<merge>^2`.
+
 ## [8.0.1] - 2026-10-21
 
 ### Fixed

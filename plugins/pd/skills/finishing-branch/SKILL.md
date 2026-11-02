@@ -16,7 +16,7 @@ Order matters: the retro runs before cleanup, because branch and worktree cleanu
    - **Record it** as a `review` entry naming `security-reviewer`, one issue line per finding.
    - **A blocker sends the work item back to Verify:** append `phase finish -> verify (back)` with `Reason:` and `Invalidates: nothing`, commit, and run the `verifying` skill. Verify's fixer works with a fresh budget of three fix cycles. When the work item returns, the security reviewer re-checks only its own findings.
 2. **Docs:** run the `updating-docs` skill: the component sync, and publishing any artifact that became reference material.
-3. **The `metrics` entry**, written once: `Mode: <mode>. Tokens: <n> (source: <gate state file>)`. `<n>` is the `tokens` value in the `Stop` gate's per-work-item file, `~/.claude/pd/gate/<repo key>/<id>.json`. The repo key is the first 16 hex digits of the SHA-256 of `git remote get-url origin`, or of the repository root's path when there is no origin. If there is no file, write `Tokens: unknown (no gate state)`; never estimate.
+3. **The `metrics` entry**, written once: `Mode: <mode>. Tokens: <n> (source: <gate state file>)`, then `Budget: workitem_token_budget=<b>`. `<b>` is the file's `budget` value (the original budget), or `unset` when it is null. `<n>` is the `tokens` value in the `Stop` gate's per-work-item file, `~/.claude/pd/gate/<repo key>/<id>.json`. The repo key is the first 16 hex digits of the SHA-256 of `git remote get-url origin`, or of the repository root's path when there is no origin. If there is no file, write `Tokens: unknown (no gate state)` and `Budget: workitem_token_budget=unset`; never estimate.
 4. **The retro trigger check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh finish <work item dir>`.
    - **A `retro.md missing` failure names the triggers:** run the `retrospecting` skill, then re-run the check until it passes.
    - **A pass with no retro owed:** append finish's `note` entry, `No retro trigger.`
@@ -30,6 +30,7 @@ Order matters: the retro runs before cleanup, because branch and worktree cleanu
    - **PR path, when `{pd_base_branch}` requires pull requests:** `gh api repos/{owner}/{repo}/rules/branches/{pd_base_branch} --jq 'any(.[]; .type == "pull_request")'` prints `true` (gh fills in `{owner}/{repo}`). Instead of the merge above, run `git push -u origin workitem/<id>`, `gh pr create --base {pd_base_branch} --fill`, `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`. A failing check is a hard stop, like a conflict. `--delete-branch` removes the branch locally and on the remote, so step 9 skips it.
 8. **Release:** run `{pd_release_script}` if it is set and the file exists. Otherwise say none is configured.
 9. **Cleanup, only after the merge:**
+   - **Remove the task worktrees** first: `git worktree remove <path>` for each worktree `git worktree list` shows on a `pd/<id>/task-*` branch. No `--force`: a dirty worktree stops cleanup and goes to the user.
    - **Delete the branches** with `git branch -d workitem/<id>`, then each `pd/<id>/task-*` branch. Never `-D`: the safe delete refusing unmerged work is the guard.
    - **Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-lint --sweep`.** Delete the `agent_sandbox/` directories it lists for done items, and show the user the rest of its list.
 

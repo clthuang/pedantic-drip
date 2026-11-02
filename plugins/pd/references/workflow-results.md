@@ -29,6 +29,7 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
       "proof": {"first": "fail", "head": "pass", "greens": [], "skipped": []},
       "cycles": 0,
       "flakes": [],
+      "reason": "first 3f2a…: fail (agent_sandbox/junit/task-1-first.xml, NotImplementedError); head 6ccfa3a5: pass (task-1-head.xml)",
       "status": "merged"
     }
   ]
@@ -39,6 +40,7 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 - **`proof`:** `pd-proof`'s verdict at the first commit and at HEAD. `greens` and `skipped` name tests already green, or skipped, at the first commit, for the Verify reviewer.
 - **`cycles`:** fix cycles spent; the first run is not a cycle.
 - **`flakes`:** tests whose runs disagreed, each `{test, runs}`; the conductor writes one `note` per flake.
+- **`reason`:** the merger's account of each proving run (commit, JUnit copy, result, first failure message), or the implementer's report when no merge ran.
 - **`status`:** `merged`, `failed` or `wrong-test` (a wrong test case sends the task back to Plan).
 
 ## `verify-change`
