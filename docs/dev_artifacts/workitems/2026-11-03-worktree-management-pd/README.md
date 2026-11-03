@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: design
+phase: create-plan
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Contracts (standard mode): ground with codebase-explorer, write ## Design, then the design review.
+Plan: write plan.md from ## Design, then the test-case review.
 
 ## Links
 

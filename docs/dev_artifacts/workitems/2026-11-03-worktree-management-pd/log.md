@@ -113,3 +113,11 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to N1 to N4 and the e
 Closes: review@2026-11-03 12:34+08:00#N1, review@2026-11-03 12:34+08:00#N2, review@2026-11-03 12:34+08:00#N4
 - R1 blocker shape.md:239 — still open from review@2026-11-03 12:34+08:00#N3: a worktree can check out a stray, tip unchanged, between the final re-read and `update-ref --no-deref -d`, deleting a branch then held.
 Rejects: R1 — no git command closes that window: `git branch -d/-D` makes the same check-then-delete in two steps (builtin/branch.c: `branch_checked_out()`, then the ref delete), and a ref lock doesn't block another worktree's checkout, which writes only that worktree's HEAD. The design matches git's own guarantee, and the delete succeeds only at a tip a non-stray branch contains, so no commit is lost (risk row). Proposed for the user's decision.
+
+## 2026-11-03 12:40+08:00 decision
+Q: accept the one-call window in which a stray checked out after the re-read is deleted under its worktree (no commit lost), as git's own check-then-delete guarantee?
+A (user, verbatim): "Accept the window (Recommended)"
+Closes: review@2026-11-03 12:34+08:00#N3, review@2026-11-03 12:38+08:00#R1
+
+## 2026-11-03 12:40+08:00 phase design -> create-plan
+Design review loop ended: R1 to R10 and N1, N2, N4 resolved by revision; N3 closed by the owner (decision above).
