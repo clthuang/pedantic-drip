@@ -96,3 +96,7 @@ Assumptions:
 Q: does the revision answering R4 (C25 run-time, C27 static) end the review loop?
 A (user, verbatim): "One more re-review"
 answers: capped@2026-11-03 12:16+08:00
+
+## 2026-11-03 12:26+08:00 review joint design and plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the owner's extra pass past the cap (decision@2026-11-03 12:19+08:00), scoped to R4 and the edit ceb3d03e..82bd0509 (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/review-brief-5.md). R4 still open; nothing new in the diff.
+- R1 blocker plan.md:56 — still open from review@2026-11-03 12:02+08:00#R4: C25 and C27 bound which process calls happen, not how many (Codex's mutation: `repo_of` run twice passed both). Checked: today a commit with no switch launches no git call (`commit_target.py:173`, `repo_of` only when `switched` is set). Revised: C25 compares each command's Popen sequence with its unwrapped form's under the fork point's `commit_target.py`, and a doubled-`repo_of` copy is a negative control.
