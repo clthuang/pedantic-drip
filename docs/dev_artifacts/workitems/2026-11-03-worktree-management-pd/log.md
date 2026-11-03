@@ -98,3 +98,12 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, on commit 823fe8c7 (brief ag
 - R9 blocker shape.md:231 — D5 named no rejected alternative; a reference file and per-caller copies rejected, with evidence.
 - R10 blocker shape.md:240 — the porcelain-drift row had no evidence; replaced by the `-z` version floor, with the hypotheticals moved to the notes.
 Fix cycle 1 of 3: `## Design` rewritten; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review.
+
+## 2026-11-03 12:34+08:00 review design, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to R1 to R10 and the edit 823fe8c7..807a4fb9 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/review-brief-2.md). R1 to R10 resolved; four new blockers in the diff, each checked (N1 and N2 probed on git 2.54.0 and Python 3.13).
+Closes: review@2026-11-03 12:21+08:00#R1, review@2026-11-03 12:21+08:00#R2, review@2026-11-03 12:21+08:00#R3, review@2026-11-03 12:21+08:00#R4, review@2026-11-03 12:21+08:00#R5, review@2026-11-03 12:21+08:00#R6, review@2026-11-03 12:21+08:00#R7, review@2026-11-03 12:21+08:00#R8, review@2026-11-03 12:21+08:00#R9, review@2026-11-03 12:21+08:00#R10
+- N1 blocker shape.md:167 — `update-ref -d` through a symbolic `worktree-wf_*` ref deletes its target (probed: `workitem/x` deleted); `--no-deref` added (probed: only the alias goes).
+- N2 blocker shape.md:142 — git()'s text mode turns `\r` into `\n` (probed), so two paths could collide; worktrees() reads bytes.
+- N3 blocker shape.md: — update-ref skips git branch's checked-out check; the list is re-read before each delete, and the one-call window left loses no commit (risk row).
+- N4 blocker shape.md:177 — pd-worktrees had two contract blocks; GitSurface folded into its one block.
+Fix cycle 2 of 3: `## Design` revised; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review of N1 to N4.
