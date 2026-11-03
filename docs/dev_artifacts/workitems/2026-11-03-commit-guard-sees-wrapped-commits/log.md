@@ -143,3 +143,7 @@ Closes: review@2026-11-03 19:03+08:00#Q1
 
 ## 2026-11-03 19:04+08:00 phase create-plan -> implement
 Simplification applied and QA-checked; Q1 closed by the owner (decision above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 19:21+08:00 phase implement -> create-plan (back)
+Reason: calvin on plan.md, the owner's rule between plan and execution (33 questions, the conductor adjudicating as author); its fixes change plan.md. Also C23: on a later branch editing either hook suite, `git diff $(git merge-base origin/main HEAD)` sees that branch's own edit and fails, so the owner's ruling (decision@2026-11-03 19:04+08:00) rested on a wrong premise; re-asked. Nothing has executed.
+Invalidates: plan.md.

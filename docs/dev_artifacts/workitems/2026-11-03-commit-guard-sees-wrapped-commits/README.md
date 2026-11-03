@@ -3,7 +3,7 @@ id: 2026-11-03-commit-guard-sees-wrapped-commits
 type: workitem
 title: commit guard sees wrapped commits
 status: active
-phase: implement
+phase: create-plan
 mode: small
 origin: backlog#2026-11-02-commit-target-py-see-commits
 branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-Ready for Execute: plan.md has two tasks (C1 to C27). Before Execute: calvin on plan.md (owner's rule). Not started this round.
+Plan: answering calvin on plan.md (owner's rule before Execute); then back to implement.
 
 ## Links
 
