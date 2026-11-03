@@ -34,3 +34,15 @@ To the conductor (wording or consistency, each answered by a revision):
 - rows 13, 14, 15, 16, 17: query text stands as the command; store move and surfaces defined; "blast radius" and "complete" dropped.
 - row 18: Codex can run a shell, so the non-goal now says reviewers re-run the recorded query rather than claiming Codex can't reach CodeGraph.
 - rows 19, 20, 21, 22: empty report defined; "unavailable" defined once; the role pins tools only; the description stays, so no doc sync.
+
+## 2026-11-03 11:21+08:00 review calvin cycle 2 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/calvin-cycle-2.md. Verdict: 3 blockers, 8 warnings, 8 notes; cycle 1: 22 rows answered, rows 21 and 24 partly, both now answered (role `explorer`, tools only; greps always beside the call graph). All 19 answered and `## Requirements` revised.
+Closes: review@2026-11-03 11:12+08:00#R1, review@2026-11-03 11:12+08:00#R2, review@2026-11-03 11:12+08:00#R3, review@2026-11-03 11:12+08:00#R4, review@2026-11-03 11:12+08:00#R5, review@2026-11-03 11:12+08:00#R6, review@2026-11-03 11:12+08:00#R7, review@2026-11-03 11:12+08:00#R8, review@2026-11-03 11:12+08:00#R9
+- R1 blocker shape.md:43 — how a reviewer re-runs a CodeGraph query; it re-runs what its tools allow (Codex's shell can run `codegraph explore`), and the greps always.
+- R2 blocker shape.md:28 — how the explorer checks for `.codegraph/`; it doesn't: it always asks CodeGraph first and the tool's own "no index" answer decides (B4).
+- R3 blocker shape.md:40 — dispatching from another repository; a headless `claude -p --plugin-dir plugins/pd` session in a scratch repository under `agent_sandbox/` (B4, B5).
+To the user: none.
+To the conductor (wording or consistency, each answered by a revision):
+- rows 4, 5, 15, 16: greps always run beside the call-graph query (#078's supplementary net), which covers string-named consumers; a table's old name is its name; the missed-by-both case is out.
+- rows 6, 9, 10, 11, 12, 18, 19: "done" reworded; B3 cites the call line as it is at Verify; B6 names its query and pre-check; `search` read off the transcript; a missing tool wins; an unconnected server makes B3 not run and asks the user; an unnamed Read is a search call.
+- rows 7, 8, 13, 14, 17: B1 runs under two locales; role `explorer` pins tools only; B5 checks a dispatch runs without the tool; a frozen index is a stale index; the CHANGELOG line named.
