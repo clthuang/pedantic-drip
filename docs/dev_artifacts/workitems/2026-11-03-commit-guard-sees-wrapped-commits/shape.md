@@ -74,3 +74,66 @@ Already seen today, kept as regression cases: `env FOO=1 git commit -m x`, `sudo
 - **Must not raise or print a traceback** from any path this change adds, deep nesting included: both hooks read stdout only and treat nothing as "not a commit", so a crash would skip lint silently (B15).
 - **Must not see quoted prose as a commit** (B14's last case, B16's pinned cases).
 - **Must not add subprocesses:** wrapper and `-c` handling is string work; the only `git` calls stay today's: `show-ref` then `rev-parse` for a `git checkout` target (`commit_target.py:157-159`), and `rev-parse --show-toplevel` per repository lookup (`repo_of`).
+
+## Design
+
+### Architecture
+
+One module changes. Both hooks and the new test reach it through the same stdin/stdout contract; it asks git only for checkout targets and repository roots.
+
+```mermaid
+flowchart LR
+    G[hooks/pre-commit-guard.sh] -->|contract: CommitTarget| C[hooks/lib/commit_target.py]
+    L[hooks/pd-commit-lint.sh] -->|contract: CommitTarget| C
+    T[hooks/lib/test_commit_target.py] -->|contract: CommitTarget| C
+    C -->|contract: GitQueries| R[(git)]
+```
+
+### Contracts
+
+```text
+modules: plugins/pd/hooks/lib/commit_target.py
+CommitTarget (unchanged): stdin {"tool_input": {"command": str}, "cwd": str}
+  -> stdout "" when no `git commit` runs, else "<dir>\t<branch>"
+     branch: "" (nothing switched) | "<name>" | "?" (a target that can't be known)
+  exit 0, stderr empty, on every input: both hooks read stdout only, so a traceback reads as "not a commit"
+GitQueries (unchanged): for a `git checkout` target, `git -C <dir> show-ref --verify --quiet refs/heads/<x>`,
+  then `git -C <dir> rev-parse --verify --quiet <x>^{commit}`; per repository lookup, `git -C <dir> rev-parse --show-toplevel`
+Internal (tests reach it only through CommitTarget):
+  WRAPPERS: wrapper name -> value options, positional rule, no-run options, directory options; the ## Requirements table, row for row
+  SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}; SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
+  scan(cmd, here, switched) -> (dir, branch) | None
+    one command line through shell_text + shlex, as main() does today
+    `switched` (repo -> branch) is shared with nested scans: a switch carries; `here` is not: a cd ends
+    a -c script -> scan(script, <that command's dir>, switched); a hit there is the answer
+    a script that raises ValueError (shlex) or RecursionError -> skipped; the scan goes on after it
+  command_start(words, i, here) -> (j, here) | None
+    skips PREFIXES, NAME=value words, and each wrapper's options and positionals, wrapper after wrapper;
+    a directory option sets `here` for that command only; None when a no-run option is present
+  switch_target(sub, args, at): drops a trailing `--` with no word after it, then applies today's rules
+Invariants:
+  shell_text unchanged: quoted prose, comments and heredoc bodies stay data, at every nesting depth
+  no git call besides GitQueries
+```
+
+### Decisions
+
+- **D1: extend `commit_target.py`; no shell-parser library.** Rejected `bashlex`: a new dependency for a hook that runs on every Bash call under the system `python3`, with no venv (`pre-commit-guard.sh:86`). KISS.
+- **D2: a `-c` script goes through the same `scan`.** Rejected a regex over the script text: one parser at every depth keeps quoted prose and heredoc bodies data inside scripts too, where 8.0.2's false-reminder fix lives (`shell_text`). DRY.
+- **D3: a table of wrappers.** Rejected per-wrapper branches in the loop: the table mirrors `## Requirements` row for row, so a missed wrapper is one row. Single responsibility.
+- **D4: a pytest file for the parser.** Rejected more 10c cases: the 10c harness keeps only reminder yes/no and drops stderr (`test-hooks.sh:260-261`). pytest writes the JUnit that `pd-proof` reads, and CI already runs a pytest line (`.github/workflows/ci.yml:41`).
+
+### Risks
+
+| Risk | Blast radius | Mitigation |
+|---|---|---|
+| A value option missing from `WRAPPERS` swallows the command word: `nice -n 5 git commit` would read `5` as the command (B4). | lint skipped for that form | a test case per table row, attached forms in B2 |
+| Deep nesting raises `RecursionError`; a traceback reads as "not a commit" in both hooks (`pre-commit-guard.sh:86`). | lint skipped | each level of `bash -c <shlex.quote(inner)>` roughly triples the command (10 levels: 118,171 characters; 12: 1,062,967; measured 2026-11-03), so real input stays far below Python's recursion limit; `scan` catches `RecursionError` per script anyway, and B8's 10-level case runs the deepest realistic input |
+| A switch inside a `-c` script that never ran still counts (`false && bash -c 'git switch main'; git commit`). | a false, non-blocking reminder | the documented `&&` shortcut (`commit_target.py:173`); no new code |
+
+### Test strategy
+
+- **Runner and JUnit option:** `uv run --project plugins/pd pytest <file> --junitxml=<path>`.
+- **Fixtures live in:** `plugins/pd/hooks/lib/test_commit_target.py` itself: `repo` (pytest `tmp_path`, `git init -b main`, one commit, branch `workitem/x`, a `sub/` directory) and `pd_repo` (an adopted layout with one work item made by `pd-new`, as `test-pd-commit-lint.sh:17-23` builds `$R`).
+- **Fakes:** none.
+- **Real resources tests may touch:** git in those `tmp_path` repositories; `pre-commit-guard.sh`, `pd-commit-lint.sh` and the two hook test files run as subprocesses.

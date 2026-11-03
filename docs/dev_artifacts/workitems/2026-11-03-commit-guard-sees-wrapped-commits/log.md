@@ -55,3 +55,6 @@ A (user, verbatim): "Signed off"
 
 ## 2026-11-03 11:24+08:00 phase specify -> design
 Criteria signed off (decision above); calvin loop ended at cycle 3 with no blocker.
+
+## 2026-11-03 11:25+08:00 note
+Grounding: the conductor read plugins/pd/hooks/lib/commit_target.py in full this session (lines 1-210), with both hooks and the 10c harness (test-hooks.sh:255-265); no codebase-explorer dispatch, its report would restate that read.
