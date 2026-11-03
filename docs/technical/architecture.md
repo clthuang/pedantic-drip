@@ -76,7 +76,7 @@ State, outside git:
 
 ## Module Interfaces
 
-- **`scripts/pd_common.py`** — the shared library: config (`load_config`, `artifacts_dir`), items (`find_items`, `split_frontmatter`), logs (`split_log`, `parse_log`, `parse_tasks`) and the computed views (`open_blockers`, `open_assumptions`, `retro_triggers`). Every Python script and `phase-gate.sh` import it (`pd-proof` and `pd-review-filter` only for its self-test helper `Checks`); none keeps a cache.
+- **`scripts/pd_common.py`** — the shared library: config (`load_config`, `artifacts_dir`), items (`find_items`, `split_frontmatter`), logs (`split_log`, `parse_log`, `parse_tasks`) and the computed views (`open_blockers`, `open_assumptions`, `retro_triggers`), and the worktree helpers (`worktrees`, `run_in_flight`). Every Python script and `phase-gate.sh` import it (`pd-proof` and `pd-review-filter` only for its self-test helper `Checks`); none keeps a cache.
 - **The scripts' CLIs** — [api-reference.md](api-reference.md).
 - **Workflow results** — each workflow script pins its own `RESULT` schema, `plugins/pd/references/workflow-results.md` restates it, and `test-workflows.mjs` checks that the two agree.
 - **Log entries** — pinned once in `plugins/pd/references/log-entries.md`; `pd-lint` checks each entry's shape.
