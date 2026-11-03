@@ -58,3 +58,78 @@ The conductor runs B3 to B6 at Verify, writing each session's stream outside the
 - **Must not write:** the explorer never gets Write, Edit, Bash, or a tool that creates or rebuilds an index. `codegraph_explore` is a query; the server's own file watcher keeps the index in sync whether or not the explorer runs.
 - **Must not fail without CodeGraph:** no dispatcher gets an error, or findings with no `no_findings_reason`, because CodeGraph is absent (B4, B5, B6); that would break `designing` step 2 and `research-fanout` in every repository without an index.
 - **Must not change the explorer's output fields** other than adding `search`: `findings[]` with `finding`, `source`, `relevance`, and `no_findings_reason` stay.
+
+## Design
+
+### Architecture
+
+The agent file changes in place; `validate.sh` pins its tools; two skills gain one checklist line each. No new module.
+
+```mermaid
+flowchart LR
+    C[conductor: designing step 2] -->|contract: ExplorerDispatch| X[agents/codebase-explorer.md]
+    F[workflows/research-fanout.js] -->|contract: ExplorerDispatch| X
+    X -->|contract: SearchOrder| M[(mcp__codegraph__codegraph_explore)]
+    X -->|contract: SearchOrder| G[(Glob, Grep, Read)]
+    V[validate.sh] -->|contract: ExplorerRole| X
+    R[skills designing + planning] -->|contract: RenameChecklistLine| W[review call]
+```
+
+### Contracts
+
+```text
+modules: plugins/pd/agents/codebase-explorer.md
+ExplorerDispatch (input unchanged): a query and context in the prompt
+  -> one JSON object: {"findings": [{"finding", "source": "<path>:<line>", "relevance": "high|medium|low"}],
+                       "no_findings_reason": str|null, "search": str}
+  search: "codegraph" | "codegraph, then grep" | "grep (codegraph unavailable: <reason>)"
+  reason: "tool not in session" | "no index" | "error: <the error's first line>"
+SearchOrder (the agent's Research Process):
+  1. the first search call is mcp__codegraph__codegraph_explore with the query's symbols or question;
+     when the tool isn't in the session, step 1 is skipped and the reason is "tool not in session"
+  2. an answer naming no .codegraph/ -> reason "no index"; an error -> "error: <first line>"
+  3. Glob, Grep and Read fill what CodeGraph didn't answer (and everything, when it was unavailable)
+  4. a stale-index banner (files named, or auto-sync disabled) -> Read each file a finding rests on before citing it
+  5. search is written from the calls actually made
+Frontmatter: tools: [Glob, Grep, Read, mcp__codegraph__codegraph_explore]; model, description, color unchanged
+Invariants: no Write, Edit, Bash or index-building tool; the output fields other than search unchanged
+```
+
+```text
+modules: validate.sh
+ExplorerRole: agent_roles_errors gains the spec codebase-explorer:explorer
+  role explorer: tools, sorted with LC_ALL=C, equal "Glob,Grep,Read,mcp__codegraph__codegraph_explore",
+    else the line "codebase-explorer: the explorer's tools are Glob, Grep, Read, mcp__codegraph__codegraph_explore (has <tools>)"
+  the tools sort in agent_roles_errors runs under LC_ALL=C for every role
+  the failing fixture gains: tools of codebase-explorer.md set to [Glob, Grep, Read, Write]; expected count 9
+```
+
+```text
+modules: plugins/pd/skills/designing/SKILL.md, plugins/pd/skills/planning/SKILL.md
+RenameChecklistLine (verbatim, one line in each `## Review checklist`, after "Absence claims are proven" in planning and after "Assumptions checked" in designing):
+- **Renames and store moves list their surfaces:** a rename or a store move (a file, config key or table moving where its state lives) lists every surface it touches, from a call-graph query of the changed symbol (`codegraph_explore`, or `codegraph explore` from a shell, when `.codegraph/` exists) plus a grep for each old name; the artifact records the query and grep commands with their hits (file:line), each marked a surface to change or history left as it is (a released CHANGELOG section, a done or abandoned work item, a retro, an archive). The reviewer re-runs the greps, and the query where its tools allow, and checks each recorded hit; a surface in its output that the list lacks is a blocker.
+```
+
+### Decisions
+
+- **D1: the MCP tool only, no CLI route in the explorer.** The owner's ruling (`decision@2026-11-03 11:08+08:00`); adding Bash would break the must-not on writing. KISS.
+- **D2: a new `explorer` role pinned on tools only.** Rejected folding it into `reviewer`: reviewers also pin `opus/high`, and the explorer runs `sonnet` (`codebase-explorer.md:4`). Single responsibility.
+- **D3: `LC_ALL=C` on the tools sort.** `mcp__…` sorts after `Read` in the C locale and before it under `en_US.UTF-8` (lowercase collates with uppercase there), so a locale-dependent sort makes the pin pass on one machine and fail on another (B1; checked 2026-11-03: `Glob,Grep,Read,mcp__codegraph__codegraph_explore` under C, `Glob,Grep,mcp__codegraph__codegraph_explore,Read` under en_US.UTF-8). Applies to every role; the existing pins are all capitalized words, and they sort the same in both locales.
+- **D4: the explorer writes `search` itself.** Rejected a hook that derives it from the transcript: the transcript check is Verify's (B3 to B6), and a hook would add a component for a field one dispatcher reads. YAGNI.
+
+### Risks
+
+| Risk | Blast radius | Mitigation |
+|---|---|---|
+| The agent skips CodeGraph and greps first despite SearchOrder (an instruction, not code). | `search` lies, or call paths are missed | B3 to B6 check the transcript's first search call; the transcript wins over `search` |
+| The server is registered under another name on another machine, so `mcp__codegraph__codegraph_explore` isn't in the session. | grep-only answers there | reported as `tool not in session` (B5); the pin follows this machine's user-scope `codegraph` server |
+| `LC_ALL=C` changes another role's comparison. | `validate.sh` fails | every other pinned list is capitalized ASCII words, sorting the same under both locales; B1 runs both |
+| The checklist line is skipped by an author who never renames anything. | none | it applies only to renames and store moves |
+
+### Test strategy
+
+- **Runner and JUnit option:** `uv run --project plugins/pd pytest <file> --junitxml=<path>`.
+- **Fixtures live in:** `plugins/pd/scripts/test_explorer_codegraph.py` itself: `agents_copy` (pytest `tmp_path` holding a copy of `plugins/pd/agents/*.md`), and `agent_roles_errors` run by extracting the function from `validate.sh` (`sed -n '/^agent_roles_errors()/,/^}/p'`) into `bash -c`.
+- **Fakes:** none.
+- **Real resources tests may touch:** `./validate.sh` run as a subprocess from the repository root (read-only; it makes its own `mktemp` fixture), and the repository's skill and agent files, read.
+- **Live dispatches:** B3 to B6 run at Verify by the conductor, as `## Requirements` says; no test in this plan starts a Claude session.

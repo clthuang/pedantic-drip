@@ -99,3 +99,6 @@ A (user, verbatim): "Signed off"
 
 ## 2026-11-03 12:05+08:00 phase specify -> design
 Criteria signed off (decision above); calvin loop ended by the owner after cycle 4.
+
+## 2026-11-03 12:08+08:00 note
+Grounding: the conductor read plugins/pd/agents/codebase-explorer.md in full, validate.sh:385-429 (agent_roles_errors and its fixture), and both skills' review checklists this session; no codebase-explorer dispatch, since the explorer is the thing changing and its report would restate that read.
