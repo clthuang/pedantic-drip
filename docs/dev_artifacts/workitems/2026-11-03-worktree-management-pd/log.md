@@ -143,3 +143,16 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to N1 and the edit cc
 Closes: review@2026-11-03 12:52+08:00#N1
 - N2 blocker plan.md:65 — C30's baseline from `git merge-base main HEAD` is the new `pd-status` itself after the merge, so a correct implementation fails on main.
 Fix cycle 3 of 3: C30's baseline is now a literal multiset (`pd-status` makes one git call today, `rev-parse --show-toplevel`, logged at b230ae35); pd-lint and `phase-gate.sh create-plan` pass. The same moving baseline sits in the commit guard's C25; fixed there by a backward move.
+
+## 2026-11-03 12:57+08:00 review plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to N2 and the edit 99fe91b7..0c2f2314 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/plan-review-brief-4.md). N2 resolved; one new blocker in the diff, checked against shape.md:196-197.
+Closes: review@2026-11-03 12:54+08:00#N2
+- M1 blocker plan.md:65 — C30's literal `branch --list` call lacks the `--format=%(refname:short)` shape.md:197 pins, so a compliant implementation fails the exact match.
+
+## 2026-11-03 12:57+08:00 capped plan
+The plan review used its three fix cycles (review@2026-11-03 12:49+08:00, fix cycles at 12:49, 12:52, 12:54); M1 arrived in the third cycle's re-review.
+Deferred: none.
+Follow-ups: none.
+Decisions: M1 fixed after the cap: C30's literal now carries the argument list shape.md:197 pins, `branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`; pd-lint and `phase-gate.sh create-plan` pass. Asking the user whether that ends the loop.
+Assumptions:
+- A1: the fix is mechanical — it copies shape.md:197's argv into C30's literal and changes no other case.
