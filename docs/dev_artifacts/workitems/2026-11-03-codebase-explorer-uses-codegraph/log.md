@@ -125,3 +125,11 @@ Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
 
 ## 2026-11-03 12:19+08:00 note
 Goal-run offer skipped: the owner scoped this round to investigate, design and plan the three backlog items, with no Execute ("proceed to investigate, design and plan for three open backlog items in this round").
+
+## 2026-11-03 18:56+08:00 review plan, simplification — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of shape.md ## Design and plan.md at ef9ca47b (the owner's ask: "use agents to code review, QA, and simplify implementation without compromising functionality"; brief agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/simplify-brief-1.md). Approved; one marginal cut, no blocker.
+- R1 note plan.md:21 — drop C1's two direct `roles()` calls on the real agents directory: C2 already runs that check through `validate.sh` under both locales (`validate.sh:415` logs every `agent_roles_errors` line through `log_error`, which counts it, `validate.sh:15-18`). C1 keeps its exact frontmatter assertion; C3 and C4 keep the direct calls on the copy.
+
+## 2026-11-03 18:56+08:00 phase implement -> create-plan (back)
+Reason: the simplification review above (R1). Nothing has executed.
+Invalidates: plan.md C1.
