@@ -30,7 +30,7 @@ Order matters: the retro runs before cleanup, because branch and worktree cleanu
    - **PR path, when `{pd_base_branch}` requires pull requests:** `gh api repos/{owner}/{repo}/rules/branches/{pd_base_branch} --jq 'any(.[]; .type == "pull_request")'` prints `true` (gh fills in `{owner}/{repo}`). Instead of the merge above, run `git push -u origin workitem/<id>`, `gh pr create --base {pd_base_branch} --fill`, `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`. A failing check is a hard stop, like a conflict. `--delete-branch` removes the branch locally and on the remote, so step 9 skips it.
 8. **Release:** run `{pd_release_script}` if it is set and the file exists. Otherwise say none is configured.
 9. **Cleanup, only after the merge:**
-   - **Remove the task worktrees** first: `git worktree remove <path>` for each worktree `git worktree list` shows on a `pd/<id>/task-*` branch. No `--force`: a dirty worktree stops cleanup and goes to the user.
+   - **Remove the task worktrees** first: `pd-worktrees <id> --remove`. On exit 1 ask as `implementing` step 5 does; a kept worktree's `pd/<id>/task-*` branch is left out of the deletes. On exit 2, a hard stop before any branch delete.
    - **Delete the branches** with `git branch -d workitem/<id>`, then each `pd/<id>/task-*` branch. Never `-D`: the safe delete refusing unmerged work is the guard.
    - **Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-lint --sweep`.** Delete the `agent_sandbox/` directories it lists for done items, and show the user the rest of its list.
 
