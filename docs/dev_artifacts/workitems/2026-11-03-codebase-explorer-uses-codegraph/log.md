@@ -87,3 +87,15 @@ To the conductor (each answered by a revision):
 - rows 10, 11, 17: the reviewer re-runs the greps and the query where its tools allow, and checks recorded hits; history is a closed list, everything else is a surface; B7 stays a line check.
 - rows 12, 14, 15, 18: timeout folds into `error: <line>`; `app.py` defines `main()`; "above" is up to `/`; any answered call counts.
 - row 13 and cycle-3 rows 10, 11, 13: `search` serves the designing-step-2 dispatcher, not research-fanout; Codex falls back to the greps; B1 also runs in CI's validate step; the checklist is the author's bar too (`designing/SKILL.md:14`, `planning/SKILL.md:13`).
+
+## 2026-11-03 12:05+08:00 decision
+Q: does calvin cycle 4, answered, end the calvin loop?
+A (user, verbatim): "End the loop (Recommended)"
+answers: capped@2026-11-03 11:29+08:00
+
+## 2026-11-03 12:05+08:00 decision-2
+Q: criteria signed off?
+A (user, verbatim): "Signed off"
+
+## 2026-11-03 12:05+08:00 phase specify -> design
+Criteria signed off (decision above); calvin loop ended by the owner after cycle 4.

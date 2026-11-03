@@ -3,7 +3,7 @@ id: 2026-11-03-codebase-explorer-uses-codegraph
 type: workitem
 title: codebase-explorer uses CodeGraph
 status: active
-phase: specify
+phase: design
 mode: small
 origin: backlog#2026-11-01-pd-codebase-explorer-uses-codegraph
 branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
 
 ## Now
 
-Created by pd-new.
+Contracts and Plan (small mode): write ## Design and plan.md, then one joint review.
 
 ## Links
 
