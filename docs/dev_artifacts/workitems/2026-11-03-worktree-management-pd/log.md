@@ -151,8 +151,9 @@ Closes: review@2026-11-03 12:54+08:00#N2
 
 ## 2026-11-03 12:57+08:00 capped plan
 The plan review used its three fix cycles (review@2026-11-03 12:49+08:00, fix cycles at 12:49, 12:52, 12:54); M1 arrived in the third cycle's re-review.
-Deferred: none.
-Follow-ups: none.
-Decisions: M1 fixed after the cap: C30's literal now carries the argument list shape.md:197 pins, `branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`; pd-lint and `phase-gate.sh create-plan` pass. Asking the user whether that ends the loop.
+Deferred: none
+Follow-ups: none
+Decisions:
+- whether M1's fix past the cap (C30's literal now carries shape.md:197's argument list, `branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`) ends the review loop: asked of the user.
 Assumptions:
 - A1: the fix is mechanical — it copies shape.md:197's argv into C30's literal and changes no other case.
