@@ -74,3 +74,10 @@ Closes: review@2026-11-03 11:34+08:00#R1, review@2026-11-03 11:34+08:00#R2
 Q: does the revision answering calvin cycle 3 end the calvin loop?
 A (user, verbatim): "Accept the fixes (Recommended)"
 answers: capped@2026-11-03 11:34+08:00
+
+## 2026-11-03 11:59+08:00 decision
+Q: criteria signed off?
+A (user, verbatim): "Signed off"
+
+## 2026-11-03 11:59+08:00 phase specify -> design
+Criteria signed off (decision above); calvin loop capped at cycle 3, ended by the owner (decision@2026-11-03 11:58+08:00).
