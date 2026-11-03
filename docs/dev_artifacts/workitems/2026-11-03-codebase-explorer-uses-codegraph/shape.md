@@ -41,7 +41,7 @@ B5: the same dispatch from a git repository whose `.codegraph/` is empty -> its 
 B6: an explorer dispatch that finds nothing -> `findings: []` with a non-empty `no_findings_reason`, and a `search` value; never an error.
 B7: the `designing` and `planning` skills' `## Review checklist` sections -> each has one line: a rename or store move lists its surfaces with the query or command that produced them (a `codegraph_explore` query when `.codegraph/` exists, else a grep for each old name), and the reviewer re-runs it; a surface in its output that the list lacks is a blocker.
 
-B3 to B6 are live dispatches: the conductor runs them at Verify and records each transcript's path in the `qa` entry.
+The conductor runs B3 to B6 as live dispatches at Verify, and records each transcript's path in the `qa` entry.
 
 ### Scope
 
