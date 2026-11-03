@@ -133,3 +133,9 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of s
 ## 2026-11-03 18:56+08:00 phase implement -> create-plan (back)
 Reason: the simplification review above (R1). Nothing has executed.
 Invalidates: plan.md C1.
+
+## 2026-11-03 19:01+08:00 review plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the QA pass on the simplification ef9ca47b..5170371d (brief agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/simplify-qa-brief-1.md). Approved, no issues: C1 still pins the explorer's exact tools, C2 runs the removed roles check through `validate.sh` under both locales (validate.sh:415, :15-18, :747-752), C3 and C4 unchanged; no earlier finding reopened.
+
+## 2026-11-03 19:01+08:00 phase create-plan -> implement
+Simplification applied and QA-approved (review above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).

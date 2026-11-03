@@ -3,7 +3,7 @@ id: 2026-11-03-codebase-explorer-uses-codegraph
 type: workitem
 title: codebase-explorer uses CodeGraph
 status: active
-phase: create-plan
+phase: implement
 mode: small
 origin: backlog#2026-11-01-pd-codebase-explorer-uses-codegraph
 branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
 
 ## Now
 
-Plan: C1 trimmed per the simplification review; then back to implement.
+Ready for Execute: plan.md has one task (C1 to C11). Before Execute: calvin on plan.md (owner's rule). Not started this round.
 
 ## Links
 
