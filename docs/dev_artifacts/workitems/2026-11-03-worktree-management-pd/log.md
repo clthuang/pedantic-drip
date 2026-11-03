@@ -69,3 +69,8 @@ Decisions:
 - whether the revision answering cycle 3's blockers ends the calvin loop, or a fourth cycle runs: asked of the user.
 Assumptions: none
 Closes: review@2026-11-03 11:34+08:00#R1, review@2026-11-03 11:34+08:00#R2
+
+## 2026-11-03 11:58+08:00 decision
+Q: does the revision answering calvin cycle 3 end the calvin loop?
+A (user, verbatim): "Accept the fixes (Recommended)"
+answers: capped@2026-11-03 11:34+08:00
