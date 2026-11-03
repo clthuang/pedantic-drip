@@ -147,3 +147,16 @@ Simplification applied and QA-checked; Q1 closed by the owner (decision above). 
 ## 2026-11-03 19:21+08:00 phase implement -> create-plan (back)
 Reason: calvin on plan.md, the owner's rule between plan and execution (33 questions, the conductor adjudicating as author); its fixes change plan.md. Also C23: on a later branch editing either hook suite, `git diff $(git merge-base origin/main HEAD)` sees that branch's own edit and fails, so the owner's ruling (decision@2026-11-03 19:04+08:00) rested on a wrong premise; re-asked. Nothing has executed.
 Invalidates: plan.md.
+
+## 2026-11-03 19:23+08:00 decision
+Q: commit guard C23, re-asked after calvin showed `merge-base origin/main HEAD` fails on any later branch that edits either hook suite: run the suites and pin the three named cases, run the suites only, or keep merge-base?
+A (user, verbatim): "Run suites + pin 3 cases (Recommended)"
+
+## 2026-11-03 19:23+08:00 note
+Calvin on plan.md (the owner's rule before Execute): one pass in report mode, 33 questions, adjudicated by the conductor as the plan's author; 27 fixed in plan.md, 5 answered, 1 dismissed. Fixed:
+- Shared terms: `seen` covers every call (not-seen ones too) and resolves `commit_target.py` from the test file's directory under `python3` from PATH; `hook(script, cmd, cwd)` defined; exact stdout for every outcome phrase.
+- Each task's contract names its parts (Task 1: WRAPPERS, `command_start`, the trailing `--`; Task 2: SHELLS, `-c` recursion); the CHANGELOG line is Task 1's alone, checked by C26.
+- The table's rows and long spellings each get a case: `sudo --user`, `sudo -k` (with and without a command), `env --unset`, `--chdir` for `sudo` and `env`, `xargs --max-args` and B4's own `xargs -I{} git commit -m {}`, `command`, `exec -a`, `command -V`, `sudo -v`, `sudo -K`, `bash +O extglob -c`, `bash --norc -c`, a `git checkout` behind a wrapper, and a comment and a heredoc inside a `-c` script.
+- C23 per the owner's ruling above. C25: which commands, how the trace is reported (`TRACE_FILE`), which literal applies, the trailing-`--` wording, and the controls run C5's `switch` form. C27: "built from the git list" pinned to `commit_target.py:156`'s form.
+Answered: Scope's bash-suite cases moved to pytest by D4 (C8, C10, C20 run both hooks); C25/C27 read internals because the must-not is about internals; C23 runs the suites inside pytest so pd-proof's JUnit carries B16; sequence equality is the simplest exact form of the must-not; tags name the expectation a case serves.
+Dismissed: a test with an artificially low recursion limit for `scan`'s `RecursionError` catch (real input stays far below the limit, shape.md Risks; the catch is defensive).
