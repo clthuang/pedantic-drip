@@ -131,3 +131,9 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the test-case review of plan
 - R5 blocker plan.md:65 — C30's single work item can't catch per-item git calls.
 - R6 blocker plan.md:66 — C31's string check misses an argv-list `worktree list` call and doesn't prove the helpers are called.
 Fix cycle 1 of 3: plan.md revised (C6, C8, C10, C14, C25, C26, C29 to C35); pd-lint and `phase-gate.sh create-plan` pass. Next: a scoped re-review of R1 to R6.
+
+## 2026-11-03 12:52+08:00 review plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to R1 to R6 and the edit a1e6bf56..ccd73d27 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/plan-review-brief-2.md). R1 to R6 resolved; one new blocker in the diff, checked (pd-status already makes its own git calls via pd_common.py:144-146, so per-type counts don't bound the total).
+Closes: review@2026-11-03 12:49+08:00#R1, review@2026-11-03 12:49+08:00#R2, review@2026-11-03 12:49+08:00#R3, review@2026-11-03 12:49+08:00#R4, review@2026-11-03 12:49+08:00#R5, review@2026-11-03 12:49+08:00#R6
+- N1 blocker plan.md:65 — the revised C30 lost the absolute "two calls added" bound: a fixed extra git call per report passes it.
+Fix cycle 2 of 3: C30 now compares its logged calls with the fork point's `pd-status` on the same fixture, plus exactly the two listings; pd-lint and `phase-gate.sh create-plan` pass. Next: a scoped re-review of N1.
