@@ -139,3 +139,7 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the QA pass on the simplific
 
 ## 2026-11-03 19:01+08:00 phase create-plan -> implement
 Simplification applied and QA-approved (review above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 19:23+08:00 phase implement -> design (back)
+Reason: calvin on plan.md, the owner's rule between plan and execution (32 questions, the conductor adjudicating as author). Two answers change ## Design: RenameChecklistLine lacks three parts of B7, and SearchOrder leaves the agent's `## Search Strategies` and its "Read files without searching first" must-not describing a search with no CodeGraph. Nothing has executed.
+Invalidates: shape.md ## Design (RenameChecklistLine, SearchOrder); plan.md.
