@@ -16,3 +16,21 @@ Reason: small: two or three tasks, agent and reviewer markdown plus a validate c
 ## 2026-11-03 11:08+08:00 decision
 Q: when a repo has `.codegraph/` but the CodeGraph MCP tool is not connected, what should the explorer do (fall back to Grep, or add Bash to try the `codegraph explore` CLI)?
 A (user, verbatim): "Fall back to Grep (Recommended)"
+
+## 2026-11-03 11:12+08:00 review calvin cycle 1 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/calvin-cycle-1.md. Verdict: 9 blockers, 11 warnings, 4 notes; all 24 answered and `## Requirements` revised.
+- R1 blocker shape.md:19 — two output shapes; `research-fanout`'s `FINDINGS` schema replaces the agent's own on that path (`research-fanout.js:25`, `:34`), now a non-goal, and B6's workflow-test claim is gone.
+- R2 blocker shape.md:44 — where `search` shows: only in the explorer's own output, on Agent-tool dispatches (B3–B5).
+- R3 blocker shape.md:30 — the reason lives inside the one `search` value.
+- R4 blocker shape.md:30 — `search`'s four values defined, empty and stale answers included.
+- R5 blocker shape.md:37 — one exact-set check, one fixture break, total 8 -> 9.
+- R6 blocker shape.md:53 — the tool name follows the user-scope `codegraph` server (`~/.claude.json`, checked 2026-11-03); another name falls back with a reason.
+- R7 blocker shape.md:44 — who runs B3–B6: the conductor at Verify, transcript paths in the `qa` entry; B5 reproduced with an empty `.codegraph/` (CLI answer checked 2026-11-03).
+- R8 blocker shape.md:10 — who lists the surfaces: the artifact's author; the reviewer re-runs the recorded query.
+- R9 blocker shape.md:42 — what counts as a rename's surface and its command; defined in Terms and B7.
+To the user: none (rows 23 and 24, why this work, are answered from the owner's CLAUDE.md CodeGraph rule and #078's source, `backlog-manual.md:202`).
+To the conductor (wording or consistency, each answered by a revision):
+- rows 7, 9, 10, 11: `codegraph_explore` is a query; "search call" defined; B3 cites the call at `commit_target.py:206`; B6 rewritten (empty result, never an error).
+- rows 13, 14, 15, 16, 17: query text stands as the command; store move and surfaces defined; "blast radius" and "complete" dropped.
+- row 18: Codex can run a shell, so the non-goal now says reviewers re-run the recorded query rather than claiming Codex can't reach CodeGraph.
+- rows 19, 20, 21, 22: empty report defined; "unavailable" defined once; the role pins tools only; the description stays, so no doc sync.
