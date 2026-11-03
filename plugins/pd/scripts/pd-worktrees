@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+"""pd-worktrees: list or remove a work item's task worktrees and the stray worktree-wf_* branches."""
+raise NotImplementedError("pd-worktrees")

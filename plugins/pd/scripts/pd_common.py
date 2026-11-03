@@ -237,6 +237,22 @@ def sections(body):
     return result
 
 
+TASK_BRANCH = re.compile(r"^pd/(?P<id>[^/]+)/task-(?P<n>\d+)$")
+STRAY_PREFIX = "worktree-wf_"
+
+
+def worktrees(root):
+    raise NotImplementedError("worktrees")
+
+
+def run_in_flight(readme_path):
+    raise NotImplementedError("run_in_flight")
+
+
+def shown(path):
+    raise NotImplementedError("shown")
+
+
 def split_log(text):
     """(text above a single file's `## Log` heading, the log after it, the log's first line number).
     Line-based: blank_fences keeps line numbers, not character offsets."""
