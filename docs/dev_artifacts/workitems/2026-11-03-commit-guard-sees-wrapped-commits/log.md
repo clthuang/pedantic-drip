@@ -26,3 +26,15 @@ To the conductor (wording or consistency, each answered by a revision):
 - rows 9, 15: "no word after the `--`" defined; `checkout <x> --` reads as `checkout <x>`.
 - rows 10, 11, 13: unparseable script skipped as a unit, nesting capped at 5, no traceback (B15).
 - rows 14, 16, 17, 18, 19, 20, 21: latency must-not reworded; shell by path counts; `<cwd>` not repo root; protected means `main` or `master`; "unchanged" pins text and outcome; missed wrappers get a backlog line; 8.0.2's pinned cases named (`test-hooks.sh:230`, `:239`, `:244`).
+
+## 2026-11-03 11:15+08:00 review calvin cycle 2 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/calvin-cycle-2.md. Verdict: 1 blocker, 7 warnings, 13 notes; cycle 1: 20 rows answered, row 13 partly (nesting), now answered by dropping the depth cap. All 21 answered and `## Requirements` revised.
+Closes: review@2026-11-03 11:10+08:00#R1, review@2026-11-03 11:10+08:00#R2, review@2026-11-03 11:10+08:00#R3, review@2026-11-03 11:10+08:00#R4
+- R1 blocker shape.md:68 — the 10c harness can't read the printed directory, branch or stderr (`test-hooks.sh:260-261`); a direct test of `commit_target.py` is now in scope.
+To the user: none.
+To the conductor (wording or consistency, each answered by a revision):
+- rows 2, 10: the frame names which expectations run the script, the hooks or the test files; "seen at <dir>" defined.
+- rows 3, 11, 13, 14, 15, 17: bundled short options, long forms listed, positional words per row, `--help`/`--version` on every wrapper, `--` ends options, shell value options `-o +o -O +O`.
+- rows 4, 5, 9, 16: every command word is found past wrappers (B7's `timeout 30 git switch main`); a wrapper's directory option lasts for its command (B9); wrappers chain (B8).
+- rows 6, 7, 18: the depth cap is gone; any depth is parsed and the must-not covers deep nesting.
+- rows 8, 12, 19, 20, 21: git-call must-not names `commit_target.py:157-159` and `repo_of`; `sudo -k` defined; other shells not seen (B14's `fish -c`); B11 notes it is `test-hooks.sh:232`; Out forms have no pinned result.
