@@ -100,3 +100,18 @@ answers: capped@2026-11-03 12:16+08:00
 ## 2026-11-03 12:26+08:00 review joint design and plan, scoped — codex
 Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the owner's extra pass past the cap (decision@2026-11-03 12:19+08:00), scoped to R4 and the edit ceb3d03e..82bd0509 (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/review-brief-5.md). R4 still open; nothing new in the diff.
 - R1 blocker plan.md:56 — still open from review@2026-11-03 12:02+08:00#R4: C25 and C27 bound which process calls happen, not how many (Codex's mutation: `repo_of` run twice passed both). Checked: today a commit with no switch launches no git call (`commit_target.py:173`, `repo_of` only when `switched` is set). Revised: C25 compares each command's Popen sequence with its unwrapped form's under the fork point's `commit_target.py`, and a doubled-`repo_of` copy is a negative control.
+
+## 2026-11-03 12:33+08:00 decision
+Q: does the differential-trace revision of C25 (with C27) end the review loop?
+A (user, verbatim): "Accept the fix (Recommended)"
+answers: capped@2026-11-03 12:16+08:00
+Closes: review@2026-11-03 12:02+08:00#R4, review@2026-11-03 12:07+08:00#R1, review@2026-11-03 12:10+08:00#R1, review@2026-11-03 12:16+08:00#R1, review@2026-11-03 12:26+08:00#R1
+
+## 2026-11-03 12:33+08:00 phase design -> create-plan
+Small mode: the joint review covered the design and the plan; the owner ended its loop (decision above).
+
+## 2026-11-03 12:34+08:00 phase create-plan -> implement
+Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 12:34+08:00 note
+Goal-run offer skipped: the owner scoped this round to investigate, design and plan the three backlog items, with no Execute ("proceed to investigate, design and plan for three open backlog items in this round").
