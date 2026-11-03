@@ -81,3 +81,6 @@ A (user, verbatim): "Signed off"
 
 ## 2026-11-03 11:59+08:00 phase specify -> design
 Criteria signed off (decision above); calvin loop capped at cycle 3, ended by the owner (decision@2026-11-03 11:58+08:00).
+
+## 2026-11-03 12:10+08:00 note
+Grounding: codebase-explorer dispatch (designing step 2), 14 findings with file:line: pd-status report() blocks and early returns (pd-status:86-129), pd_common.git and sections (pd_common.py:137-165, 228), sibling-script conventions, the session-start awk (pd-session-start.sh:43-51) and its test, CI's explicit script and pytest lists (ci.yml:34-42), no existing worktree helper, three run-in-flight parsers (pd-lint:34, pd-stop-gate.sh:23).
