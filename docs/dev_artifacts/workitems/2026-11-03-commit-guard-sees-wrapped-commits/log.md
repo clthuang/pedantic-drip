@@ -119,3 +119,6 @@ Goal-run offer skipped: the owner scoped this round to investigate, design and p
 ## 2026-11-03 12:55+08:00 phase implement -> create-plan (back)
 Reason: C25 reads its baseline from `git merge-base main HEAD`, which is HEAD once this branch is merged, so on main the comparison runs the new `commit_target.py` against itself (the doubled-call control no longer fails) and the test loses its point. Found by the worktree plan review (review@2026-11-03 12:54+08:00#N2 in workitems/2026-11-03-worktree-management-pd), the same pattern. Nothing has executed.
 Invalidates: plan.md C25.
+
+## 2026-11-03 12:55+08:00 phase-2 create-plan -> implement
+C25 now reads its baseline at b230ae35 (checked: `git show b230ae35:plugins/pd/hooks/lib/commit_target.py` prints the pre-change `repo_of`). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
