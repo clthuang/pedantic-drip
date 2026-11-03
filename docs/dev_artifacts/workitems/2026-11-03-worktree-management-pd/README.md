@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: implement
+phase: verify
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Ready for Verify: tasks 1 to 3 merged with proof pass (915a9fff).
 
 ## Links
 
