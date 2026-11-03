@@ -187,3 +187,7 @@ Simplification applied to ## Design and QA-approved (review above); design exit 
 
 ## 2026-11-03 19:01+08:00 phase-2 create-plan -> implement
 Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); plan.md from_shape matches shape.md.
+
+## 2026-11-03 19:24+08:00 phase implement -> design (back)
+Reason: calvin on plan.md, the owner's rule between plan and execution (52 questions, the conductor adjudicating as author). Four answers change ## Design: how a failed compare-and-delete is told from a git failure, `shown()` escaping a backslash and `\r`, which checkout's files `pd-worktrees` reads when run from a task worktree, and what the ask says about a discarded worktree's branch at Execute. Nothing has executed.
+Invalidates: shape.md ## Design (WorktreeHelpers.shown, WorktreesCLI, CallerSteps); plan.md.
