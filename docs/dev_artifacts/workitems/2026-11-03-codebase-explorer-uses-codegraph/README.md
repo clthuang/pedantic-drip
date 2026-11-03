@@ -3,7 +3,7 @@ id: 2026-11-03-codebase-explorer-uses-codegraph
 type: workitem
 title: codebase-explorer uses CodeGraph
 status: active
-phase: implement
+phase: verify
 mode: small
 origin: backlog#2026-11-01-pd-codebase-explorer-uses-codegraph
 branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
 
 ## Now
 
-run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Ready for Verify: task 1 merged with proof pass (fe331ca9).
 
 ## Links
 

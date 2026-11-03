@@ -156,3 +156,12 @@ Calvin's Design fixes applied (note above); design exit check passed.
 
 ## 2026-11-03 19:24+08:00 phase-2 create-plan -> implement
 Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); from_shape matches shape.md.
+
+## 2026-11-03 19:32+08:00 run implement-tasks — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 2. Tokens: 16781. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_3ee93b9c-a5f/journal.jsonl
+Commit: fe331ca9
+- task 1: merged, proof pass, cycles 0, branch pd/2026-11-03-codebase-explorer-uses-codegraph/task-1
+  case_map: C1=plugins/pd/scripts/test_explorer_codegraph.py::test_c1_explorer_tools_are_exactly_the_four, C2=plugins/pd/scripts/test_explorer_codegraph.py::test_c2_validate_passes_with_nine_fixture_checks[C] plugins/pd/scripts/test_explorer_codegraph.py::test_c2_validate_passes_with_nine_fixture_checks[en_US.UTF-8] plugins/pd/scripts/test_explorer_codegraph.py::test_c2_validate_holds_no_stale_eight, C3=plugins/pd/scripts/test_explorer_codegraph.py::test_c3_tool_order_and_locale_do_not_matter, C4=plugins/pd/scripts/test_explorer_codegraph.py::test_c4_explorer_role_rejects_write_and_the_old_list, C5=plugins/pd/scripts/test_explorer_codegraph.py::test_c5_research_process_asks_codegraph_first, C6=plugins/pd/scripts/test_explorer_codegraph.py::test_c6_output_examples_gain_only_search, C7=plugins/pd/scripts/test_explorer_codegraph.py::test_c7_stale_index_rule, C8=plugins/pd/scripts/test_explorer_codegraph.py::test_c8_rename_checklist_line[designing] plugins/pd/scripts/test_explorer_codegraph.py::test_c8_rename_checklist_line[planning], C9=plugins/pd/scripts/test_explorer_codegraph.py::test_c9_ci_and_changelog, C10=plugins/pd/scripts/test_explorer_codegraph.py::test_c10_no_symbol_query_and_several_calls, C11=plugins/pd/scripts/test_explorer_codegraph.py::test_c11_own_output_shape_leaves_out_search; greens: none; skipped: none
+
+## 2026-11-03 19:33+08:00 phase implement -> verify
+Implement exit check passed (phase-gate.sh implement: every plan task on a merged, proof pass line). Proving tests re-run on the branch after the merge: 14 passed.
