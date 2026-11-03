@@ -130,3 +130,8 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of s
 ## 2026-11-03 18:56+08:00 phase implement -> create-plan (back)
 Reason: the simplification review above. C25 compares against the pre-change parser, which fails a correct implementation on C8 and C24; explicit sequences are simpler and correct. Also C23 diffs the two hook suites "against the work item's base", unnamed: in pull-request CI there is no local `main` (actions/checkout leaves a detached merge ref, ci.yml:13-15), so it is named `origin/main`. Nothing has executed. Second backward move: a retro is owed at Finish.
 Invalidates: plan.md C23, C25.
+
+## 2026-11-03 19:03+08:00 review plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the QA pass on the simplification 5a02ab66..c4474325 (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/simplify-qa-brief-1.md). C25's five sequences match traces of the unwrapped forms; the extra-call and doubled-`repo_of` controls and C27's three controls fail as they must; B1 to B15 keep their cases. One blocker on C23.
+- Q1 blocker plan.md:55 — on `main` after the merge, `git merge-base origin/main HEAD` is HEAD, so C23's "suites unchanged" diff passes for any committed edit; asks for a fixed baseline, b230ae35.
+Rejects: Q1 — B16 is a property of this change: on the task branch and in pull-request CI the merge base is the fork point, so the diff catches any edit this change makes to the two suites. A fixed baseline would fail on every later, legitimate edit of either suite by another work item. The text before this round ("against the work item's base") was equally vacuous on `main`, so the simplification lost nothing. Proposed for the user's decision.
