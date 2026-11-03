@@ -1,5 +1,5 @@
 ---
-from_shape: 7306ee0d519185feb2ea2b477f1e2ce71871afbd
+from_shape: ef87d5f5afea14f960d1ab66ad55b8f90f71d8a3
 ---
 # Plan: worktree management in pd
 
@@ -10,9 +10,10 @@ from_shape: 7306ee0d519185feb2ea2b477f1e2ce71871afbd
 Shared terms for every case:
 - **`pd_repo`:** the fixture in `plugins/pd/scripts/conftest.py` (shape.md `### Test strategy`): an adopted repository with work item `<id>` committed on `main` and branch `workitem/<id>`, the main checkout on `main`.
 - **`task_worktree(n, state)`:** `git worktree add -b pd/<id>/task-<n> .claude/worktrees/task-<n>`, then `clean` (nothing), `dirty` (an untracked file), `locked` (`git worktree lock`) or `gone` (its directory deleted).
-- **`wt(args)`:** runs `plugins/pd/scripts/pd-worktrees <args>` with the repository root as cwd; returns stdout lines, stderr and the exit code.
+- **`wt(args)`:** runs `plugins/pd/scripts/pd-worktrees <args>` with the repository root as cwd (or the cwd a case names) and the `logging git` first on `PATH` unless the case puts another logging fake there; returns stdout lines, stderr and the exit code; then applies the guard.
+- **The guard:** after every `wt` call, no logged call may carry `--force`, `-f`, `unlock` or `prune`, nor be `branch -d` or `branch -D`, nor an `update-ref -d` of a `pd/*` or `workitem/*` ref, and every `update-ref` carries `--no-deref` (the must-nots on forcing, unlocking and deleting task branches).
 - **"unchanged":** `git worktree list --porcelain` and `git for-each-ref refs/heads/` print the same before and after.
-- **`logging git` / `moving git`:** a `git` script first on `PATH` that appends its arguments to a log and runs the real git; the moving one also commits onto the stray named in the test just after the `for-each-ref --contains` call; the occupying one instead checks that stray out in a new worktree at that moment.
+- **`logging git` / `moving git`:** a `git` script first on `PATH` that appends its arguments to a log and runs the real git; every `git` fake in these tests logs the same way; the moving one also commits onto the stray named in the test just after the `for-each-ref --contains` call; the occupying one instead checks that stray out in a new worktree at that moment.
 
 ### Wave 1
 
@@ -45,7 +46,7 @@ Shared terms for every case:
   - C20 [B6, B7] (fixture: pd_repo): with a symbolic ref `refs/heads/worktree-wf_alias` pointing at `refs/heads/workitem/<id>`, given `wt(<id> --remove)`, expect `deleted worktree-wf_alias`, the alias gone, and `workitem/<id>` still at its tip (`--no-deref`).
   - C21 [B6] (fixture: pd_repo): with a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains, and the occupying `git` on `PATH`, given `wt(<id> --remove)`, expect no line naming `worktree-wf_r-2` and the branch still present, held by the new worktree; exit 0.
   - C22 [B7] (fixture: pd_repo): with a clean task worktree at `.claude/worktrees/a\rb` and a clean worktree on branch `other` at `.claude/worktrees/a\nb`, given `wt(<id> --remove)`, expect only the first removed, and the second still listed by `git worktree list --porcelain -z` (the transport is lossless).
-  - C23 [B2, B3, B4, B7] (fixture: pd_repo): with the `logging git` on `PATH`, run every `wt` call of C1 to C22; expect no logged call to carry `--force`, `-f`, `unlock` or `prune`, no `branch -d` or `branch -D` at all, no `update-ref -d` of a `pd/*` or `workitem/*` ref, and every `update-ref` carrying `--no-deref` (the must-nots on forcing, unlocking and deleting task branches).
+  - C23 [B2, B3, B4, B7] (fixture: none): given the guard a log holding each forbidden form in turn (`worktree remove --force <p>`, `worktree remove -f <p>`, `worktree unlock <p>`, `worktree prune`, `branch -d x`, `branch -D x`, `update-ref --no-deref -d refs/heads/pd/<id>/task-1 <oid>`, `update-ref -d refs/heads/worktree-wf_r-1 <oid>`), expect it to fail on each; given a log of only allowed calls (`worktree list --porcelain -z`, `worktree remove <p>`, `update-ref --no-deref -d refs/heads/worktree-wf_r-1 <oid>`), expect it to pass (the guard every `wt` call of C1 to C22 runs is not vacuous).
   - C24 [B1] (fixture: none): read `.github/workflows/ci.yml`; expect its `uv run --project plugins/pd pytest` line to name `plugins/pd/scripts/test_pd_worktrees.py`, `plugins/pd/scripts/test_pd_status_leftovers.py` and `plugins/pd/scripts/test_worktree_callers.py`.
 
 ### Wave 2

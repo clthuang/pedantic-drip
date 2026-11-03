@@ -162,7 +162,8 @@ WorktreesCLI:
           removes nothing); then each clean or gone task worktree; then, without --task, each stray
   a worktree git refuses to remove: its state read again and printed "kept (<state>)" -- "kept (clean)" when git
           refuses a clean one (a worktree holding a submodule needs --force, git-worktree(1))
-  a stray qualifies when `git for-each-ref --contains <its tip> refs/heads/` names a branch that isn't a stray; just
+  a stray qualifies when `git for-each-ref --contains <its tip> refs/heads/` (the tip from the stray listing) names a
+          branch that isn't a stray; just
           before its delete the worktree list is read again, and a stray a worktree now holds is no longer a stray
           (skipped, not printed); it is deleted with `git update-ref --no-deref -d refs/heads/<stray> <that tip>`:
           --no-deref so a symbolic `worktree-wf_*` ref is removed itself, never the branch it points at; the old
@@ -175,8 +176,8 @@ WorktreesCLI:
   every git call runs with cwd = the main checkout (record 0), never the invoking directory, so removing the
           worktree the caller stands in doesn't strand the calls after it
 GitSurface (pd-worktrees): WorktreeHelpers.worktrees (at start and before each stray delete); git -C <path> status
-  --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname:short)
-  refs/heads/worktree-wf_*; git rev-parse <stray>; git for-each-ref --contains <tip> --format=%(refname:short)
+  --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname) %(objectname)
+  refs/heads/worktree-wf_* (each stray's ref and tip, one call); git for-each-ref --contains <tip> --format=%(refname:short)
   refs/heads/; git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>
   never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* ref
 ```
