@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: design
+phase: implement
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Design and plan: answering calvin on plan.md (owner's rule before Execute); then back to implement.
+Ready for Execute: plan.md has three tasks (C1 to C37); calvin on plan.md answered.
 
 ## Links
 

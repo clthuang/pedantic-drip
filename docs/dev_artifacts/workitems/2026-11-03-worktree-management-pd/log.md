@@ -191,3 +191,16 @@ Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); plan.md from_
 ## 2026-11-03 19:24+08:00 phase implement -> design (back)
 Reason: calvin on plan.md, the owner's rule between plan and execution (52 questions, the conductor adjudicating as author). Four answers change ## Design: how a failed compare-and-delete is told from a git failure, `shown()` escaping a backslash and `\r`, which checkout's files `pd-worktrees` reads when run from a task worktree, and what the ask says about a discarded worktree's branch at Execute. Nothing has executed.
 Invalidates: shape.md ## Design (WorktreeHelpers.shown, WorktreesCLI, CallerSteps); plan.md.
+
+## 2026-11-03 19:26+08:00 note
+Calvin on plan.md (the owner's rule before Execute): one pass in report mode, 52 questions, adjudicated by the conductor as the plan's author; 46 fixed, 6 answered. Fixed:
+- ## Design: a failed `update-ref` is the refusal only when the stray, read again, points elsewhere (gone: skipped; otherwise exit 2); `shown()` escapes backslash, newline, carriage return and tab, backslash first; the work item's directory and README are read in the main checkout, and removals follow porcelain order; `--remove` with nothing prints `no worktrees for <id>`, exit 0; `<id> --strays` is exit 2; at Execute a discarded worktree's branch stays (Execute deletes no branch).
+- plan.md shared terms: `task_worktree` takes an id and a path; stdout splits on `\n` only; "expect" vs "exactly" vs "in order"; paths as the porcelain reports them; literal work item ids; the guard reads only its own call's log lines and matches whole arguments; the fakes log JSON argv lines and make their extra calls unlogged through the real git.
+- Cases: C6 makes its own commit on `workitem/<id>`; C7 uses the shared task number; exit codes on C7, C20, C22; C11, C12, C14 gain the `--remove`-with-nothing, `<id> --strays` and plain `--strays` forms; C17 explains why porcelain order proves the main-checkout cwd; C18 commits the submodule; C22's printed `\r`; C23 a `workitem/*` vector; C24 the CHANGELOG line; C26 builds adopted repositories; C27's run line is not the first; C28 the announcement line, the awk comment and `test-pd-session-start.sh`; C29 compares against a real-git run; C30 item counts; C31 checks call arguments only; new C37 for `pd-status --self-test` and its docstring; Task 3's step spans and literal substrings; C32 to C36 pinned to specific lines (`README_FOR_DEV.md:230-231`, `architecture.md:79`, `commands-reference.md:41`, the `--self-test` loop left alone per D3).
+Answered: `for-each-ref --contains` reads only local branches (remote-tracking refs aren't `refs/heads/`); a lock by a live session is kept like any lock; the must-not on forcing is a lasting rule (the guard stays in the suite); a cross-task branch name clash can't happen (one `<id>`, one number); C30's literal multiset is the call budget; the live caller flows are Verify's QA.
+
+## 2026-11-03 19:27+08:00 phase design -> create-plan
+Calvin's Design fixes applied (note above); design exit check passed.
+
+## 2026-11-03 19:27+08:00 phase-2 create-plan -> implement
+Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); from_shape matches shape.md.

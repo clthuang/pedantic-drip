@@ -144,7 +144,8 @@ WorktreeHelpers (new, beside git() and sections()):
     main checkout; `branch` drops `refs/heads/`; None when git fails
   run_in_flight(readme_path) -> str | None
     the first line of the README's `## Now` (sections()) starting with `run in flight:`, or None
-  shown(path) -> str: the path with `\n` and `\t` escaped, so each output line stays one line
+  shown(path) -> str: the path with `\`, newline, carriage return and tab written as `\\`, `\n`, `\r` and `\t` (the
+    backslash first), so each output line stays one line and reads back unambiguously
 ```
 
 ```text
@@ -167,18 +168,23 @@ WorktreesCLI:
           before its delete the worktree list is read again, and a stray a worktree now holds is no longer a stray
           (skipped, not printed); it is deleted with `git update-ref --no-deref -d refs/heads/<stray> <that tip>`:
           --no-deref so a symbolic `worktree-wf_*` ref is removed itself, never the branch it points at; the old
-          value so a branch moved since is refused, then "kept (unique commits)", its new tip unchecked
+          value so a branch moved since is refused, then "kept (unique commits)", its new tip unchecked; a failed
+          update-ref is that refusal when the stray, read again, points elsewhere, is skipped unprinted when it is gone,
+          and is otherwise a git failure (exit 2)
+  --remove with nothing to remove or delete: "no worktrees for <id>", exit 0
   exit 0: every task worktree asked for was removed (kept strays don't count); --strays always, barring exit 2
   exit 1: a run in flight, or any "kept (<state>)" line
-  exit 2, "pd-worktrees: <message>" on stderr: no <id> and no --strays; --task without --remove; <id> with no
+  exit 2, "pd-worktrees: <message>" on stderr: no <id> and no --strays; <id> with --strays; --task without --remove; <id> with no
           directory {artifacts_root}/workitems/<id>/; not in a git repository; any other git failure (the lines
           already printed say what was done)
   every git call runs with cwd = the main checkout (record 0), never the invoking directory, so removing the
-          worktree the caller stands in doesn't strand the calls after it
+          worktree the caller stands in doesn't strand the calls after it; the work item's directory and README are
+          read there too ("this checkout" is the main checkout); removals follow the porcelain's record order
 GitSurface (pd-worktrees): WorktreeHelpers.worktrees (at start and before each stray delete); git -C <path> status
   --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname) %(objectname)
   refs/heads/worktree-wf_* (each stray's ref and tip, one call); git for-each-ref --contains <tip> --format=%(refname:short)
-  refs/heads/; git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>
+  refs/heads/; git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>; after a failed
+  delete, git rev-parse --verify -q refs/heads/<stray>
   never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* ref
 ```
 
@@ -210,8 +216,8 @@ CallerSteps (instructions, per ## Requirements' Callers):
   implementing step 5: after "Clear `run in flight:` and commit", run `pd-worktrees <id> --remove`; exit 1 -> the ask;
     exit 2 -> a hard stop before step 6
   the ask, written there once: AskUserQuestion listing each kept worktree; a "dirty" one, or a "clean" one git
-    refused, is keep or discard (the conductor then runs `git worktree remove --force <path>` and its branch is
-    deleted with the others); "locked" and "main checkout" ones are reported, not asked; no dirty or refused one ->
+    refused, is keep or discard (the conductor then runs `git worktree remove --force <path>`; at Finish and
+    abandon its branch is deleted with the others, at Execute, which deletes no branch, it stays); "locked" and "main checkout" ones are reported, not asked; no dirty or refused one ->
     no question; a run in flight -> reported, the caller stops
   implementing step 6 (wrong-test): `pd-worktrees <id> --remove --task <n>` per re-run task replaces the hand-run
     `git worktree remove --force`; a kept worktree of such a task stops the move (the ask offers discard or stop);
