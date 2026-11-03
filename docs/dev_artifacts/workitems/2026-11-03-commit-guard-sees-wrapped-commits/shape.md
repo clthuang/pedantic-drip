@@ -122,7 +122,7 @@ Invariants:
 - **D1: extend `commit_target.py`; no shell-parser library.** Rejected `bashlex`: a new dependency for a hook that runs on every Bash call under the system `python3`, with no venv (`pre-commit-guard.sh:86`). KISS.
 - **D2: a `-c` script goes through the same `scan`.** Rejected a regex over the script text: one parser at every depth keeps quoted prose and heredoc bodies data inside scripts too, where 8.0.2's false-reminder fix lives (`shell_text`). DRY.
 - **D3: a table of wrappers.** Rejected per-wrapper branches in the loop: the table mirrors `## Requirements` row for row, so a missed wrapper is one row. Single responsibility.
-- **D4: a pytest file for the parser.** Rejected more 10c cases: the 10c harness keeps only reminder yes/no and drops stderr (`test-hooks.sh:260-261`). pytest writes the JUnit that `pd-proof` reads, and CI already runs a pytest line (`.github/workflows/ci.yml:41`).
+- **D4: a pytest file for the parser.** Rejected more 10c cases: the 10c harness keeps only reminder yes/no and drops stderr (`test-hooks.sh:260-261`). pytest writes the JUnit that `pd-proof` reads, and CI already runs a pytest line (`.github/workflows/ci.yml:42`).
 
 ### Risks
 

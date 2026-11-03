@@ -1,5 +1,5 @@
 ---
-from_shape: f8d5d2a6e51a60db09a9bbcc24d9706cc8a53c93
+from_shape: 58d697f95d4962d5f33117d6376c3a6790e04eee
 ---
 # Plan: commit guard sees wrapped commits
 
@@ -53,4 +53,4 @@ Shared terms for every case: `seen(cmd, cwd=<repo>)` runs `python3 plugins/pd/ho
   - C21 [B14] (fixture: repo): given `bash -c 'echo "git commit"'`, `bash ./commit.sh` and `fish -c 'git commit -m x'`, expect each not seen.
   - C22 [B15] (fixture: repo): given `bash -c` alone, expect not seen; given `bash -c 'echo "unclosed'; git commit -m x`, expect seen at `<repo>`.
   - C23 [B16] (fixture: none): run `bash plugins/pd/hooks/tests/test-hooks.sh` and `bash plugins/pd/hooks/tests/test-pd-commit-lint.sh` as subprocesses, expect exit 0 from each, and `git diff --quiet` on both files against the work item's base (their cases unchanged).
-  - C25 [B1, B5] (fixture: repo): run `commit_target.py` through `python3 -c` with a `sys.addaudithook` hook installed before it runs (`runpy.run_path(..., run_name="__main__")`, the same stdin), logging every `subprocess.Popen`, `os.system`, `os.exec`, `os.posix_spawn` and `os.spawn` event, for every command of C1 to C24; expect every logged event to be a `git` call of the form `-C <dir> rev-parse --show-toplevel`, `-C <dir> show-ref --verify --quiet refs/heads/<x>` or `-C <dir> rev-parse --verify --quiet <x>^{commit}`, and no other event (the must-not on subprocesses; every Python process API raises one of those audit events).
+  - C25 [B1, B5] (fixture: repo): run `commit_target.py` through `python3 -c` with a `sys.addaudithook` hook installed before it runs (`runpy.run_path(..., run_name="__main__")`, the same stdin), logging every `subprocess.Popen`, `os.system`, `os.exec`, `os.posix_spawn`, `os.spawn`, `os.fork` and `os.forkpty` event (the process-creation events of the Python audit table, https://docs.python.org/3.14/library/audit_events.html), for every command of C1 to C24; expect every logged event to be a `subprocess.Popen` of `git` in the form `-C <dir> rev-parse --show-toplevel`, `-C <dir> show-ref --verify --quiet refs/heads/<x>` or `-C <dir> rev-parse --verify --quiet <x>^{commit}`, and no other event. Negative control: the same harness over a copy of `commit_target.py` with one `os.fork()` (child exits at once) and, separately, one `subprocess.check_output(["true"])` inserted at the top of `main()` -> the check fails for each (the must-not on subprocesses).
