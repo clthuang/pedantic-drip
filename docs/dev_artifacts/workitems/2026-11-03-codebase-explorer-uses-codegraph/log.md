@@ -112,3 +112,16 @@ Fix cycle 1 of 3: shape.md `## Design` and plan.md revised; pd-lint and `phase-g
 
 ## 2026-11-03 12:15+08:00 note
 Correction to review@2026-11-03 12:14+08:00: its commit (97e8cdf6) recorded fix cycle 1 as applied, but the edit script had stopped at its first check and changed nothing. The edits it describes land in the commit carrying this note; pd-lint and `phase-gate.sh design` were re-run on them and pass.
+
+## 2026-11-03 12:19+08:00 review joint design and plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to R1 to R3 and the edit a4c70fb3..5bbb5e07 (brief agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/review-brief-2.md). R1, R2 and R3 resolved; nothing new in the diff. The loop ends: a pass with no blocker.
+Closes: review@2026-11-03 12:14+08:00#R1, review@2026-11-03 12:14+08:00#R2, review@2026-11-03 12:14+08:00#R3
+
+## 2026-11-03 12:19+08:00 phase design -> create-plan
+Small mode: the joint review covered the design and the plan; its loop ended with no blocker (review above).
+
+## 2026-11-03 12:19+08:00 phase-2 create-plan -> implement
+Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 12:19+08:00 note
+Goal-run offer skipped: the owner scoped this round to investigate, design and plan the three backlog items, with no Execute ("proceed to investigate, design and plan for three open backlog items in this round").
