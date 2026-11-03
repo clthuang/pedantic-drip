@@ -109,3 +109,6 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, on commit a4c70fb3 (brief ag
 - R2 blocker plan.md: — no case for the symbol-free query or the several-calls rule; SearchOrder now states both, and C10 pins them in the agent text.
 - R3 blocker plan.md:26 — C6 checked field presence, weaker than "search is the only change"; it now asserts the exact key sets of both examples.
 Fix cycle 1 of 3: shape.md `## Design` and plan.md revised; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review.
+
+## 2026-11-03 12:15+08:00 note
+Correction to review@2026-11-03 12:14+08:00: its commit (97e8cdf6) recorded fix cycle 1 as applied, but the edit script had stopped at its first check and changed nothing. The edits it describes land in the commit carrying this note; pd-lint and `phase-gate.sh design` were re-run on them and pass.

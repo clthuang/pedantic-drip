@@ -68,7 +68,7 @@ The agent file changes in place; `validate.sh` pins its tools; two skills gain o
 ```mermaid
 flowchart LR
     C[conductor: designing step 2] -->|contract: ExplorerDispatch| X[agents/codebase-explorer.md]
-    F[workflows/research-fanout.js] -->|contract: ExplorerDispatch| X
+    F[workflows/research-fanout.js] -->|contract: ExplorerDispatch, schema FINDINGS| X
     X -->|contract: SearchOrder| M[(mcp__codegraph__codegraph_explore)]
     X -->|contract: SearchOrder| G[(Glob, Grep, Read)]
     V[validate.sh] -->|contract: ExplorerRole| X
@@ -80,17 +80,21 @@ flowchart LR
 ```text
 modules: plugins/pd/agents/codebase-explorer.md
 ExplorerDispatch (input unchanged): a query and context in the prompt
-  -> one JSON object: {"findings": [{"finding", "source": "<path>:<line>", "relevance": "high|medium|low"}],
+  with no schema supplied (the conductor at designing step 2) -> one JSON object: {"findings": [{"finding", "source": "<path>:<line>", "relevance": "high|medium|low"}],
                        "no_findings_reason": str|null, "search": str}
   search: "codegraph" | "codegraph, then grep" | "grep (codegraph unavailable: <reason>)"
   reason: "tool not in session" | "no index" | "error: <the error's first line>"
+  with a schema supplied (research-fanout's FINDINGS, research-fanout.js:25, passed at :34) -> that schema's
+    shape, {"findings": [{"claim", "evidence", "source"}]}, unchanged; search isn't carried there
 SearchOrder (the agent's Research Process):
-  1. the first search call is mcp__codegraph__codegraph_explore with the query's symbols or question;
+  1. the first search call is mcp__codegraph__codegraph_explore with the query's symbols or question,
+     a query naming no symbol included ("what testing conventions exist?" is asked once as written);
      when the tool isn't in the session, step 1 is skipped and the reason is "tool not in session"
   2. an answer naming no .codegraph/ -> reason "no index"; an error -> "error: <first line>"
   3. Glob, Grep and Read fill what CodeGraph didn't answer (and everything, when it was unavailable)
   4. a stale-index banner (files named, or auto-sync disabled) -> Read each file a finding rests on before citing it
-  5. search is written from the calls actually made
+  5. search is written from the calls actually made: any CodeGraph call that answered makes it codegraph or
+     codegraph, then grep; with none answered, the reason is the first call's
 Frontmatter: tools: [Glob, Grep, Read, mcp__codegraph__codegraph_explore]; model, description, color unchanged
 Invariants: no Write, Edit, Bash or index-building tool; the output fields other than search unchanged
 ```
