@@ -137,3 +137,9 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to R1 to R6 and the e
 Closes: review@2026-11-03 12:49+08:00#R1, review@2026-11-03 12:49+08:00#R2, review@2026-11-03 12:49+08:00#R3, review@2026-11-03 12:49+08:00#R4, review@2026-11-03 12:49+08:00#R5, review@2026-11-03 12:49+08:00#R6
 - N1 blocker plan.md:65 — the revised C30 lost the absolute "two calls added" bound: a fixed extra git call per report passes it.
 Fix cycle 2 of 3: C30 now compares its logged calls with the fork point's `pd-status` on the same fixture, plus exactly the two listings; pd-lint and `phase-gate.sh create-plan` pass. Next: a scoped re-review of N1.
+
+## 2026-11-03 12:54+08:00 review plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to N1 and the edit ccd73d27..99fe91b7 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/plan-review-brief-3.md). N1 resolved; one new blocker in the diff, checked (`git merge-base main HEAD` is HEAD once merged; CI runs on pushes to main, ci.yml:4-5).
+Closes: review@2026-11-03 12:52+08:00#N1
+- N2 blocker plan.md:65 — C30's baseline from `git merge-base main HEAD` is the new `pd-status` itself after the merge, so a correct implementation fails on main.
+Fix cycle 3 of 3: C30's baseline is now a literal multiset (`pd-status` makes one git call today, `rev-parse --show-toplevel`, logged at b230ae35); pd-lint and `phase-gate.sh create-plan` pass. The same moving baseline sits in the commit guard's C25; fixed there by a backward move.
