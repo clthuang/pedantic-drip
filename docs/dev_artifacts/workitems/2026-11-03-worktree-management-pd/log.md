@@ -178,3 +178,12 @@ Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of s
 ## 2026-11-03 18:57+08:00 phase implement -> design (back)
 Reason: the simplification review above (R1, R2). Nothing has executed.
 Invalidates: shape.md ## Design (the stray listing, GitSurface (pd-worktrees)); plan.md from_shape, C23.
+
+## 2026-11-03 19:01+08:00 review design and plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the QA pass on the simplification 4c3b1edc..a0141f62 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/simplify-qa-brief-1.md). Approved, no issues: Requirements byte-identical, from_shape current, every B still covered (B1-B13 by C1-C13, B14 by C25/C26/C30/C31, B15-B17 by C27-C29, B18 by C32-C36, B19 by C14); the guard now runs on every `wt` call with C23 as its negative control; the combined stray listing keeps containment, the re-read and `--no-deref` compare-and-delete, so the protections at log.md review@2026-11-03 12:21+08:00#R1 and 12:34+08:00#N1/#N3 and the owner's accepted window hold.
+
+## 2026-11-03 19:01+08:00 phase design -> create-plan
+Simplification applied to ## Design and QA-approved (review above); design exit check passed.
+
+## 2026-11-03 19:01+08:00 phase-2 create-plan -> implement
+Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); plan.md from_shape matches shape.md.
