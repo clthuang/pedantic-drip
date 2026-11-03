@@ -96,6 +96,9 @@ SearchOrder (the agent's Research Process):
   5. search is written from the calls actually made: any CodeGraph call that answered makes it codegraph or
      codegraph, then grep; with none answered, the reason is the first call's
 Frontmatter: tools: [Glob, Grep, Read, mcp__codegraph__codegraph_explore]; model, description, color unchanged
+  the agent text carries "unavailable": the tool missing from the session, an error (a timeout included), or an answer naming no .codegraph/
+SearchStrategies (the agent's ## Search Strategies and must-nots): "For features" starts with the CodeGraph query (callers and call
+  paths), then Glob and Grep; the must-not reads "Read files without searching first (CodeGraph, Glob or Grep)"
 Invariants: no Write, Edit, Bash or index-building tool; the output fields other than search unchanged
 ```
 
@@ -111,7 +114,7 @@ ExplorerRole: agent_roles_errors gains the spec codebase-explorer:explorer
 ```text
 modules: plugins/pd/skills/designing/SKILL.md, plugins/pd/skills/planning/SKILL.md
 RenameChecklistLine (verbatim, one line in each `## Review checklist`, after "Absence claims are proven" in planning and after "Assumptions checked" in designing):
-- **Renames and store moves list their surfaces:** a rename or a store move (a file, config key or table moving where its state lives) lists every surface it touches, from a call-graph query of the changed symbol (`codegraph_explore`, or `codegraph explore` from a shell, when `.codegraph/` exists) plus a grep for each old name; the artifact records the query and grep commands with their hits (file:line), each marked a surface to change or history left as it is (a released CHANGELOG section, a done or abandoned work item, a retro, an archive). The reviewer re-runs the greps, and the query where its tools allow, and checks each recorded hit; a surface in its output that the list lacks is a blocker.
+- **Renames and store moves list their surfaces:** a rename or a store move (a file, config key or table moving where its state lives) lists every surface it touches, from a call-graph query of the changed symbol (`codegraph_explore`, or `codegraph explore` from a shell, when `.codegraph/` exists) plus a grep for each old name; the artifact records the query and grep commands with their hits (file:line), each marked a surface to change or history left as it is (a released CHANGELOG section, a done or abandoned work item, a retro, an archive; anything else, the open backlog and `[Unreleased]` included, is a surface). The reviewer re-runs the greps, and the query where its tools allow, and checks each recorded hit at file:line; a surface in its output that the list lacks is a blocker, and a disputed mark is a finding like any other.
 ```
 
 ### Decisions

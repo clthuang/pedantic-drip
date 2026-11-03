@@ -143,3 +143,16 @@ Simplification applied and QA-approved (review above). Plan exit check passed (p
 ## 2026-11-03 19:23+08:00 phase implement -> design (back)
 Reason: calvin on plan.md, the owner's rule between plan and execution (32 questions, the conductor adjudicating as author). Two answers change ## Design: RenameChecklistLine lacks three parts of B7, and SearchOrder leaves the agent's `## Search Strategies` and its "Read files without searching first" must-not describing a search with no CodeGraph. Nothing has executed.
 Invalidates: shape.md ## Design (RenameChecklistLine, SearchOrder); plan.md.
+
+## 2026-11-03 19:24+08:00 note
+Calvin on plan.md (the owner's rule before Execute): one pass in report mode, 32 questions, adjudicated by the conductor as the plan's author; 22 fixed, 8 answered, 2 dismissed. Fixed:
+- ## Design: RenameChecklistLine gains B7's three missing parts (anything else, the open backlog and `[Unreleased]` included, is a surface; each hit checked at file:line; a disputed mark is a finding); SearchOrder carries the agent's own definition of unavailable (a timeout included); a SearchStrategies clause puts the CodeGraph query first in `## Search Strategies` and rewrites the must-not "Read files without searching first" to count a CodeGraph call.
+- plan.md: shared terms define a section, `agents_copy` and what a tag means; each text case names the literal substrings it checks (C5, C7, C10, C11); C1 compares tools as a set; C2 also checks `validate.sh` no longer says 8; C3 gains a half true only once the explorer role exists (the red-first proof); C4's second line pinned; C6 pins the two examples' `relevance` and `search` values; C8's literal comes from shape.md; C9 checks the CHANGELOG line.
+Answered: `validate.sh` exits 0 under both locales today (checked); `en_US.UTF-8` exists here and on macOS runners; C2 covers B1's CI clause by running the same script; the text cases catch a missing instruction at the merger's proof, before Verify's live runs; the case order carries nothing; the checklist lines share Task 1 (KISS).
+Dismissed: pinning model, description and color in a permanent test (a changed value shows in the branch diff at Verify); a separate order requirement for C1 (covered by the set comparison).
+
+## 2026-11-03 19:24+08:00 phase design -> create-plan
+Calvin's Design fixes applied (note above); design exit check passed.
+
+## 2026-11-03 19:24+08:00 phase-2 create-plan -> implement
+Plan exit check passed (phase-gate.sh create-plan, pd-lint clean); from_shape matches shape.md.
