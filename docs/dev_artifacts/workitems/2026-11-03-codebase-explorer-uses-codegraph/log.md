@@ -12,3 +12,7 @@ Round request (user, 2026-11-03, verbatim):
 
 ## 2026-11-03 11:02+08:00 phase triage -> specify
 Reason: small: two or three tasks, agent and reviewer markdown plus a validate check; existing agents to extend, no new module.
+
+## 2026-11-03 11:08+08:00 decision
+Q: when a repo has `.codegraph/` but the CodeGraph MCP tool is not connected, what should the explorer do (fall back to Grep, or add Bash to try the `codegraph explore` CLI)?
+A (user, verbatim): "Fall back to Grep (Recommended)"

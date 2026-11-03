@@ -33,7 +33,7 @@ B7: the `designing` and `planning` skills' `## Review checklist` sections -> eac
 ### Scope
 
 - **In:** `plugins/pd/agents/codebase-explorer.md` (tools, search order, the `search:` field, the fallback); `validate.sh` (`agent_roles_errors` and its fixture count); the two checklist lines; the CHANGELOG line; `plugins/pd/README.md`'s agent row if its description changes.
-- **Out:** the `codegraph explore` CLI fallback, unless the owner rules it in (it needs Bash in a read-only agent; see the sign-off question); reviewer tools; other agents; `codegraph init`.
+- **Out:** the `codegraph explore` CLI route (it would need Bash in a read-only agent; owner ruling 2026-11-03: fall back to Grep); reviewer tools; other agents; `codegraph init`.
 
 ### Edge cases and must-nots
 
