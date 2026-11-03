@@ -48,3 +48,10 @@ To the user: none. To the conductor (wording or consistency, each answered by a 
 - rows 3, 4: the direct test is `plugins/pd/hooks/lib/test_commit_target.py`; B8 adds a 10-level nesting case.
 - rows 5, 6, 11: B10's first half runs the script; the repository has local `main` and `workitem/x`; the Why names the reported forms and why the other rows ride along.
 - rows 8, 10: no change; long spellings stay as listed, and a backgrounded script counts as run under the existing `&&` shortcut (`commit_target.py:173`).
+
+## 2026-11-03 11:24+08:00 decision
+Q: criteria signed off?
+A (user, verbatim): "Signed off"
+
+## 2026-11-03 11:24+08:00 phase specify -> design
+Criteria signed off (decision above); calvin loop ended at cycle 3 with no blocker.
