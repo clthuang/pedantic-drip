@@ -105,7 +105,8 @@ Internal (tests reach it only through CommitTarget):
   scan(cmd, here, switched) -> (dir, branch) | None
     one command line through shell_text + shlex, as main() does today
     `switched` (repo -> branch) is shared with nested scans: a switch carries; `here` is not: a cd ends
-    a -c script -> scan(script, <that command's dir>, switched); a hit there is the answer
+    a -c script -> scan(script.translate(UNMASK), <that command's dir>, switched); a hit there is the answer
+      (shell_text masked the script's own `;`, `&&` and `|` as quoted data; UNMASK restores them so they separate again)
     a script that raises ValueError (shlex) or RecursionError -> skipped; the scan goes on after it
   command_start(words, i, here) -> (j, here) | None
     skips PREFIXES, NAME=value words, and each wrapper's options and positionals, wrapper after wrapper;
@@ -113,7 +114,7 @@ Internal (tests reach it only through CommitTarget):
   switch_target(sub, args, at): drops a trailing `--` with no word after it, then applies today's rules
 Invariants:
   shell_text unchanged: quoted prose, comments and heredoc bodies stay data, at every nesting depth
-  no git call besides GitQueries
+  no subprocess besides GitQueries' three calls (`commit_target.py:127`, `:157`, `:159`)
 ```
 
 ### Decisions
@@ -127,7 +128,7 @@ Invariants:
 
 | Risk | Blast radius | Mitigation |
 |---|---|---|
-| A value option missing from `WRAPPERS` swallows the command word: `nice -n 5 git commit` would read `5` as the command (B4). | lint skipped for that form | a test case per table row, attached forms in B2 |
+| A value option missing from `WRAPPERS` swallows the command word: `nice -n 5 git commit` would read `5` as the command (B4). | lint skipped for that form | a test case per table row (`nohup` and the long spellings included), attached forms in B2 |
 | Deep nesting raises `RecursionError`; a traceback reads as "not a commit" in both hooks (`pre-commit-guard.sh:86`). | lint skipped | each level of `bash -c <shlex.quote(inner)>` roughly triples the command (10 levels: 118,171 characters; 12: 1,062,967; measured 2026-11-03), so real input stays far below Python's recursion limit; `scan` catches `RecursionError` per script anyway, and B8's 10-level case runs the deepest realistic input |
 | A switch inside a `-c` script that never ran still counts (`false && bash -c 'git switch main'; git commit`). | a false, non-blocking reminder | the documented `&&` shortcut (`commit_target.py:173`); no new code |
 
