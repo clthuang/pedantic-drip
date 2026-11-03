@@ -121,3 +121,13 @@ Closes: review@2026-11-03 12:34+08:00#N3, review@2026-11-03 12:38+08:00#R1
 
 ## 2026-11-03 12:40+08:00 phase design -> create-plan
 Design review loop ended: R1 to R10 and N1, N2, N4 resolved by revision; N3 closed by the owner (decision above).
+
+## 2026-11-03 12:49+08:00 review plan — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the test-case review of plan.md at a1e6bf56 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/plan-review-brief-1.md). Not approved: six blockers, each checked against plan.md and the code (pd-status:110-125 for the report blocks, abandon-workitem.md:12 for the unconditional -D).
+- R1 blocker plan.md:78 — C32 to C35 don't prove B18's exit handling: no run-in-flight stop in C32, no exit-2 stop or kept-branch exclusion in C34 and C35.
+- R2 blocker plan.md:31 — C6, C8, C10 and C14 assert success messages, not the ref, directory and registration state.
+- R3 blocker plan.md:64 — C29's fake fails every git call, so a failing `branch --list` after a good `worktree list` goes untested.
+- R4 blocker plan.md:60 — C25 populates no other report section, so "last section" can't catch a misplaced block; C26 seeds no leftover in the no-items report and has no unadopted variant.
+- R5 blocker plan.md:65 — C30's single work item can't catch per-item git calls.
+- R6 blocker plan.md:66 — C31's string check misses an argv-list `worktree list` call and doesn't prove the helpers are called.
+Fix cycle 1 of 3: plan.md revised (C6, C8, C10, C14, C25, C26, C29 to C35); pd-lint and `phase-gate.sh create-plan` pass. Next: a scoped re-review of R1 to R6.
