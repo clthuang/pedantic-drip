@@ -91,3 +91,8 @@ Decisions:
 - whether the revision answering R4 (C25's run-time check plus C27's static check) ends the review loop, or one more scoped re-review runs: asked of the user.
 Assumptions:
 - A1: an `ast` scan of `commit_target.py` for process APIs and imports, with negative controls, is a complete proof of the must-not on subprocesses for this module (it is one file with no dynamic imports).
+
+## 2026-11-03 12:19+08:00 decision
+Q: does the revision answering R4 (C25 run-time, C27 static) end the review loop?
+A (user, verbatim): "One more re-review"
+answers: capped@2026-11-03 12:16+08:00
