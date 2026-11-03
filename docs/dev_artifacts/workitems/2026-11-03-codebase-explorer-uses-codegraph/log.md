@@ -68,3 +68,9 @@ Decisions:
 Assumptions:
 - A1: `claude -p --output-format stream-json --verbose` carries a subagent's messages with its dispatch's `parent_tool_use_id` (checked at Verify; if not, the transcript is the session's subagent file under `~/.claude/projects/`).
 Closes: review@2026-11-03 11:29+08:00#R1, review@2026-11-03 11:29+08:00#R2, review@2026-11-03 11:29+08:00#R3
+
+## 2026-11-03 11:31+08:00 decision
+Q: does the revision answering calvin cycle 3 end the calvin loop?
+A (user, verbatim): "Run a 4th calvin cycle"
+answers: capped@2026-11-03 11:29+08:00
+Sign-off asked in the same question set; the user answered "wait for 4th calvin cycle", so it stays open.
