@@ -1,5 +1,5 @@
 # Backlog
 
-- [ ] 2026-11-01-pd-codebase-explorer-uses-codegraph — pd:codebase-explorer uses CodeGraph when the repo has it: in a repo with a .codegraph/ directory, the agent queries codegraph (MCP codegraph_explore, else the codegraph explore CLI) before Glob/Grep/Read, and falls back to them without it Reviewers enumerate a rename's or store move's surfaces call graph first (folds #078).
+- [x] 2026-11-01-pd-codebase-explorer-uses-codegraph — promoted → workitems/2026-11-03-codebase-explorer-uses-codegraph
 - [ ] 2026-11-01-investigate-design-worktree-management-pd — Investigate and design worktree management in pd
 - [ ] 2026-11-02-commit-target-py-see-commits — commit_target.py: see commits behind timeout, sudo -u, env -u and bash -c, and a bare trailing -- after checkout (PR #29 review notes)
