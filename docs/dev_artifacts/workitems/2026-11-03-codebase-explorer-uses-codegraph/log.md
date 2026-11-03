@@ -46,3 +46,25 @@ To the conductor (wording or consistency, each answered by a revision):
 - rows 4, 5, 15, 16: greps always run beside the call-graph query (#078's supplementary net), which covers string-named consumers; a table's old name is its name; the missed-by-both case is out.
 - rows 6, 9, 10, 11, 12, 18, 19: "done" reworded; B3 cites the call line as it is at Verify; B6 names its query and pre-check; `search` read off the transcript; a missing tool wins; an unconnected server makes B3 not run and asks the user; an unnamed Read is a search call.
 - rows 7, 8, 13, 14, 17: B1 runs under two locales; role `explorer` pins tools only; B5 checks a dispatch runs without the tool; a frozen index is a stale index; the CHANGELOG line named.
+
+## 2026-11-03 11:29+08:00 review calvin cycle 3 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/calvin-cycle-3.md. Verdict: 3 blockers, 4 warnings, 7 notes; cycle 2: 18 rows answered, row 5 partly (what the call-graph half is checked against), now answered by B7. This is the third cycle: the cap.
+Closes: review@2026-11-03 11:21+08:00#R1, review@2026-11-03 11:21+08:00#R2, review@2026-11-03 11:21+08:00#R3
+- R1 blocker shape.md:42 — the made-up name sat in the spec, so the grep pre-check would find the spec; B6 now has the conductor make the name up at Verify.
+- R2 blocker shape.md:39 — an Agent-tool dispatch loads the installed release's agent; B3 now runs headless with `--plugin-dir` at the work tree's absolute path.
+- R3 blocker shape.md:40 — a scratch repository under `agent_sandbox/` sits under this repository's index; B4 now uses `mktemp -d` outside it, with `--plugin-dir` absolute.
+To the user: whether this revision ends the loop (the cap question).
+To the conductor (each answered by the same revision):
+- rows 4, 5: `app.py` has `run()` calling `main()`; the reason is one of four fixed strings.
+- rows 6, 7: the artifact records commands and hits, each hit a surface or history; Claude reviewers re-run the greps and check the recorded call-graph hits.
+- rows 8, 9, 14: the explorer writes `search`, the transcript wins at Verify; the transcript is the stream-json messages under the explorer's `parent_tool_use_id`; `search` tells a dispatcher whether call paths were followed.
+- rows 10, 11, 12, 13: no change beyond "Done" now meaning B1 to B7 at Verify; Codex runs the CLI where its sandbox allows, else the greps; CI's Ubuntu run is the second machine; the checklist line names what the artifact carries.
+
+## 2026-11-03 11:29+08:00 capped specify
+Deferred: none
+Follow-ups: none
+Decisions:
+- whether the revision answering cycle 3's blockers ends the calvin loop, or a fourth cycle runs: asked of the user.
+Assumptions:
+- A1: `claude -p --output-format stream-json --verbose` carries a subagent's messages with its dispatch's `parent_tool_use_id` (checked at Verify; if not, the transcript is the session's subagent file under `~/.claude/projects/`).
+Closes: review@2026-11-03 11:29+08:00#R1, review@2026-11-03 11:29+08:00#R2, review@2026-11-03 11:29+08:00#R3
