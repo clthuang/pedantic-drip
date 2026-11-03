@@ -18,7 +18,7 @@ Shared terms: `roles(dir, locale)` runs `agent_roles_errors <dir>`, extracted fr
 - command: `uv run --project plugins/pd pytest plugins/pd/scripts/test_explorer_codegraph.py --junitxml=agent_sandbox/junit/task-1.xml`
 - junit: agent_sandbox/junit/task-1.xml
 - test cases:
-  - C1 [B1] (fixture: none): given `roles(plugins/pd/agents, C)` and `roles(plugins/pd/agents, en_US.UTF-8)`, expect both empty; given `agent`'s frontmatter, expect its `tools:` to be exactly Glob, Grep, Read and `mcp__codegraph__codegraph_explore`.
+  - C1 [B1] (fixture: none): given `agent`'s frontmatter, expect its `tools:` to be exactly Glob, Grep, Read and `mcp__codegraph__codegraph_explore`.
   - C2 [B1] (fixture: none): run `./validate.sh` under `LC_ALL=C` and under `LC_ALL=en_US.UTF-8`; expect exit 0 both times and the line "the failing fixture fails all 9 checks" in each output.
   - C3 [B1] (fixture: agents_copy): with `agent`'s tools in the copy reordered to `[mcp__codegraph__codegraph_explore, Read, Grep, Glob]`, expect `roles(copy, C)` and `roles(copy, en_US.UTF-8)` both empty (order and locale don't matter).
   - C4 [B2] (fixture: agents_copy): with `agent`'s tools in the copy set to `[Glob, Grep, Read, Write]`, expect `roles(copy, C)` to be exactly one line, naming `codebase-explorer` and `Write`; with them set to `[Glob, Grep, Read]` (the old list), expect one line too.
