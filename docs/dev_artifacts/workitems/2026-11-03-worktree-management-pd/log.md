@@ -107,3 +107,9 @@ Closes: review@2026-11-03 12:21+08:00#R1, review@2026-11-03 12:21+08:00#R2, revi
 - N3 blocker shape.md: — update-ref skips git branch's checked-out check; the list is re-read before each delete, and the one-call window left loses no commit (risk row).
 - N4 blocker shape.md:177 — pd-worktrees had two contract blocks; GitSurface folded into its one block.
 Fix cycle 2 of 3: `## Design` revised; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review of N1 to N4.
+
+## 2026-11-03 12:38+08:00 review design, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to N1 to N4 and the edit 807a4fb9..7ab8d2a2 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/review-brief-3.md). N1, N2 and N4 resolved; N3 open; nothing new in the diff.
+Closes: review@2026-11-03 12:34+08:00#N1, review@2026-11-03 12:34+08:00#N2, review@2026-11-03 12:34+08:00#N4
+- R1 blocker shape.md:239 — still open from review@2026-11-03 12:34+08:00#N3: a worktree can check out a stray, tip unchanged, between the final re-read and `update-ref --no-deref -d`, deleting a branch then held.
+Rejects: R1 — no git command closes that window: `git branch -d/-D` makes the same check-then-delete in two steps (builtin/branch.c: `branch_checked_out()`, then the ref delete), and a ref lock doesn't block another worktree's checkout, which writes only that worktree's HEAD. The design matches git's own guarantee, and the delete succeeds only at a tip a non-stray branch contains, so no commit is lost (risk row). Proposed for the user's decision.
