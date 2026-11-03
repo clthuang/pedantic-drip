@@ -34,6 +34,8 @@ WRAPPERS = {
     "xargs": ({"-I", "--replace", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines", "-s", "--max-chars",
                "-d", "--delimiter", "-E", "--eof", "-a", "--arg-file"}, 0, set(), set()),
 }
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+SHELL_VALUE_OPTIONS = {"o", "O"}  # letters of -o, +o, -O, +O: the next word is their value
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NEW_BRANCH = {"checkout": {"-b", "-B", "--orphan"}, "switch": {"-c", "-C", "--create", "--force-create", "--orphan"}}
 UNKNOWN = {"-", "--detach", "-d"}
@@ -193,6 +195,22 @@ def command_start(words, i, here):
     return None
 
 
+def shell_script(words, j):
+    """The `-c` script of a shell whose arguments start at words[j], or None when it runs none."""
+    has_c = False
+    while j < len(words) and not is_sep(words[j]) and words[j][0] in "-+" and len(words[j]) > 1:
+        w = words[j]
+        j += 1
+        if w.startswith("--"):
+            continue
+        for k, letter in enumerate(w[1:], 1):
+            if letter in SHELL_VALUE_OPTIONS:
+                j += k == len(w) - 1  # `-o pipefail`; `-eo pipefail`
+                break
+            has_c = has_c or (letter == "c" and w[0] == "-")
+    return words[j] if has_c and j < len(words) and not is_sep(words[j]) else None
+
+
 def repo_of(at):
     """The repository (worktree) a directory belongs to, so `git -C sub switch` and a commit at the root match."""
     r = subprocess.run(["git", "-C", at, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
@@ -233,18 +251,18 @@ def switch_target(sub, args, at):
     return "?" if detached else None
 
 
-def main():
-    d = json.load(sys.stdin)
-    here, cmd = d.get("cwd") or ".", d.get("tool_input", {}).get("command", "")
+def scan(cmd, here, switched):
+    """(directory, branch) of the first `git commit` in `cmd` run from `here`, or None. `switched` (repository ->
+    branch) is shared with the `-c` scripts scanned inside: a switch carries out of them, a `cd` does not."""
     try:
         lex = shlex.shlex(shell_text(cmd), posix=True, punctuation_chars=PUNCT)
         lex.whitespace_split = True
         lex.commenters = ""  # shell_text dropped the comments; a `#` inside a word is just a character
         words = list(lex)
     except ValueError:
-        return
+        return None
     # shortcut: every switch counts as run and successful, so `false && git switch main; git commit` reads main; follow `&&`/`||` if that shows up
-    switched, start, outer = {}, True, []
+    start, outer = True, []
     for i, w in enumerate(words):
         if is_sep(w):
             start = True
@@ -269,6 +287,14 @@ def main():
             dirs = [a for a in args if not a.startswith("-")]  # `cd -- dir`, `cd -P dir`; `cd -` stays put
             if dirs or not args:
                 here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
+        elif os.path.basename(w) in SHELLS:
+            script = shell_script(words, i + 1)
+            try:
+                hit = scan(script.translate(UNMASK), cwd, switched) if script is not None else None
+            except RecursionError:  # a script nested too deep is skipped; the commands beside it still count
+                hit = None
+            if hit:
+                return hit
         elif os.path.basename(w) == "git":
             j, at = i + 1, cwd
             while j < len(words) and words[j].startswith("-"):
@@ -277,13 +303,19 @@ def main():
                 j += 2 if words[j] in GIT_TAKES_ARG else 1
             sub = words[j] if j < len(words) else ""
             if sub == "commit":
-                print(f"{at}\t{switched.get(repo_of(at), '') if switched else ''}")
-                return
+                return at, switched.get(repo_of(at), "") if switched else ""
             if sub in NEW_BRANCH:
                 args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[j + 1:]))
                 target = switch_target(sub, args, at)
                 if target is not None:
                     switched[repo_of(at)] = target
+
+
+def main():
+    d = json.load(sys.stdin)
+    hit = scan(d.get("tool_input", {}).get("command", ""), d.get("cwd") or ".", {})
+    if hit:
+        print(f"{hit[0]}\t{hit[1]}")
 
 
 main()

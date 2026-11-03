@@ -154,3 +154,240 @@ def test_c26_ci_and_changelog():
         changelog = f.read()
     unreleased = re.search(r"## \[Unreleased\](.*?)(?=\n## \[)", changelog, re.S).group(1)
     assert any("commit_target.py" in l and "wrapper" in l and "-c" in l for l in unreleased.splitlines())
+
+
+# ---- Task 2: `-c` scripts, nested at any depth ----
+
+import ast
+import shlex
+
+_PD_NEW = os.path.join(os.path.dirname(_HOOKS), "scripts", "pd-new")
+
+
+@pytest.fixture
+def pd_repo(tmp_path):
+    """An adopted layout with one work item made by pd-new, committed (as test-pd-commit-lint.sh builds it)."""
+    path = tmp_path / "pd repo"
+    (path / ".claude").mkdir(parents=True)
+    _git(path, "init", "-b", "main")
+    _git(path, "config", "user.email", "t@example.com")
+    _git(path, "config", "user.name", "t")
+    _git(path, "config", "commit.gpgsign", "false")
+    (path / ".claude" / "pd.local.md").write_text("---\nartifacts_root: docs/dev_artifacts\nsop: 1\n---\n")
+    subprocess.run([_PD_NEW, "workitem", "Parse the input"], cwd=path, check=True, capture_output=True, env=_ENV)
+    _git(path, "add", "-A")
+    _git(path, "commit", "-m", "base")
+    return str(path.resolve())
+
+
+def test_c15_shell_forms(repo):
+    forms = ["bash -c", "sh -c", "zsh -lc", "/bin/bash -c", "bash -o pipefail -c", "bash -eo pipefail -c",
+             "dash -c", "ksh -c", "bash +O extglob -c", "bash --norc -c"]
+    empty_branch(repo, [f"{f} 'git commit -m x'" for f in forms])
+    assert seen("bash -c 'cd sub; git commit -m x'", repo) == f"{repo}/sub\t\n"
+
+
+def test_c16_cd_in_script(repo):
+    assert seen("bash -c 'cd sub && git commit -m x'", repo) == f"{repo}/sub\t\n"
+    assert seen("bash -c 'cd sub'; git commit -m x", repo) == f"{repo}\t\n"
+
+
+def test_c17_switch_in_script(repo):
+    _on(repo, "workitem/x")
+    for cmd in ("bash -c 'git switch main && git commit -m x'", "bash -c 'git switch main'; git commit -m x"):
+        assert seen(cmd, repo) == f"{repo}\tmain\n", cmd
+
+
+def _nested(levels):
+    cmd = "git commit -m x"
+    for _ in range(levels):
+        cmd = "bash -c " + shlex.quote(cmd)
+    return cmd
+
+
+def test_c18_wrappers_and_depth(repo):
+    empty_branch(repo, ["timeout 30 bash -c 'git commit -m x'", "bash -c 'timeout 30 git commit -m x'",
+                        "bash -c \"sh -c 'git commit -m x'\"", _nested(10)])
+
+
+def test_c19_directory_option_reaches_script(repo):
+    assert seen("env -C sub bash -c 'git commit -m x'", repo) == f"{repo}/sub\t\n"
+
+
+def test_c20_lint_through_script(pd_repo):
+    log = next(p for p in (os.path.join(r, f) for r, _, fs in os.walk(os.path.join(pd_repo, "docs")) for f in fs) if p.endswith("/log.md"))
+    with open(log, "a") as f:
+        f.write("\n## 2026-11-03 10:00+08:00 bogus\n")
+    _git(pd_repo, "add", "-A")
+    _, err, code = hook("pd-commit-lint.sh", "bash -c 'git commit -m x'", pd_repo)
+    assert code == 2
+    assert "entry kind bogus" in err
+
+
+def test_c21_not_commits(repo):
+    for cmd in ("bash -c 'echo \"git commit\"'", "bash ./commit.sh", "fish -c 'git commit -m x'",
+                "bash -c $'# git commit\ntrue'", "bash -c $'cat <<EOF\ngit commit -m x\nEOF'"):
+        assert seen(cmd, repo) == "", cmd
+
+
+def test_c22_degenerate_scripts(repo):
+    assert seen("bash -c", repo) == ""
+    assert seen("bash -c 'echo \"unclosed'; git commit -m x", repo) == f"{repo}\t\n"
+
+
+def test_c23_existing_hook_tests_pass():
+    for script in ("test-hooks.sh", "test-pd-commit-lint.sh"):
+        r = subprocess.run(["bash", os.path.join(_HOOKS, "tests", script)], cwd=_ROOT, capture_output=True, text=True, env=_ENV)
+        assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    with open(os.path.join(_HOOKS, "tests", "test-hooks.sh")) as f:
+        text = f.read()
+    for literal in ("\"main|grep -n 'git commit' README.md|no\"",
+                    "\"main|\"$'cat > n.md <<\\'EOF\\'\\nstep; git commit -m x\\nEOF'\"|no\"",
+                    "\"workitem/x|printf '%s\\\\n' ';' git switch main ';' git commit|no\""):
+        assert literal in text, literal
+
+
+# C25: the subprocess calls, traced at run time through an audit hook.
+_DRIVER = """
+import json, os, runpy, sys
+trace, script = os.environ["TRACE_FILE"], sys.argv[1]
+FORBIDDEN = ("os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork")
+def audit(event, args):
+    if event == "subprocess.Popen":
+        line = {"popen": list(args[1])}
+    elif event.startswith(FORBIDDEN):
+        line = {"forbidden": event}
+    else:
+        return
+    with open(trace, "a") as f:
+        f.write(json.dumps(line) + "\\n")
+sys.addaudithook(audit)
+sys.argv = [script]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def _traced_cases(repo):
+    """(command, branch to be on, expected Popen argument lists) for every `seen` command of C1 to C24."""
+    root = ["git", "-C", repo, "rev-parse", "--show-toplevel"]
+    show = lambda b: ["git", "-C", repo, "show-ref", "--verify", "--quiet", f"refs/heads/{b}"]
+    commit = lambda b: ["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}"]
+    on_main = (["timeout 30 git commit -m x", "timeout -s KILL -k 5 30 git commit -m x",
+                "timeout --signal=KILL --kill-after 5 30 git commit -m x"]
+               + [f"sudo {o} git commit -m x" for o in ("-u alice", "-ualice", "-Eu alice", "-E -H", "--", "--user alice", "-k")]
+               + ["env -u FOO git commit -m x", "env --unset FOO git commit -m x", "env -i PATH=/usr/bin git commit -m x"]
+               + [f"{w} git commit -m x" for w in ("nice -n 5", "nice --adjustment 5", "stdbuf -oL", "stdbuf --output L",
+                                                   "time -p", "time --format %e", "nohup", "xargs --max-args 1")]
+               + ["xargs -I{} git commit -m {}", "sudo -u alice timeout 30 git commit -m x",
+                  "sudo -D sub git commit -m x", "sudo --chdir sub git commit -m x", "env -C sub git commit -m x",
+                  "env --chdir sub git commit -m x", "env -C sub true; git commit -m x",
+                  "timeout 30 cd sub && git commit -m x",
+                  "env FOO=1 git commit -m x", "sudo git commit -m x", "exec git commit -m x", "command git commit -m x",
+                  "exec -a name git commit -m x"]
+               + [f"{f} 'git commit -m x'" for f in ("bash -c", "sh -c", "zsh -lc", "/bin/bash -c", "bash -o pipefail -c",
+                                                     "bash -eo pipefail -c", "dash -c", "ksh -c", "bash +O extglob -c", "bash --norc -c")]
+               + ["bash -c 'cd sub; git commit -m x'", "bash -c 'cd sub && git commit -m x'", "bash -c 'cd sub'; git commit -m x",
+                  "timeout 30 bash -c 'git commit -m x'", "bash -c 'timeout 30 git commit -m x'",
+                  "bash -c \"sh -c 'git commit -m x'\"", _nested(10), "env -C sub bash -c 'git commit -m x'",
+                  "bash -c 'echo \"unclosed'; git commit -m x", "sudo -l git switch main; git commit -m x"])
+    cases = [(c, "main", []) for c in on_main]
+    cases.append(("git checkout main -- README.md && git commit -m t", "workitem/x", []))
+    switch_cmds = ["timeout 30 git switch main && git commit -m x", "bash -c 'git switch main && git commit -m x'",
+                   "bash -c 'git switch main'; git commit -m x"]
+    cases += [(c, "workitem/x", [root, root]) for c in switch_cmds]
+    checkout_cmds = ["timeout 30 git checkout main && git commit -m x", "git checkout main -- && git commit -m t",
+                     "git checkout main -- >/dev/null 2>&1 && git commit -m t"]
+    cases += [(c, "workitem/x", [show("main"), root, root]) for c in checkout_cmds]
+    cases.append(("git checkout HEAD~0 -- && git commit -m t", "workitem/x", [show("HEAD~0"), commit("HEAD~0"), root, root]))
+    cases.append(("git checkout nosuch -- && git commit -m t", "workitem/x", [show("nosuch"), commit("nosuch")]))
+    return cases
+
+
+def _trace_mismatches(script, repo, cases):
+    """Run `script` under the audit driver for each case; the (command, got, want, stdout, stderr) of every mismatch."""
+    bad = []
+    trace = os.path.join(os.path.dirname(script), "trace.jsonl")
+    for cmd, branch, expected in cases:
+        _on(repo, branch)
+        if os.path.exists(trace):
+            os.remove(trace)
+        r = subprocess.run(["python3", "-c", _DRIVER, script], input=json.dumps({"tool_input": {"command": cmd}, "cwd": repo}),
+                           capture_output=True, text=True, env={**_ENV, "TRACE_FILE": trace})
+        got = []
+        if os.path.exists(trace):
+            with open(trace) as f:
+                got = [json.loads(l) for l in f]
+        want = [{"popen": e} for e in expected]
+        if r.returncode != 0 or r.stderr or not r.stdout or got != want:
+            bad.append((cmd, got, want, r.stdout, r.stderr))
+    return bad
+
+
+def test_c25_only_git_queries_run(repo):
+    assert _trace_mismatches(_SCRIPT, repo, _traced_cases(repo)) == []
+
+
+def test_c25_negative_controls(repo, tmp_path):
+    with open(_SCRIPT) as f:
+        source = f.read()
+    run_line = '    r = subprocess.run(["git", "-C", at, "rev-parse", "--show-toplevel"], capture_output=True, text=True)\n'
+    controls = {"extra call in main": source.replace("def main():\n", 'def main():\n    subprocess.check_output(["true"])\n', 1),
+                "repo_of runs twice": source.replace(run_line, run_line * 2, 1)}
+    switch_case = [c for c in _traced_cases(repo) if c[0] == "timeout 30 git switch main && git commit -m x"]
+    assert len(switch_case) == 1
+    for name, text in controls.items():
+        assert text != source, name
+        copy_dir = tmp_path / name.replace(" ", "_")
+        copy_dir.mkdir()
+        copy = copy_dir / "commit_target.py"
+        copy.write_text(text)
+        assert _trace_mismatches(str(copy), repo, switch_case), name
+
+
+# C27: the imports and subprocess calls, read statically.
+_ALLOWED_IMPORTS = {"itertools", "json", "os", "re", "shlex", "subprocess", "sys"}
+_FORBIDDEN_OS = ("system", "popen", "exec", "spawn", "posix_spawn", "fork")
+
+
+def _is_git_list(node):
+    return isinstance(node, ast.List) and bool(node.elts) and isinstance(node.elts[0], ast.Constant) and node.elts[0].value == "git"
+
+
+def _is_subprocess_run(call):
+    f = call.func
+    return isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "subprocess" and f.attr == "run"
+
+
+def _static_violations(source):
+    tree = ast.parse(source)
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [f"import {a.name}" for a in node.names if a.name.split(".")[0] not in _ALLOWED_IMPORTS]
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] not in _ALLOWED_IMPORTS:
+            found.append(f"from {node.module} import")
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id == "subprocess" and node.attr != "run":
+                found.append(f"subprocess.{node.attr}")
+            if node.value.id == "os" and node.attr.startswith(_FORBIDDEN_OS):
+                found.append(f"os.{node.attr}")
+    run_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _is_subprocess_run(n)]
+    if len(run_calls) != 3:
+        found.append(f"{len(run_calls)} subprocess.run call sites, not 3")
+    for func in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        git_lists = {t.id for n in ast.walk(func) if isinstance(n, ast.Assign) and _is_git_list(n.value)
+                     for t in n.targets if isinstance(t, ast.Name)}
+        for call in (n for n in ast.walk(func) if isinstance(n, ast.Call) and _is_subprocess_run(n)):
+            first = call.args[0] if call.args else None
+            if not (_is_git_list(first) or (isinstance(first, ast.BinOp) and isinstance(first.op, ast.Add)
+                                            and isinstance(first.left, ast.Name) and first.left.id in git_lists)):
+                found.append(f"subprocess.run at line {call.lineno} does not start with a git list")
+    return found
+
+
+def test_c27_static_subprocess_audit():
+    with open(_SCRIPT) as f:
+        source = f.read()
+    assert _static_violations(source) == []
+    for extra in ("os.fork()", "import multiprocessing", 'subprocess.Popen(["true"])'):
+        assert _static_violations(source + "\n" + extra + "\n"), extra
