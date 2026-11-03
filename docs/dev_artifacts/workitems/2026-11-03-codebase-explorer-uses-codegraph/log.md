@@ -74,3 +74,16 @@ Q: does the revision answering calvin cycle 3 end the calvin loop?
 A (user, verbatim): "Run a 4th calvin cycle"
 answers: capped@2026-11-03 11:29+08:00
 Sign-off asked in the same question set; the user answered "wait for 4th calvin cycle", so it stays open.
+
+## 2026-11-03 12:05+08:00 review calvin cycle 4 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/calvin-cycle-4.md (the owner's extra cycle, decision@2026-11-03 11:31+08:00). Verdict: 1 blocker, 7 warnings, 10 notes; cycle 3: 9 rows answered, 2 partly (2, 14), 3 open (10, 11, 13); all now answered. Three assumptions were probed with headless sessions on 2026-11-03 instead of argued.
+Closes: capped@2026-11-03 11:29+08:00#A1
+- R1 blocker shape.md:28 — the no-index answer was checked only with the CLI; the MCP tool's own answer in an unindexed scratch repository is now quoted (headless session, server connected), and `no index` covers any answer saying no `.codegraph/` was found.
+To the user: whether this cycle ends the loop, and the sign-off.
+To the conductor (each answered by a revision):
+- rows 2, 3: B4 needs the server too; not-connected keeps the work item in Verify and asks the user.
+- rows 4, 5, 16: probed: stream-json carries the explorer's tool calls under its dispatch's `parent_tool_use_id` (closes A1); a marked `--plugin-dir` copy loaded over the installed release; `--strict-mcp-config` with no config starts.
+- rows 6, 7, 8, 9: streams written outside the repository during the run; B6 passes when no finding locates the name, and needs `search` starting with `codegraph`; B6 is a new session.
+- rows 10, 11, 17: the reviewer re-runs the greps and the query where its tools allow, and checks recorded hits; history is a closed list, everything else is a surface; B7 stays a line check.
+- rows 12, 14, 15, 18: timeout folds into `error: <line>`; `app.py` defines `main()`; "above" is up to `/`; any answered call counts.
+- row 13 and cycle-3 rows 10, 11, 13: `search` serves the designing-step-2 dispatcher, not research-fanout; Codex falls back to the greps; B1 also runs in CI's validate step; the checklist is the author's bar too (`designing/SKILL.md:14`, `planning/SKILL.md:13`).
