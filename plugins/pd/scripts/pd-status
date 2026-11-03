@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""pd-status: the current repository's state, computed from its committed files (plan Part B §11).
+"""pd-status: the current repository's state, computed from its committed files and live git state (worktrees and branches) (plan Part B §11).
 
   pd-status              # print the state
   pd-status --self-test
 
 Read-only, caches nothing. Prints the items by status and phase (an active plan reads done once its
 roadmap is), each roadmap's progress and next ready item, open blockers, cap stops answered, open
-assumptions, on-behalf decisions and done work items owing a retro. Entry shapes: plugins/pd/references/log-entries.md.
+assumptions, on-behalf decisions, done work items owing a retro and leftover worktrees and branches. Entry shapes: plugins/pd/references/log-entries.md.
 """
 import re
 import sys
@@ -14,10 +14,10 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (ID_RE, OLD_ITEM_DIR, PHASES, REF_RE, STATUSES, TYPE_DIRS, WORKITEM, Checks,  # noqa: E402
-                       artifacts_dir, blank_fences, find_items, is_unadopted, load_config, log_text, make_repo,
-                       old_names, open_assumptions, open_blockers, parse_log, repo_root, retro_triggers,
-                       sections, split_frontmatter)
+from pd_common import (ID_RE, OLD_ITEM_DIR, PHASES, REF_RE, STATUSES, STRAY_PREFIX, TASK_BRANCH, TYPE_DIRS,  # noqa: E402
+                       WORKITEM, Checks, artifacts_dir, blank_fences, find_items, git, is_unadopted, load_config,
+                       log_text, make_repo, old_names, open_assumptions, open_blockers, parse_log, repo_root,
+                       retro_triggers, run_in_flight, sections, shown, split_frontmatter, worktrees)
 
 
 def load_items(art):
@@ -83,6 +83,48 @@ def capped_links(entries):
     return out
 
 
+LEFTOVER_HEADER = ("clear with `pd-worktrees <id> --remove` (a work item's worktrees) or "
+                   "`pd-worktrees --strays --remove`; delete other listed branches by hand")
+
+
+def leftovers(root, items):
+    """Lines for the Leftover worktrees section ([] when none, or when either git call fails): one `worktrees`
+    call and one `branch --list`, however many items there are."""
+    wts = worktrees(root)
+    listed = git(["branch", "--list", "pd/*", "workitem/*", f"{STRAY_PREFIX}*", "--format=%(refname:short)"],
+                 root, check=False)
+    if wts is None or listed is None:
+        return []
+    branches = set(listed.split("\n")) - {""}
+    held = {w["branch"] for w in wts}
+    workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
+    after_run, done, unknown, strays = [], [], [], []
+    for w in wts:
+        m = TASK_BRANCH.match(w["branch"] or "")
+        if not m:
+            continue
+        where = shown(w["path"]) + (" (locked)" if w["locked"] else "")
+        if m["id"] in workitems:
+            if not run_in_flight(workitems[m["id"]]["path"]):
+                after_run.append(f"{m['id']}: {where} — worktree after its run")
+        elif f"workitem/{m['id']}" not in branches:
+            unknown.append(f"{m['id']}: {where} — no work item")
+    for name in sorted(branches - held):
+        m = TASK_BRANCH.match(name)
+        if name.startswith(STRAY_PREFIX):
+            strays.append(f"-: {name} — stray branch")
+        elif not m:
+            continue
+        elif m["id"] in workitems:
+            status = workitems[m["id"]]["fm"].get("status")
+            if status in ("done", "abandoned"):
+                done.append(f"{m['id']}: {name} — branch of {'a done' if status == 'done' else 'an abandoned'} work item")
+        elif f"workitem/{m['id']}" not in branches:
+            unknown.append(f"{m['id']}: {name} — no work item")
+    lines = after_run + done + unknown + strays
+    return [LEFTOVER_HEADER, *lines] if lines else []
+
+
 def report(root):
     cfg = load_config(root)
     if is_unadopted(root, cfg):
@@ -123,6 +165,7 @@ def report(root):
         if i["type"] == WORKITEM and i["fm"].get("status") == "done"
         and not (i["path"].parent / "retro.md").is_file()
         for t in [retro_triggers(i["entries"])] if t]
+    blocks["Leftover worktrees"] = leftovers(root, items)
     for title, lines in blocks.items():
         if lines:
             out += ["", title, *lines]
@@ -211,6 +254,11 @@ def _self_test():
                 "on-behalf decisions listed")
         c.check(f"workitems/{S}-alpha: defect" in out and f"workitems/{S}-omega" not in out.split("Retros owed")[-1],
                 "a done work item with a trigger and no retro.md owes a retro")
+        c.check("Leftover worktrees" not in out, "no leftover, no Leftover worktrees section")
+        git(["branch", f"{STRAY_PREFIX}r-1"], root)
+        out = report(root)
+        c.check(out.endswith(f"\n\nLeftover worktrees\n{LEFTOVER_HEADER}\n-: {STRAY_PREFIX}r-1 — stray branch"),
+                "a stray branch is a leftover, in the last section")
         old = make_repo(Path(t) / "old")
         (old / "docs" / "features" / "001-x").mkdir(parents=True)
         c.check(report(old).startswith("run /pd:adopt"), "an unadopted project says run /pd:adopt")

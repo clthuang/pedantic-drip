@@ -104,6 +104,17 @@ check "an origin URL keys the offer" has "$(ctx "$U" startup)" "https://example.
 echo "https://example.test/u.git" >> "$H/.claude/pd/init-declined"
 check "declined by origin URL: nothing" [ "$(ctx "$U" startup)" = "<none>" ]
 
+# A leftover worktree: the Leftover worktrees section is kept on every source.
+L=$(repo "$TMP/leftover"); mkdir -p "$L/.claude"
+printf -- '---\nartifacts_root: docs/dev_artifacts\nsop: 1\n---\n' > "$L/.claude/pd.local.md"
+workitem "$L/docs/dev_artifacts" 2026-10-14-alpha active "next: task 2"
+git -C "$L" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$L" branch worktree-wf_r-1
+for src in startup resume clear compact; do
+  out=$(ctx "$L" "$src")
+  check "leftover ($src): the section and its line" eval 'has "$out" "Leftover worktrees" && has "$out" "-: worktree-wf_r-1 — stray branch"'
+done
+
 # Outside git: nothing.
 mkdir -p "$TMP/plain"
 check "outside git: nothing" [ "$(ctx "$TMP/plain" startup)" = "<none>" ]
