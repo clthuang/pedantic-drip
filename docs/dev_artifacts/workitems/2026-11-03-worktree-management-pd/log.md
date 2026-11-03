@@ -46,3 +46,26 @@ To the conductor (wording or consistency, each answered by a revision):
 - rows 11, 12, 13, 15, 16, 17, 18: state precedence; the main checkout counts as a task worktree; exit 2 on a mid-way git failure with the lines printed so far; "removed" wording; strays only without `--task` (B8); another run's strays; strays come from any Workflow-tool agent.
 - rows 14, 19, 20, 21: the gone-entry check cited (scratch repo, git 2.54.0); "done" excuses anything reported and kept; one line per leftover, a held branch not repeated; the dead-lock release quoted from the worktrees page.
 - rows 22, 23, 24: only work items visible in this checkout are judged (B15); the section opens with what to run; the four docs that list scripts named (grep for `pd-review-filter`).
+
+## 2026-11-03 11:34+08:00 review calvin cycle 3 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/calvin-cycle-3.md. Verdict: 2 blockers, 7 warnings, 13 notes; cycle 2: 21 rows answered, 3 partly (9, 13, 19), and cycle 1's row 26 open; all now answered. This is the third cycle: the cap.
+Closes: review@2026-11-03 11:28+08:00#R1, review@2026-11-03 11:28+08:00#R2, review@2026-11-03 11:28+08:00#R3
+- R1 blocker shape.md:41 — a task branch made its id known, so `no work item` could never apply; a known work item is now its directory in this checkout, and `no work item` also needs no `workitem/<id>` branch.
+- R2 blocker shape.md:44 — two strays sharing a tip would vouch for each other; only a branch that isn't a stray counts (B19).
+To the user: whether this revision ends the loop (the cap question).
+To the conductor (each answered by the same revision):
+- rows 3, 5, 21: the id must have its directory here; `pd-worktrees --strays [--remove]` clears strays with no work item; why every stray qualifies.
+- rows 4, 10, 11, 19: B14's first line names both commands and "by hand" for other branches; the state shows in `pd-worktrees <id>`; the section is in the full report only.
+- rows 6, 7: abandon calls only when the user accepts cleanup; its run-in-flight check finds nothing, a live run's worktree is `locked`.
+- rows 8, 9, 22: any kept worktree of a re-run task stops the wrong-test move; Execute asks at step 5 and exit 2 stops before step 6.
+- rows 12, 13, 14, 15: no question without a dirty one; a discarded worktree's branch is deleted; "unexpected" git failures defined; Done excepts anything reported kept.
+- rows 16, 17, 18, 20: Goals say clean or gone and name strays; a main checkout on a task branch is a real leftover; the removal-site grep is cited in Why; cycle 1's row 26 answered by "What they cost".
+- pd-status's branch call adds `workitem/*`, which the `no work item` rule needs.
+
+## 2026-11-03 11:34+08:00 capped specify
+Deferred: none
+Follow-ups: none
+Decisions:
+- whether the revision answering cycle 3's blockers ends the calvin loop, or a fourth cycle runs: asked of the user.
+Assumptions: none
+Closes: review@2026-11-03 11:34+08:00#R1, review@2026-11-03 11:34+08:00#R2
