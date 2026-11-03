@@ -79,3 +79,15 @@ Fix cycle 2 of 3: plan.md revised; pd-lint passes. Next: a scoped re-review of R
 Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to the open R4 and the edit 35130c43..a60335f4 (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/review-brief-3.md). R4 still open; nothing new in the diff.
 - R1 blocker plan.md:56 — still open from review@2026-11-03 12:02+08:00#R4: the audit-event list omitted `os.fork` and `os.forkpty` (Codex's mutation probe: a forked child passed C25). Both now listed, citing the audit table, with a negative control: a copy of `commit_target.py` with an inserted `os.fork()`, and one with `subprocess.check_output`, must each fail the check (checked: `os.fork` raises its event).
 Fix cycle 3 of 3: plan.md revised; shape.md D4's CI citation corrected to `ci.yml:42`; pd-lint passes. Next: the last scoped re-review.
+
+## 2026-11-03 12:16+08:00 review joint design and plan, scoped — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, scoped to the open R4 and the edit a60335f4..ceb3d03e (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/review-brief-4.md). R4 still open; nothing new in the diff. This was the third re-review: the cap.
+- R1 blocker plan.md:56 — still open from review@2026-11-03 12:02+08:00#R4: `_posixsubprocess.fork_exec` (a `multiprocessing` spawn on Python 3.14) escapes C25's event list. Checked: on this machine's Python 3.13 the same spawn raises none of those events, so no event list is complete across versions. Revised after the cap: C25 checks every `subprocess.Popen` at run time, and the new C27 proves the absence of every other process API statically (`ast` over `commit_target.py`, with negative controls).
+
+## 2026-11-03 12:16+08:00 capped design
+Deferred: none
+Follow-ups: none
+Decisions:
+- whether the revision answering R4 (C25's run-time check plus C27's static check) ends the review loop, or one more scoped re-review runs: asked of the user.
+Assumptions:
+- A1: an `ast` scan of `commit_target.py` for process APIs and imports, with negative controls, is a complete proof of the must-not on subprocesses for this module (it is one file with no dynamic imports).
