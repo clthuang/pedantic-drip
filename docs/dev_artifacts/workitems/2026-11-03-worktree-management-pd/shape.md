@@ -121,11 +121,13 @@ One new script and three shared helpers; `pd-status` reads the same helpers for 
 
 ```mermaid
 flowchart LR
-    K[conductor: implementing, finishing-branch, abandon-workitem] -->|contract: WorktreesCLI| W[scripts/pd-worktrees]
+    I[skills implementing, finishing-branch; command abandon-workitem] -->|contract: CallerSteps| K[conductor]
+    K -->|contract: WorktreesCLI| W[scripts/pd-worktrees]
     W -->|contract: WorktreeHelpers| P[scripts/pd_common.py]
     S[scripts/pd-status] -->|contract: WorktreeHelpers| P
     P -->|contract: GitSurface| G[(git)]
     W -->|contract: GitSurface| G
+    S -->|contract: GitSurface| G
     H[hooks/pd-session-start.sh] -->|contract: LeftoverSection| S
 ```
 
@@ -137,33 +139,38 @@ WorktreeHelpers (new, beside git() and sections()):
   TASK_BRANCH = re.compile(r"^pd/(?P<id>[^/]+)/task-(?P<n>\d+)$")
   STRAY_PREFIX = "worktree-wf_"
   worktrees(root) -> list[{"path": str, "branch": str|None, "main": bool, "locked": bool, "prunable": bool}] | None
-    one `git worktree list --porcelain`; the first record is the main checkout; `branch` drops `refs/heads/`;
-    None when git fails
+    one `git worktree list --porcelain -z` (NUL-separated, so a path may hold a newline); the first record is the
+    main checkout; `branch` drops `refs/heads/`; None when git fails
   run_in_flight(readme_path) -> str | None
     the first line of the README's `## Now` (sections()) starting with `run in flight:`, or None
+  shown(path) -> str: the path with `\n` and `\t` escaped, so each output line stays one line
 ```
 
 ```text
 modules: plugins/pd/scripts/pd-worktrees
 WorktreesCLI:
-  pd-worktrees <id>                              list: "<state> <path> <branch>" per task worktree of <id>,
+  pd-worktrees <id>                              list: "<state> <shown path> <branch>" per task worktree of <id>,
                                                  "stray <branch>" per stray, or "no worktrees for <id>"; exit 0
-  pd-worktrees <id> --remove [--task <n>]...     "removed <path>" | "deleted <branch>" | "kept (<state>): <path>"
-                                                 | "kept (unique commits): <branch>" | "run in flight: <line>"; exit 0 | 1 | 2
-  pd-worktrees --strays [--remove]               the stray lines only; exit 0 | 2
-  errors: "pd-worktrees: <message>" on stderr, exit 2: no <id> and no --strays, --task without --remove,
-          <id> with no directory {artifacts_root}/workitems/<id>/, not in a git repository, a git failure
+  pd-worktrees <id> --remove [--task <n>]...     lines: "removed <shown path>" | "deleted <branch>"
+                                                 | "kept (<state>): <shown path>" | "kept (unique commits): <branch>"
+                                                 | "run in flight: <line>"
+  pd-worktrees --strays [--remove]               the stray lines only
   state, first that holds: main checkout (record 0) | locked | gone (prunable) | dirty (`git -C <path> status --porcelain`
           prints anything) | clean
   --remove order: the run-in-flight check (WorktreeHelpers.run_in_flight on <id>'s README; a hit prints its line,
-          removes nothing, exit 1); then each clean or gone task worktree; then, without --task, each stray
-  a stray qualifies when `git for-each-ref --contains <its tip> refs/heads/` names a branch that isn't a stray
-GitSurface (pd-worktrees; all through pd_common.git, cwd = the repository root):
-  git worktree list --porcelain; git -C <path> status --porcelain (per linked task worktree not locked or gone);
-  git for-each-ref --format=%(refname:short) refs/heads/worktree-wf_*; git rev-parse <stray>;
-  git for-each-ref --contains <tip> --format=%(refname:short) refs/heads/;
-  git worktree remove <path>; git branch -D <stray> (only after the containment check)
-  never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* branch
+          removes nothing); then each clean or gone task worktree; then, without --task, each stray
+  a worktree git refuses to remove: its state read again and printed "kept (<state>)" -- "kept (clean)" when git
+          refuses a clean one (a worktree holding a submodule needs --force, git-worktree(1))
+  a stray qualifies when `git for-each-ref --contains <its tip> refs/heads/` names a branch that isn't a stray; it is
+          deleted with `git update-ref -d refs/heads/<stray> <that tip>`, which refuses if the branch moved since:
+          then "kept (unique commits)", its new tip unchecked
+  exit 0: every task worktree asked for was removed (kept strays don't count); --strays always, barring exit 2
+  exit 1: a run in flight, or any "kept (<state>)" line
+  exit 2, "pd-worktrees: <message>" on stderr: no <id> and no --strays; --task without --remove; <id> with no
+          directory {artifacts_root}/workitems/<id>/; not in a git repository; any other git failure (the lines
+          already printed say what was done)
+  every git call runs with cwd = the main checkout (record 0), never the invoking directory, so removing the
+          worktree the caller stands in doesn't strand the calls after it
 ```
 
 ```text
@@ -171,12 +178,24 @@ modules: plugins/pd/scripts/pd-status
 LeftoverSection: report() gains blocks["Leftover worktrees"], the last block, built by leftovers(root, art, items):
   [first line, *one line per leftover], or [] (no section) when there are none or either git call fails
   first line: clear with `pd-worktrees <id> --remove` (a work item's worktrees) or `pd-worktrees --strays --remove`; delete other listed branches by hand
-  leftover line: "<id>: <path or branch> — <reason>", "-" for a stray's id; reasons and their order as ## Requirements' Leftovers
-  git calls: WorktreeHelpers.worktrees(root), and one `git branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`
+  leftover line: "<id>: <shown path or branch> — <reason>", "-" for a stray's id; a locked worktree's path is
+    followed by " (locked)" (from the porcelain record, no extra call), so a dead session's lock shows here too;
+    reasons and their order as ## Requirements' Leftovers
   judged work items: items of type workitem whose directory is in this checkout; status from its frontmatter;
     run in flight from WorktreeHelpers.run_in_flight
   the docstring says pd-status now also reads live git state (worktrees and branches), not only committed files
   the early `run /pd:adopt` and `no items under` returns are unchanged
+GitSurface (pd-status): WorktreeHelpers.worktrees(root), and one
+  `git branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`; nothing else
+```
+
+```text
+modules: plugins/pd/scripts/pd-worktrees (its git calls, through pd_common.git)
+GitSurface (pd-worktrees): git worktree list --porcelain -z; git -C <path> status --porcelain (per linked task
+  worktree not locked or gone); git for-each-ref --format=%(refname:short) refs/heads/worktree-wf_*;
+  git rev-parse <stray>; git for-each-ref --contains <tip> --format=%(refname:short) refs/heads/;
+  git worktree remove <path>; git update-ref -d refs/heads/<stray> <tip>
+  never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* branch
 ```
 
 ```text
@@ -188,37 +207,50 @@ LeftoverSection (kept): the awk keep test adds `sec == "Leftover worktrees"`; th
 ```text
 modules: plugins/pd/skills/implementing/SKILL.md, plugins/pd/skills/finishing-branch/SKILL.md, plugins/pd/commands/abandon-workitem.md
 CallerSteps (instructions, per ## Requirements' Callers):
-  implementing step 5: after "Clear `run in flight:` and commit", run `pd-worktrees <id> --remove`; exit 1 -> the ask; exit 2 -> a hard stop before step 6
+  implementing step 5: after "Clear `run in flight:` and commit", run `pd-worktrees <id> --remove`; exit 1 -> the ask;
+    exit 2 -> a hard stop before step 6
+  the ask, written there once: AskUserQuestion listing each kept worktree; a "dirty" one, or a "clean" one git
+    refused, is keep or discard (the conductor then runs `git worktree remove --force <path>` and its branch is
+    deleted with the others); "locked" and "main checkout" ones are reported, not asked; no dirty or refused one ->
+    no question; a run in flight -> reported, the caller stops
   implementing step 6 (wrong-test): `pd-worktrees <id> --remove --task <n>` per re-run task replaces the hand-run
-    `git worktree remove --force`; a kept worktree of such a task stops the move; then `git branch -D pd/<id>/task-<n>`
-  finishing-branch step 9: `pd-worktrees <id> --remove` replaces the hand-run removal; then the -d deletes as today
+    `git worktree remove --force`; a kept worktree of such a task stops the move (the ask offers discard or stop);
+    then `git branch -D pd/<id>/task-<n>`
+  finishing-branch step 9: `pd-worktrees <id> --remove` replaces the hand-run removal, with the ask of implementing
+    step 5; then the -d deletes as today
   abandon-workitem step 3: when the user accepts cleanup, `pd-worktrees <id> --remove` on the work item's branch,
-    then switch off it, then the -D deletes as today
-  the exit-1 ask (AskUserQuestion), with the conductor's `git worktree remove --force <path>` only on "discard",
-    written once in implementing step 5 and referenced by the other three
+    with the same ask, then switch off it, then the -D deletes as today
 ```
 
 ### Decisions
 
 - **D1: one script with the shared parsing in `pd_common`.** Rejected git commands in each caller's prose: three callers already disagree on `--force` (`finishing-branch/SKILL.md:33`, `implementing/SKILL.md:30`, `abandon-workitem.md:12`). Rejected parsing in `pd-status` alone: both scripts need the same worktree records and run-in-flight rule. DRY.
-- **D2: `git branch -D` for a stray, after the script's own containment check.** `git branch -d` measures a branch against `HEAD` (or its upstream; strays have none), so B6's stray, whose tip only `workitem/<id>` contains, would be refused whenever `HEAD` is elsewhere. The containment check (a non-stray branch contains the tip) is the guard `## Requirements` asks for; the exit-2 clause's "`git branch -d` refusing a stray" is read as that delete being refused, printed as kept. KISS.
-- **D3: tests in pytest, not `--self-test`.** The sibling scripts' self-tests print a count, not JUnit (`pd_common.py:412-437`); every plan task needs a JUnit path its command writes (`pd-lint:315-330`). pytest is already in CI (`ci.yml:42`).
+- **D2: a stray is deleted by compare-and-delete, `git update-ref -d refs/heads/<stray> <tip>`.** Rejected `git branch -d`: it measures a branch against `HEAD` (strays have no upstream), so B6's stray, whose tip only `workitem/<id>` contains, would be refused whenever `HEAD` is elsewhere. Rejected `git branch -D` after the check: it deletes whatever the branch points at by then, so a branch moved between check and delete loses its new commit (git-branch(1): `-D` ignores merged status). `update-ref -d` with the old value refuses a moved branch (checked 2026-11-03, git 2.54.0: "is at … but expected …", exit 1). The Requirements' "`git branch -d` refusing a stray" reads as this delete refusing, printed as kept. KISS.
+- **D3: tests in pytest, not `--self-test`.** The sibling scripts' self-tests print a count, not JUnit (`pd_common.py:412-437`); every plan task needs a JUnit path its command writes (`pd-lint:315-330`). pytest is in CI already, on a line that names files one by one (`ci.yml:42`), so the new test files are added to it.
 - **D4: `run in flight:` read with `sections()`, not `pd-lint`'s `RUN_RE`.** The rule is "any `## Now` line starting `run in flight:`" (`## Requirements` Terms); `RUN_RE` (`pd-lint:34`) validates the line's full shape, which a malformed line would fail and so read as no run. YAGNI.
-- **D5: the exit-1 ask written once,** in `implementing` step 5, and referenced by the other three callers. Single responsibility.
+- **D5: the exit-1 ask written once, in `implementing` step 5.** Rejected a new reference file (`references/`): a fourth file to keep in sync for one paragraph, which every caller would still have to name. Rejected restating it in each caller: three copies drift, as the three `--force` rules did (D1's evidence). `implementing` holds it because Execute is the call that runs most often; the other three name it. Single responsibility.
+- **D6: git runs from the main checkout.** Rejected the invoking directory (`repo_root()` resolves the current checkout, `pd_common.py:144-146`): a caller standing in a task worktree would have it removed under the later calls. The main checkout is never removed (state `main checkout`).
 
 ### Risks
 
 | Risk | Blast radius | Mitigation |
 |---|---|---|
-| A worktree turns dirty between the state check and `git worktree remove`. | git refuses; nothing lost | the refusal re-reads the state and prints `kept (dirty)`, exit 1 (`## Requirements` exit codes) |
-| `git worktree list --porcelain` format drift across git versions. | wrong states | tests run on CI's git and this machine's (2.54.0); fields used are long-standing (`worktree`, `branch`, `locked`, `prunable`) |
-| `pd-status` slows session start in a repository with many branches. | a slower start | two git calls in all, no per-branch call (must-not); containment isn't checked there |
-| A caller's prose drifts from the script's exit codes. | a dirty worktree forced, or a hard stop missed | B18's cases read each caller step for the call, its order before branch deletes, and its exit handling |
-| A stray deleted while another run's fixer still needs it. | none | a stray qualifies only when a non-stray branch contains its tip, so no commit is lost; the fixer's worktree is on its task branch |
+| A worktree turns dirty between the state check and `git worktree remove`. | git refuses; nothing lost | WorktreesCLI re-reads the state and prints `kept (dirty)`, exit 1, and the caller asks |
+| A stray branch moves between the containment check and its delete. | its new commit lost under `git branch -D` | D2's compare-and-delete refuses a moved branch (checked: exit 1, branch kept) |
+| `git worktree list -z` needs git 2.36 or later (git-worktree(1) added `-z` in 2.36). | pd-worktrees and the section fail on older git | `pd-worktrees` exits 2 with git's message; `pd-status` omits the section (B17); CI and this machine run 2.54.0 |
+| A clean worktree holding a submodule can't be removed without `--force` (git-worktree(1)). | a clean worktree left | WorktreesCLI prints `kept (clean)`, exit 1; CallerSteps' ask treats it like a dirty one |
+| A caller's prose drifts from the script's exit codes. | a dirty worktree forced, or a hard stop missed | the cross-file checks below |
+
+Notes: `pd-status`'s cost stays two git calls (must-not); a stray another run's fixer left loses no commit when a non-stray branch contains its tip.
 
 ### Test strategy
 
-- **Runner and JUnit option:** `uv run --project plugins/pd pytest <files> --junitxml=<path>`.
+- **Runner and JUnit option:** `uv run --project plugins/pd pytest plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py --junitxml=<path>`, the same three files added to CI's pytest line (`ci.yml:42`).
 - **Fixtures live in:** `plugins/pd/scripts/conftest.py`: `pd_repo` (pytest `tmp_path`; `git init -b main`; `.claude/pd.local.md` with `artifacts_root: docs/dev_artifacts` and `sop: 1`; one work item made by `pd-new workitem`; committed; branch `workitem/<id>`), and a `task_worktree(n, state)` helper that runs `git worktree add -b pd/<id>/task-<n> .claude/worktrees/task-<n>` and then makes the state (`git worktree lock`, a deleted directory, an untracked file).
-- **Fakes:** none.
-- **Real resources tests may touch:** git in the `tmp_path` repositories; `pd-worktrees`, `pd-status`, `pd-new` and `pd-session-start.sh` run as subprocesses there; the three caller files, read.
+- **Fakes:** a `git` script first on `PATH` that logs its arguments and runs the real git (call counts and the must-nots), and one that moves a stray between the containment check and the delete (the compare-and-delete).
+- **Real resources tests may touch:** git in the `tmp_path` repositories; `pd-worktrees`, `pd-status`, `pd-new` and `pd-session-start.sh` run as subprocesses there; the three caller files and the four docs, read.
+- **Cross-file invariants and the cases proving them:**
+  - the callers' exit handling matches WorktreesCLI's exits: `test_worktree_callers.py` reads each caller step;
+  - the section survives the hook: `test_pd_status_leftovers.py` runs `pd-session-start.sh` on all four sources;
+  - both scripts use the shared helpers: `test_pd_worktrees.py` checks that `pd-worktrees` and `pd-status` import `worktrees` and `run_in_flight` from `pd_common` and run no `git worktree list` of their own;
+  - CI runs all three files: a case reads `ci.yml:42`'s pytest line.

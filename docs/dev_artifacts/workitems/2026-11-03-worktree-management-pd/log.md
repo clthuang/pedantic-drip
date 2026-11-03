@@ -84,3 +84,17 @@ Criteria signed off (decision above); calvin loop capped at cycle 3, ended by th
 
 ## 2026-11-03 12:10+08:00 note
 Grounding: codebase-explorer dispatch (designing step 2), 14 findings with file:line: pd-status report() blocks and early returns (pd-status:86-129), pd_common.git and sections (pd_common.py:137-165, 228), sibling-script conventions, the session-start awk (pd-session-start.sh:43-51) and its test, CI's explicit script and pytest lists (ci.yml:34-42), no existing worktree helper, three run-in-flight parsers (pd-lint:34, pd-stop-gate.sh:23).
+
+## 2026-11-03 12:21+08:00 review design — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, on commit 823fe8c7 (brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/review-brief-1.md). Verdict: not approved; 10 blockers. Each claim checked before acting; all ten hold (R1 and R2 also probed on git 2.54.0).
+- R1 blocker shape.md:228 — a stray deleted by name with `-D` after the check could lose a commit pushed to it in between; deleted now by `git update-ref -d <ref> <checked tip>`, which refuses a moved branch (probed: exit 1, branch kept).
+- R2 blocker shape.md:142 — newline-split porcelain can't carry a path holding a newline; parsed with `-z`, shown escaped.
+- R3 blocker shape.md:172 — git ran from the invoking checkout, which may be a worktree being removed; every call now runs from the main checkout (D6).
+- R4 blocker shape.md:168 — exit 2 "a git failure" contradicted the refusal-is-exit-1 rule; WorktreesCLI now pins refusals as `kept (<state>)`, exit 1, and exit 2 as every other failure.
+- R5 blocker shape.md:162 — a clean worktree holding a submodule had no outcome; it prints `kept (clean)`, and the ask treats it like a dirty one.
+- R6 blocker shape.md:181 — the section couldn't show `locked`, which the dead-lock edge case asks of both scripts; a locked worktree's path is followed by ` (locked)`, from the same porcelain record.
+- R7 blocker shape.md:124 — CallerSteps and pd-status's branch query had no edge; both drawn, and GitSurface split per script.
+- R8 blocker shape.md:252 — no cross-file invariants or proving commands; four named, each with its test file, and the three files on CI's pytest line.
+- R9 blocker shape.md:231 — D5 named no rejected alternative; a reference file and per-caller copies rejected, with evidence.
+- R10 blocker shape.md:240 — the porcelain-drift row had no evidence; replaced by the `-z` version floor, with the hypotheticals moved to the notes.
+Fix cycle 1 of 3: `## Design` rewritten; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review.
