@@ -18,7 +18,23 @@ import sys
 
 PUNCT = ";&|()"
 GIT_TAKES_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
-PREFIXES = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "time", "sudo", "env", "command", "exec", "nohup", "xargs"}
+PREFIXES = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+# wrapper -> (options taking a value, positional words before the command, options that run no command, directory options)
+WRAPPERS = {
+    "timeout": ({"-s", "--signal", "-k", "--kill-after"}, 1, set(), set()),
+    "sudo": ({"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-h", "--host", "-p", "--prompt",
+              "-r", "--role", "-t", "--type", "-T", "--command-timeout", "-U", "--other-user"}, 0, {"-l", "-v", "-K"}, {"-D", "--chdir"}),
+    "env": ({"-u", "--unset", "-C", "--chdir"}, 0, set(), {"-C", "--chdir"}),
+    "nice": ({"-n", "--adjustment"}, 0, set(), set()),
+    "stdbuf": ({"-i", "--input", "-o", "--output", "-e", "--error"}, 0, set(), set()),
+    "time": ({"-f", "--format", "-o", "--output"}, 0, set(), set()),
+    "command": (set(), 0, {"-v", "-V"}, set()),
+    "exec": ({"-a"}, 0, set(), set()),
+    "nohup": (set(), 0, set(), set()),
+    "xargs": ({"-I", "--replace", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines", "-s", "--max-chars",
+               "-d", "--delimiter", "-E", "--eof", "-a", "--arg-file"}, 0, set(), set()),
+}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NEW_BRANCH = {"checkout": {"-b", "-B", "--orphan"}, "switch": {"-c", "-C", "--create", "--force-create", "--orphan"}}
 UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
@@ -122,6 +138,61 @@ def drop_redirects(args):
     return out
 
 
+def skip_wrapper(words, j, here):
+    """Past the wrapper at words[j] and its options and positionals: (index after them, directory for the
+    command it runs), or None when an option means no command runs."""
+    values, positionals, no_run, dir_opts = WRAPPERS[words[j]]
+    j += 1
+    while j < len(words) and not is_sep(words[j]) and words[j].startswith("-") and words[j] != "-":
+        w = words[j]
+        j += 1
+        if w == "--":
+            break
+        if w in ("--help", "--version"):
+            return None
+        name, eq, value = w.partition("=") if w.startswith("--") else (w, "", "")
+        letters = [(name, None)] if w.startswith("--") else [("-" + c, k) for k, c in enumerate(w[1:], 1)]
+        for opt, k in letters:
+            if opt in no_run:
+                return None
+            if opt in values:
+                if k is None:
+                    attached = value if eq else None
+                else:
+                    attached = w[k + 1:] or None
+                if attached is None:  # the value is the next word
+                    attached = words[j] if j < len(words) and not is_sep(words[j]) else ""
+                    j += 1
+                if opt in dir_opts:
+                    here = os.path.join(here, os.path.expanduser(attached.translate(UNMASK)))
+                break
+    for _ in range(positionals):
+        if j < len(words) and not is_sep(words[j]):
+            j += 1
+    while j < len(words) and ASSIGNMENT.match(words[j]):
+        j += 1
+    return j, here
+
+
+def command_start(words, i, here):
+    """Where the command that starts at words[i] really is, past prefixes, `NAME=value` words and wrappers:
+    (index, directory it runs in, whether a wrapper stands before it), or None when no command runs."""
+    wrapped = False
+    while i < len(words) and not is_sep(words[i]):
+        w = words[i]
+        if w in PREFIXES or ASSIGNMENT.match(w):
+            i += 1
+        elif w in WRAPPERS:
+            wrapped = True
+            r = skip_wrapper(words, i, here)
+            if r is None:
+                return None
+            i, here = r
+        else:
+            return i, here, wrapped
+    return None
+
+
 def repo_of(at):
     """The repository (worktree) a directory belongs to, so `git -C sub switch` and a commit at the root match."""
     r = subprocess.run(["git", "-C", at, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
@@ -130,6 +201,8 @@ def repo_of(at):
 
 def switch_target(sub, args, at):
     """The branch `git <sub> <args>` moves to, `?` if it can't be known, None if it doesn't switch."""
+    if args[-1:] == ["--"]:  # no word after the `--`: reads as without it
+        args = args[:-1]
     words = []
     for a in args:  # attached values: --create=x, -bx
         name, eq, value = a.partition("=")
@@ -181,18 +254,23 @@ def main():
                 elif ch == ")" and outer:
                     here = outer.pop()
             continue
-        if not start or w in PREFIXES:
-            continue
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):  # an env assignment before the command
+        if not start:
             continue
         start = False
+        found = command_start(words, i, here)
+        if found is None:
+            continue
+        i, cwd, wrapped = found
+        w = words[i]
         if w == "cd":
+            if wrapped:  # runs as a separate program
+                continue
             args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[i + 1:]))
             dirs = [a for a in args if not a.startswith("-")]  # `cd -- dir`, `cd -P dir`; `cd -` stays put
             if dirs or not args:
                 here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
         elif os.path.basename(w) == "git":
-            j, at = i + 1, here
+            j, at = i + 1, cwd
             while j < len(words) and words[j].startswith("-"):
                 if words[j] == "-C" and j + 1 < len(words):
                     at = os.path.join(at, os.path.expanduser(words[j + 1].translate(UNMASK)))
