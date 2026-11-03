@@ -160,3 +160,6 @@ Calvin on plan.md (the owner's rule before Execute): one pass in report mode, 33
 - C23 per the owner's ruling above. C25: which commands, how the trace is reported (`TRACE_FILE`), which literal applies, the trailing-`--` wording, and the controls run C5's `switch` form. C27: "built from the git list" pinned to `commit_target.py:156`'s form.
 Answered: Scope's bash-suite cases moved to pytest by D4 (C8, C10, C20 run both hooks); C25/C27 read internals because the must-not is about internals; C23 runs the suites inside pytest so pd-proof's JUnit carries B16; sequence equality is the simplest exact form of the must-not; tags name the expectation a case serves.
 Dismissed: a test with an artificially low recursion limit for `scan`'s `RecursionError` catch (real input stays far below the limit, shape.md Risks; the catch is defensive).
+
+## 2026-11-03 19:23+08:00 phase create-plan -> implement
+Calvin on plan.md answered (note above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
