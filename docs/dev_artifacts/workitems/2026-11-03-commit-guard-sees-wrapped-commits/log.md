@@ -135,3 +135,11 @@ Invalidates: plan.md C23, C25.
 Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, the QA pass on the simplification 5a02ab66..c4474325 (brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/simplify-qa-brief-1.md). C25's five sequences match traces of the unwrapped forms; the extra-call and doubled-`repo_of` controls and C27's three controls fail as they must; B1 to B15 keep their cases. One blocker on C23.
 - Q1 blocker plan.md:55 — on `main` after the merge, `git merge-base origin/main HEAD` is HEAD, so C23's "suites unchanged" diff passes for any committed edit; asks for a fixed baseline, b230ae35.
 Rejects: Q1 — B16 is a property of this change: on the task branch and in pull-request CI the merge base is the fork point, so the diff catches any edit this change makes to the two suites. A fixed baseline would fail on every later, legitimate edit of either suite by another work item. The text before this round ("against the work item's base") was equally vacuous on `main`, so the simplification lost nothing. Proposed for the user's decision.
+
+## 2026-11-03 19:04+08:00 decision
+Q: C23's base — keep `merge-base origin/main HEAD` (a real check on the branch and in PR CI, a no-op on main after the merge), a fixed baseline b230ae35, or drop the diff?
+A (user, verbatim): "Keep merge-base (Recommended)"
+Closes: review@2026-11-03 19:03+08:00#Q1
+
+## 2026-11-03 19:04+08:00 phase create-plan -> implement
+Simplification applied and QA-checked; Q1 closed by the owner (decision above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
