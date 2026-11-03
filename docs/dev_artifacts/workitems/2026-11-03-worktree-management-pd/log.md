@@ -157,3 +157,15 @@ Decisions:
 - whether M1's fix past the cap (C30's literal now carries shape.md:197's argument list, `branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`) ends the review loop: asked of the user.
 Assumptions:
 - A1: the fix is mechanical — it copies shape.md:197's argv into C30's literal and changes no other case.
+
+## 2026-11-03 13:40+08:00 decision
+Q: does M1's fix past the cap (C30's literal carrying shape.md:197's argument list) end the plan review loop?
+A (user, verbatim): "Accept the fix (Recommended)"
+answers: capped@2026-11-03 12:57+08:00
+Closes: review@2026-11-03 12:57+08:00#M1
+
+## 2026-11-03 13:40+08:00 phase create-plan -> implement
+Plan review loop ended: R1 to R6, N1 and N2 resolved by revision; M1 closed by the owner (decision above). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 13:40+08:00 note
+Goal-run offer skipped: the owner scoped this round to investigate, design and plan the three backlog items, with no Execute ("proceed to investigate, design and plan for three open backlog items in this round").
