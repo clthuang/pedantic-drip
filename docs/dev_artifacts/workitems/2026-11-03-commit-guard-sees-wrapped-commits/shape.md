@@ -59,7 +59,7 @@ B12: on `main`, `timeout 30 git commit -m t` through `pre-commit-guard.sh` -> th
 B13: a staged `log.md` that fails `pd-lint`, committed as `bash -c 'git commit -m x'` through `pd-commit-lint.sh` -> exit 2.
 B14: `timeout 30 echo git commit`, `sudo -u alice echo git commit`, `command -v git commit`, `sudo -l git commit`, `bash -c 'echo "git commit"'`, `bash ./commit.sh` and `echo "timeout 30 git commit"` -> not seen.
 B15: `timeout 30`, `bash -c`, `env -u`, `bash -c 'echo "unclosed'; git commit -m x` and six nested `bash -c` levels around a commit -> no traceback; the first three and the six-level one not seen, the unclosed-quote one seen at `<cwd>` (the unparseable script is skipped as a unit, the commands beside it still count).
-B16: every existing case in `plugins/pd/hooks/tests/test-hooks.sh` test 10c and in `test-pd-commit-lint.sh` keeps its text and its expected outcome, and passes. Among them, the quoted-prose cases that pin 8.0.2's false-reminder fix (`test-hooks.sh:230`, `:239`, `:244`).
+B16: `bash plugins/pd/hooks/tests/test-hooks.sh` and `bash plugins/pd/hooks/tests/test-pd-commit-lint.sh` -> every existing case passes with its text and expected outcome unchanged, the quoted-prose cases that pin 8.0.2's false-reminder fix included (`test-hooks.sh:230`, `:239`, `:244`).
 
 Already seen today, kept as regression cases: `env FOO=1 git commit -m x`, `sudo git commit -m x`, `exec git commit -m x`, `git checkout main -- README.md && git commit -m t`.
 
