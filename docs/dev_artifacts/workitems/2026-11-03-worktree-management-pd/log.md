@@ -33,3 +33,16 @@ To the conductor (wording or consistency, each answered by a revision):
 - rows 9, 10, 11, 12, 14: the Callers section: exit 1 and exit 2 handling, Execute after every run end, all of `<id>`'s worktrees, the exit-code rule.
 - rows 13, 18, 19, 25: five worktree states, dead-session locks, a task worktree defined by its branch wherever it lives, the main checkout case (B13).
 - rows 16, 17, 20, 21, 22, 23, 24: any `## Now` line counts (B9), stale lines are a non-goal, the `no work item` reason, B14's line format and order, every session-start source (B16), `pd-status`'s docstring in scope, the Claude Code page sections named.
+
+## 2026-11-03 11:28+08:00 review calvin cycle 2 — calvin-runner
+Ledger: agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/calvin-cycle-2.md. Verdict: 3 blockers, 10 warnings, 11 notes; cycle 1: 22 rows answered, 4 partly (3, 24, 25, 26), now answered. All 24 answered and `## Requirements` revised.
+Closes: review@2026-11-03 11:19+08:00#R1, review@2026-11-03 11:19+08:00#R2, review@2026-11-03 11:19+08:00#R3, review@2026-11-03 11:19+08:00#R4, review@2026-11-03 11:19+08:00#R5, review@2026-11-03 11:19+08:00#R6, review@2026-11-03 11:19+08:00#R7
+- R1 blocker shape.md:66 — abandon's work item directory lives only on its branch; abandon calls the script before switching off it, and a known work item now includes one with only branches.
+- R2 blocker shape.md:42 — `-d` against `HEAD` keeps strays of an abandoned branch; a stray is deleted when another branch contains its tip (loses no commit), else kept and printed.
+- R3 blocker shape.md:91 — a stray's line has no id; it prints `-`.
+To the user: none.
+To the conductor (wording or consistency, each answered by a revision):
+- rows 4, 5, 6, 7, 8, 9, 10: Callers: Execute calls after the line is cleared; run-in-flight exit 1 stops for the user; only a kept worktree's branch stays, the rest goes on; after "discard" the caller goes on; the wrong-test move offers discard or stop, never keep-and-continue.
+- rows 11, 12, 13, 15, 16, 17, 18: state precedence; the main checkout counts as a task worktree; exit 2 on a mid-way git failure with the lines printed so far; "removed" wording; strays only without `--task` (B8); another run's strays; strays come from any Workflow-tool agent.
+- rows 14, 19, 20, 21: the gone-entry check cited (scratch repo, git 2.54.0); "done" excuses anything reported and kept; one line per leftover, a held branch not repeated; the dead-lock release quoted from the worktrees page.
+- rows 22, 23, 24: only work items visible in this checkout are judged (B15); the section opens with what to run; the four docs that list scripts named (grep for `pd-review-filter`).
