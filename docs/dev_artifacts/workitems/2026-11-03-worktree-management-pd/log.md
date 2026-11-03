@@ -169,3 +169,12 @@ Plan review loop ended: R1 to R6, N1 and N2 resolved by revision; M1 closed by t
 
 ## 2026-11-03 13:40+08:00 note
 Goal-run offer skipped: the owner scoped this round to investigate, design and plan the three backlog items, with no Execute ("proceed to investigate, design and plan for three open backlog items in this round").
+
+## 2026-11-03 18:57+08:00 review design and plan, simplification — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of shape.md ## Design and plan.md at 4c3b1edc (the owner's ask: "use agents to code review, QA, and simplify implementation without compromising functionality"; brief agent_sandbox/2026-11-03/2026-11-03-worktree-management-pd/simplify-brief-1.md). Two cuts proposed, no blocker.
+- R1 warning plan.md:48 — C23 replays every `wt` call of C1 to C22 under the logging git; instead every `wt` call runs under it and checks the must-nots right after, the fakes logging too. No behavioral assertion goes; C23 stays as the guard's negative control.
+- R2 warning shape.md:179 — list each stray's ref and tip in one `git for-each-ref --format='%(refname) %(objectname)'` and drop the per-stray `git rev-parse`. Checked on git 2.54.0: the listed object id equals `rev-parse` for a plain and a symbolic `worktree-wf_*` ref, and `update-ref --no-deref -d` with it removes only the alias, its target kept. Containment, the re-read and the compare-and-delete are unchanged, so review@2026-11-03 12:21+08:00#R1 and review@2026-11-03 12:34+08:00#N1/#N3 stay answered.
+
+## 2026-11-03 18:57+08:00 phase implement -> design (back)
+Reason: the simplification review above (R1, R2). Nothing has executed.
+Invalidates: shape.md ## Design (the stray listing, GitSurface (pd-worktrees)); plan.md from_shape, C23.
