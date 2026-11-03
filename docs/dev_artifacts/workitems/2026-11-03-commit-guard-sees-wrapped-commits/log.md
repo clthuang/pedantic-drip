@@ -122,3 +122,11 @@ Invalidates: plan.md C25.
 
 ## 2026-11-03 12:55+08:00 phase-2 create-plan -> implement
 C25 now reads its baseline at b230ae35 (checked: `git show b230ae35:plugins/pd/hooks/lib/commit_target.py` prints the pre-change `repo_of`). Plan exit check passed (phase-gate.sh create-plan, pd-lint clean).
+
+## 2026-11-03 18:56+08:00 review plan, simplification — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, a simplification review of shape.md ## Design and plan.md at 5a02ab66 (the owner's ask: "use agents to code review, QA, and simplify implementation without compromising functionality"; brief agent_sandbox/2026-11-03/2026-11-03-commit-guard-sees-wrapped-commits/simplify-brief-1.md). One cut proposed, no blocker found.
+- R1 warning plan.md:56 — replace C25's comparison against the pre-change parser (each command's unwrapped form run through b230ae35's `commit_target.py`) with explicit expected git argv sequences, five patterns; keep the audit harness, both negative controls and C27. Checked by tracing today's `commit_target.py` with an audit hook: the five patterns hold (none; two `rev-parse --show-toplevel` after a switch; `show-ref` then two root queries for `checkout main`; plus `rev-parse --verify` for `HEAD~0`; `show-ref` and `rev-parse --verify` alone for `nosuch`). The trace also shows the current C25 fails a correct implementation: C8 and C24 have no wrapper, so their unwrapped form is the command itself, which today makes 0 git calls (`git checkout main --` isn't read as a switch, the B10 defect) while the fix must make 3.
+
+## 2026-11-03 18:56+08:00 phase implement -> create-plan (back)
+Reason: the simplification review above. C25 compares against the pre-change parser, which fails a correct implementation on C8 and C24; explicit sequences are simpler and correct. Also C23 diffs the two hook suites "against the work item's base", unnamed: in pull-request CI there is no local `main` (actions/checkout leaves a detached merge ref, ci.yml:13-15), so it is named `origin/main`. Nothing has executed. Second backward move: a retro is owed at Finish.
+Invalidates: plan.md C23, C25.
