@@ -102,3 +102,10 @@ Criteria signed off (decision above); calvin loop ended by the owner after cycle
 
 ## 2026-11-03 12:08+08:00 note
 Grounding: the conductor read plugins/pd/agents/codebase-explorer.md in full, validate.sh:385-429 (agent_roles_errors and its fixture), and both skills' review checklists this session; no codebase-explorer dispatch, since the explorer is the thing changing and its report would restate that read.
+
+## 2026-11-03 12:14+08:00 review joint design and plan — codex
+Reviewer: codex:codex-rescue, gpt-6-astra at xhigh, on commit a4c70fb3 (brief agent_sandbox/2026-11-03/2026-11-03-codebase-explorer-uses-codegraph/review-brief-1.md). Verdict: not approved; 3 blockers. Each claim checked at file:line before acting; all three hold.
+- R1 blocker shape.md: — ExplorerDispatch gave one output shape though research-fanout supplies its own FINDINGS schema (`research-fanout.js:25`, passed at `:34`); the contract now has the supplied-schema branch, `search` not carried, and C11 pins it.
+- R2 blocker plan.md: — no case for the symbol-free query or the several-calls rule; SearchOrder now states both, and C10 pins them in the agent text.
+- R3 blocker plan.md:26 — C6 checked field presence, weaker than "search is the only change"; it now asserts the exact key sets of both examples.
+Fix cycle 1 of 3: shape.md `## Design` and plan.md revised; pd-lint and `phase-gate.sh design` pass. Next: a scoped re-review.
