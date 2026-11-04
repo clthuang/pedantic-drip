@@ -397,3 +397,10 @@ Calvin cycle 3, scoped to the cycle-2 ledger and 6bfcacc6..bb26034f. Ledger: age
 - Row 29: answered: a symbolic stray whose tip no vouching branch contains is reported `kept (unique commits)`, read from its tip; conservative, and deleting it would have lost nothing.
 - Row 30: answered: the second run sees a changed repository (S gone), so T's deletion then is intended; C44 pins the one-run case.
 - Rows 32, 33: answered: with stdout closed by its reader, the caller learns what was left by running `pd-worktrees <id>` again; exit 1 survives a closed pipe by the same rule B22 pins for exit 0.
+
+## 2026-11-04 18:05+08:00 decision
+Q: criteria signed off?
+A (user, verbatim): "Signed off (Recommended)"
+
+## 2026-11-04 18:05+08:00 phase specify -> design
+Criteria signed off (decision above), after the back-move from Verify (phase verify -> specify (back) @2026-11-04 17:43+08:00); calvin loop ended at cycle 3 with no blocker (review@2026-11-04 17:56+08:00).

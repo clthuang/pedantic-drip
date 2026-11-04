@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: specify
+phase: design
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Criteria (back from Verify): the stray rules for a symbolic branch (Q8, Q9) and a `/` in the name (Q5), and a quiet early-closed pipe (Q6); then calvin and your sign-off, design, plan task 5, Verify run 3.
+Contracts (back from Verify): add to `## Design` the stray listing over all of `refs/heads/` (Q5), the symbolic-branch read and keep rule (Q8, Q9), and the quiet closed pipe (Q6); then the scoped review, plan task 5, Verify run 3.
 
 ## Links
 
