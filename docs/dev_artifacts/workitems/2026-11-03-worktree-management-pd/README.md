@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: verify
+phase: design
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Verify run 1 done (R2 to R8 fixed, battery passes at 44433ea8); settling R1's rejection, the risk signals and QA's warnings with the user.
+Design (back from Verify): pin `%(refname)` in GitSurface and LeftoverSection (R1), fix LeftoverSection's signature (Q8), add the usage errors for Q3 and Q7; then a plan task 4 for those plus Q4, Q6 and Q10.
 
 ## Links
 

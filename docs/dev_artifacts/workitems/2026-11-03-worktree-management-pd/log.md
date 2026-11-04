@@ -276,3 +276,20 @@ Fixed: R6 by cfa37f76 — plugins/pd/scripts/test_pd_worktrees.py::test_c3_dirty
 Fixed: R7 by cfa37f76 — plugins/pd/scripts/test_pd_status_leftovers.py::test_c27_run_in_flight_and_other_branch_items_not_listed now asserts exit 0 and positive controls for both exclusions
 Fixed: R8 by cfa37f76 — removal finding, no test: deleted the unused retro option and its branch from make_item()
 Closes: review@2026-11-04 14:09+08:00#R2, review@2026-11-04 14:09+08:00#R3, review@2026-11-04 14:09+08:00#R4, review@2026-11-04 14:09+08:00#R5, review@2026-11-04 14:09+08:00#R6, review@2026-11-04 14:09+08:00#R7, review@2026-11-04 14:09+08:00#R8
+
+## 2026-11-04 16:04+08:00 decision
+Q: review@2026-11-04 14:09+08:00#R1, a blocker whose fix the fixer rejected because it needs shape.md's pinned `--format=%(refname:short)` (GitSurface, pd-worktrees and pd-status) changed to `%(refname)`: a tag named like a stray branch makes git print `heads/worktree-wf_x`, so the stray vouches for itself and is deleted with its unique commits. Accept the contract change and go back to design, or waive R1?
+A (user, verbatim): "Accept, back to design (Recommended)"
+Closes: review@2026-11-04 14:09+08:00#R1
+
+## 2026-11-04 16:04+08:00 decision-2
+Q: the risk scan's security signal (qa@2026-11-04 14:09+08:00#Q1, qa@2026-11-04 14:09+08:00#Q2), pattern `\btokens?\b`: `plugins/pd/scripts/conftest.py:27: for token in raw.split(b"\0"):` and `plugins/pd/scripts/pd_common.py` worktrees(): `for token in r.stdout.split(b"\0"):`. Set `risk: [security]`, or clear it?
+A (user, verbatim): "Clear it (Recommended)"
+
+## 2026-11-04 16:04+08:00 decision-3
+Q: QA's open warnings and notes qa@2026-11-04 14:09+08:00#Q3 (`..` and `.` accepted as a work item), #Q4 (C25 can't catch a held branch listed twice), #Q6 (callers run a bare `pd-worktrees`), #Q7 (`--strays --remove --task 1` does nothing, exit 0) and #Q10 (a stray `trace.jsonl` committed by the fixer): fix all in this item, fix Q6 and Q10 only, or backlog them?
+A (user, verbatim): "Fix all in this item (Recommended)"
+
+## 2026-11-04 16:04+08:00 phase verify -> design (back)
+Reason: R1's accepted fix changes GitSurface's pinned `%(refname:short)` for pd-worktrees and pd-status to `%(refname)`; with it, LeftoverSection's `leftovers(root, art, items)` becomes the code's `leftovers(root, items)` (qa@2026-11-04 14:09+08:00#Q8), and WorktreesCLI's exit-2 list gains an id that is `.`, `..` or holds `/` (#Q3) and `--task` with `--strays` (#Q7).
+Invalidates: shape.md ## Design's WorktreesCLI, GitSurface (pd-worktrees, pd-status) and LeftoverSection; plan.md (a task 4 follows); qa@2026-11-04 14:09+08:00 (its commit predates the fix).
