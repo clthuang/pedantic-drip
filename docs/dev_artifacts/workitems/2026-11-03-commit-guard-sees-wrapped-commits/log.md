@@ -485,3 +485,6 @@ Closes: review@2026-11-05 06:14+08:00#S1, review@2026-11-05 06:14+08:00#S3, revi
 
 ## 2026-11-05 06:36+08:00 note
 Settling the fourth run's qa entry (no blocker, no rejection; all nine battery commands pass at e6e4bf62), the conductor's call: Q4 is the backlogged set-source-paths-test-paths item. Q5 is shape.md's Scope In wording against D4, recorded for the retro. Q6 (the bare `-` handled by an `env` case in skip_wrapper, not a WRAPPERS row) needs no contract change: shape.md:22's "Options are words starting with `-`" already makes `env -` an option word, and for the other rows a bare `-` is the command word their programs would run. The sudo `-h/-p/-T` and xargs `-d` survivors are the backlogged commit-target-pin-untested-wrappers item.
+
+## 2026-11-05 06:36+08:00 phase verify -> finish
+Verify passed: qa@2026-11-05 06:36+08:00 (all nine battery commands at e6e4bf62), review@2026-11-05 06:36+08:00 R1 to R5 fixed, closing security review@2026-11-05 06:14+08:00 S1, S3, S4.

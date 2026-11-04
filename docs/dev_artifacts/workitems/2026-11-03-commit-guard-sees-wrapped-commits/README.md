@@ -3,7 +3,7 @@ id: 2026-11-03-commit-guard-sees-wrapped-commits
 type: workitem
 title: commit guard sees wrapped commits
 status: active
-phase: verify
+phase: finish
 mode: small
 origin: backlog#2026-11-02-commit-target-py-see-commits
 branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-Verify done (fourth run's QA at e6e4bf62, battery passes; security S1, S3, S4 fixed); next Finish: the security re-check.
+Finish: the security re-check of S1, S3, S4, metrics, retro (owed), close; the merge goes in the round's combined PR.
 
 ## Links
 
