@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Ready for Verify: tasks 1 to 3 merged with proof pass (915a9fff).
+run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
