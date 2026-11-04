@@ -43,12 +43,32 @@ UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
 QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT)}  # quoted punctuation is data, not a separator
 UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
+ANSI_C_ESCAPE = re.compile(r"""\\(?:([abeEfnrtv\\'"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2}))""")
+ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 REDIRECT = re.compile(r"^\d*(?:<<?|>>?|<>)")  # a word that starts with a redirection operator
 
 
 def is_sep(w):
     """A run of shell punctuation (`;`, `&&`, `;(`, `|`): shlex groups adjacent punctuation into one word."""
     return bool(w) and not w.strip(PUNCT)
+
+
+def ansi_c(cmd, i):
+    """The `$'…'` word whose opening quote is at cmd[i]: (decoded text, index after the closing quote), or None
+    when it never closes."""
+    out, n = [], len(cmd)
+    while i + 1 < n:
+        i += 1
+        if cmd[i] == "'":
+            return "".join(out), i + 1
+        m = ANSI_C_ESCAPE.match(cmd, i) if cmd[i] == "\\" else None
+        if m:
+            simple, octal, hexa = m.groups()
+            out.append(ANSI_C_SIMPLE.get(simple, simple) if simple else chr(int(octal or hexa, 8 if octal else 16) & 0xFF))
+            i = m.end() - 1
+        else:
+            out.append(cmd[i])  # any other backslash stays as written
+    return None
 
 
 def shell_text(cmd):
@@ -85,7 +105,12 @@ def shell_text(cmd):
                 i += 1
                 continue
             subst[-1] -= 1
-        if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$'…'` and `$"…"`: the `$` is not part of the word
+        if c == "$" and cmd[i + 1:i + 2] == "'" and (word := ansi_c(cmd, i + 1)):  # `$'…'`: decoded, one quoted word
+            text = "".join(QUOTED_PUNCT.get(ch, ch) for ch in word[0])
+            out.append("'" + text.replace("'", "'\"'\"'") + "'")
+            i = word[1]
+            continue
+        if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$"…"`: the `$` is not part of the word
             i += 1
             continue
         if c in "'\"":
@@ -177,8 +202,6 @@ def skip_wrapper(words, j, here):
     for _ in range(positionals):
         if j < len(words) and not is_sep(words[j]):
             j += 1
-    while j < len(words) and ASSIGNMENT.match(words[j]):
-        j += 1
     return j, here
 
 
@@ -213,7 +236,7 @@ def shell_script(words, j):
             if letter in SHELL_VALUE_OPTIONS:
                 j += k == len(w) - 1  # `-o pipefail`; `-eo pipefail`
                 break
-            has_c = has_c or (letter == "c" and w[0] == "-")
+            has_c = has_c or letter == "c"  # `+c` runs a script too; a `+` word without `c` is a script file's name
     return words[j] if has_c and j < len(words) and not is_sep(words[j]) else None
 
 
