@@ -502,3 +502,6 @@ Verdict: approved. Commit: 06d2e10c. Branch diff main...HEAD outside docs/dev_ar
 
 ## 2026-11-04 19:10+08:00 metrics
 Mode: standard. Tokens: 9570778 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-03-worktree-management-pd.json)
+
+## 2026-11-04 19:17+08:00 note
+Docs: synced before Verify (c28a971a: CLAUDE.md:32, architecture.md, workflow-artifacts.md, usage.md, README_FOR_DEV.md), so the battery covered them; no skill, command, agent or hook was added, renamed or removed, so the component counts stand. No roadmap names this work item (no replan). The merge goes in the round's combined PR to main (owner: "once qa passed, commit and merge all in 1 pr").
