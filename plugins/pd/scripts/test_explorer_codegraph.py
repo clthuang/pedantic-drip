@@ -172,3 +172,9 @@ def test_c9_ci_and_changelog():
     unreleased = re.search(r"^## \[Unreleased\]\n(.*?)(?=^## \[)", (ROOT / "CHANGELOG.md").read_text(),
                            re.M | re.S).group(1)
     assert any("codebase-explorer" in l and "CodeGraph" in l for l in unreleased.splitlines())
+
+
+def test_c12_reply_is_the_json_object_alone():
+    block = section(AGENT.read_text(), "## Output Format")
+    assert "Reply with the JSON object alone" in block
+    assert "no text before or after it" in block
