@@ -299,3 +299,8 @@ Verdict: approved. Commit: 772bf1c2. Scoped re-review of 0351267e..772bf1c2 (sha
 
 ## 2026-11-04 16:09+08:00 phase design -> create-plan
 Design fix reviewed (review@2026-11-04 16:09+08:00, approved). Next: plan.md's task 4.
+
+## 2026-11-04 16:19+08:00 review plan — codex (fallback: no)
+Verdict: changes requested. Commit: fe3855e2. Scoped review of task 4 (772bf1c2..fe3855e2).
+- R1 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:103 — C41 already passes at the tests-only first commit (pd-status:99-112 already excludes held branches), so it proves no new code.
+- R2 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:100 — C38 checks `deleted worktree-wf_r-2` but never that `refs/heads/worktree-wf_r-2` is gone, which B6 and B19 require.
