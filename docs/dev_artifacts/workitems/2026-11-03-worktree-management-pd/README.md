@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: verify
+phase: specify
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Verify run 2 done (R1 and R2 fixed, battery passes at 1f0246ec); Q8, the fix's unsynced contract change, and QA's warnings go to the user.
+Criteria (back from Verify): the stray rules for a symbolic branch (Q8, Q9) and a `/` in the name (Q5), and a quiet early-closed pipe (Q6); then calvin and your sign-off, design, plan task 5, Verify run 3.
 
 ## Links
 

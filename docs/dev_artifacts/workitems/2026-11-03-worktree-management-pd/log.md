@@ -362,3 +362,15 @@ Criteria gaps: Cross-task drive at HEAD (scratch repo2): task-1 clean (advanced 
 Fixed: R1 by 1f0246ec — plugins/pd/scripts/test_pd_worktrees.py::test_c20b_symbolic_ref_to_a_stray_does_not_vouch (failed before the fix, committed in 18925515)
 Fixed: R2 by 18925515 — plugins/pd/scripts/test_worktree_callers.py::test_c32_implementing_step_5_clears_worktrees_after_the_run (now requires the exact text '(on "discard" the conductor runs `git worktree remove --force <path>`)'; a discard-to-keep mutant fails it)
 Closes: review@2026-11-04 16:44+08:00#R1, review@2026-11-04 16:44+08:00#R2
+
+## 2026-11-04 17:43+08:00 decision
+Q: qa@2026-11-04 16:44+08:00#Q8: Verify run 2's fixer closed R1 by making pd-worktrees:57 read `--format=%(refname) %(symref)` and skip symbolic refs, a contract change shape.md lacks. Back to design, sync shape.md in Verify, or revert the fix?
+A (user, verbatim): "Back to design (Recommended)"
+
+## 2026-11-04 17:43+08:00 decision-2
+Q: qa@2026-11-04 16:44+08:00#Q4 (C42 can't fail without the `/` guard), #Q5 (pd-status lists a stray `worktree-wf_a/b` that pd-worktrees never sees), #Q9 (deleting a stray can leave a symbolic branch pointing at it dangling) and #Q6 (BrokenPipeError on stderr when piped to `head`): fix Q4 and Q5 and backlog Q6 and Q9, fix all four, or backlog all four?
+A (user, verbatim): "Fix all four"
+
+## 2026-11-04 17:43+08:00 phase verify -> specify (back)
+Reason: "Fix all four" includes Q9, which keeps a stray a symbolic branch points at and so adds an output line to ## Requirements' `pd-worktrees` list; Q5's `/` in a stray's name and Q6's early-closed pipe are Requirements edge cases, and Q8's rule that a symbolic ref never vouches belongs in the stray Term. Design (Q8's pinned surface) follows in the same loop.
+Invalidates: shape.md ## Requirements' stray Term, the `pd-worktrees` output list, the edge cases and expectations B20 to B22 (new); ## Design's WorktreesCLI and GitSurface (pd-worktrees); plan.md (a task 5 follows); qa@2026-11-04 16:44+08:00 (its commit predates the fix).
