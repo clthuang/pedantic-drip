@@ -362,7 +362,10 @@ def test_c25_no_subprocess_for_non_commits(repo, tmp_path):
 def test_c25_leaves_no_trace_in_source_tree(repo, tmp_path):
     leftover = os.path.join(_LIB, "trace.jsonl")
     assert not os.path.exists(leftover)
-    _trace_mismatches(_SCRIPT, repo, _traced_cases(repo)[:1], tmp_path)
+    spawning = [c for c in _traced_cases(repo) if c[0] == "git checkout nosuch -- && git commit -m t"]
+    assert len(spawning) == 1 and spawning[0][2]  # a case that runs git, so the audit hook writes a trace
+    assert _trace_mismatches(_SCRIPT, repo, spawning, tmp_path) == []
+    assert os.path.exists(tmp_path / "trace.jsonl")
     assert not os.path.exists(leftover)
 
 
