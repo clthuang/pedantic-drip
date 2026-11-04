@@ -6,7 +6,7 @@
 
 - **Fixed stages:** Clarify, Criteria, Contracts, Plan, Execute, Verify, Finish. Each stage hands the next committed work. Criteria through Finish each close only when their exit check (`phase-gate.sh`) passes.
 - **State in git:** each work item is a folder of Markdown files, committed with your code.
-- **Mechanical checks:** from Criteria on, a script checks each stage's hand-off and prints one line per problem. A hook lints the work item files staged by every `git commit` Claude runs; commits you type in a terminal aren't checked.
+- **Mechanical checks:** from Criteria on, a script checks each stage's hand-off and prints one line per problem. A hook lints the work item files staged by each `git commit` in a Bash command Claude runs (one inside a script file, an `eval` or an alias isn't seen); commits you type in a terminal aren't checked.
 - **Tests first, proven per task:** each plan task runs in its own worktree, on its own branch. The merger lands a task after checking that its tests failed before the code was written and pass after; a refactor or fixture task marked `proof: green-only` only has to pass. A test that was already passing is named for the review at Verify.
 - **Bounded reviews:** at Contracts, Plan and Verify, Codex reviews first unless your CLAUDE.md disables it; otherwise, or when Codex fails twice, a Claude reviewer does. Up to three fix cycles follow. Blockers still open after that stop the run, and pd asks you what to do.
 - **Unattended runs:** a goal run drives a work item to a target stage. A Stop hook holds the run until that stage is reached with no open blocker.

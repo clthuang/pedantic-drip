@@ -48,7 +48,7 @@ A finished brainstorm or RCA becomes a work item through promotion:
 /pd:finish-workitem # security review, docs, metrics, retro if owed, merge, cleanup
 ```
 
-Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <workitem-dir>` must pass, and every `git commit` Claude runs is checked by `pd-lint --staged` (commits you type in a terminal aren't).
+Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <workitem-dir>` must pass, and each `git commit` in a Bash command Claude runs is checked by `pd-lint --staged` (not one inside a script file, an `eval` or an alias, nor commits you type in a terminal).
 
 - **calvin:** a separately installed skill ([Optional](installation.md#optional)) that questions the criteria at `/pd:specify`; without it, `/pd:specify` asks whether to sign off anyway.
 - **Small** (`--mode small`): design and plan are written in one sitting and reviewed in one joint call.

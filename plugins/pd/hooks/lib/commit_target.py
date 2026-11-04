@@ -6,7 +6,8 @@ command moved that repository to, `?` when that target can't be known (`-`, `--d
 commit, no name after `-b`/`-c`), or empty when nothing switched it (the caller reads HEAD, which is
 still current: PreToolUse runs first). Shell words, not a regex: quoted prose, comments and heredoc
 bodies aren't commands; newlines separate commands; `git -C dir`, `--no-pager`, `cd dir &&` (scoped
-to its subshell) and a leading `if`/`then`/`!` count.
+to its subshell) and a leading `if`/`then`/`!` count, and so does a `git commit` behind a wrapper
+(WRAPPERS) or inside a `-c` script of a shell in SHELLS, at any depth.
 """
 import itertools
 import json
