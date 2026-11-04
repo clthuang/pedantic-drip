@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify run 1 done (QA at 462ade63, battery passes; R1 to R5 fixed); open for the owner: R6 rejected (contract change), R7 and Q8 warnings, notes Q3 Q4 Q5 Q9 Q10.
 
 ## Links
 
