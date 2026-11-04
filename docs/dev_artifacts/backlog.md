@@ -6,3 +6,4 @@
 - [ ] 2026-11-05-commit-guard-ksh-93-runs — commit guard: ksh 93 runs a bare string argument as a command (ksh 'git commit' is unseen) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
 - [ ] 2026-11-05-commit-hooks-commit-prefilter-drops — commit hooks: the *commit* prefilter drops a quote-split commit word the parser sees (git com''mit, git co\mmit) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
 - [ ] 2026-11-05-commit-target-normalize-printed-directory — commit_target: normalize the printed directory after cd .. (sub/.. today) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-pin-untested-wrappers — commit_target: pin the untested WRAPPERS options (xargs -I {}, -d; sudo -g/-h/-p/-T), ~ on directory options, one-digit \xH (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)

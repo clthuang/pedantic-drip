@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify done (third run's QA at 02c67b6a, battery passes; R1 to R4 of every run fixed); notes and test debt backlogged; next Finish.
 
 ## Links
 
