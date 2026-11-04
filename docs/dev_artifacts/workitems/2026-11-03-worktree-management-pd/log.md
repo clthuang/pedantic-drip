@@ -381,3 +381,11 @@ Calvin cycle 1, scoped to 62c8bb38..91723351. Ledger: agent_sandbox/2026-11-04/2
 - Rows 6, 7, 8, 13: fixed (the exit-code line, the output list and the must-not point to the Term; Done means counts a stray kept for a symbolic branch). Row 13 answered: the line names the stray, like `kept (unique commits)`; nothing else to do.
 - Row 5: fixed (the edge case no longer claims pd-status lists only clearable strays).
 - Rows 9, 10, 11, 12: fixed (a closed pipe drops the output, the work finishes with its usual exit code, nothing on stderr; B22 uses a pipe closed before the run; B21 names every mode).
+
+## 2026-11-04 17:53+08:00 review specify — calvin-runner
+Calvin cycle 2, scoped to the cycle-1 ledger and 91723351..6bfcacc6. Ledger: agent_sandbox/2026-11-04/2026-11-03-worktree-management-pd/calvin-cycle-2.md (14 cycle-1 rows resolved, rows 2, 4 and 12 in part; 14 new rows, 2 blockers: rows 15, 16). Every row went to the conductor.
+- Rows 15, 16, 17, 18, 20: fixed by simplifying the stray Term: a branch's tip is what it resolves to; any symbolic branch, a stray or not, keeps the stray it points at; pointers are read once at the listing, so order doesn't change what is kept (a symbolic stray may be deleted while its target is kept that run); new B23 pins the unique-commit report and the no-vouch rule.
+- Row 22: fixed (the output reads `kept (symbolic branch)`; B20 says symbolic branch).
+- Rows 19, 21: fixed in the Term (the dangling claim cites qa@2026-11-04 16:44+08:00#Q9, git 2.54.0; losing work is the reason reported first).
+- Rows 24, 25, 26, 27, 28: fixed (an exit-2 message still goes to stderr; B22's remove run also deletes a stray; the edge case's example names B22's setup; pd-status plainly out of scope; B21 adds `pd-worktrees <id> --remove` and pd-status's exit 0).
+- Row 23: answered: pd-status lists every stray without judging it (the must-not on session-start cost); `pd-worktrees --strays --remove` prints why each kept one stays, and the header already says to delete other listed branches by hand.
