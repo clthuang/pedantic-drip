@@ -174,23 +174,23 @@ WorktreesCLI:
   --remove with nothing to remove or delete: "no worktrees for <id>", exit 0
   exit 0: every task worktree asked for was removed (kept strays don't count); --strays always, barring exit 2
   exit 1: a run in flight, or any "kept (<state>)" line
-  exit 2, "pd-worktrees: <message>" on stderr: no <id> and no --strays; <id> with --strays; --task without --remove; <id> with no
-          directory {artifacts_root}/workitems/<id>/; not in a git repository; any other git failure (the lines
+  exit 2, "pd-worktrees: <message>" on stderr: no <id> and no --strays; <id> with --strays; --task without --remove, or with --strays; an <id> that
+          is `.` or `..` or holds `/`, or has no directory {artifacts_root}/workitems/<id>/; not in a git repository; any other git failure (the lines
           already printed say what was done)
   every git call runs with cwd = the main checkout (record 0), never the invoking directory, so removing the
           worktree the caller stands in doesn't strand the calls after it; the work item's directory and README are
           read there too ("this checkout" is the main checkout); removals follow the porcelain's record order
 GitSurface (pd-worktrees): WorktreeHelpers.worktrees (at start and before each stray delete); git -C <path> status
   --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname) %(objectname)
-  refs/heads/worktree-wf_* (each stray's ref and tip, one call); git for-each-ref --contains <tip> --format=%(refname:short)
-  refs/heads/; git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>; after a failed
+  refs/heads/worktree-wf_* (each stray's ref and tip, one call); git for-each-ref --contains <tip> --format=%(refname)
+  refs/heads/ (full refs, compared with refs/heads/ dropped: D7); git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>; after a failed
   delete, git rev-parse --verify -q refs/heads/<stray>
   never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* ref
 ```
 
 ```text
 modules: plugins/pd/scripts/pd-status
-LeftoverSection: report() gains blocks["Leftover worktrees"], the last block, built by leftovers(root, art, items):
+LeftoverSection: report() gains blocks["Leftover worktrees"], the last block, built by leftovers(root, items):
   [first line, *one line per leftover], or [] (no section) when there are none or either git call fails
   first line: clear with `pd-worktrees <id> --remove` (a work item's worktrees) or `pd-worktrees --strays --remove`; delete other listed branches by hand
   leftover line: "<id>: <shown path or branch> — <reason>", "-" for a stray's id; a locked worktree's path is
@@ -201,7 +201,7 @@ LeftoverSection: report() gains blocks["Leftover worktrees"], the last block, bu
   the docstring says pd-status now also reads live git state (worktrees and branches), not only committed files
   the early `run /pd:adopt` and `no items under` returns are unchanged
 GitSurface (pd-status): WorktreeHelpers.worktrees(root), and one
-  `git branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)`; nothing else
+  `git branch --list pd/* workitem/* worktree-wf_* --format=%(refname)`, with refs/heads/ dropped (D7); nothing else
 ```
 
 ```text
@@ -213,6 +213,8 @@ LeftoverSection (kept): the awk keep test adds `sec == "Leftover worktrees"`; th
 ```text
 modules: plugins/pd/skills/implementing/SKILL.md, plugins/pd/skills/finishing-branch/SKILL.md, plugins/pd/commands/abandon-workitem.md
 CallerSteps (instructions, per ## Requirements' Callers):
+  each runs the script by its plugin path, `${CLAUDE_PLUGIN_ROOT}/scripts/pd-worktrees`, as these files run phase-gate.sh
+    and pd-lint: nothing puts it on PATH
   implementing step 5: after "Clear `run in flight:` and commit", run `pd-worktrees <id> --remove`; exit 1 -> the ask;
     exit 2 -> a hard stop before step 6
   the ask, written there once: AskUserQuestion listing each kept worktree; a "dirty" one, or a "clean" one git
@@ -236,6 +238,7 @@ CallerSteps (instructions, per ## Requirements' Callers):
 - **D4: `run in flight:` read with `sections()`, not `pd-lint`'s `RUN_RE`.** The rule is "any `## Now` line starting `run in flight:`" (`## Requirements` Terms); `RUN_RE` (`pd-lint:34`) validates the line's full shape, which a malformed line would fail and so read as no run. YAGNI.
 - **D5: the exit-1 ask written once, in `implementing` step 5.** Rejected a new reference file (`references/`): a fourth file to keep in sync for one paragraph, which every caller would still have to name. Rejected restating it in each caller: three copies drift, as the three `--force` rules did (D1's evidence). `implementing` holds it because Execute is the call that runs most often; the other three name it. Single responsibility.
 - **D6: git runs from the main checkout.** Rejected the invoking directory (`repo_root()` resolves the current checkout, `pd_common.py:144-146`): a caller standing in a task worktree would have it removed under the later calls. The main checkout is never removed (state `main checkout`).
+- **D7: branch names come from full refs, `%(refname)` with `refs/heads/` dropped, never `%(refname:short)`.** When a tag shares a branch's name, `%(refname:short)` prints `heads/<name>` (checked 2026-11-04, git 2.54.0, for `for-each-ref` and `branch --list`), so a stray containing its own tip read as a non-stray branch, vouched for itself and was deleted with its unique commits, and `pd-status` missed it as a stray (Verify's R1). The stray listing already read `%(refname)`. KISS.
 
 ### Risks
 
@@ -244,6 +247,7 @@ CallerSteps (instructions, per ## Requirements' Callers):
 | A worktree turns dirty between the state check and `git worktree remove`. | git refuses; nothing lost | WorktreesCLI re-reads the state and prints `kept (dirty)`, exit 1, and the caller asks |
 | A stray branch moves between the containment check and its delete. | its new commit lost under `git branch -D` | D2's compare-and-delete refuses a moved branch (checked: exit 1, branch kept) |
 | A worktree checks a stray out between the re-read and the delete (a window of one git call). | that worktree's branch ref deleted under it | no commit lost: the delete only succeeds at the checked tip, which a non-stray branch contains; the re-read closes all but that window |
+| A tag shares a branch's name (`worktree-wf_x`, or `pd/<id>/task-1`). | a stray vouching for itself, deleted with its unique commits | D7's full refs; a case with a same-named tag |
 | A `worktree-wf_*` name is a symbolic ref to a task or work-item branch. | that branch deleted through it | `--no-deref` (checked 2026-11-03, git 2.54.0: without it the target `workitem/x` was deleted; with it only the alias) |
 | `git worktree list -z` needs git 2.36 or later (git-worktree(1) added `-z` in 2.36). | pd-worktrees and the section fail on older git | `pd-worktrees` exits 2 with git's message; `pd-status` omits the section (B17); CI and this machine run 2.54.0 |
 | A clean worktree holding a submodule can't be removed without `--force` (git-worktree(1)). | a clean worktree left | WorktreesCLI prints `kept (clean)`, exit 1; CallerSteps' ask treats it like a dirty one |
