@@ -409,3 +409,10 @@ Criteria signed off (decision above), after the back-move from Verify (phase ver
 Verdict: changes requested. Commit: 80342aa6. Review of the Contracts change 7a5ec0fd..80342aa6 (Q5, Q6, Q8, Q9).
 - R1 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/shape.md:174 — `%(symref)` names a symbolic chain's last ref, so with `saved -> worktree-wf_r-2 -> main` the target set holds only refs/heads/main, the stray is deleted and `saved` dangles (B20, the must-not). Verified 2026-11-04, git 2.54.0: both report `refs/heads/main`; `git symbolic-ref --no-recurse refs/heads/saved` prints `refs/heads/worktree-wf_r-2`.
 - R2 warning docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/shape.md:265 — the new Risks row calls the snapshot window "one call"; it spans the run from the listing to each stray's delete (pd-worktrees:101, :118-130).
+
+## 2026-11-04 18:16+08:00 review design — codex (fallback: no)
+Verdict: approved. Commit: 84dbb1a0. Scoped re-review of 80342aa6..84dbb1a0: R1 resolved (shape.md:172-178 reads each symbolic branch's own target with `symbolic-ref --no-recurse`; :198-199 GitSurface), R2 resolved (shape.md:267 states the window). New in the diff: N1 warning shape.md:256 — D8 still said the targets "come free" beside the per-branch call; fixed (D8's rejected alternative restated).
+Closes: review@2026-11-04 18:14+08:00#R1, review@2026-11-04 18:14+08:00#R2
+
+## 2026-11-04 18:16+08:00 phase design -> create-plan
+Design fix reviewed (review@2026-11-04 18:16+08:00, approved). Next: plan.md task 5 (C44 to C48).
