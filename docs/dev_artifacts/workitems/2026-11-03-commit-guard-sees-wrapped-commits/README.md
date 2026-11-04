@@ -3,7 +3,7 @@ id: 2026-11-03-commit-guard-sees-wrapped-commits
 type: workitem
 title: commit guard sees wrapped commits
 status: active
-phase: design
+phase: create-plan
 mode: small
 origin: backlog#2026-11-02-commit-target-py-see-commits
 branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-Back at design (third backward move): amend Contracts for R7 and Q8, then plan C26 and a new task 3 (Q8, Q3, Q4, Q5, Q9), then Verify again.
+Plan Task 3 approved by the joint review; calvin on Task 3 next, then implement (task 3 only).
 
 ## Links
 
