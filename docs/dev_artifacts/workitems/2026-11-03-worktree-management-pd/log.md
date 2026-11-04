@@ -389,3 +389,11 @@ Calvin cycle 2, scoped to the cycle-1 ledger and 91723351..6bfcacc6. Ledger: age
 - Rows 19, 21: fixed in the Term (the dangling claim cites qa@2026-11-04 16:44+08:00#Q9, git 2.54.0; losing work is the reason reported first).
 - Rows 24, 25, 26, 27, 28: fixed (an exit-2 message still goes to stderr; B22's remove run also deletes a stray; the edge case's example names B22's setup; pd-status plainly out of scope; B21 adds `pd-worktrees <id> --remove` and pd-status's exit 0).
 - Row 23: answered: pd-status lists every stray without judging it (the must-not on session-start cost); `pd-worktrees --strays --remove` prints why each kept one stays, and the header already says to delete other listed branches by hand.
+
+## 2026-11-04 17:56+08:00 review specify — calvin-runner
+Calvin cycle 3, scoped to the cycle-2 ledger and 6bfcacc6..bb26034f. Ledger: agent_sandbox/2026-11-04/2026-11-03-worktree-management-pd/calvin-cycle-3.md (rows 15 to 28 resolved, 19, 20, 24 and 25 in part; 7 new rows 29 to 35, no blocker). The loop ends here. Every row went to the conductor.
+- Row 31: fixed (the dangling claim re-checked 2026-11-04 on git 2.54.0: `git branch` warns "ignoring dangling symref" and omits it; `rev-parse --verify` fails).
+- Rows 34, 35: fixed (pd-status's out-of-scope reason restored; "no branch dangles" limited to branches that existed at the listing).
+- Row 29: answered: a symbolic stray whose tip no vouching branch contains is reported `kept (unique commits)`, read from its tip; conservative, and deleting it would have lost nothing.
+- Row 30: answered: the second run sees a changed repository (S gone), so T's deletion then is intended; C44 pins the one-run case.
+- Rows 32, 33: answered: with stdout closed by its reader, the caller learns what was left by running `pd-worktrees <id>` again; exit 1 survives a closed pipe by the same rule B22 pins for exit 0.
