@@ -56,18 +56,21 @@ def is_sep(w):
 def ansi_c(cmd, i):
     """The `$'…'` word whose opening quote is at cmd[i]: (decoded text, index after the closing quote), or None
     when it never closes."""
-    out, n = [], len(cmd)
+    out, n, cut = bytearray(), len(cmd), False  # bash reads bytes: \xe4\xb8\xad is one UTF-8 character
     while i + 1 < n:
         i += 1
         if cmd[i] == "'":
-            return "".join(out), i + 1
+            return out.decode("utf-8", "replace"), i + 1
         m = ANSI_C_ESCAPE.match(cmd, i) if cmd[i] == "\\" else None
         if m:
             simple, octal, hexa = m.groups()
-            out.append(ANSI_C_SIMPLE.get(simple, simple) if simple else chr(int(octal or hexa, 8 if octal else 16) & 0xFF))
+            piece = ANSI_C_SIMPLE.get(simple, simple).encode() if simple else bytes([int(octal or hexa, 8 if octal else 16) & 0xFF])
             i = m.end() - 1
         else:
-            out.append(cmd[i])  # any other backslash stays as written
+            piece = cmd[i].encode()  # any other backslash stays as written
+        cut = cut or piece == b"\0"  # bash ends the word at a NUL but the quotes still span the rest
+        if not cut:
+            out += piece
     return None
 
 
