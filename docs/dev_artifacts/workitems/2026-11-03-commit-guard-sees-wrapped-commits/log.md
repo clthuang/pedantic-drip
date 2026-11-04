@@ -418,3 +418,6 @@ Closes: review@2026-11-05 06:06+08:00#R1, review@2026-11-05 06:06+08:00#R2, revi
 
 ## 2026-11-05 06:06+08:00 note
 Settling qa@2026-11-05 06:06+08:00 (no blocker, no rejection; battery passes at 02c67b6a), the conductor's call: the fix loop stops here. Each run's mutation sweep finds further single-option coverage gaps in the WRAPPERS table, with every input behaving correctly today (Q2 `xargs -I {}`, Q3 sudo `-g/-h/-p/-T` and xargs `-d`, Q5 `~` on a directory option, Q6 a one-digit `\xH`). They are test debt, not defects, and go to one backlog item, filed above. Q7 is the set-source-paths-test-paths backlog item; Q8 is the earlier run's Q5 (shape.md Scope In wording), for the retro.
+
+## 2026-11-05 06:06+08:00 phase verify -> finish
+Verify passed: qa@2026-11-05 06:06+08:00 (all nine battery commands at 02c67b6a), review@2026-11-05 06:06+08:00 R1 to R4 fixed; QA notes and test debt backlogged (note@2026-11-05 06:06+08:00).
