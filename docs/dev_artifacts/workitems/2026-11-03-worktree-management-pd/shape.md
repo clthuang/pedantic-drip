@@ -160,7 +160,7 @@ WorktreesCLI:
   pd-worktrees <id>                              list: "<state> <shown path> <branch>" per task worktree of <id>,
                                                  "stray <branch>" per stray, or "no worktrees for <id>"; exit 0
   pd-worktrees <id> --remove [--task <n>]...     lines: "removed <shown path>" | "deleted <branch>"
-                                                 | "kept (<state>): <shown path>" | "kept (unique commits): <branch>"
+                                                 | "kept (<state>): <shown path>" | "kept (unique commits): <branch>" | "kept (symbolic branch): <branch>"
                                                  | "run in flight: <line>"
   pd-worktrees --strays [--remove]               the stray lines only
   state, first that holds: main checkout (record 0) | locked | gone (prunable) | dirty (`git -C <path> status --porcelain`
@@ -169,8 +169,12 @@ WorktreesCLI:
           removes nothing); then each clean or gone task worktree; then, without --task, each stray
   a worktree git refuses to remove: its state read again and printed "kept (<state>)" -- "kept (clean)" when git
           refuses a clean one (a worktree holding a submodule needs --force, git-worktree(1))
+  the stray listing reads every branch once (D8): its name, its tip (through its target for a symbolic branch)
+    and its %(symref); a stray is a `worktree-wf_` name no worktree holds, and the symbolic targets are the
+    non-empty %(symref) values, fixed for the run
   a stray qualifies when `git for-each-ref --contains <its tip> refs/heads/` (the tip from the stray listing) names a
-          branch that isn't a stray; just
+    branch that is neither a stray nor a symbolic branch (its %(symref) empty), else "kept (unique commits)"; and
+    then when no symbolic target is refs/heads/<the stray>, else "kept (symbolic branch)"; just
           before its delete the worktree list is read again, and a stray a worktree now holds is no longer a stray
           (skipped, not printed); it is deleted with `git update-ref --no-deref -d refs/heads/<stray> <that tip>`:
           --no-deref so a symbolic `worktree-wf_*` ref is removed itself, never the branch it points at; the old
@@ -186,10 +190,12 @@ WorktreesCLI:
   every git call runs with cwd = the main checkout (record 0), never the invoking directory, so removing the
           worktree the caller stands in doesn't strand the calls after it; the work item's directory and README are
           read there too ("this checkout" is the main checkout); removals follow the porcelain's record order
+  stdout: each line is flushed as it is printed; a BrokenPipeError points stdout at /dev/null and the run goes on
+    (D9), so the work, the exit code and stderr are as with a reader that read everything
 GitSurface (pd-worktrees): WorktreeHelpers.worktrees (at start and before each stray delete); git -C <path> status
-  --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname) %(objectname)
-  refs/heads/worktree-wf_* (each stray's ref and tip, one call); git for-each-ref --contains <tip> --format=%(refname)
-  refs/heads/ (full refs, compared with refs/heads/ dropped: D7); git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>; after a failed
+  --porcelain (per linked task worktree not locked or gone); git for-each-ref --format=%(refname) %(objectname) %(symref)
+  refs/heads/ (every branch's ref, tip and target, one call: D8); git for-each-ref --contains <tip>
+  --format=%(refname) %(symref) refs/heads/ (full refs, compared with refs/heads/ dropped: D7); git worktree remove <path>; git update-ref --no-deref -d refs/heads/<stray> <tip>; after a failed
   delete, git rev-parse --verify -q refs/heads/<stray>
   never: --force, -f, worktree unlock, worktree prune, a delete of any pd/* or workitem/* ref
 ```
@@ -245,6 +251,8 @@ CallerSteps (instructions, per ## Requirements' Callers):
 - **D5: the exit-1 ask written once, in `implementing` step 5.** Rejected a new reference file (`references/`): a fourth file to keep in sync for one paragraph, which every caller would still have to name. Rejected restating it in each caller: three copies drift, as the three `--force` rules did (D1's evidence). `implementing` holds it because Execute is the call that runs most often; the other three name it. Single responsibility.
 - **D6: git runs from the main checkout.** Rejected the invoking directory (`repo_root()` resolves the current checkout, `pd_common.py:144-146`): a caller standing in a task worktree would have it removed under the later calls. The main checkout is never removed (state `main checkout`).
 - **D7: branch names come from full refs, `%(refname)` with `refs/heads/` dropped, never `%(refname:short)`.** When a tag shares a branch's name, `%(refname:short)` prints `heads/<name>` (checked 2026-11-04, git 2.54.0, for `for-each-ref` and `branch --list`), so a stray containing its own tip read as a non-stray branch, vouched for itself and was deleted with its unique commits, and `pd-status` missed it as a stray (Verify's R1). The stray listing already read `%(refname)`. KISS.
+- **D8: the stray listing reads all of `refs/heads/` in one `for-each-ref`, filtered by the `worktree-wf_` prefix in the script, with `%(symref)` beside each tip.** Rejected the `refs/heads/worktree-wf_*` pattern: its `*` doesn't cross a `/`, so `worktree-wf_a/b` was never listed (Verify run 2's Q5), while `pd-status`'s `git branch --list` glob does match it. Rejected a second call for symbolic branches: the same listing already holds each branch's `%(symref)`, so the symbolic targets come free and are read once, at the listing, as `## Requirements` asks (Q9). Checked 2026-11-04, git 2.54.0: one call lists `worktree-wf_a/b`, gives a symbolic branch's target in `%(symref)` and its tip through that target; `update-ref --no-deref -d` with that tip deletes a symbolic stray alone.
+- **D9: a closed stdout is the Python docs' recipe** ("Note on SIGPIPE", the `signal` module): flush each line, and on `BrokenPipeError` `os.dup2` `/dev/null` onto stdout and carry on. Rejected restoring `SIGPIPE`'s default action: the process would die mid-removal, with an exit code of its own (Q6 asks the work to finish). Rejected catching it once in `main`: output is block-buffered on a pipe, so the error surfaces at an arbitrary later print or at exit, and Python's shutdown flush prints "Exception ignored" on stderr.
 
 ### Risks
 
@@ -254,6 +262,7 @@ CallerSteps (instructions, per ## Requirements' Callers):
 | A stray branch moves between the containment check and its delete. | its new commit lost under `git branch -D` | D2's compare-and-delete refuses a moved branch (checked: exit 1, branch kept) |
 | A worktree checks a stray out between the re-read and the delete (a window of one git call). | that worktree's branch ref deleted under it | no commit lost: the delete only succeeds at the checked tip, which a non-stray branch contains; the re-read closes all but that window |
 | A tag shares a branch's name (`worktree-wf_x`, or `pd/<id>/task-1`). | a stray vouching for itself, deleted with its unique commits | D7's full refs; a case with a same-named tag |
+| A symbolic branch is pointed at a stray after the listing, before its delete. | that branch dangles | accepted: `## Requirements` limits the guarantee to branches present at the listing; the same one-call window as a stray checked out after the listing |
 | A `worktree-wf_*` name is a symbolic ref to a task or work-item branch. | that branch deleted through it | `--no-deref` (checked 2026-11-03, git 2.54.0: without it the target `workitem/x` was deleted; with it only the alias) |
 | `git worktree list -z` needs git 2.36 or later (git-worktree(1) added `-z` in 2.36). | pd-worktrees and the section fail on older git | `pd-worktrees` exits 2 with git's message; `pd-status` omits the section (B17); CI and this machine run 2.54.0 |
 | A clean worktree holding a submodule can't be removed without `--force` (git-worktree(1)). | a clean worktree left | WorktreesCLI prints `kept (clean)`, exit 1; CallerSteps' ask treats it like a dirty one |
