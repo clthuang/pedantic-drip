@@ -75,8 +75,8 @@ def delete_stray(main, name, tip, strays, targets):
     contained = git(["for-each-ref", "--contains", tip, "--format=%(refname) %(symref)", "refs/heads/"], main)
     # Full refs: with a same-named tag, %(refname:short) prints heads/<name>, and a stray would vouch for itself.
     # A symbolic ref (non-empty symref) is no independent reference: deleting its target would leave it dangling.
-    vouchers = (line.split(" ")[0].removeprefix("refs/heads/") for line in contained.split("\n")
-                if line and line.endswith(" "))
+    vouchers = (line.partition(" ")[0].removeprefix("refs/heads/") for line in contained.split("\n")
+                if line and not line.partition(" ")[2])  # git() strips the last line's empty %(symref)
     if not any(b not in strays for b in vouchers):
         return f"kept (unique commits): {name}"
     if f"refs/heads/{name}" in targets:  # deleting it would leave a symbolic branch dangling
