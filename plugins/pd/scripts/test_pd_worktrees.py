@@ -388,3 +388,28 @@ def test_c24_ci_and_changelog():
     changelog = (ROOT / "CHANGELOG.md").read_text()
     unreleased = changelog.split("## [Unreleased]")[1].split("\n## [")[0]
     assert "pd-worktrees" in unreleased
+
+
+@pytest.mark.parametrize("remove_args", [None, ("--strays", "--remove")], ids=["by-id", "strays"])
+def test_c38_same_named_tag_does_not_vouch(pd_repo, wt, remove_args):
+    unique = pd_repo.commit_on("refs/heads/main", "only this stray has it")
+    stray_on(pd_repo, "worktree-wf_r-3", unique)
+    pd_repo.git("tag", "worktree-wf_r-3", unique)
+    contained = pd_repo.tip(f"workitem/{pd_repo.id}")
+    stray_on(pd_repo, "worktree-wf_r-2", contained)
+    pd_repo.git("tag", "worktree-wf_r-2", contained)
+    r = wt(*(remove_args or (pd_repo.id, "--remove")))
+    assert multiset(r.lines) == multiset(["kept (unique commits): worktree-wf_r-3", "deleted worktree-wf_r-2"])
+    assert pd_repo.tip("worktree-wf_r-3") == unique
+    assert not pd_repo.has_branch("worktree-wf_r-2")
+    assert r.code == 0
+
+
+@pytest.mark.parametrize("args", [("..",), (".",), ("..", "--remove"), ("a/b", "--remove"),
+                                  ("--strays", "--remove", "--task", "1")])
+def test_c42_usage_errors(pd_repo, wt, args):
+    stray_on(pd_repo, "worktree-wf_r-2", pd_repo.tip(f"workitem/{pd_repo.id}"))
+    before = pd_repo.snapshot()
+    r = wt(*args)
+    assert r.stdout == "" and r.stderr.startswith("pd-worktrees:") and r.code == 2
+    assert pd_repo.snapshot() == before and pd_repo.has_branch("worktree-wf_r-2")

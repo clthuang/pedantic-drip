@@ -135,6 +135,26 @@ def test_c27_run_in_flight_and_other_branch_items_not_listed(pd_repo, task_workt
     assert f"D: {path2} \u2014 no work item" in section(pd_status(pd_repo.root).stdout, SECTION)
 
 
+def test_c39_same_named_tags_do_not_hide_branches(pd_repo):
+    make_item(pd_repo.root, "B", "done")
+    for branch in ("worktree-wf_r-1", "pd/B/task-1"):
+        pd_repo.git("branch", branch)
+        pd_repo.git("tag", branch, branch)
+    lines = section(pd_status(pd_repo.root).stdout, SECTION)
+    assert "-: worktree-wf_r-1 \u2014 stray branch" in lines
+    assert "B: pd/B/task-1 \u2014 branch of a done work item" in lines
+    assert not any("heads/" in line for line in lines)
+
+
+def test_c41_held_branches_are_listed_once_and_are_not_strays(pd_repo, task_worktree):
+    make_item(pd_repo.root, "B", "done")
+    path1 = task_worktree(1, "clean", id="B")
+    pd_repo.git("worktree", "add", "-q", "-b", "worktree-wf_held", ".claude/worktrees/wf-held")
+    lines = section(pd_status(pd_repo.root).stdout, SECTION)
+    assert [line for line in lines if line.startswith("B:")] == [f"B: {path1} \u2014 worktree after its run"]
+    assert not any("worktree-wf_held" in line for line in lines)
+
+
 def hook_context(cwd, source, home):
     r = subprocess.run(["bash", str(HOOK)], input=json.dumps({"session_id": "s1", "source": source, "cwd": str(cwd)}),
                        capture_output=True, text=True, env={**os.environ, "HOME": str(home)})
@@ -182,7 +202,7 @@ def test_c29_outside_git(pd_repo, tmp_path):
 
 def test_c30_git_cost_is_two_calls(pd_repo, task_worktree, fake_bin, tmp_path):
     expected = Counter(["rev-parse --show-toplevel", "worktree list --porcelain -z",
-                        "branch --list pd/* workitem/* worktree-wf_* --format=%(refname:short)"])
+                        "branch --list pd/* workitem/* worktree-wf_* --format=%(refname)"])
     log = tmp_path / "git.log"
 
     def calls():
