@@ -67,7 +67,7 @@ def ansi_c(cmd, i):
             piece = ANSI_C_SIMPLE.get(simple, simple).encode() if simple else bytes([int(octal or hexa, 8 if octal else 16) & 0xFF])
             i = m.end() - 1
         else:
-            piece = cmd[i].encode()  # any other backslash stays as written
+            piece = cmd[i].encode("utf-8", "surrogatepass")  # any other backslash stays as written
         cut = cut or piece == b"\0"  # bash ends the word at a NUL but the quotes still span the rest
         if not cut:
             out += piece
@@ -108,6 +108,10 @@ def shell_text(cmd):
                 i += 1
                 continue
             subst[-1] -= 1
+        if cmd.startswith("$$", i):  # the PID: pair it first so `$$'` is not an ANSI-C quote
+            out.append("$$")
+            i += 2
+            continue
         if c == "$" and cmd[i + 1:i + 2] == "'" and (word := ansi_c(cmd, i + 1)):  # `$'…'`: decoded, one quoted word
             text = "".join(QUOTED_PUNCT.get(ch, ch) for ch in word[0])
             out.append("'" + text.replace("'", "'\"'\"'") + "'")
@@ -176,10 +180,13 @@ def skip_wrapper(words, j, here):
     """Past the wrapper at words[j] and its options and positionals: (index after them, directory for the
     command it runs), or None when an option means no command runs."""
     values, positionals, no_run, dir_opts = WRAPPERS[words[j]]
+    is_env = words[j] == "env"
     j += 1
-    while j < len(words) and not is_sep(words[j]) and words[j].startswith("-") and words[j] != "-":
+    while j < len(words) and not is_sep(words[j]) and words[j].startswith("-") and (words[j] != "-" or is_env):
         w = words[j]
         j += 1
+        if w == "-":  # `env -` is `env -i`
+            continue
         if w == "--":
             break
         if w in ("--help", "--version"):
