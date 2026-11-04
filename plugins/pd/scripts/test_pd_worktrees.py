@@ -343,6 +343,15 @@ def test_c20_symbolic_ref_stray(pd_repo, wt):
     assert r.code == 0
 
 
+def test_c20b_symbolic_ref_to_a_stray_does_not_vouch(pd_repo, wt):
+    unique = pd_repo.commit_on("refs/heads/main", "only the stray has it")
+    stray_on(pd_repo, "worktree-wf_r-3", unique)
+    pd_repo.git("symbolic-ref", "refs/heads/saved", "refs/heads/worktree-wf_r-3")
+    r = wt(pd_repo.id, "--remove")
+    assert "kept (unique commits): worktree-wf_r-3" in r.lines
+    assert pd_repo.tip("worktree-wf_r-3") == unique
+
+
 def test_c21_stray_taken_by_a_worktree(pd_repo, wt, tmp_path):
     stray_on(pd_repo, "worktree-wf_r-2", pd_repo.tip(f"workitem/{pd_repo.id}"))
     r = wt(pd_repo.id, "--remove", mode="occupy", FAKE_STRAY="worktree-wf_r-2",

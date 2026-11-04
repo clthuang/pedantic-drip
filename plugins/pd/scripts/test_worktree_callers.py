@@ -45,6 +45,7 @@ def has_all(text, *needles):
 def test_c32_implementing_step_5_clears_worktrees_after_the_run():
     span = step(IMPLEMENTING, 5)
     in_order(span, "Clear `run in flight:`", REMOVE)
+    in_order(span, '(on "discard" the conductor runs `git worktree remove --force <path>`)')
     has_all(
         span,
         "whatever stopped the run",
@@ -52,7 +53,6 @@ def test_c32_implementing_step_5_clears_worktrees_after_the_run():
         "dirty",
         "clean",
         "git worktree remove --force <path>",
-        "discard",
         "Execute deletes no branch",
         "locked",
         "main checkout",
