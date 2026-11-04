@@ -541,3 +541,24 @@ def test_lint_prefilter_sees_escaped_commit(pd_repo):
     _, err, code = hook("pd-commit-lint.sh", "bash -c $'git \\x63ommit -m x'", pd_repo)
     assert code == 2
     assert "entry kind bogus" in err
+
+
+def test_dollar_dollar_pairs_before_quote(repo):
+    assert seen("echo $$'\\' ; git commit -m x ; echo '\\'", repo) == f"{repo}\t\n"
+    assert seen('echo $$"x" ; git commit -m x', repo) == f"{repo}\t\n"
+
+
+def test_env_bare_dash_is_dash_i(repo):
+    assert seen("env - PATH=/usr/bin git commit -m x", repo) == f"{repo}\t\n"
+
+
+def test_lone_surrogate_in_ansi_c_keeps_earlier_commit(repo):
+    assert seen("git commit -m x; echo $'\ud800'", repo) == f"{repo}\t\n"
+
+
+def test_wrapper_value_options_separated(repo):
+    empty_branch(repo, ["xargs -I {} git commit -m {}", "sudo -g staff git commit -m x"])
+
+
+def test_one_digit_hex_escape(repo):
+    assert seen("bash -c $'git\\x9 commit -m x'", repo) == f"{repo}\t\n"
