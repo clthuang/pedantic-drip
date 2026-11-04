@@ -374,3 +374,10 @@ A (user, verbatim): "Fix all four"
 ## 2026-11-04 17:43+08:00 phase verify -> specify (back)
 Reason: "Fix all four" includes Q9, which keeps a stray a symbolic branch points at and so adds an output line to ## Requirements' `pd-worktrees` list; Q5's `/` in a stray's name and Q6's early-closed pipe are Requirements edge cases, and Q8's rule that a symbolic ref never vouches belongs in the stray Term. Design (Q8's pinned surface) follows in the same loop.
 Invalidates: shape.md ## Requirements' stray Term, the `pd-worktrees` output list, the edge cases and expectations B20 to B22 (new); ## Design's WorktreesCLI and GitSurface (pd-worktrees); plan.md (a task 5 follows); qa@2026-11-04 16:44+08:00 (its commit predates the fix).
+
+## 2026-11-04 17:49+08:00 review specify — calvin-runner
+Calvin cycle 1, scoped to 62c8bb38..91723351. Ledger: agent_sandbox/2026-11-04/2026-11-03-worktree-management-pd/calvin-cycle-1.md (14 questions, 5 blockers: rows 1, 2, 5, 9, 11). Every row went to the conductor (wording and consistency); row 14's reason rests on the user's ruling decision-2@2026-11-04 17:43+08:00 ("Fix all four").
+- Rows 1, 2, 3, 4, 14: fixed in the stray Term (a symbolic branch defined as a `refs/heads/` ref only; the unique-commit check first, then the symbolic-branch keep; a symbolic stray keeps nothing, so order doesn't matter; what dangling breaks).
+- Rows 6, 7, 8, 13: fixed (the exit-code line, the output list and the must-not point to the Term; Done means counts a stray kept for a symbolic branch). Row 13 answered: the line names the stray, like `kept (unique commits)`; nothing else to do.
+- Row 5: fixed (the edge case no longer claims pd-status lists only clearable strays).
+- Rows 9, 10, 11, 12: fixed (a closed pipe drops the output, the work finishes with its usual exit code, nothing on stderr; B22 uses a pipe closed before the run; B21 names every mode).
