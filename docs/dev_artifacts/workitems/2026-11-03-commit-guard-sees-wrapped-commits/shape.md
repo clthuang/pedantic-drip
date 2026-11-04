@@ -117,8 +117,11 @@ Internal (tests reach it only through CommitTarget):
 Invariants:
   shell_text: quoted prose, comments and heredoc bodies stay data, at every nesting depth
     a `$'…'` word is decoded as bash's ANSI-C quoting: the escapes `\a \b \e \E \f \n \r \t \v \\ \' \" \?`, octal `\nnn` and hex `\xHH`
-      (any other backslash, `\u` and `\c` included, stays as written)
-      and is then one single-quoted word, so `bash -c $'git switch main\ngit commit -m x'` scans as two commands; `$"…"` drops its `$`
+      (any other backslash, `\u` and `\c` included, stays as written), and the decoded text is one quoted word at its own level:
+      a decoded `'` stays inside the word, and a decoded `;`, `&`, `|`, `(` or `)` is masked as quoted data (QUOTED_PUNCT) like any
+      quoted punctuation; a decoded newline is word data there too. Only a `-c` scan of that word (UNMASK, above) reads them as
+      syntax, by the inner quoting: `bash -c $'git switch main\ngit commit -m x'` scans as two commands, `echo $'\x3b' git commit` as one
+    `$"…"` drops its `$` and is a double-quoted word
   no subprocess besides GitQueries' three calls (`commit_target.py:127`, `:157`, `:159`)
 ```
 
