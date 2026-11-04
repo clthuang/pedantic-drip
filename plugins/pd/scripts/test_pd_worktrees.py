@@ -540,3 +540,26 @@ def test_c48_id_with_a_slash_is_refused(pd_repo, wt):
         r = wt(*args)
         assert r.stdout == "" and r.stderr.startswith("pd-worktrees:") and r.code == 2, args
         assert pd_repo.snapshot() == before, args
+
+
+@pytest.mark.parametrize("by_id", [True, False])
+def test_last_sorting_voucher_vouches(pd_repo, wt, by_id):
+    shared = pd_repo.commit_on("refs/heads/main", "only on zz-feature and the stray")
+    pd_repo.git("branch", "zz-feature", shared)
+    stray_on(pd_repo, "worktree-wf_a", shared)
+    r = wt(pd_repo.id, "--remove") if by_id else wt("--strays", "--remove")
+    assert "deleted worktree-wf_a" in r.lines
+    assert not pd_repo.has_branch("worktree-wf_a")
+    assert pd_repo.tip("zz-feature") == shared
+    assert r.code == 0
+
+
+def test_main_checkout_metadata_decides_run_in_flight(pd_repo, task_worktree, wt):
+    p1, p2 = task_worktree(1, "clean"), task_worktree(2, "clean")
+    pd_repo.set_now("a first line", "run in flight: implement-tasks session x")  # main checkout only
+    before = pd_repo.snapshot()
+    r = wt(pd_repo.id, "--remove", cwd=p1)
+    assert r.lines == ["run in flight: implement-tasks session x"]
+    assert pd_repo.snapshot() == before
+    assert Path(p1).exists() and Path(p2).exists()
+    assert r.code == 1
