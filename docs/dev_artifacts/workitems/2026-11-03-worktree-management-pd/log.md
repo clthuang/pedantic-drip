@@ -492,3 +492,13 @@ Done: those 11 paths added to .git/info/exclude between BEGIN/END markers; remov
 
 ## 2026-11-04 19:06+08:00 phase verify -> finish
 Verify run 3 passed: qa@2026-11-04 18:57+08:00 (all nine battery commands at b5075961), review@2026-11-04 18:57+08:00 R1 and R2 fixed; QA notes Q2 to Q5 only (Q2, Q3 cleared at decision-2@2026-11-04 16:04+08:00).
+
+## 2026-11-04 19:10+08:00 review finish — security-reviewer
+Verdict: approved. Commit: 06d2e10c. Branch diff main...HEAD outside docs/dev_artifacts (22 files); read-only, code not run.
+- S1 note plugins/pd/scripts/pd-worktrees:38 — a `clean` worktree can hold gitignored files (`agent_sandbox/`, .gitignore:50), which `git worktree remove` deletes; implementing step 5 now does this after every run. No tracked change, untracked file or commit is lost.
+- S2 note plugins/pd/skills/implementing/SKILL.md:0 — a stray vouched for by `pd/<id>/task-n` is deleted at step 5, and a later wrong-test or abandon `-D` of task-n leaves its commits unreached; its history is a subset of the discarded task's.
+- S3 note plugins/pd/scripts/pd-status:94 — a non-UTF-8 refname raises UnicodeDecodeError in pd_common.git() (text=True, strict); pd-status's section vanishes from session start and pd-worktrees exits 1, not 2. Needs a non-UTF-8 ref in packed-refs or reftable; nothing is deleted.
+- S4 note plugins/pd/scripts/pd-status:115 — branch names reach the session-start context unescaped; git's refname rules reject control bytes, so no new injection path.
+
+## 2026-11-04 19:10+08:00 metrics
+Mode: standard. Tokens: 9570778 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-03-worktree-management-pd.json)
