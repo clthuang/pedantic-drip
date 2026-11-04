@@ -144,7 +144,7 @@ The conductor fixed both by hand. Nothing is proposed for this.
 
 ## Takeaways
 
-Each lesson lands as a skill edit or a backlog item; the skill edits and the backlog lines are in commit LANDING_COMMIT.
+Each lesson lands as a skill edit or a backlog item; the skill edits and the backlog lines are in commit 77401f23.
 
 - **A rule about how an outside program behaves is a fact to probe, not wording to settle** -> skill edit, `plugins/pd/skills/specifying/SKILL.md`:
   - step 4 (`:35`) gains "A row asking how a program behaves is never a wording question: answer it with a probe, quoted in the cycle's `review` entry."
