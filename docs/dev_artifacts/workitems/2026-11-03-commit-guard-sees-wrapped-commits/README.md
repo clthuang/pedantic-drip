@@ -3,7 +3,7 @@ id: 2026-11-03-commit-guard-sees-wrapped-commits
 type: workitem
 title: commit guard sees wrapped commits
 status: active
-phase: create-plan
+phase: implement
 mode: small
 origin: backlog#2026-11-02-commit-target-py-see-commits
 branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-Plan Task 3 revised after calvin and the +c criterion; scoped Codex review next, then implement (task 3 only).
+run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 

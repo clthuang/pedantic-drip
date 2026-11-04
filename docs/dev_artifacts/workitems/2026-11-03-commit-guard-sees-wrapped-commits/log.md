@@ -291,3 +291,11 @@ Criteria change applied (decision@2026-11-05 04:57+08:00): "A `-c` script" count
 
 ## 2026-11-05 04:58+08:00 phase-2 design -> create-plan
 No contract line names the `+` rule; shape.md's only Design change in this pass is the octal and hex digit counts (calvin question 27). Plan Task 3 revised for calvin; a scoped review of 9bfb50c6..HEAD next.
+
+## 2026-11-05 05:06+08:00 review plan, scoped — codex
+Verdict: approved. Commit: fe6c8a95. Scope: 9bfb50c6..fe6c8a95 (the +c criterion, calvin's Task 3 revisions).
+- R1 note plan.md:81 — C30's `bash +x` negative holds for bash, sh, zsh and dash, but ksh 93u+ runs the argument as a command string (`ksh +x 'printf PD_SCRIPT_RAN; exit 7'` printed and exited 7); the conductor confirmed `ksh 'echo KSH_RAN; exit 5'` runs with no option at all. Outside the signed-off `-c` criterion; goes to the backlog.
+Summary: removing the sign test at commit_target.py:216 keeps value options (:213-215) and leaves all 82 existing trace inputs, `_traced_negatives` and 26 test-hooks.sh cases unchanged; C29's six positives, C30's two and C33's trace fail on today's code; C28, C31 (n=18 on 3.13.18, n=17 on 3.14.10 and 3.15.2) and C32 pass and fail their named mutations.
+
+## 2026-11-05 05:06+08:00 phase create-plan -> implement
+Plan Task 3 approved (review@2026-11-05 05:06+08:00, after review@2026-11-05 04:46+08:00 and calvin, review@2026-11-05 04:58+08:00). Implement runs task 3 only; tasks 1 and 2 stay merged.
