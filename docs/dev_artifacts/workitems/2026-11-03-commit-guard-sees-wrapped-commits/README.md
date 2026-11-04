@@ -3,7 +3,7 @@ id: 2026-11-03-commit-guard-sees-wrapped-commits
 type: workitem
 title: commit guard sees wrapped commits
 status: active
-phase: implement
+phase: verify
 mode: small
 origin: backlog#2026-11-02-commit-target-py-see-commits
 branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
