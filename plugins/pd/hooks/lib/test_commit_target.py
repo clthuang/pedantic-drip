@@ -517,3 +517,27 @@ def test_c31_recursion_limit_skips_deep_script(repo):
     assert n is not None
     r = run(deep + "; git commit -m x", n)
     assert (r.returncode, r.stdout, r.stderr) == (0, f"{repo}\t\n", "")
+
+
+def test_decoded_apostrophe_is_requoted(repo):
+    assert seen("echo $'\\'' && git commit -m x", repo) == f"{repo}\t\n"
+
+
+def test_long_equals_directory_option(repo):
+    sub = os.path.join(repo, "sub")
+    for cmd in ("env --chdir=sub git commit -m x", "sudo --chdir=sub git commit -m x"):
+        assert seen(cmd, repo) == f"{sub}\t\n", cmd
+
+
+def test_long_shell_option_is_not_command_flag(repo):
+    assert seen("bash --restricted 'git commit -m x'", repo) == ""
+
+
+def test_lint_prefilter_sees_escaped_commit(pd_repo):
+    log = next(p for p in (os.path.join(r, f) for r, _, fs in os.walk(os.path.join(pd_repo, "docs")) for f in fs) if p.endswith("/log.md"))
+    with open(log, "a") as f:
+        f.write("\n## 2026-11-03 10:00+08:00 bogus\n")
+    _git(pd_repo, "add", "-A")
+    _, err, code = hook("pd-commit-lint.sh", "bash -c $'git \\x63ommit -m x'", pd_repo)
+    assert code == 2
+    assert "entry kind bogus" in err
