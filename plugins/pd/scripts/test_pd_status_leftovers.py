@@ -155,6 +155,13 @@ def test_c41_held_branches_are_listed_once_and_are_not_strays(pd_repo, task_work
     assert not any("worktree-wf_held" in line for line in lines)
 
 
+def test_c46_pd_status_lists_a_stray_with_a_slash(pd_repo):
+    pd_repo.git("branch", "worktree-wf_a/b")
+    r = pd_status(pd_repo.root)
+    assert r.returncode == 0
+    assert "-: worktree-wf_a/b \u2014 stray branch" in section(r.stdout, SECTION)
+
+
 def hook_context(cwd, source, home):
     r = subprocess.run(["bash", str(HOOK)], input=json.dumps({"session_id": "s1", "source": source, "cwd": str(cwd)}),
                        capture_output=True, text=True, env={**os.environ, "HOME": str(home)})
