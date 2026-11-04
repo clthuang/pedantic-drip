@@ -9,6 +9,7 @@ isn't a stray contains its tip. Exit 0: all asked removals done; 1: a worktree k
 2: usage or git failure (message on stderr).
 """
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -61,9 +62,13 @@ def delete_stray(main, name, tip, strays):
     # The tip as the old value: a branch moved since the check is refused; --no-deref spares a symbolic ref's target.
     if git(["update-ref", "--no-deref", "-d", f"refs/heads/{name}", tip], main, check=False) is not None:
         return f"deleted {name}"
-    now = git(["rev-parse", "--verify", "-q", f"refs/heads/{name}"], main, check=False)
-    if now is None:
+    # git() can't tell a missing ref (rc 1 under -q) from a git failure, so read the return code here.
+    r = subprocess.run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{name}"], cwd=main, capture_output=True, text=True)
+    if r.returncode == 1:
         return None
+    if r.returncode != 0:
+        raise Fail(f"git rev-parse refs/heads/{name} failed: {r.stderr.strip()}")
+    now = r.stdout.strip()
     if now != tip:
         return f"kept (unique commits): {name}"
     raise Fail(f"git update-ref -d refs/heads/{name} failed")
@@ -91,6 +96,9 @@ def run(args):
     if args.remove and args.task:
         tasks = [w for w in tasks if int(TASK_BRANCH.match(w["branch"])["n"]) in args.task]
         strays = {}
+    if args.remove and args.id and (flight := run_in_flight(readme)):
+        print(flight)
+        return 1
     if args.id and not tasks and not strays:
         print(f"no worktrees for {args.id}")
         return 0
@@ -100,16 +108,16 @@ def run(args):
         for name in strays:
             print(f"stray {name}")
         return 0
-    if args.id and (flight := run_in_flight(readme)):
-        print(flight)
-        return 1
     code = 0
     for w in tasks:
         state = state_of(main, w)
         if state in ("clean", "gone") and git(["worktree", "remove", w["path"]], main, check=False) is not None:
             print(f"removed {shown(w['path'])}")
             continue
-        print(f"kept ({state_of(main, w) if state in ('clean', 'gone') else state}): {shown(w['path'])}")
+        if state in ("clean", "gone"):  # git refused: the lock or dirt may be new, so read the record again
+            now = next((x for x in listed_worktrees(main) if x["path"] == w["path"]), w)
+            state = state_of(main, now)
+        print(f"kept ({state}): {shown(w['path'])}")
         code = 1
     for name, tip in strays.items():
         if (line := delete_stray(main, name, tip, strays)):

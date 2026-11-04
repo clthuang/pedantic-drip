@@ -1,0 +1,2 @@
+{"popen": ["git", "-C", "/private/var/folders/61/sch8t_rj6hvfjdwcfr4sl_lw0000gn/T/pytest-of-terry/pytest-29/test_c25_only_git_queries_run0/repo", "show-ref", "--verify", "--quiet", "refs/heads/nosuch"]}
+{"popen": ["git", "-C", "/private/var/folders/61/sch8t_rj6hvfjdwcfr4sl_lw0000gn/T/pytest-of-terry/pytest-29/test_c25_only_git_queries_run0/repo", "rev-parse", "--verify", "--quiet", "nosuch^{commit}"]}
