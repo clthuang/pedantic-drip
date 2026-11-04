@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: create-plan
+phase: implement
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Plan (back from Verify): task 5 for D8, D9 and the symbolic-branch keep (C44 to C48); then the scoped review, implement-tasks, Verify run 3.
+run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
