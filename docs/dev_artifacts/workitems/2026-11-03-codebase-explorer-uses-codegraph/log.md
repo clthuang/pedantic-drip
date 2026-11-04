@@ -218,3 +218,39 @@ Closes: review@2026-11-04 19:47+08:00#R1
 ## 2026-11-04 19:54+08:00 decision
 Q: qa@2026-11-04 19:47+08:00#Q5 (warning: codebase-explorer.md:67 sends skipped items to `no_findings_reason` "or a finding", and a finding must cite `<path>:<line>`): fix it or backlog it?
 A (user, verbatim): "Re-run Verify to fix it (Recommended)"
+
+## 2026-11-04 20:10+08:00 run verify-change — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 4. Tokens: 27977. Cycles: 1. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_69c125ba-790/journal.jsonl
+Run: wf_69c125ba-790 (the owner's second run, decision@2026-11-04 19:54+08:00). Stopped: none.
+
+## 2026-11-04 20:10+08:00 review verify — codex (fallback: no)
+Verdict: changes requested. Commit: 5b5a0e11. The review confirms qa@2026-11-04 19:47+08:00#Q5 (R1).
+- R1 blocker plugins/pd/agents/codebase-explorer.md:67 — Q5 remains unfixed: the line tells the explorer to put skipped or unchecked work in no_findings_reason "or a finding". A skipped item has no file:line, so it breaks the ExplorerDispatch contract. Reword the line so a finding is allowed only when it rests on a file:line, and put every other limitation in no_findings_reason. Add a regression test that fails before the fix.
+
+## 2026-11-04 20:10+08:00 qa
+Commit: dc79ae4b
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: R1 fix holds as a text fix. In a detached scratch worktree (since removed), plugins/pd/scripts/test_explorer_codegraph.py::test_c12_limitations_go_in_no_findings_reason_not_findings fails at 1516ed20 ('1 failed, 16 passed') and passes at dc79ae4b ('17 passed'). The test pins only the wording of codebase-explorer.md:67. It cannot catch a reply that still puts a skipped item in a finding (see Q6).
+Criteria gaps: B1: validate.sh exited 0 locally at dc79ae4b. Run 1 already showed both locales (C2) and the non-vacuity of the locale pin (mutation M1). The only change since 5b5a0e11 is agent text plus one test, so no mutations were re-run. CI's validate step (ci.yml:23) was not watched at this commit.
+Criteria gaps: B2: unchanged since run 1. The fixture still checks only the total error count of 9; only C4's direct agent_roles_errors call pins the explorer line itself.
+Criteria gaps: B3, re-driven live at dc79ae4b (stream at /private/tmp/claude-501/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/scratchpad/qa-run2/b3.jsonl). codegraph was connected. The explorer made one call, mcp__codegraph__codegraph_explore('switch_target callers'), with search='codegraph'. The reply passed json.loads with keys findings/no_findings_reason/search. Finding 1 cites commit_target.py:206, the switch_target( call in main(). Finding 2 cites :131, the def, which is not a caller. The earlier sourceless 'not traced' finding (:211) is gone. No stale banner appeared, so SearchOrder step 4 is still not exercised. The stream was not copied under agent_sandbox/.
+Criteria gaps: Edge case 'a query with no symbol', driven live for the first time (stream at /private/tmp/claude-501/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/scratchpad/qa-run2/nosym.jsonl). The calls were codegraph_explore('what testing conventions exist?') as written, then Grep, then Glob, with search='codegraph, then grep'. Limitations went into no_findings_reason ('Not checked: ...') while findings were also present. Every source is <path>:<line>. The claim 'only three' test_*.py files matches `find plugins/pd -name 'test_*.py'` = 3.
+Criteria gaps: B4, B5, B6: not re-driven at dc79ae4b. The run-1 samples (at 5b5a0e11) still apply: only line 67 of the agent text changed. The 'error: <first line>' reason, the timeout branch and the 'server registered under another name' branch have never been driven live.
+Criteria gaps: B7: C8 checks that the checklist line is present verbatim. Nothing checks that a reviewer re-runs the recorded greps, and no rename has gone through the line yet.
+Criteria gaps: The research-fanout path (a schema is supplied, search is left out) has still not been driven live. Only C11 pins it, and test-workflows.mjs uses stubbed agents.
+Criteria gaps: Every agent-text test (C5 to C7, C10 to C12) pins instruction text only. No test parses a real explorer reply, so the reply format, the search value and where limitations go rest on 2 live samples in this run and 4 in run 1.
+- Q2 note plugins/pd/agents/codebase-explorer.md:75 — Still open from run 1. Step 3 counts a CodeGraph call only when it 'answered (returned results)'. An empty answer ('No relevant code found') is neither a result nor one of the three unavailable reasons, so the agent text allows no search value for it.
+- Q3 note plugins/pd/README.md:67 — Still open from run 1. The diff touches plugins/pd/README.md:67, docs/user-guide/installation.md and .claude/pd.local.md. shape.md Scope Out says the README needs no sync, and Scope In lists neither of the other two. shape.md was not updated.
+- Q4 note .claude/worktrees/wf_3ee93b9c-a5f-1:0 — Still open from run 1. This work item's task-1 worktree was not removed after the merge (implementing step 5: `pd-worktrees <id> --remove`).
+- Q5 note .claude/pd.local.md:0 — Still open from run 1. pd-lint --isolation skips this repository, so the new test file was never checked against test_paths or module rules.
+- Q6 note plugins/pd/agents/codebase-explorer.md:67 — After the R1 fix, the explorer no longer writes findings without a source, but it still puts skipped or unchecked notes inside findings that do have a valid source. Line 67 says such items go 'never in a finding'. The R1 test checks the wording only, so it cannot catch this.
+Fixed: R1 by dc79ae4b — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_limitations_go_in_no_findings_reason_not_findings (failed before the fix, committed in 1516ed20)
+Closes: review@2026-11-04 20:10+08:00#R1

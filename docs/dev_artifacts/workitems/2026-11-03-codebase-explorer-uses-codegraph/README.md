@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify done (second run's QA at dc79ae4b, battery passes; Q5 fixed); notes only; next Finish.
 
 ## Links
 
