@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `codebase-explorer` asks CodeGraph first.** It falls back to Glob, Grep and Read when CodeGraph is unavailable, and reports how it searched in `search`. A design or plan that renames something or moves a store lists its surfaces from a call-graph query plus a grep for each old name (backlog #078).
 - **Two more review checklist lines.** Designing's checklist asks for one design with no contradictions between its decisions, contract blocks, risks and diagram. Planning's asks that a claim of absence ("no caller left") name the search that would find a counterexample, and its scope.
 
 ## [8.0.2] - 2026-11-02

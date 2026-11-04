@@ -387,11 +387,11 @@ echo ""
 agent_roles_errors() {
     local dir=$1 spec name role fm tools model effort
     for spec in design-reviewer:reviewer plan-reviewer:reviewer code-quality-reviewer:reviewer security-reviewer:reviewer \
-                implementer:executor qa-executor:verifier retro-facilitator:verifier merger:merger calvin-runner:calvin; do
+                codebase-explorer:explorer implementer:executor qa-executor:verifier retro-facilitator:verifier merger:merger calvin-runner:calvin; do
         name=${spec%%:*}; role=${spec#*:}
         [ -f "$dir/$name.md" ] || { echo "$name.md is missing"; continue; }
         fm=$(sed -n '2,/^---$/p' "$dir/$name.md")
-        tools=$(echo "$fm" | sed -n 's/^tools:[[:space:]]*//p' | tr -d '[] ' | tr ',' '\n' | sort | paste -s -d, -)
+        tools=$(echo "$fm" | sed -n 's/^tools:[[:space:]]*//p' | tr -d '[] ' | tr ',' '\n' | LC_ALL=C sort | paste -s -d, -)
         model=$(echo "$fm" | sed -n 's/^model:[[:space:]]*//p')
         effort=$(echo "$fm" | sed -n 's/^effort:[[:space:]]*//p')
         case $role in
@@ -403,6 +403,8 @@ agent_roles_errors() {
                 grep -q '^## Verify before you report' "$dir/$name.md" || echo "$name: an executor keeps its verification paragraph" ;;
             verifier)
                 [ "$model/$effort" = opus/high ] || echo "$name: QA and the retro run model: opus, effort: high" ;;
+            explorer)
+                [ "$tools" = "Glob,Grep,Read,mcp__codegraph__codegraph_explore" ] || echo "$name: the explorer's tools are Glob, Grep, Read, mcp__codegraph__codegraph_explore (has $tools)" ;;
             merger)
                 case ",$tools," in *,Write,*|*,Edit,*) echo "$name: the merger has no Write or Edit" ;; esac ;;
             calvin)
@@ -422,11 +424,12 @@ perl -pi -e 's/^model:.*/model: opus/; s/^## Verify before you report/## Verify/
 perl -pi -e 's/^model:.*/model: sonnet/' "$roles_fixture/qa-executor.md"
 perl -pi -e 's/^tools:.*/tools: [Bash, Read, Write]/' "$roles_fixture/merger.md"
 perl -pi -e 's/^tools:.*/tools: [Read, Glob, Write]/' "$roles_fixture/calvin-runner.md"
+perl -pi -e 's/^tools:.*/tools: [Glob, Grep, Read, Write]/' "$roles_fixture/codebase-explorer.md"
 rm "$roles_fixture/security-reviewer.md"
 fixture_errors=$(agent_roles_errors "$roles_fixture" | grep -c . || true)
 rm -rf "$roles_fixture"
-if [ "$fixture_errors" -eq 8 ]; then log_success "Agent roles valid; the failing fixture fails all 8 checks"
-else log_error "agent-roles rule: the failing fixture raised $fixture_errors of 8 errors"; fi
+if [ "$fixture_errors" -eq 9 ]; then log_success "Agent roles valid; the failing fixture fails all 9 checks"
+else log_error "agent-roles rule: the failing fixture raised $fixture_errors of 9 errors"; fi
 echo ""
 
 # Validate commands (commands/*.md - all frontmatter fields are optional per official docs)

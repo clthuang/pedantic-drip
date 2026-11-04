@@ -39,7 +39,7 @@ jobs:
           python3 plugins/pd/scripts/pd_common.py --self-test
           uv run --script plugins/pd/scripts/pd-html.py --self-test
           node plugins/pd/workflows/tests/test-workflows.mjs
-          uv run --project plugins/pd pytest -q plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py plugins/pd/hooks/lib/test_project_root.py plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py
+          uv run --project plugins/pd pytest -q plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py plugins/pd/hooks/lib/test_project_root.py plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py plugins/pd/scripts/test_explorer_codegraph.py
 
       - name: Released CHANGELOG sections unchanged
         if: github.event_name == 'pull_request'

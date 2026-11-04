@@ -64,7 +64,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | calvin-runner | Runs the calvin skill on a work item's criteria and writes the ledger to one named path |
 | ds-analysis-reviewer | Reviews data analysis for statistical pitfalls and methodology |
 | code-quality-reviewer | Reviews implementation quality by severity |
-| codebase-explorer | Analyzes codebase for patterns and constraints |
+| codebase-explorer | Analyzes codebase for patterns and constraints, asking CodeGraph first when it's available |
 | design-reviewer | Challenges design assumptions and finds gaps (skeptic) |
 | documentation-researcher | Researches documentation state and identifies update needs |
 | documentation-writer | Writes and updates documentation |

@@ -19,6 +19,7 @@ source-workitem: thin-pd (docs/dev_artifacts/plans/2026-10-14-thin-pd-native-des
 
 - **[Codex plugin](https://github.com/openai/codex-plugin-cc):** reviews first at Contracts, Plan and Verify unless your CLAUDE.md has the line `**Codex reviewer: DISABLED**`. When it's disabled, missing or fails twice, a Claude reviewer does the review.
 - **[calvin skill](https://github.com/clthuang/calvin):** questions the criteria at Criteria, run by the `calvin-runner` agent. `/pd:init` reports it when it's missing, and without it `/pd:specify` asks whether to sign off anyway.
+- **CodeGraph:** an MCP server over a `.codegraph/` index of the repository. When its `codegraph_explore` tool is in the session, `codebase-explorer` asks it first for symbols, callers and call paths, then fills the gaps with Glob, Grep and Read; without the tool or an index, it uses Glob, Grep and Read alone.
 - **`gh`:** `/pd:finish-workitem` uses it to push, open and merge a PR when the base branch's rules require a pull request.
 
 ## Install
