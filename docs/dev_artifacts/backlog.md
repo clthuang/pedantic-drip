@@ -7,3 +7,5 @@
 - [ ] 2026-11-05-commit-hooks-commit-prefilter-drops — commit hooks: the *commit* prefilter drops a quote-split commit word the parser sees (git com''mit, git co\mmit) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
 - [ ] 2026-11-05-commit-target-normalize-printed-directory — commit_target: normalize the printed directory after cd .. (sub/.. today) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
 - [ ] 2026-11-05-commit-target-pin-untested-wrappers — commit_target: pin the untested WRAPPERS options (xargs -I {}, -d; sudo -g/-h/-p/-T), ~ on directory options, one-digit \xH (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-decode-u-u — commit_target: decode \u, \U and \cX in $'…' as bash 4.2+ does (security S2; a contract change) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-bsd-wrapper-value — commit_target: BSD wrapper value options (xargs -J/-R/-S, env -P), bash --rcfile, tab in a directory name (security S6, S7) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)

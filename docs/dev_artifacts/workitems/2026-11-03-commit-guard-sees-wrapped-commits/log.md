@@ -421,3 +421,18 @@ Settling qa@2026-11-05 06:06+08:00 (no blocker, no rejection; battery passes at 
 
 ## 2026-11-05 06:06+08:00 phase verify -> finish
 Verify passed: qa@2026-11-05 06:06+08:00 (all nine battery commands at 02c67b6a), review@2026-11-05 06:06+08:00 R1 to R4 fixed; QA notes and test debt backlogged (note@2026-11-05 06:06+08:00).
+
+## 2026-11-05 06:14+08:00 review finish — security-reviewer
+Verdict: changes requested. Commit: 40de33f8. Branch diff main...HEAD outside docs/dev_artifacts (12 files); read-only, code not run by the reviewer.
+- S1 blocker plugins/pd/hooks/lib/commit_target.py:111 — `$$'` is read as an ANSI-C quote although bash pairs `$$` (the PID) first, so `echo $$'\' ; git commit -m x ; echo '\'` hides a real top-level commit from both hooks; a regression. The conductor probed it in a temp repo: HEAD prints nothing, main's commit_target.py prints `<repo>\t`, and bash runs the middle command. Fix: pair `$$` before the `$'`/`$"` checks (line 111, and :116 for `$$"`).
+- S2 warning plugins/pd/hooks/lib/commit_target.py:46 — `\u`, `\U` and `\c` stay undecoded, as shape.md's `$'…'` line pins; bash 4.2+ decodes them (the conductor's /bin/bash 3.2 does not: `$'a\u000ab'` stays literal), so `bash -c $'git status\u000agit commit -m x'` hides a commit under a newer bash. A contract change: backlog.
+- S3 warning plugins/pd/hooks/lib/commit_target.py:180 — `env -` (the POSIX spelling of `-i`) ends option parsing, so `env - PATH=/usr/bin git commit -m x` is unseen (probed: HEAD prints nothing; main misses it too).
+- S4 note plugins/pd/hooks/lib/commit_target.py:70 — a lone surrogate in a `$'…'` body raises UnicodeEncodeError (a ValueError), caught at :289-295, so the whole command is unseen; `encode("utf-8", "surrogatepass")` removes the path.
+- S5 note plugins/pd/hooks/lib/commit_target.py:248 — a raw NUL in a directory word makes subprocess.run raise outside any try; needs a raw NUL in the hook's JSON, predates this change.
+- S6 note plugins/pd/hooks/pd-commit-lint.sh:17 — a tab in a directory name breaks the `<dir>\t<branch>` framing (also pre-commit-guard.sh:88); predates this change.
+- S7 note plugins/pd/hooks/lib/commit_target.py:35 — BSD-only value options (`xargs -J/-R/-S`, `env -P`) and `bash --rcfile f -c` are missed; shape.md's "a missed one gets a backlog line".
+- S8 note plugins/pd/hooks/lib/commit_target.py:280 — the subprocess audit holds: only the three git queries, every path after `-C`, names starting with `-` filtered (:270); no realistic input stalls the hook.
+
+## 2026-11-05 06:14+08:00 phase finish -> verify (back)
+Reason: review@2026-11-05 06:14+08:00#S1 (blocker, a regression: `$$'` read as an ANSI-C quote hides a top-level commit; probed by the conductor). The verify-change run also takes S3 (`env -`, the env row this item claims) and S4 (a lone surrogate, line 70 of the new decoder); S2 (a contract change), S5, S6 and S7 go to the backlog.
+Invalidates: nothing
