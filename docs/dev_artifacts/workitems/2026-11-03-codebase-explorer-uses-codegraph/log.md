@@ -172,3 +172,45 @@ Live B3 to B6, driven by the conductor at 3f0142f0 (claude 2.1.318, `claude -p -
 - B4 holds: cwd a `mktemp -d` git repository (no `.codegraph/` in it or above it, checked) holding `app.py` (`main()` :1, `run()` calling it :6); first call CodeGraph, which answered "isn't indexed with codegraph (no .codegraph/ directory found ...)"; `"search": "grep (codegraph unavailable: no index)"`; finding cites `app.py:6`.
 - B5 holds: as B4 with `--strict-mcp-config` and no config (init lists no MCP server); `"search": "grep (codegraph unavailable: tool not in session)"`; finding cites `app.py:6`.
 - B6 holds: `QuillarbFrobnicator` (`grep -rn` over the repository: 0 hits before the run); `"findings": []` with a non-empty `no_findings_reason`; `"search": "codegraph, then grep"`; `is_error: false`.
+
+## 2026-11-04 19:47+08:00 run verify-change — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 6. Tokens: 47823. Cycles: 2. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_6b75b6cd-7ed/journal.jsonl
+Run: wf_6b75b6cd-7ed. Stopped: none.
+
+## 2026-11-04 19:47+08:00 review verify — codex (fallback: no)
+Verdict: changes requested. Commit: 1feb0559. The review confirms review@2026-11-03 12:05+08:00#R1's open claim from the saved B4 stream (the MCP tool's own no-index answer).
+- R1 blocker plugins/pd/agents/codebase-explorer.md:76 — The default explorer response violates ExplorerDispatch's single-JSON-object contract. Require JSON-only output and validate the complete explorer handback, including trailing content.
+Closes: review@2026-11-03 12:05+08:00#R1
+
+## 2026-11-04 19:47+08:00 qa
+Commit: 99e4b4cc
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: B3 to B6 driven live by the conductor at 3f0142f0, all holding (note@2026-11-04 19:22+08:00; streams agent_sandbox/2026-11-04/2026-11-03-codebase-explorer-uses-codegraph/live/b3.jsonl to b6.jsonl), and re-driven by QA at 99e4b4cc (below).
+Criteria gaps: Q2 fix check, mechanical part: test_c12_reply_carries_no_code_fence fails at 951583ee (1 failed, 15 passed, in a detached worktree I removed afterwards) and passes at 99e4b4cc (16 passed). So the red-then-green proof holds. Like R1's test, C12 checks only the instruction text. No test parses a real reply, so the behaviour is covered only by the live samples below.
+Criteria gaps: Q2 live behaviour, re-driven at 99e4b4cc. There were 5 parallel headless dispatches (claude -p --plugin-dir plugins/pd --output-format stream-json --verbose): B3, B4, B5 (--strict-mcp-config), B6 (with the fresh name Quorvintalex40417, 0 grep -rn hits before the run) and the no-symbol query. Every handback passed a strict json.loads of the whole dedented report. None was fenced and none had trailing prose. Streams and handbacks are under /private/tmp/claude-501/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/scratchpad/qa3/ (*.jsonl, *.toolresult). This is one nondeterministic sample per case. The streams were not copied under agent_sandbox/, because QA fixes nothing.
+Criteria gaps: B1: CI's validate step (ci.yml:23) was not watched at 99e4b4cc. Only the local default-locale run was seen directly. C2 covers LC_ALL=C and en_US.UTF-8.
+Criteria gaps: B2: validate.sh still checks only the fixture's total error count (9). A role that printed two lines could hide a missing codebase-explorer line. C4 pins that line through a direct agent_roles_errors call.
+Criteria gaps: B3 at HEAD: the only call was codegraph_explore('switch_target callers') with no projectPath, and search='codegraph'. One finding cites commit_target.py:206, the switch_target( call inside main() (def at :163, no other def between). It holds, but the finding was cited from CodeGraph's output without a Read. Another finding cites :131, the def itself, not a caller. The stale-index rule (SearchOrder step 4) was never exercised live.
+Criteria gaps: B4 at HEAD: CodeGraph was called first, with projectPath passed explicitly to the scratch repo, and answered no index. Grep and Read followed, search='grep (codegraph unavailable: no index)', and the finding was app.py:6. Before the run I checked the scratch repo and every directory above it for .codegraph/ and found none. Because projectPath was passed explicitly, B4 still does not show that the server defaults to the session's project directory.
+Criteria gaps: B5 at HEAD: init lists no MCP servers, and the explorer made no CodeGraph call. It ran Grep, Glob and Read, wrote search='grep (codegraph unavailable: tool not in session)', and found app.py:6. It holds. The 'error: <first line>' reason and the 'server registered under another name' edge case were never driven live; only C5 and C10 pin their text.
+Criteria gaps: B6 at HEAD: codegraph_explore returned 'No relevant code found for "Quorvintalex40417"', then Grep ran. findings=[] with a non-empty no_findings_reason, search='codegraph, then grep', and no error. It holds only by reading the empty answer as 'answered' (Q1).
+Criteria gaps: No-symbol edge case at HEAD: codegraph_explore('what testing conventions exist?') was asked once as written. No Glob or Grep followed, and search='codegraph' matches the transcript. The Glob/Grep branch of this edge case was covered in run 2, not here.
+Criteria gaps: B7: C8 checks that the checklist line appears verbatim in both skills. No rename or store move has gone through the line yet, so no reviewer has applied it.
+Criteria gaps: research-fanout path (schema supplied, search left out): not driven live. Only C11 pins the text, and test-workflows.mjs uses stubbed agents.
+Criteria gaps: The battery ran at the same time as the 5 live sessions. All 9 commands exited 0, with Validation passed and 0 warnings. pytest over plugins/pd collected 26 tests, 16 of them from test_explorer_codegraph.py.
+Criteria gaps: pd-lint on the work-item directory: exit 0. Isolation lint was not re-run; in run 2 it skipped itself because no source_paths/test_paths are set.
+- Q1 note plugins/pd/agents/codebase-explorer.md:74 — Step 3 still counts a CodeGraph call only when it 'answered (returned results)'. An empty answer ('No relevant code found') is neither results nor one of the three unavailable reasons, so it has no allowed `search` value. B6 depends on the explorer reading it as answered.
+- Q3 note plugins/pd/README.md:67 — The diff still touches files that shape.md ## Scope lists as Out or does not list: plugins/pd/README.md:67, docs/user-guide/installation.md and .claude/pd.local.md. shape.md was not updated to match.
+- Q4 note .claude/worktrees/wf_3ee93b9c-a5f-1:0 — This work item's task worktree is still present after its merge. Under CLAUDE.md, implementing step 5 removes task worktrees with pd-worktrees <id> --remove.
+- Q5 warning plugins/pd/agents/codebase-explorer.md:67 — Line 67 (the R1/Q2 output line) sends anything skipped or unchecked to 'no_findings_reason or a finding'. A finding about something not checked has no file to cite, so the explorer writes a source that breaks the pinned contract `"source": "<path>:<line>"` (shape.md ExplorerDispatch). No test checks the source format of a real reply.
+Fixed: R1 by 669643b6 — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_reply_is_the_json_object_alone (failed before the fix, committed in edb60e6c)
+Fixed: Q2 by 99e4b4cc — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_reply_carries_no_code_fence (failed before the fix, committed in 951583ee)
+Closes: review@2026-11-04 19:47+08:00#R1
