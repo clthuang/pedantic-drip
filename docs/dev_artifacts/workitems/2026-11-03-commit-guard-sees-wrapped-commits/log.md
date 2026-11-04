@@ -496,3 +496,9 @@ Verdict: approved. Commit: 9f2ef5af. Re-checked only review@2026-11-05 06:14+08:
 - S4 note plugins/pd/hooks/lib/commit_target.py:70 — Closed: `surrogatepass` at :70 with the `replace` decode at :63 leaves no surrogate in a decoded word.
 - N1 note plugins/pd/hooks/lib/commit_target.py:357 — a lone surrogate in a directory word (`cd "\ud800" ; git commit -m x` as JSON) makes `print` (:357) or repo_of's subprocess (:255) raise, and the hooks' `|| exit 0` lets the commit through; predates this change, a sibling of the backlogged S5.
 - N2 note plugins/pd/hooks/lib/commit_target.py:226 — a wrapper called by path (`/usr/bin/env git commit -m x`, `/usr/bin/timeout 5 git commit -m x`) is not recognised, since wrappers match by exact name while shells and git match by basename (:329, :337); predates this change.
+
+## 2026-11-05 06:41+08:00 metrics
+Mode: small. Tokens: 8441493 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-03-commit-guard-sees-wrapped-commits.json)
+
+## 2026-11-05 06:41+08:00 note
+Docs: synced before Verify (67fdb6ea: README.md, plugins/pd/README.md, docs/user-guide/overview.md and usage.md, docs/dev-guide/hook-development.md, the commit_target.py docstring), so the battery covered them; the later fixes (`$'…'`, `+c`, `$$`, `env -`) change no documented behaviour, and no component was added, renamed or removed. The retro's skill-edit landings and its backlog lines go in a commit after this close, as the explorer item's did (3d10d53c), because the verify gate counts any source change after the QA commit. No roadmap names this work item (no replan). The merge goes in the round's combined PR to main.
