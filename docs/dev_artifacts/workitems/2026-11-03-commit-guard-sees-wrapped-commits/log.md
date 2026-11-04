@@ -488,3 +488,11 @@ Settling the fourth run's qa entry (no blocker, no rejection; all nine battery c
 
 ## 2026-11-05 06:36+08:00 phase verify -> finish
 Verify passed: qa@2026-11-05 06:36+08:00 (all nine battery commands at e6e4bf62), review@2026-11-05 06:36+08:00 R1 to R5 fixed, closing security review@2026-11-05 06:14+08:00 S1, S3, S4.
+
+## 2026-11-05 06:40+08:00 review finish — security-reviewer (re-check)
+Verdict: approved. Commit: 9f2ef5af. Re-checked only review@2026-11-05 06:14+08:00's S1, S3 and S4 against the fix (19b799f9, e6e4bf62); read-only, no probes run by the reviewer.
+- S1 note plugins/pd/hooks/lib/commit_target.py:111 — Closed: `$$` is consumed as one unit before the `$'` (:115) and `$"` (:120) checks; `$$$'x'`, `$$$$'x'`, `\$$'` and `$$` inside quotes read as bash reads them, and the pairing opens no new hidden path.
+- S3 note plugins/pd/hooks/lib/commit_target.py:185 — Closed: a bare `-` after `env` stays in the option loop (:183-188); `env -i -` and `env - -u FOO git commit` are seen; other wrappers unchanged. GNU env stops at `-`, so the hook may flag a commit that would not run, which errs toward flagging.
+- S4 note plugins/pd/hooks/lib/commit_target.py:70 — Closed: `surrogatepass` at :70 with the `replace` decode at :63 leaves no surrogate in a decoded word.
+- N1 note plugins/pd/hooks/lib/commit_target.py:357 — a lone surrogate in a directory word (`cd "\ud800" ; git commit -m x` as JSON) makes `print` (:357) or repo_of's subprocess (:255) raise, and the hooks' `|| exit 0` lets the commit through; predates this change, a sibling of the backlogged S5.
+- N2 note plugins/pd/hooks/lib/commit_target.py:226 — a wrapper called by path (`/usr/bin/env git commit -m x`, `/usr/bin/timeout 5 git commit -m x`) is not recognised, since wrappers match by exact name while shells and git match by basename (:329, :337); predates this change.
