@@ -254,3 +254,6 @@ Criteria gaps: Every agent-text test (C5 to C7, C10 to C12) pins instruction tex
 - Q6 note plugins/pd/agents/codebase-explorer.md:67 — After the R1 fix, the explorer no longer writes findings without a source, but it still puts skipped or unchecked notes inside findings that do have a valid source. Line 67 says such items go 'never in a finding'. The R1 test checks the wording only, so it cannot catch this.
 Fixed: R1 by dc79ae4b — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_limitations_go_in_no_findings_reason_not_findings (failed before the fix, committed in 1516ed20)
 Closes: review@2026-11-04 20:10+08:00#R1
+
+## 2026-11-04 20:10+08:00 phase verify -> finish
+Verify passed: qa@2026-11-04 20:10+08:00 (all nine battery commands at dc79ae4b), review@2026-11-04 20:10+08:00 R1 fixed; QA notes only (Q2 to Q6).
