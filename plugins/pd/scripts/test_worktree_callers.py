@@ -69,6 +69,7 @@ def test_c33_wrong_test_bullet_removes_by_task_before_branch_delete():
     bullet = wrong_test_bullet()
     in_order(bullet, "pd-worktrees <id> --remove --task <n>", "git branch -D pd/<id>/task-<n>")
     has_all(bullet, "stops the move", "`discard`", "`stop the move`")
+    in_order(bullet, "pd-worktrees <id> --remove --task <n>", "exit 2", "hard stop", "git branch -D pd/<id>/task-<n>")
     assert "--force" not in bullet
 
 

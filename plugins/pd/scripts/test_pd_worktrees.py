@@ -24,6 +24,13 @@ real = "{REAL_GIT}"
 if mode == "fail-for-each-ref" and "for-each-ref" in args:
     sys.stderr.write("fatal: fake for-each-ref failure\\n")
     sys.exit(128)
+if mode == "lock" and args[:2] == ["worktree", "remove"]:
+    subprocess.check_call([real, "worktree", "lock", args[2]])
+if mode == "fail-delete" and "update-ref" in args and "-d" in args:
+    sys.exit(1)
+if mode == "fail-delete" and "rev-parse" in args and "--verify" in args:
+    sys.stderr.write("fatal: fake rev-parse failure\\n")
+    sys.exit(128)
 code = subprocess.call([real, *args])
 if mode in ("move", "occupy") and "for-each-ref" in args and "--contains" in args:
     stray = os.environ["FAKE_STRAY"]
@@ -119,6 +126,7 @@ def test_c3_dirty_is_kept(pd_repo, task_worktree, wt):
     r = wt(pd_repo.id, "--remove")
     assert f"removed {p1}" in r.lines and f"kept (dirty): {p2}" in r.lines
     assert (Path(p2) / "untracked.txt").exists()
+    assert not Path(p1).exists() and p1 not in {w["path"] for w in pd_repo.listed()}
     assert r.code == 1
 
 
@@ -188,6 +196,28 @@ def test_c9_run_in_flight_removes_nothing(pd_repo, task_worktree, wt):
     assert r.lines == ["run in flight: implement-tasks session x"]
     assert pd_repo.snapshot() == before
     assert r.code == 1
+
+
+def test_run_in_flight_is_checked_with_nothing_to_remove(pd_repo, wt):
+    pd_repo.set_now("a first line", "run in flight: implement-tasks session x")
+    for extra in ((), ("--task", "9")):
+        r = wt(pd_repo.id, "--remove", *extra)
+        assert r.lines == ["run in flight: implement-tasks session x"]
+        assert r.code == 1
+
+
+def test_refused_removal_reads_lock_state_again(pd_repo, task_worktree, wt):
+    p1 = task_worktree(1, "clean")
+    r = wt(pd_repo.id, "--remove", mode="lock")
+    assert r.lines == [f"kept (locked): {p1}"]
+    assert r.code == 1
+
+
+def test_failed_lookup_after_failed_delete_is_exit_2(pd_repo, wt):
+    stray_on(pd_repo, "worktree-wf_r-2", pd_repo.tip(f"workitem/{pd_repo.id}"))
+    r = wt(pd_repo.id, "--remove", mode="fail-delete")
+    assert r.stderr.startswith("pd-worktrees:")
+    assert r.code == 2
 
 
 def test_c10_work_item_branch_gone(pd_repo, task_worktree, wt):

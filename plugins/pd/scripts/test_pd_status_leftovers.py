@@ -44,14 +44,12 @@ def fake_bin(tmp_path):
     return bindir
 
 
-def make_item(root, id_, status, now="", log="", retro=False):
+def make_item(root, id_, status, now="", log=""):
     d = Path(root) / "docs" / "dev_artifacts" / "workitems" / id_
     d.mkdir(parents=True)
     (d / "README.md").write_text(f"---\nid: {id_}\ntype: workitem\ntitle: {id_}\nstatus: {status}\n"
                                  f"phase: implement\nmode: standard\n---\n# {id_}\n\n## Now\n\n{now}\n\n## Links\n")
     (d / "log.md").write_text(log)
-    if retro:
-        (d / "retro.md").write_text("# Retro\n")
 
 
 def pd_status(cwd, *args, bindir=None, **env):
@@ -123,11 +121,18 @@ def test_c26_no_leftovers_and_early_reports(pd_repo, tmp_path):
 
 def test_c27_run_in_flight_and_other_branch_items_not_listed(pd_repo, task_worktree):
     pd_repo.set_now("first line", "", "run in flight: implement-tasks session y")
-    task_worktree(1, "clean")
+    path1 = task_worktree(1, "clean")
     pd_repo.git("branch", "workitem/D")
-    task_worktree(2, "clean", id="D")
-    out = pd_status(pd_repo.root).stdout
-    assert SECTION not in out and "pd/D/task-2" not in out
+    path2 = task_worktree(2, "clean", id="D")
+    r = pd_status(pd_repo.root)
+    assert r.returncode == 0, r.stderr
+    assert SECTION not in r.stdout and path1 not in r.stdout and path2 not in r.stdout
+    # Positive controls: each worktree shows once its exclusion is lifted.
+    readme = pd_repo.root / "docs" / "dev_artifacts" / "workitems" / pd_repo.id / "README.md"
+    readme.write_text(readme.read_text().replace("run in flight: implement-tasks session y", ""))
+    assert f"{pd_repo.id}: {path1} \u2014 worktree after its run" in section(pd_status(pd_repo.root).stdout, SECTION)
+    pd_repo.git("branch", "-D", "workitem/D")
+    assert f"D: {path2} \u2014 no work item" in section(pd_status(pd_repo.root).stdout, SECTION)
 
 
 def hook_context(cwd, source, home):
