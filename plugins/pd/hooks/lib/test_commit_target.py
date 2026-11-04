@@ -231,8 +231,9 @@ def test_c21_not_commits(repo):
 
 
 def test_empty_shell_argument_keeps_later_commit(repo):
-    for cmd in ("bash -c ''; git commit -m x", 'bash ""; git commit -m x', "bash '' -c 'git commit -m x'"):
+    for cmd in ("bash -c ''; git commit -m x", 'bash ""; git commit -m x'):
         assert seen(cmd, repo) == f"{repo}\t\n", cmd
+    assert seen("bash '' -c 'git commit -m x'", repo) == ""  # the empty word is the script file; `-c` comes too late
 
 
 def test_wrapper_option_without_value_stops_at_separator(repo):

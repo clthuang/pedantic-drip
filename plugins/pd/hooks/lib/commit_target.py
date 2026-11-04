@@ -85,6 +85,9 @@ def shell_text(cmd):
                 i += 1
                 continue
             subst[-1] -= 1
+        if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$'…'` and `$"…"`: the `$` is not part of the word
+            i += 1
+            continue
         if c in "'\"":
             quote = c
         elif c == "\\" and i + 1 < n:
@@ -164,7 +167,9 @@ def skip_wrapper(words, j, here):
                 else:
                     attached = w[k + 1:] or None
                 if attached is None:  # the value is the next word
-                    attached = words[j] if j < len(words) and not is_sep(words[j]) else ""
+                    if j >= len(words) or is_sep(words[j]):  # no value: the separator ends the wrapper
+                        break
+                    attached = words[j]
                     j += 1
                 if opt in dir_opts:
                     here = os.path.join(here, os.path.expanduser(attached.translate(UNMASK)))
@@ -199,7 +204,7 @@ def command_start(words, i, here):
 def shell_script(words, j):
     """The `-c` script of a shell whose arguments start at words[j], or None when it runs none."""
     has_c = False
-    while j < len(words) and not is_sep(words[j]) and words[j][0] in "-+" and len(words[j]) > 1:
+    while j < len(words) and not is_sep(words[j]) and len(words[j]) > 1 and words[j][0] in "-+":
         w = words[j]
         j += 1
         if w.startswith("--"):
