@@ -165,3 +165,10 @@ Commit: fe331ca9
 
 ## 2026-11-03 19:33+08:00 phase implement -> verify
 Implement exit check passed (phase-gate.sh implement: every plan task on a merged, proof pass line). Proving tests re-run on the branch after the merge: 14 passed.
+
+## 2026-11-04 19:22+08:00 note
+Live B3 to B6, driven by the conductor at 3f0142f0 (claude 2.1.318, `claude -p --plugin-dir /Users/terry/projects/pedantic-drip/plugins/pd --output-format stream-json --verbose < /dev/null`, streams written to the session scratchpad while running, copied to agent_sandbox/2026-11-04/2026-11-03-codebase-explorer-uses-codegraph/live/b3.jsonl to b6.jsonl). The explorer's calls are the stream messages carrying the dispatch's `parent_tool_use_id`, so A1 holds.
+- B3 holds: cwd this repository, `codegraph` connected; first call `mcp__codegraph__codegraph_explore` ("switch_target callers"); `"search": "codegraph"`; finding cites `plugins/pd/hooks/lib/commit_target.py:206` (the `switch_target(` call in `main()`, :163).
+- B4 holds: cwd a `mktemp -d` git repository (no `.codegraph/` in it or above it, checked) holding `app.py` (`main()` :1, `run()` calling it :6); first call CodeGraph, which answered "isn't indexed with codegraph (no .codegraph/ directory found ...)"; `"search": "grep (codegraph unavailable: no index)"`; finding cites `app.py:6`.
+- B5 holds: as B4 with `--strict-mcp-config` and no config (init lists no MCP server); `"search": "grep (codegraph unavailable: tool not in session)"`; finding cites `app.py:6`.
+- B6 holds: `QuillarbFrobnicator` (`grep -rn` over the repository: 0 hits before the run); `"findings": []` with a non-empty `no_findings_reason`; `"search": "codegraph, then grep"`; `is_error: false`.
