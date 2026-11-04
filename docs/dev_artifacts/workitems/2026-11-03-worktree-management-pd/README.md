@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: design
+phase: create-plan
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Design (back from Verify): pin `%(refname)` in GitSurface and LeftoverSection (R1), fix LeftoverSection's signature (Q8), add the usage errors for Q3 and Q7; then a plan task 4 for those plus Q4, Q6 and Q10.
+Plan (back from Verify): task 4 in a Wave 3 for R1's full refs, the C30 amendment, Q3, Q4, Q6, Q7 and Q10; then the Plan review.
 
 ## Links
 

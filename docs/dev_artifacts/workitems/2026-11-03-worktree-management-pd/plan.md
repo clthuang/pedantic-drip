@@ -1,5 +1,5 @@
 ---
-from_shape: a06e1ce461007f4200d74987f9f41178ea44d28b
+from_shape: ea976ce9de6f3ff81151941eeaa73432e2fcae4c
 ---
 # Plan: worktree management in pd
 
@@ -84,3 +84,22 @@ Task 3's terms: a step spans from its numbered line (`N. **`) to the next number
   - C34 [B18] (fixture: none): in `finishing-branch` step 9, expect `pd-worktrees <id> --remove` before `git branch -d`, the ask of `implementing` step 5 named for exit 1, a kept worktree's `pd/<id>/task-*` branch named as left out of the deletes, exit 2 named a hard stop before any branch delete, and no `git worktree remove` in step 9's span outside the `pd-worktrees` call.
   - C35 [B18] (fixture: none): in `abandon-workitem` step 3, expect `pd-worktrees <id> --remove` after the user accepts cleanup, run `on the work item's branch`, before "switch off" the branch, and before `git branch -D`; the ask of `implementing` step 5 named for exit 1; a kept worktree's `pd/<id>/task-*` branch named as left out of the `-D` deletes; and exit 2 named a hard stop before any branch delete.
   - C36 [B18] (fixture: none): expect `README_FOR_DEV.md`'s scripts line (the one naming `pd-review-filter`, today `:231`) to name `pd-worktrees` and its computed-state line (`:230`) to name leftover worktrees; `docs/technical/api-reference.md` to hold a `## pd-worktrees` section with both usage forms and exits 0, 1 and 2, and its `## pd-status` section to name `Leftover worktrees` and live git state; `docs/technical/architecture.md`'s `pd_common.py` line (`:79`) to name `worktrees` and `run_in_flight`; and `docs/dev-guide/commands-reference.md`'s pytest line (`:41`) to also run `plugins/pd/scripts`, its `--self-test` loop (`:23`) left as it is (`pd-worktrees` has no self-test, D3).
+
+### Wave 3
+
+#### Task 4: Verify's fixes — full refs, the usage errors, the callers' plugin path
+
+Task 4's terms: the shared terms above, and Task 3's for a step's span. `tag <name>` is `git tag <name> <that branch's tip>`, made right after the branch it shadows.
+
+- contract: shape.md ## Design (WorktreesCLI's exit 2, GitSurface (pd-worktrees), GitSurface (pd-status), LeftoverSection, CallerSteps, D7), plugins/pd/scripts/pd-worktrees, plugins/pd/scripts/pd-status
+- files: plugins/pd/scripts/pd-worktrees, plugins/pd/scripts/pd-status, plugins/pd/scripts/test_pd_worktrees.py, plugins/pd/scripts/test_pd_status_leftovers.py, plugins/pd/scripts/test_worktree_callers.py, plugins/pd/skills/implementing/SKILL.md, plugins/pd/skills/finishing-branch/SKILL.md, plugins/pd/commands/abandon-workitem.md, plugins/pd/hooks/lib/trace.jsonl (deleted: a debug trace another run's test left, which Verify's fixer committed; QA's Q10)
+- uses: plugins/pd/scripts/pd_common.py, plugins/pd/scripts/conftest.py
+- command: `uv run --project plugins/pd pytest plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py --junitxml=agent_sandbox/junit/task-4.xml`
+- junit: agent_sandbox/junit/task-4.xml
+- test cases:
+  - C38 [B6, B19] (fixture: pd_repo): with a stray `worktree-wf_r-3` holding a commit no other branch has and `tag worktree-wf_r-3`, and a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains and `tag worktree-wf_r-2`, given `wt(<id> --remove)`, expect `kept (unique commits): worktree-wf_r-3` with `refs/heads/worktree-wf_r-3` still at its tip, and `deleted worktree-wf_r-2`; exit 0. Given the same setup built again and `wt(--strays --remove)`, expect the same two lines and states; exit 0. (With a same-named tag, `%(refname:short)` prints `heads/worktree-wf_r-3`, so that stray would vouch for itself: D7.)
+  - C39 [B14] (fixture: pd_repo): with a stray `worktree-wf_r-1` and `tag worktree-wf_r-1`, and a done work item `B` (`status: done`) with a branch `pd/B/task-1` and `tag pd/B/task-1`, given `pd-status`, expect the lines `-: worktree-wf_r-1 — stray branch` and `B: pd/B/task-1 — branch of a done work item`, and no line holding `heads/`.
+  - C40 [B14] (fixture: pd_repo): amending C30, C30's test expects the `branch --list` call as `branch --list pd/* workitem/* worktree-wf_* --format=%(refname)`, the argument list `GitSurface (pd-status)` now pins; the rest of C30 is unchanged.
+  - C41 [B14] (fixture: pd_repo): with a done work item `B` whose `task_worktree(1, clean, id=B)` is still there, and a worktree at `.claude/worktrees/wf-held` on a branch `worktree-wf_held`, given `pd-status`, expect exactly one line starting `B:`, `B: <path 1> — worktree after its run`, and no line naming `worktree-wf_held`: a branch a listed worktree holds isn't listed again, and a branch a worktree holds isn't a stray (QA's Q4; listing every branch, not only those no worktree holds, fails both).
+  - C42 [B12] (fixture: pd_repo): with a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains, given `wt(..)`, `wt(.)`, `wt(.. --remove)`, `wt(a/b --remove)` and `wt(--strays --remove --task 1)`, expect each: stdout empty, stderr starting `pd-worktrees:`, exit 2, and unchanged, the stray still present (QA's Q3 and Q7).
+  - C43 [B18] (fixture: none): in each span C32 to C35 read, expect every occurrence of `pd-worktrees <id>` to be immediately preceded by `${CLAUDE_PLUGIN_ROOT}/scripts/`, the way those files run `phase-gate.sh` and `pd-lint` (QA's Q6: nothing puts `pd-worktrees` on `PATH`); and expect `plugins/pd/hooks/lib/trace.jsonl` absent from `git ls-files`.

@@ -293,3 +293,9 @@ A (user, verbatim): "Fix all in this item (Recommended)"
 ## 2026-11-04 16:04+08:00 phase verify -> design (back)
 Reason: R1's accepted fix changes GitSurface's pinned `%(refname:short)` for pd-worktrees and pd-status to `%(refname)`; with it, LeftoverSection's `leftovers(root, art, items)` becomes the code's `leftovers(root, items)` (qa@2026-11-04 14:09+08:00#Q8), and WorktreesCLI's exit-2 list gains an id that is `.`, `..` or holds `/` (#Q3) and `--task` with `--strays` (#Q7).
 Invalidates: shape.md ## Design's WorktreesCLI, GitSurface (pd-worktrees, pd-status) and LeftoverSection; plan.md (a task 4 follows); qa@2026-11-04 14:09+08:00 (its commit predates the fix).
+
+## 2026-11-04 16:09+08:00 review design — codex (fallback: no)
+Verdict: approved. Commit: 772bf1c2. Scoped re-review of 0351267e..772bf1c2 (shape.md ## Design) against review@2026-11-04 14:09+08:00#R1 and qa@2026-11-04 14:09+08:00#Q3, #Q6, #Q7, #Q8: all five resolved at the contract level, none needing a Requirements change; no new finding in the diff.
+
+## 2026-11-04 16:09+08:00 phase design -> create-plan
+Design fix reviewed (review@2026-11-04 16:09+08:00, approved). Next: plan.md's task 4.
