@@ -34,5 +34,6 @@ The Contracts stage (`phase: design`) removes one unknown: what crosses each bou
 - **One design, no contradictions:** no two parts of `## Design` (a decision, a contract block, a risk's mitigation, the diagram) state incompatible things; a decision that changes an interface changes it in its contract block.
 - **No code:** the design is semantic and contract-level; nothing under the source paths changes in this stage.
 - **Assumptions checked:** each open assumption handed in is confirmed or flagged, with file:line.
+- **External output parsed:** each git or CLI output a contract parses names the input variants it was probed against, with the command and tool version (for refs: a same-named tag, a symbolic ref and a chain of them, a `/` in the name, a last line whose trailing field is empty).
 
 A blocker is an item above that the design fails, or a `B<n>` it doesn't deliver, shown by a named input, call sequence or caller, or by the element at fault. A "what if" that names none of these is a note. Every finding cites file:line; a missing piece cites the `B<n>` or section it belongs to.

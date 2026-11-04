@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`pd-worktrees` lists and removes a work item's task worktrees.** It removes the clean and gone ones and the stray `worktree-wf_*` branches that lose no commit, never forcing, unlocking or deleting a task branch. Shared worktree parsing moved into `pd_common`.
+
 ### Changed
 
 - **Two more review checklist lines.** Designing's checklist asks for one design with no contradictions between its decisions, contract blocks, risks and diagram. Planning's asks that a claim of absence ("no caller left") name the search that would find a counterexample, and its scope.

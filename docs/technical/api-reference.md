@@ -24,7 +24,7 @@ Ids are local `YYYY-MM-DD-slug`. Inside a goal run the conductor sets `PD_GOAL_R
 pd-status              # print the state
 ```
 
-Read-only, caches nothing. Prints the items by status and phase (an active plan reads `done` once its roadmap is), each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done work items owing a retro. Takes no other argument.
+Read-only, caches nothing. Prints the items by status and phase (an active plan reads `done` once its roadmap is), each roadmap's progress and next ready item, open blockers, cap stops answered, open assumptions, on-behalf decisions and done work items owing a retro, and a `Leftover worktrees` section (task worktrees and branches left after a run, stray branches). Besides committed files it reads live git state (worktrees and branches). Takes no other argument.
 
 ## phase-gate.sh — a phase's exit check
 
@@ -50,6 +50,15 @@ Errors print `pd-lint: ERROR <path>:<line>: <message>` and exit 1; warnings neve
 
 - **Not adopted:** in an old-layout project (`docs/features/` without `sop: 1`), every mode except `--self-test` prints `pd-lint: not adopted: run /pd:adopt` and exits 0.
 - **`--staged` and unstaged changes:** a staged item with unstaged or untracked changes is an error, so the lint checks exactly what will be committed.
+
+## pd-worktrees — clean up a work item's worktrees
+
+```
+pd-worktrees <id> [--remove [--task <n>]...]   # list, or remove, <id>'s task worktrees and the stray branches
+pd-worktrees --strays [--remove]               # only the stray branches; needs no work item
+```
+
+Lists by default and changes nothing. `--remove` runs `git worktree remove` (never forced) on each `clean` and `gone` task worktree, and deletes each stray branch that loses no commit; it never unlocks a worktree or deletes a task branch. Exits 0 when everything asked was removed, 1 when a worktree was kept or a run is in flight, 2 on a usage error, an unknown id or a git failure. Callers: `implementing` steps 5 and 6, `finishing-branch` step 9, `abandon-workitem` step 3.
 
 ## pd-proof — judge a task's JUnit XML
 

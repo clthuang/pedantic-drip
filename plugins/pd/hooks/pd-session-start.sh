@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SessionStart hook: a short summary of the current project (plan Part B §9, §12).
 # - adopted (or configured) project: active and blocked items with their ## Now lines, each roadmap's
-#   next ready item and the retros owed, from pd-status; on every matcher;
+#   next ready item, the retros owed and leftover worktrees, from pd-status; on every matcher;
 # - old layout (docs/features/ without `sop: 1`): "run /pd:adopt"; on every matcher;
 # - no .claude/pd.local.md: one /pd:init offer, on startup and resume only.
 # With a config or the offer, the {pd_artifacts_root}, {pd_base_branch} and {pd_release_script}
@@ -40,15 +40,15 @@ if [ -d "$top/docs/features" ] && [ "$adopted" = 0 ]; then
     [ "$declined" = 1 ] && exit 0
     text="pd: run /pd:adopt: this project still uses the old layout (docs/features/ without \`sop: 1\` in .claude/pd.local.md)."
 elif [ -f "$cfg" ]; then
-    # Keep pd-status's Migrate warning, active and blocked rows, unfinished plans' roadmap lines and retros owed.
+    # Keep pd-status's Migrate warning, active and blocked rows, unfinished plans' roadmap lines, retros owed and leftover worktrees.
     summary=$(cd "$top" && "${SCRIPT_DIR}/../scripts/pd-status" 2>/dev/null | awk '
         /^$/ {sec = ""; next}
-        sec == "" {sec = $0; keep = (sec == "Migrate" || sec == "Plans" || sec == "Retros owed"); shown = 0; next}
+        sec == "" {sec = $0; keep = (sec == "Migrate" || sec == "Plans" || sec == "Retros owed" || sec == "Leftover worktrees"); shown = 0; next}
         sec == "Items" && ($1 == "active" || $1 == "blocked") {print; next}
         sec == "Plans" && / plan done$/ {next}
         keep {if (!shown) {print sec; shown = 1}; print}')
     text="$vars"
-    [ -n "$summary" ] && text+=$'\n'"pd: active and blocked items, next ready, retros owed (pd-status prints the rest)"$'\n'"$summary"
+    [ -n "$summary" ] && text+=$'\n'"pd: active and blocked items, next ready, retros owed, leftover worktrees (pd-status prints the rest)"$'\n'"$summary"
 else
     case "$source" in startup|resume) ;; *) exit 0 ;; esac
     [ "$declined" = 1 ] && exit 0

@@ -38,7 +38,7 @@ bash plugins/pd/hooks/tests/test-hooks.sh
 node plugins/pd/workflows/tests/test-workflows.mjs
 
 # Python hook tests (project root, unicode guard); uv creates the venv if it's missing
-uv run --project plugins/pd pytest -q plugins/pd/hooks
+uv run --project plugins/pd pytest -q plugins/pd/hooks plugins/pd/scripts
 
 # Release scripts' tests (throwaway repos, stub gh)
 bash scripts/test-release.sh
