@@ -267,3 +267,6 @@ Verdict: approved. Commit: 14dc87b8. Branch diff main...HEAD outside docs/dev_ar
 
 ## 2026-11-04 20:12+08:00 metrics
 Mode: small. Tokens: 5172211 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-03-codebase-explorer-uses-codegraph.json)
+
+## 2026-11-04 20:18+08:00 note
+Docs: synced before Verify (3f0142f0: plugins/pd/README.md codebase-explorer row, docs/user-guide/installation.md optional CodeGraph), so the battery covered them; no component added, renamed or removed. Scope drift (qa@2026-11-04 20:10+08:00#Q3): that commit and the config commit 4efddb02 (`.claude/pd.local.md`) touch files shape.md `### Scope` lists as Out or omits; recorded here rather than editing the signed-off Scope. The task-1 worktree `.claude/worktrees/wf_3ee93b9c-a5f-1` (Q4) is removed in the round's cleanup after the combined PR merges. No roadmap names this work item (no replan). The merge goes in the round's combined PR to main.
