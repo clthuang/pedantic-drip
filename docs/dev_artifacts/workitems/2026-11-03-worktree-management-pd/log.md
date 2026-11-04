@@ -320,3 +320,45 @@ Run: wf_907e8c03-51e, resuming with tasks 1 to 3 merged. Stopped: none. Merge: 1
 
 ## 2026-11-04 16:30+08:00 phase implement -> verify
 Task 4 merged with proof pass (132a3507); tasks 1 to 3 unchanged.
+
+## 2026-11-04 16:44+08:00 run verify-change — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 4. Tokens: 37294. Cycles: 1. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_e5dde490-16d/journal.jsonl
+Run: wf_e5dde490-16d (Verify run 2). Stopped: none.
+
+## 2026-11-04 16:44+08:00 review verify — codex (fallback: no)
+Verdict: changes requested. Commit: 35f76c11. The review confirms capped@2026-11-03 12:57+08:00#A1 holds (01c55ca8 changed only C30's case; C40 supersedes its argv).
+- R1 blocker plugins/pd/scripts/pd-worktrees:59 — A symbolic ref outside the stray namespace can falsely vouch for a stray, allowing deletion of its only direct branch reference.
+- R2 blocker plugins/pd/scripts/test_worktree_callers.py:48 — C32 does not enforce that forced removal happens only after the user chooses discard.
+Closes: capped@2026-11-03 12:57+08:00#A1
+
+## 2026-11-04 16:44+08:00 qa
+Commit: 1f0246ec
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: The R1 fix holds. test_c20b_symbolic_ref_to_a_stray_does_not_vouch fails at 18925515 (the code printed 'deleted worktree-wf_r-3'; the calls show `update-ref --no-deref -d refs/heads/worktree-wf_r-3`) and passes at 1f0246ec. Both were run from git-archive copies. A native-git drive at HEAD (refs/heads/saved symbolically pointing at refs/heads/worktree-wf_unique, which has a unique commit) printed 'kept (unique commits): worktree-wf_unique', and both refs survived.
+Criteria gaps: The R2 fix holds. In a copy of HEAD, the decision-inversion mutant of implementing/SKILL.md:27 ('(on "discard" the conductor runs' changed to '(on "keep" the conductor runs') fails the new C32. The C32 from 35f76c11 passes the same mutant (5 passed; the only failure is C43, see the next item).
+Criteria gaps: test_c43_plugin_path_and_no_trace_file fails in every git-archive copy because it runs `git ls-files` and the copy is not a git repository (exit 128). It passes in the real checkout (68 passed). Read the mutant counts here with that in mind.
+Criteria gaps: B12/C42 still passes when the `"/" in args.id` guard (pd-worktrees:97) is gone: the mutant gives 57 passed, plus the C43 failure that every copy has (see Q4). By hand, the real script exits 2 on `<id>/`, `<id>/..`, `x/../<id>`, `.` and `..`.
+Criteria gaps: B6/B19 now also exclude a symbolic branch from vouching. The suite does not test a symbolic ref to a NON-stray branch (for example `alias -> main`). By hand it is harmless, because the target branch is listed and vouches itself, but the case is not pinned.
+Criteria gaps: B18/C32-C35/C43 still check literal substrings in order. They do not check the conductor's behaviour: the AskUserQuestion branch, a discard followed by a forced removal, and a stop of the wrong-test move were not driven (carried from run 1).
+Criteria gaps: B4/C4 order of locked vs gone, B3 refusal from new dirt, B16 many-line sources, B14's bare `pd-worktrees` header literal, tab/backslash paths in pytest: carried from run 1. Nothing in the 35f76c11..HEAD diff touches them. Not re-driven this run, except the header literal, which pd-status still prints.
+Criteria gaps: Cross-task drive at HEAD (scratch repo2): task-1 clean (advanced commit), task-2 dirty, task-3 locked, stray worktree-wf_r-1 contained by task-1's branch, and stray worktree-wf_r-2 unique with a symbolic `keepme` pointing at it. pd-worktrees listing, the pd-status Leftover section and `--remove` run from inside task-1 printed removed/kept (dirty)/kept (locked)/deleted r-1/kept (unique commits) r-2, exit 1. Task branches were all kept. All matched shape.md.
+- Q1 note plugins/pd/scripts/conftest.py:1 — pd-lint --risk still warns of a security risk signal with no `risk: [security]` tag on the work item. The user has already cleared it.
+- Q2 note plugins/pd/scripts/pd_common.py:1 — pd-lint --risk still warns of a security risk signal with no `risk: [security]` tag. The user has already cleared it.
+- Q3 note .:0 — The isolation check still does not run on the branch diff.
+- Q4 warning plugins/pd/scripts/test_pd_worktrees.py:408 — test_c42_usage_errors still cannot fail if the `"/" in args.id` guard at pd-worktrees:97 is removed. Its only slash input, `a/b`, is rejected by `not item_dir.is_dir()` anyway.
+- Q5 note plugins/pd/scripts/pd-worktrees:49 — A stray whose name has a slash is still listed by pd-status, but pd-worktrees never sees it.
+- Q6 note plugins/pd/scripts/pd-worktrees:137 — pd-worktrees still prints a Python BrokenPipeError to stderr when its reader closes the pipe early.
+- Q7 note CLAUDE.md:32 — The diff still changes files outside shape.md's Scope `In` list (shape.md:103).
+- Q8 warning plugins/pd/scripts/pd-worktrees:57 — The R1 fix changes pd-worktrees' git surface and its rule for which branch can vouch for a stray. shape.md was not updated and no user decision was recorded, although R1's own finding said this contract change needs one.
+- Q9 note plugins/pd/scripts/pd-worktrees:66 — When a real branch vouches for a stray and a non-stray symbolic branch points at that stray, deleting the stray leaves the symbolic branch dangling. No commit is lost.
+Fixed: R1 by 1f0246ec — plugins/pd/scripts/test_pd_worktrees.py::test_c20b_symbolic_ref_to_a_stray_does_not_vouch (failed before the fix, committed in 18925515)
+Fixed: R2 by 18925515 — plugins/pd/scripts/test_worktree_callers.py::test_c32_implementing_step_5_clears_worktrees_after_the_run (now requires the exact text '(on "discard" the conductor runs `git worktree remove --force <path>`)'; a discard-to-keep mutant fails it)
+Closes: review@2026-11-04 16:44+08:00#R1, review@2026-11-04 16:44+08:00#R2

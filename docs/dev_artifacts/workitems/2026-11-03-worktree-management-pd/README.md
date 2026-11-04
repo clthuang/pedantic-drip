@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify run 2 done (R1 and R2 fixed, battery passes at 1f0246ec); Q8, the fix's unsynced contract change, and QA's warnings go to the user.
 
 ## Links
 
