@@ -178,3 +178,9 @@ def test_c12_reply_is_the_json_object_alone():
     block = section(AGENT.read_text(), "## Output Format")
     assert "Reply with the JSON object alone" in block
     assert "no text before or after it" in block
+
+
+def test_c12_reply_carries_no_code_fence():
+    # Live replies at 669643b6 came back wrapped in a ```json fence, which fails json.loads (Q2).
+    block = section(AGENT.read_text(), "## Output Format")
+    assert "no ```json fence" in block
