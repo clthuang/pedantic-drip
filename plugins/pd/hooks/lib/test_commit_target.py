@@ -276,6 +276,9 @@ _C29_SEEN_ON_MAIN = [r"bash -c $'git commit\t-m x'", r"bash -c $'\x67it commit -
                      r"bash -c $'git commit -m \'x\''", r"bash -c $'true\x3b git commit -m x'"]
 _C29_NOT_SEEN = [r"bash -c $'echo \'git commit\''", r"echo $'a\ngit commit -m x'", r"echo $'\x3b' git commit -m x",
                  r"echo $'\x26\x7c\x28\x29' git commit -m x"]
+_R1_SEEN = [r"bash -c $'git commit\0 -m x'", r"bash -c $'git checkout main\0ignored'; git commit -m x"]
+_R2_SEEN = [r"bash -c $'git switch main; git \x63ommit -m x'", r"bash -c $'git switch main; git \143ommit -m x'"]
+_C29_RAW_NOT_SEEN = [r"bash -c $'# git commit\ntrue'", r"bash -c $'cat <<EOF\ngit commit -m x\nEOF'"]
 _C30_SEEN = ["bash +c 'git commit -m x'", "bash +ec 'git commit -m x'"]
 _C30_NOT_SEEN = ["bash +x 'git commit -m x'"]
 _C32_SEEN = ['bash -c $"git commit -m x"']
@@ -345,7 +348,7 @@ def _traced_negatives():
             "nice --version git commit", 'echo "timeout 30 git commit"', "timeout 30", "env -u", "sudo -k",
             "bash -c 'echo \"git commit\"'", "bash ./commit.sh", "fish -c 'git commit -m x'",
             "bash -c $'# git commit\ntrue'", "bash -c $'cat <<EOF\ngit commit -m x\nEOF'", "bash -c"]
-    cmds += _C29_NOT_SEEN + _C30_NOT_SEEN
+    cmds += _C29_NOT_SEEN + _C30_NOT_SEEN + _C29_RAW_NOT_SEEN
     return [(c, "workitem/x", []) for c in cmds]
 
 
@@ -376,7 +379,7 @@ def test_c25_only_git_queries_run(repo, tmp_path):
 
 def test_c25_no_subprocess_for_non_commits(repo, tmp_path):
     negatives = _traced_negatives()
-    assert len(negatives) == 19 + len(_C29_NOT_SEEN) + len(_C30_NOT_SEEN)
+    assert len(negatives) == 19 + len(_C29_NOT_SEEN) + len(_C30_NOT_SEEN) + len(_C29_RAW_NOT_SEEN)
     assert _trace_mismatches(_SCRIPT, repo, negatives, tmp_path, empty_ok=True) == []
 
 
@@ -464,8 +467,25 @@ def test_c29_ansi_c_decoding(repo):
     _on(repo, "main")
     for cmd in _C29_SEEN_ON_MAIN:
         assert seen(cmd, repo) == f"{repo}\t\n", cmd
-    for cmd in _C29_NOT_SEEN + [r"bash -c $'# git commit\ntrue'", r"bash -c $'cat <<EOF\ngit commit -m x\nEOF'"]:
+    for cmd in _C29_NOT_SEEN + _C29_RAW_NOT_SEEN:
         assert seen(cmd, repo) == "", cmd
+
+
+def test_review_nul_bytes_and_hook_prefilters(repo):
+    _on(repo, "main")
+    assert seen(_R1_SEEN[0], repo) == f"{repo}\t\n"
+    assert seen(_R1_SEEN[1], repo) == f"{repo}\tmain\n"
+    _on(repo, "workitem/x")
+    for cmd in _R2_SEEN:
+        assert seen(cmd, repo) == f"{repo}\tmain\n", cmd
+        out, _, code = hook("pre-commit-guard.sh", cmd, repo)
+        assert "Committing directly to 'main'" in out, cmd
+
+
+def test_review_utf8_bytes_in_directory(repo):
+    os.mkdir(os.path.join(repo, "中"))
+    assert seen(r"env -C $'\xe4\xb8\xad' git commit -m x", repo).startswith(f"{repo}/中\t")
+    assert seen(r"bash -c $'cd \xe4\xb8\xad; git commit -m x'", repo).startswith(f"{repo}/中\t")
 
 
 def test_c30_plus_c(repo):
