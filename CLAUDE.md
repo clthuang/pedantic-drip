@@ -131,6 +131,7 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 - **Helper dispatch isolation:** When a function orchestrates N independent helpers, wrap each in its own `try/except`. List-literal dispatch (`[helper1(), helper2()]`) means one exception blocks all subsequent helpers.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Hook EPIPE safety (feature 107):** Hooks emitting structured output via printf/cat MUST keep `trap '' PIPE` AND wrap writes with `{ ...; } 2>/dev/null || true`. The trap is co-load-bearing — without it, the bash process is SIGPIPE-killed before `|| true` can run. Use `safe_emit_hook_json` from `lib/session-start-helpers.sh`. See `docs/dev-guide/hook-development.md` "Broken-pipe handling".
+- **Live replies carry the session's hooks:** before fixing content a live agent reply carries that no instruction asks for, grep the stream's `hook_response` lines: the codebase-explorer's trailing "Skipped: … Risk: …" lines followed a user-level SessionStart hook's end-of-reply rule (2026-11-04), and three wording fixes treated the symptom.
 - **Bash 3.2 / macOS BSD portability:** Use POSIX `[[:space:]]` (not `\s`) in `grep -E`; use `${!varname:-default}` indirect expansion (not `eval`) for env-var indirection — both work on macOS bash 3.2 and avoid eval-injection. `$?` in `trap '...' EXIT` strings expands at fire time, not registration time (verified empirically).
 
 ## Quick Reference
