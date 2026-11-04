@@ -152,8 +152,16 @@ def test_c26_ci_and_changelog():
     assert "plugins/pd/hooks/lib/test_commit_target.py" in line
     with open(os.path.join(_ROOT, "CHANGELOG.md")) as f:
         changelog = f.read()
-    unreleased = re.search(r"## \[Unreleased\](.*?)(?=\n## \[)", changelog, re.S).group(1)
-    assert any("commit_target.py" in l and "wrapper" in l and "-c" in l for l in unreleased.splitlines())
+    # scripts/release-pr.sh:36 keeps the first `## [Unreleased]` line, then an empty line and the new version's heading
+    released, done = [], False
+    for l in changelog.split("\n"):
+        released.append(l)
+        if not done and l.startswith("## [Unreleased]"):
+            released += ["", "## [9.9.9] - 2026-01-01"]
+            done = True
+    assert done
+    for text in (changelog, "\n".join(released)):
+        assert any("commit_target.py" in l and "wrapper" in l and "-c" in l for l in text.splitlines())
 
 
 # ---- Task 2: `-c` scripts, nested at any depth ----
@@ -262,6 +270,16 @@ def test_c23_existing_hook_tests_pass():
         assert literal in text, literal
 
 
+# Task 3 inputs: the shell spelling of `$'…'` escapes, never Python escapes.
+_C29_SWITCH = r"bash -c $'git switch main\ngit commit -m x'"
+_C29_SEEN_ON_MAIN = [r"bash -c $'git commit\t-m x'", r"bash -c $'\x67it commit -m x'", r"bash -c $'\147it commit -m x'",
+                     r"bash -c $'git commit -m \'x\''", r"bash -c $'true\x3b git commit -m x'"]
+_C29_NOT_SEEN = [r"bash -c $'echo \'git commit\''", r"echo $'a\ngit commit -m x'", r"echo $'\x3b' git commit -m x",
+                 r"echo $'\x26\x7c\x28\x29' git commit -m x"]
+_C30_SEEN = ["bash +c 'git commit -m x'", "bash +ec 'git commit -m x'"]
+_C30_NOT_SEEN = ["bash +x 'git commit -m x'"]
+_C32_SEEN = ['bash -c $"git commit -m x"']
+
 # C25: the subprocess calls, traced at run time through an audit hook.
 _DRIVER = """
 import json, os, runpy, sys
@@ -304,11 +322,13 @@ def _traced_cases(repo):
                + ["bash -c 'cd sub; git commit -m x'", "bash -c 'cd sub && git commit -m x'", "bash -c 'cd sub'; git commit -m x",
                   "timeout 30 bash -c 'git commit -m x'", "bash -c 'timeout 30 git commit -m x'",
                   "bash -c \"sh -c 'git commit -m x'\"", _nested(10), "env -C sub bash -c 'git commit -m x'",
-                  "bash -c 'echo \"unclosed'; git commit -m x", "sudo -l git switch main; git commit -m x"])
+                  "bash -c 'echo \"unclosed'; git commit -m x", "sudo -l git switch main; git commit -m x"]
+               + _C29_SEEN_ON_MAIN + _C30_SEEN + _C32_SEEN)
     cases = [(c, "main", []) for c in on_main]
     cases.append(("git checkout main -- README.md && git commit -m t", "workitem/x", []))
     switch_cmds = ["timeout 30 git switch main && git commit -m x", "bash -c 'git switch main && git commit -m x'",
                    "bash -c 'git switch main'; git commit -m x"]
+    switch_cmds.append(_C29_SWITCH)
     cases += [(c, "workitem/x", [root, root]) for c in switch_cmds]
     checkout_cmds = ["timeout 30 git checkout main && git commit -m x", "git checkout main -- && git commit -m t",
                      "git checkout main -- >/dev/null 2>&1 && git commit -m t"]
@@ -325,6 +345,7 @@ def _traced_negatives():
             "nice --version git commit", 'echo "timeout 30 git commit"', "timeout 30", "env -u", "sudo -k",
             "bash -c 'echo \"git commit\"'", "bash ./commit.sh", "fish -c 'git commit -m x'",
             "bash -c $'# git commit\ntrue'", "bash -c $'cat <<EOF\ngit commit -m x\nEOF'", "bash -c"]
+    cmds += _C29_NOT_SEEN + _C30_NOT_SEEN
     return [(c, "workitem/x", []) for c in cmds]
 
 
@@ -355,7 +376,7 @@ def test_c25_only_git_queries_run(repo, tmp_path):
 
 def test_c25_no_subprocess_for_non_commits(repo, tmp_path):
     negatives = _traced_negatives()
-    assert len(negatives) == 19
+    assert len(negatives) == 19 + len(_C29_NOT_SEEN) + len(_C30_NOT_SEEN)
     assert _trace_mismatches(_SCRIPT, repo, negatives, tmp_path, empty_ok=True) == []
 
 
@@ -433,3 +454,46 @@ def test_c27_static_subprocess_audit():
     assert _static_violations(source) == []
     for extra in ("os.fork()", "import multiprocessing", 'subprocess.Popen(["true"])'):
         assert _static_violations(source + "\n" + extra + "\n"), extra
+
+
+# ---- Task 3: Verify's fixes ----
+
+def test_c29_ansi_c_decoding(repo):
+    _on(repo, "workitem/x")
+    assert seen(_C29_SWITCH, repo) == f"{repo}\tmain\n"
+    _on(repo, "main")
+    for cmd in _C29_SEEN_ON_MAIN:
+        assert seen(cmd, repo) == f"{repo}\t\n", cmd
+    for cmd in _C29_NOT_SEEN + [r"bash -c $'# git commit\ntrue'", r"bash -c $'cat <<EOF\ngit commit -m x\nEOF'"]:
+        assert seen(cmd, repo) == "", cmd
+
+
+def test_c30_plus_c(repo):
+    for cmd in _C30_SEEN:
+        assert seen(cmd, repo) == f"{repo}\t\n", cmd
+    for cmd in _C30_NOT_SEEN:
+        assert seen(cmd, repo) == "", cmd
+
+
+def test_c32_dollar_double_quote(repo):
+    assert seen(_C32_SEEN[0], repo) == f"{repo}\t\n"
+
+
+_LIMITED = """
+import itertools, json, os, re, shlex, subprocess, runpy, pkgutil, sys
+sys.setrecursionlimit(int(sys.argv[2]))
+runpy.run_path(sys.argv[1], run_name="__main__")
+"""
+
+
+def test_c31_recursion_limit_skips_deep_script(repo):
+    def run(cmd, limit):
+        argv = ["python3", "-c", _LIMITED, _SCRIPT, str(limit)]
+        return subprocess.run(argv, input=json.dumps({"tool_input": {"command": cmd}, "cwd": repo}),
+                              capture_output=True, text=True, env=_ENV)
+    deep = _nested(10)
+    assert seen(deep, repo) == f"{repo}\t\n"
+    n = next((n for n in range(10, 301) if (r := run(deep, n)).returncode == 0 and r.stdout == "" and r.stderr == ""), None)
+    assert n is not None
+    r = run(deep + "; git commit -m x", n)
+    assert (r.returncode, r.stdout, r.stderr) == (0, f"{repo}\t\n", "")
