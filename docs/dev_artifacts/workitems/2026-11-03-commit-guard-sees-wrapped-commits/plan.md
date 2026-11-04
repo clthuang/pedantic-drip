@@ -1,0 +1,84 @@
+---
+from_shape: fd80ff638058e3a14fc054c05a8956aac5f9586e
+---
+# Plan: commit guard sees wrapped commits
+
+<!-- from_shape is `git hash-object shape.md` when this plan was derived. Format: plugins/pd/references/doc-format.md. -->
+
+## Plan
+
+Shared terms for every case:
+- **`seen(cmd, cwd=<repo>)`:** runs `python3` (from `PATH`, as the hooks call it) on `commit_target.py`, its path taken from the test file's own directory, with `{"tool_input": {"command": cmd}, "cwd": cwd}` on stdin; returns its stdout. Every call of `seen`, the ones expecting "not seen" included, also asserts exit 0 and empty stderr.
+- **`hook(script, cmd, cwd=<repo>)`:** runs `bash plugins/pd/hooks/<script>` with the same JSON on stdin and `cwd` as its working directory; returns stdout, stderr and the exit code.
+- **`<repo>`:** the `repo` fixture's path, checked out on `main` unless a case says otherwise.
+- **Outcomes:** "seen, branch empty" means stdout is `<repo>\t\n`; "seen at `<d>`" means `<d>\t\n`; "seen, branch `b`" or "branch `b`" means `<repo>\tb\n`; "not seen" means stdout is empty.
+
+### Wave 1
+
+#### Task 1: wrappers and a bare trailing `--`
+- contract: shape.md ## Design (WRAPPERS, `command_start`, `switch_target`'s trailing `--`), plugins/pd/hooks/lib/commit_target.py
+- files: plugins/pd/hooks/lib/commit_target.py, plugins/pd/hooks/lib/test_commit_target.py, .github/workflows/ci.yml, CHANGELOG.md
+- uses: none
+- command: `uv run --project plugins/pd pytest plugins/pd/hooks/lib/test_commit_target.py --junitxml=agent_sandbox/junit/task-1.xml`
+- junit: agent_sandbox/junit/task-1.xml
+- test cases:
+  - C1 [B1] (fixture: repo): given `timeout 30 git commit -m x`, `timeout -s KILL -k 5 30 git commit -m x` and `timeout --signal=KILL --kill-after 5 30 git commit -m x`, expect each seen, branch empty.
+  - C2 [B2] (fixture: repo): given the five `sudo` forms of B2 (`-u alice`, `-ualice`, `-Eu alice`, `-E -H`, `--`), plus `--user alice` and `-k`, before `git commit -m x`, expect each seen, branch empty.
+  - C3 [B3] (fixture: repo): given `env -u FOO git commit -m x`, `env --unset FOO git commit -m x` and `env -i PATH=/usr/bin git commit -m x`, expect each seen, branch empty.
+  - C4 [B4] (fixture: repo): given `nice -n 5`, `nice --adjustment 5`, `stdbuf -oL`, `stdbuf --output L`, `time -p`, `time --format %e`, `nohup` and `xargs --max-args 1` before `git commit -m x`, and `xargs -I{} git commit -m {}` (B4's form), expect each seen, branch empty.
+  - C5 [B7] (fixture: repo): on `workitem/x`, given `timeout 30 git switch main && git commit -m x` and `timeout 30 git checkout main && git commit -m x`, expect each seen, branch `main`.
+  - C6 [B8] (fixture: repo): given `sudo -u alice timeout 30 git commit -m x`, expect seen, branch empty.
+  - C7 [B9] (fixture: repo): given `sudo -D sub git commit -m x`, `sudo --chdir sub git commit -m x`, `env -C sub git commit -m x` and `env --chdir sub git commit -m x`, expect each seen at `<repo>/sub`; given `env -C sub true; git commit -m x`, expect seen at `<repo>`.
+  - C8 [B10] (fixture: repo): on `workitem/x`, given `git checkout main -- && git commit -m t`, expect seen, branch `main`; `hook("pre-commit-guard.sh", <the same command>)`'s output contains "Committing directly to 'main'".
+  - C9 [B11] (fixture: repo): given `git checkout main -- README.md && git commit -m t` on `workitem/x`, expect seen, branch empty.
+  - C10 [B12] (fixture: repo): on `main`, `hook("pre-commit-guard.sh", "timeout 30 git commit -m t")`'s output contains "Committing directly to 'main'".
+  - C11 [B14] (fixture: repo): given `timeout 30 echo git commit`, `sudo -u alice echo git commit`, `command -v git commit`, `command -V git commit`, `sudo -l git commit`, `sudo -v git commit`, `sudo -K git commit`, `timeout --help git commit`, `nice --version git commit` and `echo "timeout 30 git commit"`, expect each not seen; given `sudo -l git switch main; git commit -m x` on `workitem/x`, expect seen, branch empty.
+  - C12 [B15] (fixture: repo): given `timeout 30`, `env -u` and `sudo -k`, expect each not seen.
+  - C13 [B6] (fixture: repo): given `timeout 30 cd sub && git commit -m x`, expect seen at `<repo>`.
+  - C14 [B3] (fixture: repo): given the regression forms `env FOO=1 git commit -m x`, `sudo git commit -m x` and `exec git commit -m x`, and the table's other rows `command git commit -m x` and `exec -a name git commit -m x`, expect each seen, branch empty.
+  - C24 [B10] (fixture: repo): on `workitem/x`, given `git checkout main -- >/dev/null 2>&1 && git commit -m t`, expect seen, branch `main`; given `git checkout HEAD~0 -- && git commit -m t`, expect branch `?`; given `git checkout nosuch -- && git commit -m t`, expect branch empty (the `--` edge case: a redirection is not a following word, and the target resolves as today).
+  - C26 [B16] (fixture: none): read `.github/workflows/ci.yml`; expect its `uv run --project plugins/pd pytest` line to name `plugins/pd/hooks/lib/test_commit_target.py` (CI runs the new file; that line lists files one by one). Also expect `CHANGELOG.md`'s `[Unreleased]` section to hold a line naming `commit_target.py`, wrappers and `-c` scripts (the work item's one line, written in this task). Amended by C28 (Task 3): the CHANGELOG half looks anywhere in the file.
+
+### Wave 2
+
+#### Task 2: `-c` scripts, nested at any depth
+- contract: shape.md ## Design (SHELLS, `scan`'s `-c` recursion), plugins/pd/hooks/lib/commit_target.py
+- files: plugins/pd/hooks/lib/commit_target.py, plugins/pd/hooks/lib/test_commit_target.py
+- uses: none
+- command: `uv run --project plugins/pd pytest plugins/pd/hooks/lib/test_commit_target.py --junitxml=agent_sandbox/junit/task-2.xml`
+- junit: agent_sandbox/junit/task-2.xml
+- test cases:
+  - C15 [B5] (fixture: repo): given the six shell forms of B5 (`bash -c`, `sh -c`, `zsh -lc`, `/bin/bash -c`, `bash -o pipefail -c`, `bash -eo pipefail -c`), plus `dash -c`, `ksh -c`, `bash +O extglob -c` and `bash --norc -c`, each followed by `'git commit -m x'` (single-quoted), expect each seen, branch empty; given `bash -c 'cd sub; git commit -m x'`, expect seen at `<repo>/sub` (the script's own `;` separates).
+  - C16 [B6] (fixture: repo): given `bash -c 'cd sub && git commit -m x'`, expect seen at `<repo>/sub`; given `bash -c 'cd sub'; git commit -m x`, expect seen at `<repo>`.
+  - C17 [B7] (fixture: repo): on `workitem/x`, given `bash -c 'git switch main && git commit -m x'` and `bash -c 'git switch main'; git commit -m x`, expect each seen, branch `main`.
+  - C18 [B8] (fixture: repo): given `timeout 30 bash -c 'git commit -m x'`, `bash -c 'timeout 30 git commit -m x'`, `bash -c "sh -c 'git commit -m x'"` and `git commit -m x` wrapped in 10 levels of `bash -c <shlex.quote(inner)>`, expect each seen, branch empty.
+  - C19 [B9] (fixture: repo): given `env -C sub bash -c 'git commit -m x'`, expect seen at `<repo>/sub`.
+  - C20 [B13] (fixture: pd_repo): with an entry `## 2026-11-03 10:00+08:00 bogus` appended to the work item's `log.md` and staged (README untouched), `hook("pd-commit-lint.sh", "bash -c 'git commit -m x'", cwd=<the pd_repo path>)` exits 2 and stderr containing `entry kind bogus` (probed 2026-11-03: the unwrapped form already exits 2 with that message).
+  - C21 [B14] (fixture: repo): given `bash -c 'echo "git commit"'`, `bash ./commit.sh`, `fish -c 'git commit -m x'`, a `-c` script holding a comment (`bash -c $'# git commit\ntrue'`) and one holding a heredoc body (`bash -c $'cat <<EOF\ngit commit -m x\nEOF'`), expect each not seen.
+  - C22 [B15] (fixture: repo): given `bash -c` alone, expect not seen; given `bash -c 'echo "unclosed'; git commit -m x`, expect seen at `<repo>`.
+  - C23 [B16] (fixture: none): run `bash plugins/pd/hooks/tests/test-hooks.sh` and `bash plugins/pd/hooks/tests/test-pd-commit-lint.sh` as subprocesses, expect exit 0 from each (every existing case passes); and expect `test-hooks.sh` to hold each of the three quoted-prose case lines B16 names, verbatim as literals in the test (today's `test-hooks.sh:230`, `:239` and `:244`: `"main|grep -n 'git commit' README.md|no"`, `"main|"$'cat > n.md <<\'EOF\'\nstep; git commit -m x\nEOF'"|no"` and `"workitem/x|printf '%s\\n' ';' git switch main ';' git commit|no"`). The other cases' text is Verify's to check in the branch diff (the owner's ruling).
+  - C25 [B1, B5] (fixture: repo): run `commit_target.py` through `python3 -c` with a `sys.addaudithook` hook installed before it runs (`runpy.run_path(..., run_name="__main__")`, the same stdin), for every `seen` command of C1 to C24 (C20's included, run under `repo`; the `hook` calls and C23 excluded), the hook appending each call's argument list as one JSON line to a file the test names in `TRACE_FILE`; expect the sequence of `subprocess.Popen` argument lists to equal the literal the test maps to that command, one of five (`<d>` the command's directory; `root` = `git -C <d> rev-parse --show-toplevel`): none, for every command not listed next; `root, root` for C5's `switch` form and both C17 forms; `git -C <d> show-ref --verify --quiet refs/heads/main, root, root` for C5's `checkout` form, C8 and C24's redirection form; `git -C <d> show-ref --verify --quiet refs/heads/HEAD~0, git -C <d> rev-parse --verify --quiet HEAD~0^{commit}, root, root` for C24's `HEAD~0` form; `git -C <d> show-ref --verify --quiet refs/heads/nosuch, git -C <d> rev-parse --verify --quiet nosuch^{commit}` for C24's `nosuch` form (today's calls for the same command with its wrappers, `-c` layers and trailing `--` removed, traced 2026-11-03); and expect no `os.system`, `os.exec`, `os.posix_spawn`, `os.spawn`, `os.fork` or `os.forkpty` event. Negative controls, each running C5's `switch` form, where the check must report a mismatch: copies with `subprocess.check_output(["true"])` inserted at the top of `main()`, and with `repo_of`'s `subprocess.run` called twice, (the must-not on subprocesses, at run time). Extended by C33 (Task 3) to C29's, C30's and C32's inputs.
+  - C27 [B1, B5] (fixture: none): parse `commit_target.py` with `ast`; expect its imports to be only `itertools`, `json`, `os`, `re`, `shlex`, `subprocess` and `sys` (today's, `commit_target.py:11-17`); every `subprocess` attribute it uses to be `run`, at exactly the three call sites whose first argument is a list literal starting with the constant `"git"`, or a `+` whose left operand is a name assigned in the same function to such a list (`git = ["git", "-C", at]`, `commit_target.py:156`); and no call of `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `os.posix_spawn*`, `os.fork*`, nor any import of `multiprocessing`, `concurrent`, `pty` or `asyncio`. Negative controls: copies inserting `os.fork()`, `import multiprocessing` and `subprocess.Popen(["true"])` each fail it (the must-not on subprocesses, statically: audit events differ across Python versions, so the runtime check alone can't be complete; checked 2026-11-03, a `multiprocessing` spawn raises none of those events on Python 3.13; the proving command runs the project venv's Python, 3.15 here).
+
+### Wave 3
+
+#### Task 3: Verify's fixes — a release-proof CHANGELOG check, `+c`, `$'…'` decoding, the open notes
+Tasks 1 and 2 stay merged. This task carries what the owner accepted after Verify:
+- **R6** (decision@2026-11-05 04:26+08:00): C28. The worktree and explorer items' twin checks change on the round's combined branch, outside this work item.
+- **R7** (decision-2@2026-11-05 04:26+08:00): shape.md's `SHELL_VALUE_OPTIONS` and `command_start` lines now describe the code already there; nothing changes for them.
+- **Q8** (decision-3@2026-11-05 04:26+08:00): `$'…'` decoding, C29 and C33.
+- **Q3, Q4, Q9** (decision-4@2026-11-05 04:26+08:00): C30, C31 and C32; C30 follows the `+c` criterion (decision@2026-11-05 04:57+08:00).
+- **Q5** (decision-4): delete skip_wrapper's trailing `NAME=value` loop (`commit_target.py:180`), since command_start's ASSIGNMENT branch already skips those words (262 in-memory comparisons found identical output, review@2026-11-05 04:38+08:00); C3 and C14 keep proving `NAME=value` after a wrapper, and Verify's review checks the deletion in the diff.
+- **Red and green:** C29, C30 and C33 fail at the first commit; C28, C31 and C32 pin code already there, so they are green at it, and each names the mutation Verify's QA re-runs to show it red.
+- contract: shape.md ## Requirements ("A `-c` script": `+` words; B5) and ## Design (`shell_text`'s `$'…'` rule), plugins/pd/hooks/lib/commit_target.py
+- files: plugins/pd/hooks/lib/commit_target.py, plugins/pd/hooks/lib/test_commit_target.py
+- uses: none
+- command: `uv run --project plugins/pd pytest plugins/pd/hooks/lib/test_commit_target.py --junitxml=agent_sandbox/junit/task-3.xml`
+- junit: agent_sandbox/junit/task-3.xml
+- test cases:
+  - C28 [B16] (fixture: none; amends C26): C26's CHANGELOG half finds its line anywhere in `CHANGELOG.md`, not only under `[Unreleased]`. The test runs that check on the file as read and on the file as `scripts/release-pr.sh:36`'s awk leaves it (the first `## [Unreleased]` line kept, then an empty line, then `## [9.9.9] - 2026-01-01`, every other line as is; the test runs that awk on the text, or the same transform in Python), and expects the line found in both. Today's file passes the old `[Unreleased]`-only check too; the released text is what fails it, which is the mutation. The ci.yml half of C26 is unchanged.
+  - C29 [B5, B7, B14] (fixture: repo): every `\n`, `\t`, `\'`, `\xHH` and `\nnn` below is the shell spelling (a backslash and its letters, written as Python raw strings), never a Python escape; each `\xHH` has two hex digits and each `\nnn` three octal ones. Seen: on `workitem/x`, `bash -c $'git switch main\ngit commit -m x'`: seen, branch `main`; on `main`, `bash -c $'git commit\t-m x'`, `bash -c $'\x67it commit -m x'`, `bash -c $'\147it commit -m x'`, `bash -c $'git commit -m \'x\''` (the decoded `'` kept inside the script, not the whole `$'…'` word discarded) and `bash -c $'true\x3b git commit -m x'` (a decoded `;` separates inside the scan): each seen, branch empty. Not seen, guards that a decoder leaking its text to the outer level would fail (today's code passes them): `bash -c $'echo \'git commit\''`, `echo $'a\ngit commit -m x'`, `echo $'\x3b' git commit -m x` and `echo $'\x26\x7c\x28\x29' git commit -m x` (decoded `;`, `&`, `|`, `(`, `)` are data at the outer level), and C21's two `$'…'` cases in their backslash spelling, `bash -c $'# git commit\ntrue'` and `bash -c $'cat <<EOF\ngit commit -m x\nEOF'`.
+  - C30 [B5] (fixture: repo): given `bash +c 'git commit -m x'` and `bash +ec 'git commit -m x'`, expect each seen, branch empty (a `+` word with `c` runs a script, decision@2026-11-05 04:57+08:00); given `bash +x 'git commit -m x'`, expect not seen (no `c`: that word is a script file's name).
+  - C31 [B15] (fixture: repo): run `commit_target.py` through `python3 -c` that first imports its dependencies and the runner (`itertools`, `json`, `os`, `re`, `shlex`, `subprocess`, `runpy`, `pkgutil`), then sets `sys.setrecursionlimit(n)` and calls `runpy.run_path(..., run_name="__main__")` (the same stdin). The test calibrates `n`: the smallest `n` from 10 to 300 at which C18's 10-level script alone exits 0 with stdout and stderr empty. Expect such an `n` found (n=18 on Python 3.13.14 and n=17 on 3.15.2, review@2026-11-05 04:46+08:00; CI runs 3.14, `.github/workflows/ci.yml:20`), and the same script seen, branch empty, under the default limit (no `setrecursionlimit` call), so the not-seen result comes from the limit. At that `n`, given the script followed by `; git commit -m x`, expect seen, branch empty, exit 0 and stderr empty. Mutation: the `except RecursionError` removed; then no `n` qualifies, since `main()` has no other catch, and a missing import shows the same way.
+  - C32 [B5] (fixture: repo): given `bash -c $"git commit -m x"`, expect seen, branch empty (`$"…"` drops its `$`). Mutation: the `$` kept before `"`.
+  - C33 [B1, B5] (fixture: repo; amends C25): C25's traced cases also run C29's, C30's and C32's inputs under the same audit driver. `bash -c $'git switch main\ngit commit -m x'` on `workitem/x` expects the `[root, root]` C25 expects for `bash -c 'git switch main'; git commit -m x` (`test_commit_target.py:311-312`); every other one of those inputs expects no call, and the not-seen ones stdout empty. C31's input stays outside the trace: its driver lowers the recursion limit, and C27's static audit covers it.

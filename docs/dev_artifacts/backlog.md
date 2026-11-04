@@ -1,7 +1,6 @@
 # Backlog
 
 - [x] 2026-11-01-investigate-design-worktree-management-pd — promoted → workitems/2026-11-03-worktree-management-pd
-- [ ] 2026-11-02-commit-target-py-see-commits — commit_target.py: see commits behind timeout, sudo -u, env -u and bash -c, and a bare trailing -- after checkout (PR #29 review notes)
 - [ ] 2026-11-04-conftest-hostile-refs-repository-fixture — conftest: a hostile-refs repository fixture (same-named tag, symbolic ref and chain, slash in a stray name, last-sorting branch) that every git-parsing script test runs against (from: workitems/2026-11-03-worktree-management-pd)
 - [ ] 2026-11-04-phase-gate-implement-fail-first — phase-gate implement: fail a first-commit green that plan.md does not declare as expected (from: workitems/2026-11-03-worktree-management-pd)
 - [ ] 2026-11-04-pd-common-git-keep-last — pd_common.git(): keep the last line's trailing whitespace and decode refnames losslessly (security S3, QA Q5 of the worktree item) (from: workitems/2026-11-03-worktree-management-pd)
@@ -14,3 +13,14 @@
 - [ ] 2026-11-04-pre-commit-log-md-fix — pre-commit: a log.md fix-cycle review entry naming shape.md or plan.md needs them in the same commit (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
 - [ ] 2026-11-04-validate-sh-role-pins-reject — validate.sh role pins: reject a tools list continued past its first line (security S1 of the explorer item) (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
 - [ ] 2026-11-04-set-source-paths-test-paths — set source_paths/test_paths in .claude/pd.local.md so pd-lint --isolation covers this repository (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
+- [x] 2026-11-02-commit-target-py-see-commits — promoted → workitems/2026-11-03-commit-guard-sees-wrapped-commits
+- [ ] 2026-11-05-commit-guard-ksh-93-runs — commit guard: ksh 93 runs a bare string argument as a command (ksh 'git commit' is unseen) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-hooks-commit-prefilter-drops — commit hooks: the *commit* prefilter drops a quote-split commit word the parser sees (git com''mit, git co\mmit) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-normalize-printed-directory — commit_target: normalize the printed directory after cd .. (sub/.. today) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-pin-untested-wrappers — commit_target: pin the untested WRAPPERS options (xargs -I {}, -d; sudo -g/-h/-p/-T), ~ on directory options, one-digit \xH (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-decode-u-u — commit_target: decode \u, \U and \cX in $'…' as bash 4.2+ does (security S2; a contract change) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-bsd-wrapper-value — commit_target: BSD wrapper value options (xargs -J/-R/-S, env -P), bash --rcfile, tab in a directory name (security S6, S7) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-lone-surrogate-raw — commit_target: a lone surrogate or raw NUL in a directory word crashes the hook, which then lets the commit through (security S5, N1) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-match-wrappers-basename — commit_target: match wrappers by basename, so /usr/bin/env and /usr/bin/timeout wrap a commit as env and timeout do (security N2) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-ci-run-pytest-suite-changelog — CI: run the pytest suite on CHANGELOG.md as release-pr.sh promotes it (one shared promote transform for release-pr.sh, CI and test_commit_target.py:155-159) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [ ] 2026-11-05-commit-target-corpus-differential-tests — commit_target: corpus differential tests, against main's parser (an input it sees that HEAD misses is a regression) and against the real shells (a logging git shim on PATH) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
