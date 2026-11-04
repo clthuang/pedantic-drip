@@ -1,5 +1,6 @@
 """Tests for the pd-worktrees callers and docs (shape.md ## Design; plan Task 3, cases C32 to C36)."""
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -112,3 +113,15 @@ def test_c36_docs_name_pd_worktrees():
     assert "plugins/pd/scripts" in pytest_line
     loop = next(l for l in commands.split("\n") if l.startswith("for s in pd-lint"))
     assert "pd-worktrees" not in loop
+
+
+def test_c43_plugin_path_and_no_trace_file():
+    spans = [step(IMPLEMENTING, 5), wrong_test_bullet(), step(FINISHING, 9), step(ABANDON, 3)]
+    prefix = "${CLAUDE_PLUGIN_ROOT}/scripts/"
+    for span in spans:
+        assert "pd-worktrees <id>" in span
+        for m in re.finditer(re.escape("pd-worktrees <id>"), span):
+            assert span[:m.start()].endswith(prefix), span[max(0, m.start() - 40):m.end()]
+    tracked = subprocess.run(["git", "ls-files", "plugins/pd/hooks/lib/trace.jsonl"], cwd=ROOT,
+                             capture_output=True, text=True, check=True).stdout
+    assert tracked == ""

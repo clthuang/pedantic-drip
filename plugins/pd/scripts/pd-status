@@ -91,11 +91,11 @@ def leftovers(root, items):
     """Lines for the Leftover worktrees section ([] when none, or when either git call fails): one `worktrees`
     call and one `branch --list`, however many items there are."""
     wts = worktrees(root)
-    listed = git(["branch", "--list", "pd/*", "workitem/*", f"{STRAY_PREFIX}*", "--format=%(refname:short)"],
+    listed = git(["branch", "--list", "pd/*", "workitem/*", f"{STRAY_PREFIX}*", "--format=%(refname)"],
                  root, check=False)
     if wts is None or listed is None:
         return []
-    branches = set(listed.split("\n")) - {""}
+    branches = {ref.removeprefix("refs/heads/") for ref in listed.split("\n") if ref}  # full refs: a same-named tag skews :short
     held = {w["branch"] for w in wts}
     workitems = {i["id"]: i for i in items if i["type"] == WORKITEM}
     after_run, done, unknown, strays = [], [], [], []

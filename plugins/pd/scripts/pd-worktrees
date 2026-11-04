@@ -54,8 +54,9 @@ def stray_tips(main, held):
 
 def delete_stray(main, name, tip, strays):
     """One output line, or None when the stray is gone or a worktree took it."""
-    contained = git(["for-each-ref", "--contains", tip, "--format=%(refname:short)", "refs/heads/"], main)
-    if not any(b not in strays for b in contained.split("\n") if b):
+    contained = git(["for-each-ref", "--contains", tip, "--format=%(refname)", "refs/heads/"], main)
+    # Full refs: with a same-named tag, %(refname:short) prints heads/<name>, and a stray would vouch for itself.
+    if not any(b.removeprefix("refs/heads/") not in strays for b in contained.split("\n") if b):
         return f"kept (unique commits): {name}"
     if name in {w["branch"] for w in listed_worktrees(main)}:  # a worktree took it since the listing
         return None
@@ -79,8 +80,10 @@ def run(args):
         raise Fail("give a work item id or --strays")
     if args.id and args.strays:
         raise Fail("a work item id and --strays don't go together")
-    if args.task and not args.remove:
-        raise Fail("--task needs --remove")
+    if args.task and (not args.remove or args.strays):
+        raise Fail("--task needs --remove and a work item id")
+    if args.id in (".", ".."):
+        raise Fail(f"{args.id} is not a work item id")
     wts = worktrees(".")
     if wts is None:
         raise Fail("not in a git repository (or git failed)")
