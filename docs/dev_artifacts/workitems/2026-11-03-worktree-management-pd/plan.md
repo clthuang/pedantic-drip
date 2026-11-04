@@ -103,3 +103,21 @@ Task 4's terms: the shared terms above, and Task 3's for a step's span. `tag <na
   - C41 [B14] (fixture: pd_repo): with a done work item `B` whose `task_worktree(1, clean, id=B)` is still there, and a worktree at `.claude/worktrees/wf-held` on a branch `worktree-wf_held`, given `pd-status`, expect exactly one line starting `B:`, `B: <path 1> — worktree after its run`, and no line naming `worktree-wf_held`: a branch a listed worktree holds isn't listed again, and a branch a worktree holds isn't a stray (QA's Q4; listing every branch, not only those no worktree holds, fails both). Green at task 4's first commit by design: today's `pd-status` already holds the rule, and this case is the guard C25 lacked; the merger reports it in `greens` (`pd-proof` first mode), and Verify's reviewer reads it as that guard, not as proof of new code.
   - C42 [B12] (fixture: pd_repo): with a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains, given `wt(..)`, `wt(.)`, `wt(.. --remove)`, `wt(a/b --remove)` and `wt(--strays --remove --task 1)`, expect each: stdout empty, stderr starting `pd-worktrees:`, exit 2, and unchanged, the stray still present (QA's Q3 and Q7).
   - C43 [B18] (fixture: none): in each span C32 to C35 read, expect every occurrence of `pd-worktrees <id>` to be immediately preceded by `${CLAUDE_PLUGIN_ROOT}/scripts/`, the way those files run `phase-gate.sh` and `pd-lint` (QA's Q6: nothing puts `pd-worktrees` on `PATH`); and expect `plugins/pd/hooks/lib/trace.jsonl` absent from `git ls-files`.
+
+### Wave 4
+
+#### Task 5: Verify run 2's fixes — symbolic refs, a `/` in a stray's name, a quiet closed pipe
+
+Task 5's terms: the shared terms above; `symref <name> <target>` is `git symbolic-ref refs/heads/<name> refs/heads/<target>`.
+
+- contract: shape.md ## Design (WorktreesCLI, GitSurface (pd-worktrees)), plugins/pd/scripts/pd-worktrees
+- files: plugins/pd/scripts/pd-worktrees, plugins/pd/scripts/test_pd_worktrees.py, plugins/pd/scripts/test_pd_status_leftovers.py
+- uses: plugins/pd/scripts/pd_common.py, plugins/pd/scripts/conftest.py, plugins/pd/scripts/pd-status
+- command: `uv run --project plugins/pd pytest plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py --junitxml=agent_sandbox/junit/task-5.xml`
+- junit: agent_sandbox/junit/task-5.xml
+- test cases:
+  - C44 [B20] (fixture: pd_repo): with a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains and `symref saved worktree-wf_r-2`, given `wt(<id> --remove)`, expect `kept (symbolic ref): worktree-wf_r-2`, `refs/heads/worktree-wf_r-2` still at its tip and `git rev-parse --verify -q saved` still resolving; exit 0. Rebuilt with `symref saved main` instead, expect `deleted worktree-wf_r-2`; exit 0. Given the first setup rebuilt and `wt(--strays --remove)`, expect `kept (symbolic ref): worktree-wf_r-2`; exit 0.
+  - C45 [B6] (fixture: pd_repo): `test_c20b_symbolic_ref_to_a_stray_does_not_vouch` (Verify run 2's fix, 18925515), unchanged: a stray holding a commit no other branch has, with a symbolic branch pointing at it, prints `kept (unique commits)` (no symbolic ref vouches, and the commit check comes before the symbolic-branch check); green at task 5's first commit by design, since 1f0246ec already holds the rule.
+  - C46 [B21] (fixture: pd_repo): with a stray `worktree-wf_a/b` whose tip `main` contains, given `wt(--strays)`, expect `stray worktree-wf_a/b`; given `pd-status`, expect `-: worktree-wf_a/b — stray branch`; given `wt(--strays --remove)`, expect `deleted worktree-wf_a/b` and `git rev-parse --verify -q refs/heads/worktree-wf_a/b` then failing; exit 0.
+  - C47 [B22] (fixture: pd_repo): with `task_worktree(1, clean)` and a stray `worktree-wf_r-1`, run `pd-worktrees <id>` and `pd-worktrees --strays` each with stdout a pipe whose read end is closed before the script writes; expect stderr empty for both.
+  - C48 [B12] (fixture: pd_repo): with a stray `worktree-wf_r-2` whose tip `workitem/<id>` contains, given `wt(<id>/..)`, `wt(<id>/.. --remove)` and `wt(<id>/)`, expect each: stdout empty, stderr starting `pd-worktrees:`, exit 2, unchanged (QA's Q4: `<id>/..` resolves to the `workitems/` directory, so only the `/` rule rejects it). Green at task 5's first commit by design: the guard exists; this is the case that fails if it goes.
