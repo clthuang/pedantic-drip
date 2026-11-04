@@ -101,19 +101,24 @@ GitQueries (unchanged): for a `git checkout` target, `git -C <dir> show-ref --ve
   then `git -C <dir> rev-parse --verify --quiet <x>^{commit}`; per repository lookup, `git -C <dir> rev-parse --show-toplevel`
 Internal (tests reach it only through CommitTarget):
   WRAPPERS: wrapper name -> value options, positional rule, no-run options, directory options; the ## Requirements table, row for row
-  SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}; SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
+  SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}; SHELL_VALUE_OPTIONS = {"o", "O"}: the letters of -o, +o, -O and +O,
+    read letter by letter as a bundled option word is (`-eo pipefail`)
   scan(cmd, here, switched) -> (dir, branch) | None
     one command line through shell_text + shlex, as main() does today
     `switched` (repo -> branch) is shared with nested scans: a switch carries; `here` is not: a cd ends
     a -c script -> scan(script.translate(UNMASK), <that command's dir>, switched); a hit there is the answer
       (shell_text masked the script's own `;`, `&&` and `|` as quoted data; UNMASK restores them so they separate again)
     a script that raises ValueError (shlex) or RecursionError -> skipped; the scan goes on after it
-  command_start(words, i, here) -> (j, here) | None
+  command_start(words, i, here) -> (j, here, wrapped) | None
     skips PREFIXES, NAME=value words, and each wrapper's options and positionals, wrapper after wrapper;
     a directory option sets `here` for that command only; None when a no-run option is present
+    wrapped: a wrapper stands before the command, so a `cd` there runs as a separate program and moves nothing
   switch_target(sub, args, at): drops a trailing `--` with no word after it, then applies today's rules
 Invariants:
-  shell_text unchanged: quoted prose, comments and heredoc bodies stay data, at every nesting depth
+  shell_text: quoted prose, comments and heredoc bodies stay data, at every nesting depth
+    a `$'…'` word is decoded as bash's ANSI-C quoting: the escapes `\a \b \e \E \f \n \r \t \v \\ \' \" \?`, octal `\nnn` and hex `\xHH`
+      (any other backslash, `\u` and `\c` included, stays as written)
+      and is then one single-quoted word, so `bash -c $'git switch main\ngit commit -m x'` scans as two commands; `$"…"` drops its `$`
   no subprocess besides GitQueries' three calls (`commit_target.py:127`, `:157`, `:159`)
 ```
 

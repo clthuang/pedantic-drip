@@ -226,3 +226,26 @@ Fixed: R4 by d3207a8c — plugins/pd/hooks/lib/test_commit_target.py::test_ansi_
 Fixed: R5 by 0f0fe06d — plugins/pd/hooks/lib/test_commit_target.py::test_c25_no_subprocess_for_non_commits (19 negative inputs; a test-only fix)
 Fixed: Q7 by 462ade63 — test_c25_leaves_no_trace_in_source_tree traces a case that runs git (test-only)
 Closes: review@2026-11-04 20:55+08:00#R1, review@2026-11-04 20:55+08:00#R2, review@2026-11-04 20:55+08:00#R3, review@2026-11-04 20:55+08:00#R4, review@2026-11-04 20:55+08:00#R5
+
+## 2026-11-05 04:26+08:00 decision
+Q: review@2026-11-04 20:55+08:00#R6 (rejected: C26 asserts the CHANGELOG entry under `[Unreleased]`, test_commit_target.py:155, which scripts/release-pr.sh:36 empties; the same assertion is in test_pd_worktrees.py:407 and test_explorer_codegraph.py:172): how should the three tests change?
+A (user, verbatim): "Any section, all three (Recommended)"
+C26 changes to look for the entry anywhere in CHANGELOG.md (a contract change: plan C26, back to design with R7); the two done items get one conductor commit on the combined branch before its battery.
+Closes: review@2026-11-04 20:55+08:00#R6
+
+## 2026-11-05 04:26+08:00 decision-2
+Q: review@2026-11-04 20:55+08:00#R7 (warning: shape.md:111 pins `command_start -> (j, here)` and shape.md:104 `SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}`; the code returns `(i, here, wrapped)`, commit_target.py:200, and stores `{"o", "O"}`, :39): which side moves?
+A (user, verbatim): "Amend shape.md to the code (Recommended)"
+Closes: review@2026-11-04 20:55+08:00#R7
+
+## 2026-11-05 04:26+08:00 decision-3
+Q: qa@2026-11-04 20:55+08:00#Q8 (warning: `$'...'` escapes aren't decoded, so `bash -c $'git switch main\ngit commit -m x'` prints nothing; reproduced by the conductor at a716cb80): fix it now?
+A (user, verbatim): "Fix it in this pass (Recommended)"
+
+## 2026-11-05 04:26+08:00 decision-4
+Q: qa@2026-11-04 20:55+08:00#Q3, #Q4, #Q5, #Q9 (no test for the `+`-word rule, commit_target.py:216; none for the RecursionError catch, :299; skip_wrapper's trailing NAME=value loop, :180, repeats command_start's ASSIGNMENT branch; no test for the `$"..."` strip, :88): fold them into the same fix?
+A (user, verbatim): "Fold them in (Recommended)"
+
+## 2026-11-05 04:26+08:00 phase verify -> design (back)
+Accepted contract changes (decision@2026-11-05 04:26+08:00, decision-2@2026-11-05 04:26+08:00): shape.md `### Contracts` (`command_start`'s return, `SHELL_VALUE_OPTIONS`, and a new `$'…'` decoding rule for Q8, decision-3@2026-11-05 04:26+08:00) and plan C26. Folded in: Q3, Q4, Q5, Q9 (decision-4@2026-11-05 04:26+08:00). Tasks 1 and 2 stay merged; the changes go into a new task.
+Invalidates: shape.md Contracts `command_start`, `SHELL_VALUE_OPTIONS`, `shell_text`; plan.md C26
