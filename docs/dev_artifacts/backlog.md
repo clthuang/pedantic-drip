@@ -12,7 +12,7 @@
 - [ ] 2026-11-04-codebase-explorer-parse-saved-stream — codebase-explorer: parse saved stream-json handbacks at Verify (whole reply json.loads, search in its closed set, every source <path>:<line>, no skipped-item text in findings) (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
 - [ ] 2026-11-04-pre-commit-log-md-fix — pre-commit: a log.md fix-cycle review entry naming shape.md or plan.md needs them in the same commit (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
 - [ ] 2026-11-04-validate-sh-role-pins-reject — validate.sh role pins: reject a tools list continued past its first line (security S1 of the explorer item) (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
-- [ ] 2026-11-04-set-source-paths-test-paths — set source_paths/test_paths in .claude/pd.local.md so pd-lint --isolation covers this repository (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
+- [x] 2026-11-04-set-source-paths-test-paths — dropped: duplicate of 2026-11-04-pd-local-md-set-source, which also covers the verify gate (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
 - [x] 2026-11-02-commit-target-py-see-commits — promoted → workitems/2026-11-03-commit-guard-sees-wrapped-commits
 - [ ] 2026-11-05-commit-guard-ksh-93-runs — commit guard: ksh 93 runs a bare string argument as a command (ksh 'git commit' is unseen) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
 - [ ] 2026-11-05-commit-hooks-commit-prefilter-drops — commit hooks: the *commit* prefilter drops a quote-split commit word the parser sees (git com''mit, git co\mmit) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)

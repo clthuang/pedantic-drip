@@ -169,9 +169,8 @@ def test_c9_ci_and_changelog():
     ci = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
     pytest_line = [l for l in ci if "uv run --project plugins/pd pytest" in l]
     assert pytest_line and "plugins/pd/scripts/test_explorer_codegraph.py" in pytest_line[0]
-    unreleased = re.search(r"^## \[Unreleased\]\n(.*?)(?=^## \[)", (ROOT / "CHANGELOG.md").read_text(),
-                           re.M | re.S).group(1)
-    assert any("codebase-explorer" in l and "CodeGraph" in l for l in unreleased.splitlines())
+    changelog = (ROOT / "CHANGELOG.md").read_text()  # any section: a release moves [Unreleased] under a version
+    assert any("codebase-explorer" in l and "CodeGraph" in l for l in changelog.splitlines())
 
 
 def test_c12_reply_is_the_json_object_alone():

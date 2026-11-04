@@ -403,9 +403,7 @@ def test_c24_ci_and_changelog():
     line = next(l for l in ci.splitlines() if "uv run --project plugins/pd pytest" in l)
     for name in ("test_pd_worktrees.py", "test_pd_status_leftovers.py", "test_worktree_callers.py"):
         assert f"plugins/pd/scripts/{name}" in line
-    changelog = (ROOT / "CHANGELOG.md").read_text()
-    unreleased = changelog.split("## [Unreleased]")[1].split("\n## [")[0]
-    assert "pd-worktrees" in unreleased
+    assert "pd-worktrees" in (ROOT / "CHANGELOG.md").read_text()  # any section: a release moves [Unreleased] under a version
 
 
 @pytest.mark.parametrize("remove_args", [None, ("--strays", "--remove")], ids=["by-id", "strays"])

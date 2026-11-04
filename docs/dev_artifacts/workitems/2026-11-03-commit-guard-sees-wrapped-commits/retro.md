@@ -170,7 +170,7 @@ Each lesson lands as a skill edit or a backlog item; the skill edits and the bac
   - 2026-11-05-commit-target-normalize-printed-directory
   - 2026-11-05-commit-target-pin-untested-wrappers
   - the security review's S2 (`\u`, `\U`, `\cX`) and S6/S7 (BSD options, `--rcfile`, a tab in a directory) items
-- **set-source-paths-test-paths** (qa@2026-11-05 05:42+08:00 Q4; qa@2026-11-05 06:36+08:00 Q4) belongs to the explorer item, and lands with the round's combined PR.
+- **set-source-paths-test-paths** (qa@2026-11-05 05:42+08:00 Q4; qa@2026-11-05 06:36+08:00 Q4) was filed twice in this round; the combined branch drops it as a duplicate of the worktree item's 2026-11-04-pd-local-md-set-source, which also covers the verify gate.
 
 ---
 Drafted by `pd:retro-facilitator` from `log.md` and the git log at 9f2ef5af's predecessor; the conductor added move 6, the security review and Verify run 4 from their entries (review@2026-11-05 06:14+08:00, run@2026-11-05 06:36+08:00, qa@2026-11-05 06:36+08:00), and checked the sibling retros and the "External output parsed" wording with `git show`.
