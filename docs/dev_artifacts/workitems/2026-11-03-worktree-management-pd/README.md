@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify run 1 done (R2 to R8 fixed, battery passes at 44433ea8); settling R1's rejection, the risk signals and QA's warnings with the user.
 
 ## Links
 

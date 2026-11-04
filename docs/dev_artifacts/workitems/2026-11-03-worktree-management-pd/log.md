@@ -217,3 +217,62 @@ Commit: 915a9fff
 
 ## 2026-11-03 19:58+08:00 phase implement -> verify
 Implement exit check passed (phase-gate.sh implement: all three plan tasks on merged, proof pass lines). Re-run on the branch after the merges: the three proving files 44 passed; CI's test steps (hook suites, phase-gate, eight self-tests, test-workflows.mjs, the pytest line: 54 passed), test-hooks.sh 24/24 and validate.sh all pass. `pd-worktrees 2026-11-03-worktree-management-pd` on this repository lists the run's three clean task worktrees, exit 0; `--strays` lists none.
+
+## 2026-11-04 14:09+08:00 run verify-change — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 4. Tokens: 55342. Cycles: 1. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_2b4646db-f10/journal.jsonl
+Run: wf_2b4646db-f10. Stopped: none.
+
+## 2026-11-04 14:09+08:00 review verify — codex (fallback: no)
+Verdict: changes requested. Commit: ef16b893.
+- R1 blocker plugins/pd/scripts/pd-worktrees:56 — Ambiguous short ref names can make a stray vouch for itself, allowing deletion of its unique commits.
+- R2 blocker plugins/pd/skills/implementing/SKILL.md:33 — The wrong-test cleanup invocation lacks the required hard stop on exit 2.
+- R3 blocker plugins/pd/scripts/pd-worktrees:112 — A refused removal does not refresh the worktree's lock or prunable state.
+- R4 blocker plugins/pd/scripts/pd-worktrees:94 — Empty cleanup bypasses the run-in-flight guard.
+- R5 blocker plugins/pd/scripts/pd-worktrees:64 — A failed post-deletion lookup is silently treated as an absent branch.
+- R6 blocker plugins/pd/scripts/test_pd_worktrees.py:120 — C3 does not prove B3's clean-worktree removal in the mixed clean/dirty case.
+- R7 blocker plugins/pd/scripts/test_pd_status_leftovers.py:129 — C27, green at its first commit, does not prove B15's filtering behavior.
+- R8 blocker plugins/pd/scripts/test_pd_status_leftovers.py:47 — Remove the unused retro option of make_item() and its file-writing branch.
+- R9 warning plugins/pd/scripts/pd-status:90 — The implemented signature differs from the contract.
+Rejects: review@2026-11-04 14:09+08:00#R1 — The finding is real, but the fix needs a contract change, so it goes to the user. shape.md GitSurface pins `--format=%(refname:short)` for `git for-each-ref --contains <tip> refs/heads/` (read at plugins/pd/scripts/pd-worktrees:56). The short name is ambiguous when a same-named tag exists. LeftoverSection in shape.md, via pd-status leftovers() at plugins/pd/scripts/pd-status:~113, has the same pinned `branch --list --format=%(refname:short)`. Proposed change: pin `%(refname)` in both places, strip `refs/heads/` in code, and compare full refs throughout. I did not edit shape.md, and I did not make the code diverge from the pinned format.
+
+## 2026-11-04 14:09+08:00 qa
+Commit: 44433ea8
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: Fix check, R2-R5 hold: I exported trees at cfa37f76 and 44433ea8 (git archive of plugins/pd) and ran the four new tests in each. At cfa37f76 all four are red, each for the reason its finding names. C33: the bullet has no 'exit 2'/'hard stop'. R3: printed 'kept (clean)', not 'kept (locked)'. R4: printed 'no worktrees for <id>', not the run-in-flight line. R5: exit 0 with empty stderr. At 44433ea8 all four are green.
+Criteria gaps: Fix check, R6 and R7 hold: the strengthened C3 and C27 are green at both commits, as expected for test-only fixes. Each now kills the mutant its finding describes. A pd-worktrees mutant that prints 'removed' without calling `git worktree remove` fails C3 (11 failures in total). A pd-status mutant that exits 1 with empty stdout fails C27.
+Criteria gaps: Fix check, R8 holds: cfa37f76 deletes the `retro=False` parameter and the retro.md branch from make_item(), and no call site passes retro=.
+Criteria gaps: B1/C1 pass would still allow `pd-worktrees <id>` in list mode to print a wrong state for the main checkout. `main checkout` is tested only under --remove (C13, test_pd_worktrees.py:261).
+Criteria gaps: B3/C3 pass, together with the Risks row 'turns dirty between the state check and remove', would still allow a wrong state when the refusal comes from new dirt rather than a new lock. Only the lock race is simulated (test_refused_removal_reads_lock_state_again). The re-read shares state_of(), so the risk is low.
+Criteria gaps: B6/B19 pass would still allow a `worktree-wf_*` branch that a worktree holds to count as the non-stray branch that vouches for a stray. This matches the Terms definition literally, but no test pins it either way.
+Criteria gaps: B12/C12 pass would still allow `..` and `.` to be accepted as known work items. See Q3: the mutant that deletes the `"/"` guard still survives all 27 tests in test_pd_worktrees.py.
+Criteria gaps: B14/C25 pass would still allow a branch held by a listed worktree to be listed a second time. That covers a held `worktree-wf_*` branch, which would show as `stray branch`. See Q4: the mutant `sorted(branches)` survives all 42 tests in test_pd_worktrees.py and test_pd_status_leftovers.py.
+Criteria gaps: B16/C28 pass would still allow the hook to drop or truncate the section when pd-status prints many leftover lines. Only a single leftover is tested.
+Criteria gaps: B18/C32-C35 pass would still allow caller prose that reads ambiguously, because the tests check literal substrings in order and not behaviour. Example: abandon's 'any other `pd/<id>/task-*` branches' depends on the conductor reading the kept list.
+Criteria gaps: B18 pass would still allow callers to invoke a bare `pd-worktrees`, which is not on PATH (see Q6).
+Criteria gaps: Worktree paths are covered only for \n and \r (C16, C22). A tab or backslash in a path passing through `shown()` is untested end to end.
+Criteria gaps: End-to-end flow in a scratch repo across tasks 1-3 behaved as shape.md says. The flow: an Execute leaves 3 task worktrees (one dirty) and a stray. pd-status lists 3 `worktree after its run` lines plus the stray, and the session-start hook on resume includes the section. `pd-worktrees --remove` removes 2, keeps the dirty one, deletes the stray, and exits 1. A run in flight makes `--remove --task 3` print the line and exit 1, and pd-status omits that worktree. After abandoned status, --force discard, a second --remove and `branch -D` of all three, pd-status has no Leftover worktrees section. All five B12 usage errors exit 2 with a message on stderr. Not driven: the conductor's AskUserQuestion step, and Finish's `-d` path with a real PR.
+- Q1 warning plugins/pd/scripts/conftest.py:1 — Still open. pd-lint reports a security risk signal that has no matching `risk: [security]` tag on the work item.
+- Q2 warning plugins/pd/scripts/pd_common.py:1 — Still open. pd-lint reports a security risk signal that has no matching `risk: [security]` tag on the work item.
+- Q3 warning plugins/pd/scripts/pd-worktrees:91 — Still open. `..` and `.` pass the known-work-item check, so `pd-worktrees .. --remove` deletes strays and exits 0 instead of exiting 2.
+- Q4 warning plugins/pd/scripts/test_pd_status_leftovers.py:74 — Still open. test_c25_every_reason_in_order cannot fail on the rule 'a branch a listed worktree holds isn't listed again'.
+- Q6 note plugins/pd/skills/implementing/SKILL.md:25 — Still open. The caller steps invoke bare `pd-worktrees`, which is not on PATH, while the same files use `${CLAUDE_PLUGIN_ROOT}/scripts/...` for phase-gate.sh.
+- Q7 note plugins/pd/scripts/pd-worktrees:96 — Still open. `pd-worktrees --strays --remove --task 1` is accepted, empties the stray set, does nothing and exits 0.
+- Q8 note plugins/pd/scripts/pd-status:90 — Still open. LeftoverSection names `leftovers(root, art, items)`, but the code defines `leftovers(root, items)`.
+- Q9 note .:0 — Still open. The isolation check did not run on the branch diff.
+- Q10 warning plugins/pd/hooks/lib/trace.jsonl:1 — Fix commit 44433ea8 also committed a debugging trace file into shipped plugin source. The file is unrelated to R2-R5.
+Fixed: R2 by 44433ea8 — plugins/pd/scripts/test_worktree_callers.py::test_c33_wrong_test_bullet_removes_by_task_before_branch_delete (red at cfa37f76)
+Fixed: R3 by 44433ea8 — plugins/pd/scripts/test_pd_worktrees.py::test_refused_removal_reads_lock_state_again (red at cfa37f76)
+Fixed: R4 by 44433ea8 — plugins/pd/scripts/test_pd_worktrees.py::test_run_in_flight_is_checked_with_nothing_to_remove (red at cfa37f76)
+Fixed: R5 by 44433ea8 — plugins/pd/scripts/test_pd_worktrees.py::test_failed_lookup_after_failed_delete_is_exit_2 (red at cfa37f76)
+Fixed: R6 by cfa37f76 — plugins/pd/scripts/test_pd_worktrees.py::test_c3_dirty_is_kept now asserts the clean directory and its registration are gone
+Fixed: R7 by cfa37f76 — plugins/pd/scripts/test_pd_status_leftovers.py::test_c27_run_in_flight_and_other_branch_items_not_listed now asserts exit 0 and positive controls for both exclusions
+Fixed: R8 by cfa37f76 — removal finding, no test: deleted the unused retro option and its branch from make_item()
+Closes: review@2026-11-04 14:09+08:00#R2, review@2026-11-04 14:09+08:00#R3, review@2026-11-04 14:09+08:00#R4, review@2026-11-04 14:09+08:00#R5, review@2026-11-04 14:09+08:00#R6, review@2026-11-04 14:09+08:00#R7, review@2026-11-04 14:09+08:00#R8
