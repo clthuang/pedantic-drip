@@ -64,6 +64,8 @@ If no relevant findings:
 
 `search` says how you searched, written from the calls you made: `codegraph` (a CodeGraph call answered and no Glob or Grep followed), `codegraph, then grep` (a CodeGraph call answered and a Glob or Grep followed), or `grep (codegraph unavailable: <reason>)`. The reason is one of `tool not in session`, `no index` or `error: <the error's first line>`.
 
+Reply with the JSON object alone: no text before or after it. Anything you skipped or could not check goes in `no_findings_reason` or a finding, never in trailing prose.
+
 When the dispatch asks for its own output shape (a schema in its prompt or tools), return that shape and leave out "search".
 
 ## Research Process
