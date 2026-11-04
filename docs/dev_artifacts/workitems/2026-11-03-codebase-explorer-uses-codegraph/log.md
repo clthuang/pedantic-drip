@@ -214,3 +214,7 @@ Criteria gaps: pd-lint on the work-item directory: exit 0. Isolation lint was no
 Fixed: R1 by 669643b6 — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_reply_is_the_json_object_alone (failed before the fix, committed in edb60e6c)
 Fixed: Q2 by 99e4b4cc — plugins/pd/scripts/test_explorer_codegraph.py::test_c12_reply_carries_no_code_fence (failed before the fix, committed in 951583ee)
 Closes: review@2026-11-04 19:47+08:00#R1
+
+## 2026-11-04 19:54+08:00 decision
+Q: qa@2026-11-04 19:47+08:00#Q5 (warning: codebase-explorer.md:67 sends skipped items to `no_findings_reason` "or a finding", and a finding must cite `<path>:<line>`): fix it or backlog it?
+A (user, verbatim): "Re-run Verify to fix it (Recommended)"

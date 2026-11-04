@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-codebase-explorer-uses-codegraph
 
 ## Now
 
-Verify done (its third QA run at 99e4b4cc, battery passes; R1 and Q2 fixed); open: Q5 warning (the explorer's skipped-items line) for the owner.
+run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
