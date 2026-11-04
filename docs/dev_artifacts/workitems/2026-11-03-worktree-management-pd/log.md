@@ -416,3 +416,10 @@ Closes: review@2026-11-04 18:14+08:00#R1, review@2026-11-04 18:14+08:00#R2
 
 ## 2026-11-04 18:16+08:00 phase design -> create-plan
 Design fix reviewed (review@2026-11-04 18:16+08:00, approved). Next: plan.md task 5 (C44 to C48).
+
+## 2026-11-04 18:22+08:00 review plan — codex (fallback: no)
+Verdict: changes requested. Commit: 020efeb4. Review of task 5 (C44 to C48).
+- R1 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:119 — C44's symbolic stray `worktree-wf_s` sorts after its target `worktree-wf_r-2`, and strays are handled in listing order (pd-worktrees:128-130), so targets re-read at each delete pass it too; the source must sort first.
+- R2 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:119 — C44's deletions are checked by the printed line only (plan.md:13: line membership); B20 needs the ref gone.
+- R3 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:122 — C47 has only exit-0 runs; the edge case's usual exit code and the exit-2 message on stderr have no case.
+All three verified against the code (pd-worktrees:126-130; test_pd_worktrees.py:29-31 `fail-delete`).
