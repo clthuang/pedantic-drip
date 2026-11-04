@@ -230,6 +230,20 @@ def test_c21_not_commits(repo):
         assert seen(cmd, repo) == "", cmd
 
 
+def test_empty_shell_argument_keeps_later_commit(repo):
+    for cmd in ("bash -c ''; git commit -m x", 'bash ""; git commit -m x', "bash '' -c 'git commit -m x'"):
+        assert seen(cmd, repo) == f"{repo}\t\n", cmd
+
+
+def test_wrapper_option_without_value_stops_at_separator(repo):
+    for cmd in ("env -C sub -u ; git commit -m x", "sudo -D sub -u ; git commit -m x"):
+        assert seen(cmd, repo) == f"{repo}\t\n", cmd
+
+
+def test_ansi_c_quoted_script_is_seen(repo):
+    assert seen("bash -c $'git commit -m x'", repo) == f"{repo}\t\n"
+
+
 def test_c22_degenerate_scripts(repo):
     assert seen("bash -c", repo) == ""
     assert seen("bash -c 'echo \"unclosed'; git commit -m x", repo) == f"{repo}\t\n"
@@ -303,10 +317,21 @@ def _traced_cases(repo):
     return cases
 
 
-def _trace_mismatches(script, repo, cases):
-    """Run `script` under the audit driver for each case; the (command, got, want, stdout, stderr) of every mismatch."""
+def _traced_negatives():
+    """(command, branch) for every `seen` command of C1 to C24 that prints nothing: none may run a subprocess."""
+    cmds = ["timeout 30 echo git commit", "sudo -u alice echo git commit", "command -v git commit", "command -V git commit",
+            "sudo -l git commit", "sudo -v git commit", "sudo -K git commit", "timeout --help git commit",
+            "nice --version git commit", 'echo "timeout 30 git commit"', "timeout 30", "env -u", "sudo -k",
+            "bash -c 'echo \"git commit\"'", "bash ./commit.sh", "fish -c 'git commit -m x'",
+            "bash -c $'# git commit\ntrue'", "bash -c $'cat <<EOF\ngit commit -m x\nEOF'", "bash -c"]
+    return [(c, "workitem/x", []) for c in cmds]
+
+
+def _trace_mismatches(script, repo, cases, trace_dir, empty_ok=False):
+    """Run `script` under the audit driver for each case; the (command, got, want, stdout, stderr) of every mismatch.
+    The trace file lives in `trace_dir`, never beside the script."""
     bad = []
-    trace = os.path.join(os.path.dirname(script), "trace.jsonl")
+    trace = os.path.join(str(trace_dir), "trace.jsonl")
     for cmd, branch, expected in cases:
         _on(repo, branch)
         if os.path.exists(trace):
@@ -318,13 +343,26 @@ def _trace_mismatches(script, repo, cases):
             with open(trace) as f:
                 got = [json.loads(l) for l in f]
         want = [{"popen": e} for e in expected]
-        if r.returncode != 0 or r.stderr or not r.stdout or got != want:
+        if r.returncode != 0 or r.stderr or (not r.stdout and not empty_ok) or (r.stdout and empty_ok) or got != want:
             bad.append((cmd, got, want, r.stdout, r.stderr))
     return bad
 
 
-def test_c25_only_git_queries_run(repo):
-    assert _trace_mismatches(_SCRIPT, repo, _traced_cases(repo)) == []
+def test_c25_only_git_queries_run(repo, tmp_path):
+    assert _trace_mismatches(_SCRIPT, repo, _traced_cases(repo), tmp_path) == []
+
+
+def test_c25_no_subprocess_for_non_commits(repo, tmp_path):
+    negatives = _traced_negatives()
+    assert len(negatives) == 19
+    assert _trace_mismatches(_SCRIPT, repo, negatives, tmp_path, empty_ok=True) == []
+
+
+def test_c25_leaves_no_trace_in_source_tree(repo, tmp_path):
+    leftover = os.path.join(_LIB, "trace.jsonl")
+    assert not os.path.exists(leftover)
+    _trace_mismatches(_SCRIPT, repo, _traced_cases(repo)[:1], tmp_path)
+    assert not os.path.exists(leftover)
 
 
 def test_c25_negative_controls(repo, tmp_path):
@@ -341,7 +379,7 @@ def test_c25_negative_controls(repo, tmp_path):
         copy_dir.mkdir()
         copy = copy_dir / "commit_target.py"
         copy.write_text(text)
-        assert _trace_mismatches(str(copy), repo, switch_case), name
+        assert _trace_mismatches(str(copy), repo, switch_case, copy_dir), name
 
 
 # C27: the imports and subprocess calls, read statically.
