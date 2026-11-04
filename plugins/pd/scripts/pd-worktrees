@@ -9,6 +9,7 @@ isn't a stray contains its tip. Exit 0: all asked removals done; 1: a worktree k
 2: usage or git failure (message on stderr).
 """
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,15 +45,32 @@ def listed_worktrees(main):
     return found
 
 
+def emit(line):
+    """Print one flushed line; a reader that closed the pipe loses the rest of the output, not the work (D9)."""
+    try:
+        print(line, flush=True)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+
 def stray_tips(main, held):
-    """{stray branch: tip}: the worktree-wf_* branches no worktree holds."""
-    out = git(["for-each-ref", "--format=%(refname) %(objectname)", f"refs/heads/{STRAY_PREFIX}*"], main)
-    pairs = (line.rsplit(" ", 1) for line in out.split("\n") if line)
-    return {ref.removeprefix("refs/heads/"): tip for ref, tip in pairs
-            if ref.removeprefix("refs/heads/") not in held}
+    """({stray: tip}, {refs/heads/<branch> a symbolic branch points at}), read once from one listing (D8)."""
+    out = git(["for-each-ref", "--format=%(refname) %(objectname) %(symref)", "refs/heads/"], main)
+    strays, targets = {}, set()
+    for line in out.split("\n"):
+        if not line:
+            continue
+        ref, tip, *rest = line.split(" ", 2)  # git() strips the last line's empty %(symref)
+        symref = rest[0] if rest else ""
+        name = ref.removeprefix("refs/heads/")
+        if symref:  # %(symref) names a chain's last ref, so each link's own target is read separately
+            targets.add(git(["symbolic-ref", "--no-recurse", ref], main))
+        if name.startswith(STRAY_PREFIX) and name not in held:
+            strays[name] = tip
+    return strays, targets
 
 
-def delete_stray(main, name, tip, strays):
+def delete_stray(main, name, tip, strays, targets):
     """One output line, or None when the stray is gone or a worktree took it."""
     contained = git(["for-each-ref", "--contains", tip, "--format=%(refname) %(symref)", "refs/heads/"], main)
     # Full refs: with a same-named tag, %(refname:short) prints heads/<name>, and a stray would vouch for itself.
@@ -61,6 +79,8 @@ def delete_stray(main, name, tip, strays):
                 if line and line.endswith(" "))
     if not any(b not in strays for b in vouchers):
         return f"kept (unique commits): {name}"
+    if f"refs/heads/{name}" in targets:  # deleting it would leave a symbolic branch dangling
+        return f"kept (symbolic branch): {name}"
     if name in {w["branch"] for w in listed_worktrees(main)}:  # a worktree took it since the listing
         return None
     # The tip as the old value: a branch moved since the check is refused; --no-deref spares a symbolic ref's target.
@@ -98,36 +118,36 @@ def run(args):
             raise Fail(f"{args.id} is not a work item in this checkout")
         readme = item_dir / "README.md"
     tasks = [w for w in wts if args.id and (m := TASK_BRANCH.match(w["branch"] or "")) and m["id"] == args.id]
-    strays = stray_tips(main, {w["branch"] for w in wts})
+    strays, targets = stray_tips(main, {w["branch"] for w in wts})
     if args.remove and args.task:
         tasks = [w for w in tasks if int(TASK_BRANCH.match(w["branch"])["n"]) in args.task]
         strays = {}
     if args.remove and args.id and (flight := run_in_flight(readme)):
-        print(flight)
+        emit(flight)
         return 1
     if args.id and not tasks and not strays:
-        print(f"no worktrees for {args.id}")
+        emit(f"no worktrees for {args.id}")
         return 0
     if not args.remove:
         for w in tasks:
-            print(f"{state_of(main, w)} {shown(w['path'])} {w['branch']}")
+            emit(f"{state_of(main, w)} {shown(w['path'])} {w['branch']}")
         for name in strays:
-            print(f"stray {name}")
+            emit(f"stray {name}")
         return 0
     code = 0
     for w in tasks:
         state = state_of(main, w)
         if state in ("clean", "gone") and git(["worktree", "remove", w["path"]], main, check=False) is not None:
-            print(f"removed {shown(w['path'])}")
+            emit(f"removed {shown(w['path'])}")
             continue
         if state in ("clean", "gone"):  # git refused: the lock or dirt may be new, so read the record again
             now = next((x for x in listed_worktrees(main) if x["path"] == w["path"]), w)
             state = state_of(main, now)
-        print(f"kept ({state}): {shown(w['path'])}")
+        emit(f"kept ({state}): {shown(w['path'])}")
         code = 1
     for name, tip in strays.items():
-        if (line := delete_stray(main, name, tip, strays)):
-            print(line)
+        if (line := delete_stray(main, name, tip, strays, targets)):
+            emit(line)
     return code
 
 

@@ -75,12 +75,19 @@ def wt(pd_repo, tmp_path):
     fake.chmod(0o755)
     log = tmp_path / "git.log"
 
-    def run(*args, cwd=None, mode="log", **extra_env):
+    def run(*args, cwd=None, mode="log", closed_stdout=False, **extra_env):
         log.write_text("")
         env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "GIT_LOG": str(log),
                "FAKE_MODE": mode, **extra_env}
-        r = subprocess.run([sys.executable, str(SCRIPTS / "pd-worktrees"), *args], cwd=cwd or pd_repo.root,
-                           env=env, capture_output=True)
+        command = [sys.executable, str(SCRIPTS / "pd-worktrees"), *args]
+        if closed_stdout:  # stdout is a pipe whose read end is already closed
+            read_end, write_end = os.pipe()
+            os.close(read_end)
+            r = subprocess.run(command, cwd=cwd or pd_repo.root, env=env, stdout=write_end, stderr=subprocess.PIPE)
+            os.close(write_end)
+            r.stdout = b""
+        else:
+            r = subprocess.run(command, cwd=cwd or pd_repo.root, env=env, capture_output=True)
         stdout = r.stdout.decode("utf-8", "surrogateescape")
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         check_guard(calls)
@@ -350,6 +357,8 @@ def test_c20b_symbolic_ref_to_a_stray_does_not_vouch(pd_repo, wt):
     r = wt(pd_repo.id, "--remove")
     assert "kept (unique commits): worktree-wf_r-3" in r.lines
     assert pd_repo.tip("worktree-wf_r-3") == unique
+    assert pd_repo.git("rev-parse", "--verify", "-q", "saved") == unique
+    assert r.code == 0
 
 
 def test_c21_stray_taken_by_a_worktree(pd_repo, wt, tmp_path):
@@ -422,3 +431,112 @@ def test_c42_usage_errors(pd_repo, wt, args):
     r = wt(*args)
     assert r.stdout == "" and r.stderr.startswith("pd-worktrees:") and r.code == 2
     assert pd_repo.snapshot() == before and pd_repo.has_branch("worktree-wf_r-2")
+
+
+def symref(pd_repo, name, target):
+    pd_repo.git("symbolic-ref", f"refs/heads/{name}", f"refs/heads/{target}")
+
+
+def contained_stray(pd_repo, name="worktree-wf_r-2"):
+    """A stray whose tip workitem/<id> contains; returns the tip."""
+    tip = pd_repo.advance(f"workitem/{pd_repo.id}", "on the work item branch")
+    stray_on(pd_repo, name, tip)
+    return tip
+
+
+@pytest.mark.parametrize("remove_args", [None, ("--strays", "--remove")], ids=["by-id", "strays"])
+def test_c44a_symbolic_branch_pointing_at_a_stray_keeps_it(pd_repo, wt, remove_args):
+    tip = contained_stray(pd_repo)
+    symref(pd_repo, "saved", "worktree-wf_r-2")
+    r = wt(*(remove_args or (pd_repo.id, "--remove")))
+    assert "kept (symbolic branch): worktree-wf_r-2" in r.lines
+    assert pd_repo.tip("worktree-wf_r-2") == tip
+    assert pd_repo.git("rev-parse", "--verify", "-q", "saved") == tip
+    assert r.code == 0
+
+
+def test_c44b_symbolic_branch_pointing_elsewhere_keeps_nothing(pd_repo, wt):
+    contained_stray(pd_repo)
+    symref(pd_repo, "saved", "main")
+    r = wt(pd_repo.id, "--remove")
+    assert "deleted worktree-wf_r-2" in r.lines
+    assert not pd_repo.has_branch("worktree-wf_r-2")
+    assert r.code == 0
+
+
+def test_c44c_symbolic_stray_is_deleted_and_its_target_kept(pd_repo, wt):
+    tip = contained_stray(pd_repo)
+    symref(pd_repo, "worktree-wf_a-sym", "worktree-wf_r-2")
+    r = wt(pd_repo.id, "--remove")
+    assert "deleted worktree-wf_a-sym" in r.lines
+    assert not pd_repo.has_branch("worktree-wf_a-sym")
+    assert "kept (symbolic branch): worktree-wf_r-2" in r.lines
+    assert pd_repo.tip("worktree-wf_r-2") == tip
+    assert r.code == 0
+
+
+def test_c44d_chain_keeps_the_middle_link(pd_repo, wt):
+    contained_stray(pd_repo)
+    symref(pd_repo, "worktree-wf_r-2", "main")
+    symref(pd_repo, "saved", "worktree-wf_r-2")
+    r = wt(pd_repo.id, "--remove")
+    assert "kept (symbolic branch): worktree-wf_r-2" in r.lines
+    assert pd_repo.git("symbolic-ref", "--no-recurse", "refs/heads/saved") == "refs/heads/worktree-wf_r-2"
+    assert pd_repo.git("rev-parse", "--verify", "-q", "saved")
+    assert r.code == 0
+
+
+def test_c46_stray_name_with_a_slash(pd_repo, wt):
+    name = "worktree-wf_a/b"
+    main_tip = pd_repo.tip("main")
+    stray_on(pd_repo, name, main_tip)
+    for args in ((pd_repo.id,), ("--strays",)):
+        r = wt(*args)
+        assert f"stray {name}" in r.lines and r.code == 0, args
+    for args in (("--strays", "--remove"), (pd_repo.id, "--remove")):
+        r = wt(*args)
+        assert f"deleted {name}" in r.lines and r.code == 0, args
+        assert not pd_repo.has_branch(name), args
+        stray_on(pd_repo, name, main_tip)
+
+
+def test_c47a_listing_to_a_closed_pipe(pd_repo, task_worktree, wt):
+    task_worktree(1, "clean")
+    pd_repo.git("branch", "worktree-wf_r-1")
+    for args in ((pd_repo.id,), ("--strays",)):
+        r = wt(*args, closed_stdout=True)
+        assert r.stderr == "" and r.code == 0, (args, r.stderr)
+
+
+def test_c47b_remove_finishes_with_a_closed_pipe(pd_repo, task_worktree, wt):
+    p1 = task_worktree(1, "clean")
+    contained_stray(pd_repo)
+    r = wt(pd_repo.id, "--remove", closed_stdout=True)
+    assert r.stderr == "" and r.code == 0
+    assert not Path(p1).exists() and p1 not in {w["path"] for w in pd_repo.listed()}
+    assert not pd_repo.has_branch("worktree-wf_r-2")
+
+
+def test_c47c_exit_1_survives_a_closed_pipe(pd_repo, task_worktree, wt):
+    p1, p2 = task_worktree(1, "clean"), task_worktree(2, "dirty")
+    r = wt(pd_repo.id, "--remove", closed_stdout=True)
+    assert r.stderr == "" and r.code == 1
+    assert not Path(p1).exists() and Path(p2).exists()
+
+
+def test_c47d_exit_2_message_with_a_closed_pipe(pd_repo, task_worktree, wt):
+    task_worktree(1, "clean")
+    contained_stray(pd_repo)
+    r = wt(pd_repo.id, "--remove", mode="fail-delete", closed_stdout=True)
+    assert r.stderr.startswith("pd-worktrees:")
+    assert "Traceback" not in r.stderr and "BrokenPipeError" not in r.stderr
+    assert r.code == 2
+
+
+def test_c48_id_with_a_slash_is_refused(pd_repo, wt):
+    contained_stray(pd_repo)
+    before = pd_repo.snapshot()
+    for args in ((f"{pd_repo.id}/..",), (f"{pd_repo.id}/..", "--remove"), (f"{pd_repo.id}/",)):
+        r = wt(*args)
+        assert r.stdout == "" and r.stderr.startswith("pd-worktrees:") and r.code == 2, args
+        assert pd_repo.snapshot() == before, args
