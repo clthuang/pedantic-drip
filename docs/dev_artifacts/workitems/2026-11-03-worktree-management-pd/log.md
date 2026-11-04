@@ -430,3 +430,15 @@ Closes: review@2026-11-04 18:22+08:00#R1, review@2026-11-04 18:22+08:00#R2, revi
 
 ## 2026-11-04 18:25+08:00 phase create-plan -> implement
 Task 5 reviewed (review@2026-11-04 18:25+08:00, approved). Next: implement-tasks for task 5; tasks 1 to 4 stay merged.
+
+## 2026-11-04 18:34+08:00 run implement-tasks — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 2. Tokens: 17797. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_709d6e35-b98/journal.jsonl
+Run: wf_709d6e35-b98, resuming with tasks 1 to 4 merged. Stopped: none. Merge: 427e72ed.
+- task 5: merged, proof pass, cycles 0, branch pd/2026-11-03-worktree-management-pd/task-5
+  case_map: C44=plugins/pd/scripts/test_pd_worktrees.py::test_c44a_symbolic_branch_pointing_at_a_stray_keeps_it + plugins/pd/scripts/test_pd_worktrees.py::test_c44b_symbolic_branch_pointing_elsewhere_keeps_nothing + plugins/pd/scripts/test_pd_worktrees.py::test_c44c_symbolic_stray_is_deleted_and_its_target_kept + plugins/pd/scripts/test_pd_worktrees.py::test_c44d_chain_keeps_the_middle_link, C45=plugins/pd/scripts/test_pd_worktrees.py::test_c20b_symbolic_ref_to_a_stray_does_not_vouch, C46=plugins/pd/scripts/test_pd_worktrees.py::test_c46_stray_name_with_a_slash + plugins/pd/scripts/test_pd_status_leftovers.py::test_c46_pd_status_lists_a_stray_with_a_slash, C47=plugins/pd/scripts/test_pd_worktrees.py::test_c47a_listing_to_a_closed_pipe + plugins/pd/scripts/test_pd_worktrees.py::test_c47b_remove_finishes_with_a_closed_pipe + plugins/pd/scripts/test_pd_worktrees.py::test_c47c_exit_1_survives_a_closed_pipe + plugins/pd/scripts/test_pd_worktrees.py::test_c47d_exit_2_message_with_a_closed_pipe, C48=plugins/pd/scripts/test_pd_worktrees.py::test_c48_id_with_a_slash_is_refused; greens: test_c20b_symbolic_ref_to_a_stray_does_not_vouch (declared in the plan), test_c48_id_with_a_slash_is_refused (declared in the plan), test_c46_pd_status_lists_a_stray_with_a_slash (pd-status's `branch --list` glob already matched a `/`, D8), test_c44b_symbolic_branch_pointing_elsewhere_keeps_nothing (C44(b)'s control: the delete was already the behaviour); the earlier tasks' tests also green, as before; skipped: none
+
+## 2026-11-04 18:34+08:00 note
+Found after the merge, by a native-git probe (2026-11-04, git 2.54.0), for Verify run 3: a stray `worktree-wf_a` whose tip only `zz-feature` (a plain branch sorting after it) contains prints `kept (unique commits): worktree-wf_a`, not `deleted`, against B6. Cause: `delete_stray`'s vouchers keep lines ending in " " (an empty `%(symref)`), and `pd_common.git()` strips its output (pd_common.py:141), so the last line loses that space. From Verify run 2's fix 1f0246ec; fail-safe (it keeps), but B6's outcome is wrong.
+
+## 2026-11-04 18:34+08:00 phase implement -> verify
+Task 5 merged with proof pass (427e72ed); tasks 1 to 4 unchanged. A B6 defect from 1f0246ec goes to Verify run 3 (note@2026-11-04 18:34+08:00).

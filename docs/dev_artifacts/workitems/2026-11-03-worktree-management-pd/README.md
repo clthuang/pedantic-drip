@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: implement
+phase: verify
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Verify run 3 (after task 5): the review beside QA over the branch diff, the battery at the QA commit; the B6 voucher defect (note@2026-11-04 18:34+08:00) handed to it.
 
 ## Links
 
