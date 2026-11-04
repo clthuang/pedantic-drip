@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Ready for Verify (run 2): task 4 merged with proof pass (132a3507).
+run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
