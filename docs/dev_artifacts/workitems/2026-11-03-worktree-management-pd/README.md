@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: create-plan
+phase: implement
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Plan (back from Verify): task 4 in a Wave 3 for R1's full refs, the C30 amendment, Q3, Q4, Q6, Q7 and Q10; then the Plan review.
+run in flight: implement-tasks session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 

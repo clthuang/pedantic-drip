@@ -304,3 +304,10 @@ Design fix reviewed (review@2026-11-04 16:09+08:00, approved). Next: plan.md's t
 Verdict: changes requested. Commit: fe3855e2. Scoped review of task 4 (772bf1c2..fe3855e2).
 - R1 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:103 — C41 already passes at the tests-only first commit (pd-status:99-112 already excludes held branches), so it proves no new code.
 - R2 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/plan.md:100 — C38 checks `deleted worktree-wf_r-2` but never that `refs/heads/worktree-wf_r-2` is gone, which B6 and B19 require.
+
+## 2026-11-04 16:21+08:00 review plan — codex (fallback: no)
+Verdict: approved. Commit: 0639a8de. Scoped re-review of fe3855e2..0639a8de: R1 resolved (C41 declared an expected-green guard; pd-proof:58-71 reports first-commit greens, merger.md:25), R2 resolved (C38 checks the full ref is gone); no new finding in the diff.
+Closes: review@2026-11-04 16:19+08:00#R1, review@2026-11-04 16:19+08:00#R2
+
+## 2026-11-04 16:21+08:00 phase create-plan -> implement
+Task 4 reviewed (review@2026-11-04 16:21+08:00, approved). Next: implement-tasks for task 4; tasks 1 to 3 stay merged.
