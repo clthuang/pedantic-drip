@@ -184,3 +184,11 @@ def test_c12_reply_carries_no_code_fence():
     # Live replies at 669643b6 came back wrapped in a ```json fence, which fails json.loads (Q2).
     block = section(AGENT.read_text(), "## Output Format")
     assert "no ```json fence" in block
+
+
+def test_c12_limitations_go_in_no_findings_reason_not_findings():
+    # A skipped item has no file:line, so it cannot be a finding (ExplorerDispatch source is <path>:<line>).
+    block = section(AGENT.read_text(), "## Output Format")
+    assert "goes in `no_findings_reason` or a finding" not in block
+    assert "goes in `no_findings_reason`" in block
+    assert "only when it rests on a `<path>:<line>`" in block
