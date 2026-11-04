@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-commit-guard-sees-wrapped-commits
 
 ## Now
 
-Plan Task 3 approved by the joint review; calvin on Task 3 next, then implement (task 3 only).
+Plan Task 3 revised after calvin and the +c criterion; scoped Codex review next, then implement (task 3 only).
 
 ## Links
 

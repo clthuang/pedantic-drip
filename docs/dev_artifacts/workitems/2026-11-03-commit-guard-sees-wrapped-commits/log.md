@@ -270,3 +270,24 @@ Closes: review@2026-11-05 04:38+08:00#R1, review@2026-11-05 04:38+08:00#R2, revi
 
 ## 2026-11-05 04:46+08:00 phase design -> create-plan
 Design amendments approved (review@2026-11-05 04:46+08:00): shape.md Contracts for R7 and Q8; plan Task 3 (C28 to C33) reviewed jointly. Next: calvin on Task 3 (the owner's rule between plan and execution; the earlier pass at log.md:148 predates it), then implement.
+
+## 2026-11-05 04:57+08:00 decision
+Q: calvin on Task 3, question 29 (agent_sandbox/2026-11-05/2026-11-03-commit-guard-sees-wrapped-commits/task3-calvin.md), probed by the conductor: `<shell> +c 'echo RAN; exit 7'` and `<shell> +ec 'echo RAN2'` run the string as a script in all five SHELLS (bash 3.2.57, sh, zsh, dash, ksh: RAN printed, rc 7), so shape.md's signed-off rule (a `-c` word starts with a single `-`; `+` words are flags) misses `bash +c 'git commit -m x'`, and C30 (from qa@2026-11-04 20:55+08:00#Q3) would pin the miss. Change the criterion?
+A (user, verbatim): "Count +c as -c (Recommended)"
+Signed-off text: an option word starting with `-` or `+` with `c` among its letters runs a script (`-c`, `+c`, `-lc`, `+ec`); `-o`, `+o`, `-O` and `+O` still take a value. B5 gains `bash +c 'git commit -m x'` and `bash +ec 'git commit -m x'` -> seen, branch empty.
+
+## 2026-11-05 04:57+08:00 phase create-plan -> specify (back)
+Criteria change signed off (decision@2026-11-05 04:57+08:00): `## Requirements` "A `-c` script" counts `+` words with `c` (`+c`, `+ec`), and B5 gains their two inputs. C30 flips to expect them seen; the code change (the `w[0] == "-"` test, commit_target.py:216) goes into Task 3.
+Invalidates: shape.md Requirements "A `-c` script", B5; plan.md C30
+
+## 2026-11-05 04:58+08:00 review calvin on plan Task 3 — calvin
+Ledger: agent_sandbox/2026-11-05/2026-11-03-commit-guard-sees-wrapped-commits/task3-calvin.md (plan.md Task 3, C28 to C33, at aab6ffe2; the owner's rule between plan and execution). Verdict: 1 blocker, 15 warnings, 16 notes; the conductor adjudicated as Task 3's author: 22 fixed, 10 answered, 0 dismissed.
+- Question 29 (a note) probed false: every SHELL runs a `+c` string as a script, so the criterion changed (decision@2026-11-05 04:57+08:00).
+- The blocker (question 1, C31's "limit at which C18 sees that script"): C31 now also runs the script under the default limit.
+Revised: plan.md Task 3 rewritten (intro list of rulings, red and green marks, C28 to C33 sharpened, C26 and C25 annotated); shape.md octal and hex digit counts.
+
+## 2026-11-05 04:58+08:00 phase specify -> design
+Criteria change applied (decision@2026-11-05 04:57+08:00): "A `-c` script" counts `-` and `+` words with `c`; B5 gains `bash +c` and `bash +ec`. Signed off by the owner in that decision.
+
+## 2026-11-05 04:58+08:00 phase-2 design -> create-plan
+No contract line names the `+` rule; shape.md's only Design change in this pass is the octal and hex digit counts (calvin question 27). Plan Task 3 revised for calvin; a scoped review of 9bfb50c6..HEAD next.

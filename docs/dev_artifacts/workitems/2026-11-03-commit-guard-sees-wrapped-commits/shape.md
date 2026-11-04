@@ -36,7 +36,7 @@ A wrapper word starts a command (where `PREFIXES` count today, `commit_target.py
 
 `sudo`, `env`, `time`, `command`, `exec`, `nohup` and `xargs` are in `PREFIXES` today but none of their options are skipped; `timeout`, `nice` and `stdbuf` are new.
 
-**A `-c` script:** the command word's basename is `bash`, `sh`, `zsh`, `dash` or `ksh`; among the option words before its first non-option word, one starts with a single `-` and has `c` among its letters (`-c`, `-lc`, `-ec`); `-o`, `+o`, `-O` and `+O` take a value, bundled words read letter by letter as for wrappers (`-eo pipefail`), and every other option (`--long` and other `+` words included) is a flag. The script is the first non-option word after those options. It is parsed as a command line of its own, at any depth of nesting.
+**A `-c` script:** the command word's basename is `bash`, `sh`, `zsh`, `dash` or `ksh`; among the option words before its first non-option word, one starts with a single `-` or a `+` and has `c` among its letters (`-c`, `-lc`, `-ec`, `+c`, `+ec`: each of these shells runs the script either way, probed 2026-11-05); `-o`, `+o`, `-O` and `+O` take a value, bundled words read letter by letter as for wrappers (`-eo pipefail`), and every other option (`--long` included) is a flag. The script is the first non-option word after those options. It is parsed as a command line of its own, at any depth of nesting.
 
 **State across a boundary:** a `-c` script runs in a child shell, so a `cd` inside it ends with it; a branch switch inside it changes the repository on disk, so it carries to a later commit outside it. A wrapper's directory option (`sudo -D`, `env -C`) applies to the command it runs, a `-c` script included, and ends with it.
 
@@ -48,7 +48,7 @@ B1: `timeout 30 git commit -m x` and `timeout -s KILL -k 5 30 git commit -m x` -
 B2: `sudo -u alice git commit -m x`, `sudo -ualice git commit -m x`, `sudo -Eu alice git commit -m x`, `sudo -E -H git commit -m x` and `sudo -- git commit -m x` -> seen, branch empty.
 B3: `env -u FOO git commit -m x` and `env -i PATH=/usr/bin git commit -m x` -> seen, branch empty.
 B4: `nice -n 5 git commit -m x`, `stdbuf -oL git commit -m x`, `time -p git commit -m x` and `xargs -I{} git commit -m {}` -> seen, branch empty.
-B5: `bash -c 'git commit -m x'`, `sh -c "git commit -m x"`, `zsh -lc 'git commit -m x'`, `/bin/bash -c 'git commit -m x'` `bash -o pipefail -c 'git commit -m x'` and `bash -eo pipefail -c 'git commit -m x'` -> seen, branch empty.
+B5: `bash -c 'git commit -m x'`, `sh -c "git commit -m x"`, `zsh -lc 'git commit -m x'`, `/bin/bash -c 'git commit -m x'` `bash -o pipefail -c 'git commit -m x'`, `bash -eo pipefail -c 'git commit -m x'`, `bash +c 'git commit -m x'` and `bash +ec 'git commit -m x'` -> seen, branch empty.
 B6: `bash -c 'cd sub && git commit -m x'` -> seen at `<cwd>/sub`; `bash -c 'cd sub'; git commit -m x` and `timeout 30 cd sub && git commit -m x` -> seen at `<cwd>`.
 B7: `bash -c 'git switch main && git commit -m x'`, `bash -c 'git switch main'; git commit -m x` and `timeout 30 git switch main && git commit -m x` -> seen, branch `main`.
 B8: `timeout 30 bash -c 'git commit -m x'`, `bash -c 'timeout 30 git commit -m x'`, `sudo -u alice timeout 30 git commit -m x` `bash -c "sh -c 'git commit -m x'"`, and `git commit -m x` wrapped in 10 nested `bash -c` levels (each level `bash -c <shlex.quote of the level inside>`) -> seen, branch empty.
@@ -116,7 +116,7 @@ Internal (tests reach it only through CommitTarget):
   switch_target(sub, args, at): drops a trailing `--` with no word after it, then applies today's rules
 Invariants:
   shell_text: quoted prose, comments and heredoc bodies stay data, at every nesting depth
-    a `$'…'` word is decoded as bash's ANSI-C quoting: the escapes `\a \b \e \E \f \n \r \t \v \\ \' \" \?`, octal `\nnn` and hex `\xHH`
+    a `$'…'` word is decoded as bash's ANSI-C quoting: the escapes `\a \b \e \E \f \n \r \t \v \\ \' \" \?`, octal `\nnn` (one to three digits) and hex `\xHH` (one or two)
       (any other backslash, `\u` and `\c` included, stays as written), and the decoded text is one quoted word at its own level:
       a decoded `'` stays inside the word, and a decoded `;`, `&`, `|`, `(` or `)` is masked as quoted data (QUOTED_PUNCT) like any
       quoted punctuation; a decoded newline is word data there too. Only a `-c` scan of that word (UNMASK, above) reads them as
