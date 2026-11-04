@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-Verify run 3 (after task 5): the review beside QA over the branch diff, the battery at the QA commit; the B6 voucher defect (note@2026-11-04 18:34+08:00) handed to it.
+run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
 
 ## Links
 
