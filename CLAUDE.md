@@ -29,7 +29,7 @@ Claude Code plugin providing a structured development workflow—skills, command
 
 **Plans from any source:** When the user provides a plan (via CC plan mode, pasted in chat, or from a file), always dispatch plan-reviewer before implementing. No hook enforces this since thin pd deleted the ExitPlanMode hook (T2.1); do it by hand for every plan.
 
-**Worktree directory:** `implement-tasks` runs each task in a Claude Code worktree under `.claude/worktrees/` (`isolation: 'worktree'`), branched from the work item's branch HEAD by the `worktree.baseRef: "head"` setting. It is gitignored; Claude Code removes clean ones itself. Never commit inside `.claude/worktrees/` or treat it as source of truth — the merger lands each `pd/<id>/task-<n>` branch on the work item's branch.
+**Worktree directory:** `implement-tasks` runs each task in a Claude Code worktree under `.claude/worktrees/` (`isolation: 'worktree'`), branched from the work item's branch HEAD by the `worktree.baseRef: "head"` setting. It is gitignored. After each run the conductor removes the task worktrees with `pd-worktrees <id> --remove` (`implementing` step 5; a dirty one goes to the user), and `pd-status` lists any left over. Never commit inside `.claude/worktrees/` or treat it as source of truth — the merger lands each `pd/<id>/task-<n>` branch on the work item's branch.
 
 **Worktree includes (`.worktreeinclude`):** Projects whose tests need gitignored files (e.g., `.env`, build outputs, local config) list them in a `.worktreeinclude` at the project root (`.gitignore` syntax); Claude Code copies them into every worktree it creates, subagent worktrees included (code.claude.com/docs/en/worktrees). Omit it when tests need no gitignored files.
 

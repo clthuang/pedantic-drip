@@ -217,7 +217,7 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 | `pd-commit-lint` | PreToolUse (Bash) | Runs `pd-lint --staged` before a `git commit` Claude runs; a lint error blocks the commit (exit 2) |
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
-| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items and retros owed; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
+| `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items, retros owed and leftover worktrees; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
 | `pd-stop-gate` | Stop | Holds a goal run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-work-item token cap |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py`, a worker the wrapper calls; it isn't registered on its own. Writing a hook: [docs/dev-guide/hook-development.md](docs/dev-guide/hook-development.md).

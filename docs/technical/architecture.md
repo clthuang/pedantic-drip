@@ -49,6 +49,7 @@ Stage names map to `phase:` values: Criteria = `specify`, Contracts = `design`, 
    - **`proof: green-only` tasks** (refactor, infra, fixture): skip the first-commit checks and the test-file check; the rest stays.
 4. A failed task gets up to three fix cycles (cycles 2 and 3 on opus), reusing its branch; still failing, the run stops for the user.
 5. The conductor appends a `run` entry with one `task <n>: merged, proof pass, …` line per task, which `phase-gate.sh implement` reads.
+6. The conductor runs `pd-worktrees <id> --remove`: the clean and gone task worktrees go, and each stray `worktree-wf_*` branch that loses no commit; a dirty worktree goes to the user; the task branches stay until Finish.
 
 ### Verify: `verify-change`
 
