@@ -257,3 +257,13 @@ Closes: review@2026-11-04 20:10+08:00#R1
 
 ## 2026-11-04 20:10+08:00 phase verify -> finish
 Verify passed: qa@2026-11-04 20:10+08:00 (all nine battery commands at dc79ae4b), review@2026-11-04 20:10+08:00 R1 fixed; QA notes only (Q2 to Q6).
+
+## 2026-11-04 20:12+08:00 review finish — security-reviewer
+Verdict: approved. Commit: 14dc87b8. Branch diff main...HEAD outside docs/dev_artifacts (10 files); read-only, code not run.
+- S1 warning validate.sh:394 — the role pins read only the first `tools:` line, so a flow list continued on a second line (`tools: [Glob, Grep, Read, mcp__codegraph__codegraph_explore` then `  , Bash]`) passes the explorer pin (and the reviewer pins at :399) while the list widens. Pre-existing; this diff adds the explorer's pin, so it narrows exposure. Whether Claude Code's frontmatter parser accepts a split list is unverified. Goes to the backlog: a validate.sh change now would reopen this item's Verify.
+- S2 note plugins/pd/agents/codebase-explorer.md:5 — the grant is one named, read-only MCP tool; no write, shell or network tool, no permission fields.
+- S3 note plugins/pd/agents/codebase-explorer.md:121 — CodeGraph's answers are the repository's own source, which the explorer could already read; it can't act on them.
+- S4 note .claude/pd.local.md:10 — `qa_battery` and `workflow_output_cap` fill an existing mechanism with CI's own commands; no permission rule added.
+
+## 2026-11-04 20:12+08:00 metrics
+Mode: small. Tokens: 5172211 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-03-codebase-explorer-uses-codegraph.json)
