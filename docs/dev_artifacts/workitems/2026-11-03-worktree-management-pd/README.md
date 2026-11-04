@@ -3,7 +3,7 @@ id: 2026-11-03-worktree-management-pd
 type: workitem
 title: worktree management in pd
 status: active
-phase: verify
+phase: finish
 mode: standard
 origin: backlog#2026-11-01-investigate-design-worktree-management-pd
 branch: workitem/2026-11-03-worktree-management-pd
@@ -14,7 +14,7 @@ branch: workitem/2026-11-03-worktree-management-pd
 
 ## Now
 
-run in flight: verify-change session 9ff7243d-736c-40dd-a44c-1f533b1cce4a
+Finish: security review, docs (done before Verify, c28a971a), metrics, the retro check, close; the merge goes in the round's combined PR.
 
 ## Links
 

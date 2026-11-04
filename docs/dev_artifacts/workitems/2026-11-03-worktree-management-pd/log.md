@@ -442,3 +442,53 @@ Found after the merge, by a native-git probe (2026-11-04, git 2.54.0), for Verif
 
 ## 2026-11-04 18:34+08:00 phase implement -> verify
 Task 5 merged with proof pass (427e72ed); tasks 1 to 4 unchanged. A B6 defect from 1f0246ec goes to Verify run 3 (note@2026-11-04 18:34+08:00).
+
+## 2026-11-04 18:57+08:00 run verify-change — finished
+Session: 9ff7243d-736c-40dd-a44c-1f533b1cce4a  Agents: 4. Tokens: 35095. Cycles: 1. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/9ff7243d-736c-40dd-a44c-1f533b1cce4a/subagents/workflows/wf_d5dd5b21-8d9/journal.jsonl
+Run: wf_d5dd5b21-8d9 (Verify run 3). Stopped: none.
+
+## 2026-11-04 18:57+08:00 review verify — codex (fallback: no)
+Verdict: changes requested. Commit: 0a1206d4. The review confirms note@2026-11-04 18:34+08:00 (the open claim handed in: R1).
+- R1 blocker plugins/pd/scripts/pd-worktrees:78 — delete_stray requires voucher lines to end with a space (empty %(symref)), but pd_common.git() strips the final line's trailing space. A plain branch sorting last therefore cannot vouch, and a stray is wrongly printed 'kept (unique commits)' instead of deleted (B6).
+- R2 blocker plugins/pd/scripts/test_pd_worktrees.py:313 — C17 does not prove that work-item metadata is read from the main checkout (plan.md:45). A mutant that reads from the invoking checkout still passes.
+
+## 2026-11-04 18:57+08:00 qa
+Commit: b5075961
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: Fix checks (all hold): R1 and Q1: test_last_sorting_voucher_vouches[True/False] fails at 15bdd631 with 'kept (unique commits): worktree-wf_a' (2 failed) and passes at b5075961 (3 passed for -k last_sorting or main_checkout_metadata). R2: at b5075961, mutating pd-worktrees:116 to artifacts_dir(Path.cwd(), load_config(Path.cwd())) fails only test_main_checkout_metadata_decides_run_in_flight (1 failed, 48 passed); restoring the code gives 49 passed. A second mutant drops the new symref filter (`if line and not line.partition(' ')[2]` -> `if line`) and is killed by test_c20b_symbolic_ref_to_a_stray_does_not_vouch, so the fix still rejects symbolic vouchers.
+Criteria gaps: Cross-task flows driven by hand in scratch repos, all as specified: (1) Finish's PR path. With two task worktrees (one clean, one dirty) and a fixer stray on task-1's tip, pd-status and the session-start hook (source startup) both show the Leftover worktrees section with all three lines. After merging into main, switching to main and deleting workitem/<id>, `pd-worktrees <id> --remove` removed task-1, printed kept (dirty) for task-2, deleted the stray and exited 1. The conductor's `git worktree remove --force` then `git branch -d` on both task branches succeeded, and pd-status shows no section afterwards. (2) Abandon. Cleanup on the work-item branch removed the clean worktree (exit 0), `git branch -D` succeeded, and a detached-HEAD worktree beside it was neither listed nor touched. (3) Run in flight. With `run in flight:` set only in the main checkout, `pd-worktrees <id> --remove` invoked from inside task-1 printed the line and exited 1, removing nothing.
+Criteria gaps: B6/B19/B20/B23: the voucher order is now covered both ways (a voucher sorting first, and one sorting last). Branch names that sort between `main` and `worktree-wf_` with a symbolic target sorting last are covered only by my hand probe: aa-sym and zz-sym2 were correctly kept as 'symbolic branch'.
+Criteria gaps: B1: covers one task worktree in each state. A detached-HEAD worktree beside task worktrees is untested (my probe: correctly ignored), and so is a bare main repository.
+Criteria gaps: B2/B10: these cover the script alone. Finish's real `gh pr merge --delete-branch` followed by cleanup from the base branch is not driven by any test; it was only simulated by hand above.
+Criteria gaps: B9: pins `run in flight:` on a later `## Now` line only. The Terms say 'any line', but a hit on the first line is not pinned by a test.
+Criteria gaps: B14/B15: pd-status judges 'this checkout' as the invoking checkout (repo_root), while pd-worktrees uses the main checkout (D6). Probed: with `run in flight:` set only in the main checkout's README, pd-status run from main lists 0 'worktree after its run' lines, but run from inside the task worktree it lists 1. That matches the Terms as written (shape.md:45-47), but no test pins it, and the session-start hook inherits it when a session opens inside a task worktree.
+Criteria gaps: B16: checks that the section and its line appear on all four sources. Nothing checks that a long leftover list stays usable in the hook context.
+Criteria gaps: B18: the caller checks are substring and order checks on prose. They still pass if the surrounding text contradicts them, and nothing executes a conductor following the steps (the AskUserQuestion prompt, --force only on 'discard', and branch deletes that skip kept worktrees).
+Criteria gaps: B20/B23: a symbolic branch pointed at a stray after the listing can still dangle. The design accepts this (Risks row), but no test pins how wide the window is.
+Criteria gaps: B22: covers pd-worktrees only. pd-status with a closed pipe is out of scope by design.
+Criteria gaps: WorktreeHelpers surrogateescape decode: still unguarded (Q5). APFS cannot create a non-UTF-8 path, so only a Linux case could cover it.
+Criteria gaps: Must-not 'session start not slowed': C30 counts git calls, but nothing measures time with many worktrees or branches.
+Criteria gaps: pd-lint --isolation still checks nothing in this repo (Q4), so task isolation over the branch diff is unverified by that tool.
+- Q2 note plugins/pd/scripts/conftest.py:1 — `pd-lint --risk b230ae35..HEAD` still warns of a security risk signal with no `risk: [security]` tag. The user already cleared it.
+- Q3 note plugins/pd/scripts/pd_common.py:1 — `pd-lint --risk b230ae35..HEAD` still warns of a security risk signal (the `token` loop at pd_common.py:254) with no `risk: [security]` tag. The user already cleared it.
+- Q4 note .:0 — `pd-lint --isolation b230ae35..HEAD` checked nothing: this repo has no source_paths/test_paths config and no src/ or tests/ directory. It reports no error, but isolation is unverified.
+- Q5 note plugins/pd/scripts/pd_common.py:258 — The contract-pinned `surrogateescape` decode still has no guarding test: swapping it for 'replace' leaves every script and hook test green.
+Fixed: R1 by b5075961 — plugins/pd/scripts/test_pd_worktrees.py::test_last_sorting_voucher_vouches (failed before the fix, committed in 15bdd631; both removal modes)
+Fixed: R2 by 15bdd631 — plugins/pd/scripts/test_pd_worktrees.py::test_main_checkout_metadata_decides_run_in_flight (test only: the code was right; a Path.cwd() mutant of the metadata lookup fails it)
+Closes: review@2026-11-04 18:57+08:00#R1, review@2026-11-04 18:57+08:00#R2
+
+## 2026-11-04 19:06+08:00 decision
+Q: the verify gate counts the owner's untracked .codegraph/, .pd-worktrees/ and docs/workflow-* files as changes since QA (no source_paths); how to pass it without touching them?
+A (user, verbatim): "Local exclude, temporary (Recommended)"
+Done: those 11 paths added to .git/info/exclude between BEGIN/END markers; removed after the combined PR merges.
+
+## 2026-11-04 19:06+08:00 phase verify -> finish
+Verify run 3 passed: qa@2026-11-04 18:57+08:00 (all nine battery commands at b5075961), review@2026-11-04 18:57+08:00 R1 and R2 fixed; QA notes Q2 to Q5 only (Q2, Q3 cleared at decision-2@2026-11-04 16:04+08:00).
