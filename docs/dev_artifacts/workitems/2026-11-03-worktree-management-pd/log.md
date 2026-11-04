@@ -404,3 +404,8 @@ A (user, verbatim): "Signed off (Recommended)"
 
 ## 2026-11-04 18:05+08:00 phase specify -> design
 Criteria signed off (decision above), after the back-move from Verify (phase verify -> specify (back) @2026-11-04 17:43+08:00); calvin loop ended at cycle 3 with no blocker (review@2026-11-04 17:56+08:00).
+
+## 2026-11-04 18:14+08:00 review design — codex (fallback: no)
+Verdict: changes requested. Commit: 80342aa6. Review of the Contracts change 7a5ec0fd..80342aa6 (Q5, Q6, Q8, Q9).
+- R1 blocker docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/shape.md:174 — `%(symref)` names a symbolic chain's last ref, so with `saved -> worktree-wf_r-2 -> main` the target set holds only refs/heads/main, the stray is deleted and `saved` dangles (B20, the must-not). Verified 2026-11-04, git 2.54.0: both report `refs/heads/main`; `git symbolic-ref --no-recurse refs/heads/saved` prints `refs/heads/worktree-wf_r-2`.
+- R2 warning docs/dev_artifacts/workitems/2026-11-03-worktree-management-pd/shape.md:265 — the new Risks row calls the snapshot window "one call"; it spans the run from the listing to each stray's delete (pd-worktrees:101, :118-130).
