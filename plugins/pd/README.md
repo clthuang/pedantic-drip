@@ -49,7 +49,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 ## Quality Gates
 
 - **Exit checks:** `scripts/phase-gate.sh <phase> <work item dir>` checks what each phase must hand down; one line per failure.
-- **Commit checks:** the `pd-commit-lint` hook runs `pd-lint --staged` before every `git commit` Claude runs; an error blocks it. Commits typed in a terminal aren't checked.
+- **Commit checks:** the `pd-commit-lint` hook runs `pd-lint --staged` before each `git commit` in a Bash command Claude runs (one inside a script file, an `eval` or an alias isn't seen); an error blocks it. Commits typed in a terminal aren't checked.
 - **The review call** at Contracts, Plan and Verify (`references/review-call.md`): Codex first with one retry unless CLAUDE.md disables it, else the stage's Claude reviewer. One pass, then up to three fix cycles against runnable checks, then you.
 - **The merger** lands each task only if its tests load at the test commit (one already green there is named for Verify) and pass at HEAD, untouched since (`scripts/pd-proof`); a task marked `proof: green-only` only has to pass.
 - **QA** (`pd:qa-executor`) runs `qa_battery` beside the code review at Verify; it reports and fixes nothing.
@@ -64,7 +64,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | calvin-runner | Runs the calvin skill on a work item's criteria and writes the ledger to one named path |
 | ds-analysis-reviewer | Reviews data analysis for statistical pitfalls and methodology |
 | code-quality-reviewer | Reviews implementation quality by severity |
-| codebase-explorer | Analyzes codebase for patterns and constraints |
+| codebase-explorer | Analyzes codebase for patterns and constraints, asking CodeGraph first when it's available |
 | design-reviewer | Challenges design assumptions and finds gaps (skeptic) |
 | documentation-researcher | Researches documentation state and identifies update needs |
 | documentation-writer | Writes and updates documentation |

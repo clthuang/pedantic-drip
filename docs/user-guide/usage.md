@@ -48,7 +48,7 @@ A finished brainstorm or RCA becomes a work item through promotion:
 /pd:finish-workitem # security review, docs, metrics, retro if owed, merge, cleanup
 ```
 
-Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <workitem-dir>` must pass, and every `git commit` Claude runs is checked by `pd-lint --staged` (commits you type in a terminal aren't).
+Each command invokes its stage skill. Before `phase:` moves on, `phase-gate.sh <phase> <workitem-dir>` must pass, and each `git commit` in a Bash command Claude runs is checked by `pd-lint --staged` (not one inside a script file, an `eval` or an alias, nor commits you type in a terminal).
 
 - **calvin:** a separately installed skill ([Optional](installation.md#optional)) that questions the criteria at `/pd:specify`; without it, `/pd:specify` asks whether to sign off anyway.
 - **Small** (`--mode small`): design and plan are written in one sitting and reviewed in one joint call.
@@ -61,9 +61,11 @@ Start a goal run on a work item: the main session (the conductor) offers one onc
 
 ## Check Progress
 
-Run `pd-status` as [Check It Works](installation.md#check-it-works) shows: it prints items by status and phase, roadmaps, open blockers and retros owed.
+Run `pd-status` as [Check It Works](installation.md#check-it-works) shows: it prints items by status and phase, roadmaps, open blockers, retros owed and leftover worktrees.
 
-At the start of each session, the SessionStart hook gives Claude the active and blocked items, each roadmap's next ready item and the retros owed, so you can ask about them.
+Its `Leftover worktrees` section lists what pd's runs left behind: a task worktree still there after its run (Execute keeps one with uncommitted changes for you), a task branch whose work item is done or abandoned, a task worktree or branch with no work item, and stray `worktree-wf_*` branches. Clear them with `pd-worktrees <id> --remove` or `pd-worktrees --strays --remove`, and delete other listed branches by hand. `pd-worktrees` never forces, so a dirty worktree stays until you commit or discard its changes.
+
+At the start of each session, the SessionStart hook gives Claude the active and blocked items, each roadmap's next ready item, the retros owed and any leftover worktrees, so you can ask about them.
 
 ## Utilities
 

@@ -2,7 +2,7 @@
 name: codebase-explorer
 description: Analyzes codebase patterns and constraints. Use when (1) brainstorming Stage 2, (2) user says 'explore codebase', (3) user says 'find existing patterns', (4) user says 'what code is related'.
 model: sonnet
-tools: [Glob, Grep, Read]
+tools: [Glob, Grep, Read, mcp__codegraph__codegraph_explore]
 color: cyan
 ---
 
@@ -47,7 +47,8 @@ Return structured findings:
       "relevance": "high | medium | low"
     }
   ],
-  "no_findings_reason": null
+  "no_findings_reason": null,
+  "search": "codegraph | codegraph, then grep | grep (codegraph unavailable: <reason>)"
 }
 ```
 
@@ -56,17 +57,25 @@ If no relevant findings:
 ```json
 {
   "findings": [],
-  "no_findings_reason": "Explanation of why nothing was found (e.g., 'No existing code for this domain')"
+  "no_findings_reason": "Explanation of why nothing was found (e.g., 'No existing code for this domain')",
+  "search": "grep (codegraph unavailable: no index)"
 }
 ```
+
+`search` says how you searched, written from the calls you made: `codegraph` (a CodeGraph call answered and no Glob or Grep followed), `codegraph, then grep` (a CodeGraph call answered and a Glob or Grep followed), or `grep (codegraph unavailable: <reason>)`. The reason is one of `tool not in session`, `no index` or `error: <the error's first line>`.
+
+Reply with the JSON object alone: no text before or after it, and no ```json fence around it (the shapes above are fenced only for display); the reply's first character is `{` and its last is `}`. Anything you skipped or could not check goes in `no_findings_reason`, never in trailing prose and never in a finding: a finding is allowed only when it rests on a `<path>:<line>` you read.
+
+When the dispatch asks for its own output shape (a schema in its prompt or tools), return that shape and leave out "search".
 
 ## Research Process
 
 1. **Parse the query** - Understand what patterns/code to look for
-2. **Search for files** - Use Glob to find relevant files by name/path
-3. **Search for content** - Use Grep to find relevant code patterns
-4. **Read key files** - Use Read to understand important findings
-5. **Compile findings** - Organize by relevance with file:line references
+2. **Ask CodeGraph first** - Your first search call is `mcp__codegraph__codegraph_explore` with the query's symbols or question, for callers and call paths. A query naming no symbol ("what testing conventions exist?") is asked once as written. When the tool is not in the session, skip this step: the reason is `tool not in session`.
+3. **Judge the answer** - CodeGraph is unavailable when the tool is missing from the session, errors (a timeout included), or answers that no `.codegraph/` was found. The reason is `tool not in session` (wins whatever the repository holds), `no index` or `error: <the error's first line>`. With several CodeGraph calls, one that answered (returned results) counts; with none answered, give the first call's reason.
+4. **Fill the gaps** - Use Glob, Grep and Read for what CodeGraph didn't answer, and for everything when it was unavailable.
+5. **Mind a stale index** - If CodeGraph's banner says files were edited since the last index sync, or that auto-sync is DISABLED, Read each file a finding rests on before citing it.
+6. **Compile findings** - Organize by relevance with file:line references, and write `search` from the calls you made
 
 ## What to Look For
 
@@ -81,7 +90,7 @@ If no relevant findings:
 - Invent findings (only report what you actually find)
 - Assume code exists without searching
 - Include irrelevant code to pad output
-- Read files without searching first (be efficient)
+- Read files without searching first (CodeGraph, Glob or Grep)
 
 ## Relevance Levels
 
@@ -94,6 +103,7 @@ If no relevant findings:
 ## Search Strategies
 
 For features:
+- Ask `codegraph_explore` for callers and call paths
 - Glob for similar file names
 - Grep for related function/class names
 

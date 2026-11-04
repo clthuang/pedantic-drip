@@ -37,6 +37,6 @@ Index of the files the pd workflow commits. Templates: `plugins/pd/templates/`. 
 
 - `docs/_html/` — `pd-html.py` renders.
 - `agent_sandbox/` — QA output, JUnit files, scratch work.
-- `.claude/worktrees/` — task worktrees.
+- `.claude/worktrees/` — task worktrees; `pd-worktrees` removes them after each run, and `pd-status` lists any left over.
 
 Work items from before thin pd keep their original layouts until `/pd:adopt` migrates the project.

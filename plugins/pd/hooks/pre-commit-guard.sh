@@ -79,7 +79,7 @@ remind() {
 main() {
     local input target dir branch
     input=$(read_tool_input) || exit 0  # unreadable input: no opinion, the normal permission flow decides
-    case "$input" in *commit*) ;; *) exit 0 ;; esac
+    case "$input" in *commit*|*\$\'*) ;; *) exit 0 ;; esac
 
     # Where the command's `git commit` runs and the branch it lands on, after any checkout or switch
     # earlier in the command (lib/commit_target.py); nothing means it doesn't commit.

@@ -237,6 +237,50 @@ def sections(body):
     return result
 
 
+TASK_BRANCH = re.compile(r"^pd/(?P<id>[^/]+)/task-(?P<n>\d+)$")
+STRAY_PREFIX = "worktree-wf_"
+
+
+def worktrees(root):
+    """Every worktree, main checkout first: [{path, branch, main, locked, prunable}]; None when git fails.
+    Read as bytes: -z keeps a path with a newline whole, and text mode would turn a `\\r` into `\\n`."""
+    try:
+        r = subprocess.run(["git", "worktree", "list", "--porcelain", "-z"], cwd=root, capture_output=True)
+    except OSError:
+        return None
+    if r.returncode != 0:
+        return None
+    records, cur = [], None
+    for token in r.stdout.split(b"\0"):
+        if not token:
+            cur = None
+            continue
+        key, _, value = token.decode("utf-8", "surrogateescape").partition(" ")
+        if key == "worktree":
+            cur = {"path": value, "branch": None, "main": not records, "locked": False, "prunable": False}
+            records.append(cur)
+        elif cur and key == "branch":
+            cur["branch"] = value.removeprefix("refs/heads/")
+        elif cur and key in ("locked", "prunable"):
+            cur[key] = True
+    return records
+
+
+def run_in_flight(readme_path):
+    """The first `## Now` line starting `run in flight:`, or None."""
+    try:
+        _, body, _ = split_frontmatter(Path(readme_path).read_text())
+    except (OSError, ValueError):
+        return None
+    return next((line for line in sections(body).get("Now", "").split("\n")
+                 if line.startswith("run in flight:")), None)
+
+
+def shown(path):
+    """A path on one unambiguous line: backslash (first), newline, carriage return and tab escaped."""
+    return path.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+
 def split_log(text):
     """(text above a single file's `## Log` heading, the log after it, the log's first line number).
     Line-based: blank_fences keeps line numbers, not character offsets."""

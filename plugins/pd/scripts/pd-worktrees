@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""pd-worktrees: list or remove a work item's task worktrees and the repository's stray branches.
+
+  pd-worktrees <id>                           list task worktrees (clean|dirty|locked|gone|main checkout) and strays
+  pd-worktrees <id> --remove [--task <n>]...  remove clean and gone worktrees; without --task, delete strays too
+  pd-worktrees --strays [--remove]            the stray `worktree-wf_*` branches only
+Never forces, unlocks or prunes, and never deletes a task branch. A stray goes only when a branch that
+isn't a stray contains its tip. Exit 0: all asked removals done; 1: a worktree kept or a run in flight;
+2: usage or git failure (message on stderr).
+"""
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import (STRAY_PREFIX, TASK_BRANCH, WORKITEM, TYPE_DIRS, artifacts_dir, git, load_config,  # noqa: E402
+                       run_in_flight, shown, worktrees)
+
+
+class Fail(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Fail(message)
+
+
+def state_of(main, wt):
+    if wt["main"]:
+        return "main checkout"
+    if wt["locked"]:
+        return "locked"
+    if wt["prunable"]:
+        return "gone"
+    return "dirty" if git(["-C", wt["path"], "status", "--porcelain"], main) else "clean"
+
+
+def listed_worktrees(main):
+    found = worktrees(main)
+    if found is None:
+        raise Fail("git worktree list failed")
+    return found
+
+
+def emit(line):
+    """Print one flushed line; a reader that closed the pipe loses the rest of the output, not the work (D9)."""
+    try:
+        print(line, flush=True)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+
+def stray_tips(main, held):
+    """({stray: tip}, {refs/heads/<branch> a symbolic branch points at}), read once from one listing (D8)."""
+    out = git(["for-each-ref", "--format=%(refname) %(objectname) %(symref)", "refs/heads/"], main)
+    strays, targets = {}, set()
+    for line in out.split("\n"):
+        if not line:
+            continue
+        ref, tip, *rest = line.split(" ", 2)  # git() strips the last line's empty %(symref)
+        symref = rest[0] if rest else ""
+        name = ref.removeprefix("refs/heads/")
+        if symref:  # %(symref) names a chain's last ref, so each link's own target is read separately
+            targets.add(git(["symbolic-ref", "--no-recurse", ref], main))
+        if name.startswith(STRAY_PREFIX) and name not in held:
+            strays[name] = tip
+    return strays, targets
+
+
+def delete_stray(main, name, tip, strays, targets):
+    """One output line, or None when the stray is gone or a worktree took it."""
+    contained = git(["for-each-ref", "--contains", tip, "--format=%(refname) %(symref)", "refs/heads/"], main)
+    # Full refs: with a same-named tag, %(refname:short) prints heads/<name>, and a stray would vouch for itself.
+    # A symbolic ref (non-empty symref) is no independent reference: deleting its target would leave it dangling.
+    vouchers = (line.partition(" ")[0].removeprefix("refs/heads/") for line in contained.split("\n")
+                if line and not line.partition(" ")[2])  # git() strips the last line's empty %(symref)
+    if not any(b not in strays for b in vouchers):
+        return f"kept (unique commits): {name}"
+    if f"refs/heads/{name}" in targets:  # deleting it would leave a symbolic branch dangling
+        return f"kept (symbolic branch): {name}"
+    if name in {w["branch"] for w in listed_worktrees(main)}:  # a worktree took it since the listing
+        return None
+    # The tip as the old value: a branch moved since the check is refused; --no-deref spares a symbolic ref's target.
+    if git(["update-ref", "--no-deref", "-d", f"refs/heads/{name}", tip], main, check=False) is not None:
+        return f"deleted {name}"
+    # git() can't tell a missing ref (rc 1 under -q) from a git failure, so read the return code here.
+    r = subprocess.run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{name}"], cwd=main, capture_output=True, text=True)
+    if r.returncode == 1:
+        return None
+    if r.returncode != 0:
+        raise Fail(f"git rev-parse refs/heads/{name} failed: {r.stderr.strip()}")
+    now = r.stdout.strip()
+    if now != tip:
+        return f"kept (unique commits): {name}"
+    raise Fail(f"git update-ref -d refs/heads/{name} failed")
+
+
+def run(args):
+    if not args.id and not args.strays:
+        raise Fail("give a work item id or --strays")
+    if args.id and args.strays:
+        raise Fail("a work item id and --strays don't go together")
+    if args.task and (not args.remove or args.strays):
+        raise Fail("--task needs --remove and a work item id")
+    if args.id in (".", ".."):
+        raise Fail(f"{args.id} is not a work item id")
+    wts = worktrees(".")
+    if wts is None:
+        raise Fail("not in a git repository (or git failed)")
+    main = wts[0]["path"]
+    readme = None
+    if args.id:
+        item_dir = artifacts_dir(main, load_config(main)) / TYPE_DIRS[WORKITEM] / args.id
+        if "/" in args.id or not item_dir.is_dir():
+            raise Fail(f"{args.id} is not a work item in this checkout")
+        readme = item_dir / "README.md"
+    tasks = [w for w in wts if args.id and (m := TASK_BRANCH.match(w["branch"] or "")) and m["id"] == args.id]
+    strays, targets = stray_tips(main, {w["branch"] for w in wts})
+    if args.remove and args.task:
+        tasks = [w for w in tasks if int(TASK_BRANCH.match(w["branch"])["n"]) in args.task]
+        strays = {}
+    if args.remove and args.id and (flight := run_in_flight(readme)):
+        emit(flight)
+        return 1
+    if args.id and not tasks and not strays:
+        emit(f"no worktrees for {args.id}")
+        return 0
+    if not args.remove:
+        for w in tasks:
+            emit(f"{state_of(main, w)} {shown(w['path'])} {w['branch']}")
+        for name in strays:
+            emit(f"stray {name}")
+        return 0
+    code = 0
+    for w in tasks:
+        state = state_of(main, w)
+        if state in ("clean", "gone") and git(["worktree", "remove", w["path"]], main, check=False) is not None:
+            emit(f"removed {shown(w['path'])}")
+            continue
+        if state in ("clean", "gone"):  # git refused: the lock or dirt may be new, so read the record again
+            now = next((x for x in listed_worktrees(main) if x["path"] == w["path"]), w)
+            state = state_of(main, now)
+        emit(f"kept ({state}): {shown(w['path'])}")
+        code = 1
+    for name, tip in strays.items():
+        if (line := delete_stray(main, name, tip, strays, targets)):
+            emit(line)
+    return code
+
+
+def main(argv):
+    ap = Parser(prog="pd-worktrees", description=__doc__.split("\n")[0])
+    ap.add_argument("id", nargs="?")
+    ap.add_argument("--remove", action="store_true")
+    ap.add_argument("--strays", action="store_true")
+    ap.add_argument("--task", type=int, action="append")
+    sys.stdout.reconfigure(errors="surrogateescape")
+    try:
+        return run(ap.parse_args(argv))
+    except (Fail, RuntimeError) as e:
+        print(f"pd-worktrees: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

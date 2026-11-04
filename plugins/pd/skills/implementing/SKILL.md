@@ -22,12 +22,15 @@ The Execute stage (`phase: implement`) turns the plan's tasks into merged, prove
    - under each task line, `  case_map: C1=<test>, C2=<test>; greens: <tests or none>; skipped: <tests or none>`, which Verify's reviewer reads from this entry, then `  runs: <the task's reason>`;
    - `Agents:` and `Tokens:` from the result's `agents_used` and `tokens`;
    - one `note` entry per flake (`Flaky: <test> — <runs>`).
-   Clear `run in flight:` and commit.
+   Clear `run in flight:` and commit. Then run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-worktrees <id> --remove`, whatever stopped the run:
+   - **exit 0:** go on;
+   - **exit 1:** a run in flight is reported and stops the caller (the user decides). Otherwise ask through AskUserQuestion, listing each kept worktree: a `dirty` one, or a `clean` one git refused, is keep or discard (on "discard" the conductor runs `git worktree remove --force <path>`); that worktree's branch stays (Execute deletes no branch). `locked` and `main checkout` ones are reported, not asked; with no dirty or refused one listed, no question. A kept worktree's task branch is not deleted;
+   - **exit 2:** report the message; a hard stop before step 6.
 6. **Act on what stopped the run:**
    - **`stopped: "budget"`:** per `workflow-transitions`; the resume list is step 3's, re-derived.
    - **a merge conflict:** a hard stop. Ask the user through AskUserQuestion; never resolve it here.
    - **a task `failed` after its three fix cycles:** a hard stop for the user, with the merger's reason and the branch. Their ruling is a `decision` entry.
-   - **a task `wrong-test`** (the test case itself is wrong): move back to `create-plan` (`phase implement -> create-plan (back)`, `Invalidates:` the task's test cases). Merged tasks stay merged, and resume skips them, so a change to a merged task's cases goes into a new task. The plan's fix re-runs the unmerged tasks whose contract or cases changed. Before relaunching, remove each one's worktree (`git worktree remove --force <path>`, from `git worktree list`) and then delete its `pd/<id>/task-<n>` branch (`git branch -D`); git won't delete a branch a worktree holds. Its tests and its copy of `plan.md` hold the old cases, so resuming it would hand the merger and the fixer the wrong test.
+   - **a task `wrong-test`** (the test case itself is wrong): move back to `create-plan` (`phase implement -> create-plan (back)`, `Invalidates:` the task's test cases). Merged tasks stay merged, and resume skips them, so a change to a merged task's cases goes into a new task. The plan's fix re-runs the unmerged tasks whose contract or cases changed. Before relaunching, run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-worktrees <id> --remove --task <n>` for each (exit 2 is a hard stop, as at step 5, before any branch is deleted), then delete its `pd/<id>/task-<n>` branch (`git branch -D pd/<id>/task-<n>`); git won't delete a branch a worktree holds. A worktree it keeps, at step 5 or by this call, stops the move: the work item stays in `implement`, and the user chooses `discard` or `stop the move`. Its tests and its copy of `plan.md` hold the old cases, so resuming it would hand the merger and the fixer the wrong test.
    - **every task merged:** go on.
 7. **Exit check:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/phase-gate.sh implement <work item dir>`, which needs every plan task (express: the one task) on a `merged, proof pass` line. Then phase exit per `workflow-transitions` (`phase implement -> verify`).
 

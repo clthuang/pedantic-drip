@@ -32,7 +32,7 @@ The Criteria stage (`phase: specify`) removes one unknown: how will anyone know 
    json.dump(d, open(p, "w"))' "${CLAUDE_SESSION_ID}" "<ledger path>"
    ```
 3. **Dispatch `calvin-runner`** on `shape.md`, with the PRD or RCA report the criteria derive from, in report mode, naming the ledger path. A later cycle is scoped: the earlier ledger's rows and the edit that answered them.
-4. **Answer each row.** Questions about intent, scope, priorities or a ruling are the user's: ask them through AskUserQuestion and quote the answers. Questions about wording or consistency are the conductor's. Revise `## Requirements`.
+4. **Answer each row.** Questions about intent, scope, priorities or a ruling are the user's: ask them through AskUserQuestion and quote the answers. Questions about wording or consistency are the conductor's. A row asking how a program behaves (a shell, git, a CLI) is never a wording question: the conductor answers it with a probe, quoted in the cycle's `review` entry. Revise `## Requirements`.
 5. **Write a `review` entry** for the cycle: the ledger path, each row's outcome, and whom each question went to.
 6. **The loop ends** at the first cycle whose ledger has no blocker-severity row. Still open after the third: a `capped` entry, then ask the user.
 
@@ -44,11 +44,11 @@ For `mode: express` (a small diff on a known pattern, provable by one command), 
 
 ## The bar for `## Requirements`
 
-**Expectations: observable, one per line.** `B<n>: <input or action> -> <observable outcome>`, ids unique. Each names what anyone can see happen: a value, an error, an exit code, a file. "Login works" is not one; `B3: an expired token -> the request gets 401 and no session row` is. An expectation resting on stdlib or library runtime behavior carries the verifying REPL line inline (`>>> expr → result`). These are expectations, not tests: the Plan stage turns them into test cases.
+**Expectations: observable, one per line.** `B<n>: <input or action> -> <observable outcome>`, ids unique. Each names what anyone can see happen: a value, an error, an exit code, a file. "Login works" is not one; `B3: an expired token -> the request gets 401 and no session row` is. An expectation resting on stdlib, library or external-program behavior (how a shell, git or a CLI reads its arguments or prints its output) carries the verifying probe inline (`>>> expr → result` or `$ cmd → output`). These are expectations, not tests: the Plan stage turns them into test cases.
 
 **Goals, non-goals and user stories** give the expectations their context.
 
-**Scope boundaries, both sides.** What gets built, and the out-of-scope items a reader would otherwise assume are included. YAGNI applies to both lists. A criterion that keeps old behaviour working (compatibility) cites its evidence of external consumers: a published package, API or CLI, a route called from outside the repository, a file format other tools read, or a named consumer outside the repository; without it, it's out of scope, and callers inside the repository move with the change.
+**Scope boundaries, both sides.** What gets built, and the out-of-scope items a reader would otherwise assume are included. YAGNI applies to both lists. A criterion that keeps old behaviour working (compatibility) cites its evidence of external consumers: a published package, API or CLI, a route called from outside the repository, a file format other tools read, or a named consumer outside the repository; without it, it's out of scope, and callers inside the repository move with the change. A change that parses another program's input (a shell command line, a config format) lists the lexical forms it reads and those it leaves Out (quoting, escapes, encodings, split words), not only the semantic ones.
 
 **Edge cases, named, not gestured at.** Invalid input, absent or empty state, concurrent access, and the failure mode of each external dependency, each with its expected behavior, as an expectation where it is observable. Complex branching goes in a truth table instead of a linear list.
 

@@ -6,7 +6,7 @@ set -uo pipefail
 trap '' PIPE
 
 input=$(cat)
-case "$input" in *commit*) ;; *) exit 0 ;; esac
+case "$input" in *commit*|*\$\'*) ;; *) exit 0 ;; esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
