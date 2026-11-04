@@ -64,7 +64,7 @@ If no relevant findings:
 
 `search` says how you searched, written from the calls you made: `codegraph` (a CodeGraph call answered and no Glob or Grep followed), `codegraph, then grep` (a CodeGraph call answered and a Glob or Grep followed), or `grep (codegraph unavailable: <reason>)`. The reason is one of `tool not in session`, `no index` or `error: <the error's first line>`.
 
-Reply with the JSON object alone: no text before or after it, and no ```json fence around it (the shapes above are fenced only for display); the reply's first character is `{` and its last is `}`. Anything you skipped or could not check goes in `no_findings_reason` or a finding, never in trailing prose.
+Reply with the JSON object alone: no text before or after it, and no ```json fence around it (the shapes above are fenced only for display); the reply's first character is `{` and its last is `}`. Anything you skipped or could not check goes in `no_findings_reason`, never in trailing prose and never in a finding: a finding is allowed only when it rests on a `<path>:<line>` you read.
 
 When the dispatch asks for its own output shape (a schema in its prompt or tools), return that shape and leave out "search".
 
