@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.3] - 2026-11-05
+
 ### Added
 
 - **`pd-worktrees` lists and removes a work item's task worktrees.** It removes the clean and gone ones and the stray `worktree-wf_*` branches that lose no commit, never forcing, unlocking or deleting a task branch. Shared worktree parsing moved into `pd_common`.
