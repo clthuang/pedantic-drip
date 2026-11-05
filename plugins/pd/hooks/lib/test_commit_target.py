@@ -152,16 +152,8 @@ def test_c26_ci_and_changelog():
     assert "plugins/pd/hooks/lib/test_commit_target.py" in line
     with open(os.path.join(_ROOT, "CHANGELOG.md")) as f:
         changelog = f.read()
-    # scripts/release-pr.sh:36 keeps the first `## [Unreleased]` line, then an empty line and the new version's heading
-    released, done = [], False
-    for l in changelog.split("\n"):
-        released.append(l)
-        if not done and l.startswith("## [Unreleased]"):
-            released += ["", "## [9.9.9] - 2026-01-01"]
-            done = True
-    assert done
-    for text in (changelog, "\n".join(released)):
-        assert any("commit_target.py" in l and "wrapper" in l and "-c" in l for l in text.splitlines())
+    # any section: release-pr.sh moves [Unreleased] entries under the new version's heading
+    assert any("commit_target.py" in l and "wrapper" in l and "-c" in l for l in changelog.splitlines())
 
 
 # ---- Task 2: `-c` scripts, nested at any depth ----

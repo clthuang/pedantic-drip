@@ -197,3 +197,17 @@
 - [x] 2026-09-24-low-correctness-detect-phase-events — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
 - [x] 2026-09-24-low-implementation-ac-5-allowlist — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
 - [x] 2026-09-24-low-test-gap-ac-5 — dropped: the code it names was deleted with the registry, MCP servers and UI in thin pd (v7); also a copy of the 2026-04-20 line
+- [x] 2026-11-01-investigate-design-worktree-management-pd — promoted → workitems/2026-11-03-worktree-management-pd
+- [x] 2026-11-01-pd-codebase-explorer-uses-codegraph — promoted → workitems/2026-11-03-codebase-explorer-uses-codegraph
+- [x] 2026-11-04-set-source-paths-test-paths — dropped: duplicate of 2026-11-04-pd-local-md-set-source, which also covers the verify gate (from: workitems/2026-11-03-codebase-explorer-uses-codegraph)
+- [x] 2026-11-02-commit-target-py-see-commits — promoted → workitems/2026-11-03-commit-guard-sees-wrapped-commits
+- [x] 2026-11-05-commit-guard-ksh-93-runs — dropped: merged into 2026-11-05-commit-guard-misses-wrapped-commits (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-hooks-commit-prefilter-drops — dropped: merged into 2026-11-05-commit-guard-misses-wrapped-commits (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-normalize-printed-directory — dropped: merged into 2026-11-05-commit-target-hook-crash-safety (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-pin-untested-wrappers — dropped: merged into 2026-11-05-commit-target-test-debt-pin (xargs -I {}, sudo -g and one-digit \xH were pinned in 19b799f9) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-decode-u-u — dropped: merged into 2026-11-05-commit-guard-misses-wrapped-commits (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-bsd-wrapper-value — dropped: merged into 2026-11-05-commit-guard-misses-wrapped-commits (the tab in a directory name into 2026-11-05-commit-target-hook-crash-safety) (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-lone-surrogate-raw — dropped: merged into 2026-11-05-commit-target-hook-crash-safety (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-match-wrappers-basename — dropped: merged into 2026-11-05-commit-guard-misses-wrapped-commits (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-ci-run-pytest-suite-changelog — dropped: obsolete since 98e3ff17, whose CHANGELOG checks search the whole file, so release-pr.sh's promotion can't break them (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
+- [x] 2026-11-05-commit-target-corpus-differential-tests — dropped: merged into 2026-11-05-commit-target-test-debt-pin (from: workitems/2026-11-03-commit-guard-sees-wrapped-commits)
