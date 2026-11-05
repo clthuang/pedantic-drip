@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verifies the Verified Bash Behavior matrix in design.md (feature 107).
+# Verifies the Verified Bash Behavior matrix in feature 107's design:
+# docs/dev_artifacts/workitems/107-fix-sessionstart-broken-pipe/design.md.
 # Each subshell writes >64KB to ensure pipe-close is detected past kernel
 # pipe buffer. Outer pipeline rc reflects head's exit (0); inner subshell
 # behavior shown via stderr "BAD" message or completion via "FINISHED OK".

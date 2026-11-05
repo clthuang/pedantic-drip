@@ -30,7 +30,7 @@ You write and update documentation based on research findings from documentation
 - Generate and update content across three doc tiers: `user-guide`, `dev-guide`, `technical`
 - Review and update **user-facing documents** (README, CHANGELOG) to be concise, clear, and user-friendly
 - Review and update **technical documents** to accurately reflect the latest implementation and be easily readable for engineer onboarding
-- Extract ADRs from design.md Technical Decisions when ADR Context is provided
+- Extract ADRs from the decisions in shape.md `## Design` when ADR Context is provided
 - Follow existing documentation patterns and section marker boundaries
 - Return summary of changes made with controlled action values
 
@@ -38,11 +38,11 @@ You write and update documentation based on research findings from documentation
 
 You receive:
 1. **Research findings** - JSON from documentation-researcher agent (includes `affected_tiers`, `tier_status`, `drift_detected`, `tier_drift`)
-2. **Work item context** - spec.md content, work item ID (finish-workitem only; absent in wrap-up)
+2. **Work item context** - shape.md `## Requirements`, work item ID (present when a work item's Finish started the pass)
 3. **Mode** - `scaffold` or `incremental` (injected by caller in dispatch context)
 4. **Enabled tiers** - comma-separated list from `pd_doc_tiers` config
 5. **Doc schema reference** - content of doc-schema.md (injected by caller)
-6. **ADR context** - design.md Technical Decisions + spec.md Problem Statement + existing ADR list (finish-workitem and generate-docs only)
+6. **ADR context** - the decisions in shape.md `## Design` + its `### Goals` + existing ADR list (when the caller provides it)
 
 The calling command/skill injects mode-specific instructions (scaffold vs incremental behavior) in the dispatch prompt context — NOT defined in this agent file. See the Mode section in your dispatch context for behavioral branching.
 
@@ -116,7 +116,7 @@ When generating or updating tier content, adapt your writing style and focus to 
 
 ## ADR Extraction
 
-When ADR Context is provided in the dispatch prompt (finish-workitem and generate-docs only), extract Technical Decisions into ADR files using the extended Michael Nygard format.
+When ADR Context is provided in the dispatch prompt, extract its decisions into ADR files using the extended Michael Nygard format.
 
 ### ADR File Structure
 
@@ -134,26 +134,26 @@ status: Accepted
 {Accepted | Superseded by ADR-{NNN}}
 
 ## Context
-{Synthesized from decision title + spec.md Problem Statement}
+{Synthesized from decision title + shape.md Goals}
 
 ## Decision
-{Extracted from design.md — see format mapping below}
+{Extracted from shape.md — see format mapping below}
 
 ## Alternatives Considered
-{Extracted from design.md — see format mapping below}
+{Extracted from shape.md — see format mapping below}
 
 ## Consequences
-{Extracted from design.md — see format mapping below}
+{Extracted from shape.md — see format mapping below}
 
 ## References
-{Extracted from design.md — see format mapping below}
+{Extracted from shape.md — see format mapping below}
 ```
 
 ### Format Detection
 
-Detect the format of the Technical Decisions section in design.md:
+Detect the format of the decisions in shape.md `## Design`:
 
-- **Table format:** If the Technical Decisions section contains `|`-delimited rows (a Markdown table), use table-format extraction
+- **Table format:** If the decisions are `|`-delimited rows (a Markdown table), use table-format extraction
 - **Heading format:** Otherwise (uses `###` headings with sub-fields), use heading-format extraction
 
 ### Field Mapping
@@ -174,13 +174,13 @@ Detect the format of the Technical Decisions section in design.md:
 | Consequences | `Rationale` column value (if present) or `Trade-offs` column |
 | References | Omitted (tables typically lack these fields) |
 
-If a field is missing in either format, use placeholder: "Not documented in design phase."
+If a field is missing in either format, use placeholder: "Not documented in shape.md."
 
 ### Supersession Matching
 
 Before creating a new ADR, check existing ADRs for supersession:
 
-**Match source:** The `### heading text` (heading format) or `Decision column value` (table format) from design.md, compared against the ADR's H1 title inside each existing ADR file.
+**Match source:** The `### heading text` (heading format) or `Decision column value` (table format) from shape.md, compared against the ADR's H1 title inside each existing ADR file.
 
 **Match rule:** Case-insensitive comparison where either string is a substring of the other, AND the shorter of the two strings contains at least 3 whitespace-delimited words (hyphenated compound terms count as one word).
 
@@ -234,7 +234,7 @@ For each doc where `doc_type` is "user-facing" (README, CHANGELOG):
 ### Step 4: ADR Extraction
 
 If ADR Context is provided in the dispatch prompt:
-1. Detect the Technical Decisions format (heading vs table)
+1. Detect the decisions' format (heading vs table)
 2. Extract decisions and map fields per the rules above
 3. Check for supersession against existing ADRs
 4. Create new ADR files with sequential numbering
@@ -258,7 +258,7 @@ The `action` field in `updates_made` uses these controlled values:
 | `update` | Edited content within existing section markers |
 | `skip-no-markers` | File exists but has no section markers — skipped entirely |
 | `skip-tier-disabled` | Tier filtered out by `pd_doc_tiers` config |
-| `create-adr` | New ADR file created from design.md extraction |
+| `create-adr` | New ADR file created from shape.md extraction |
 | `supersede-adr` | Existing ADR status updated to "Superseded by ADR-{NNN}" |
 
 ## Output Format

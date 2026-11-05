@@ -71,38 +71,6 @@ read_local_md_field() {
     fi
 }
 
-# Read a key from a hook state file (key=value format)
-# Usage: read_hook_state "$file" "key" "default"
-read_hook_state() {
-    local file="$1" key="$2" default="${3:-}"
-    if [[ ! -f "$file" ]]; then
-        echo "$default"
-        return
-    fi
-    local value
-    value=$(grep "^${key}=" "$file" 2>/dev/null | head -1 | cut -d'=' -f2- || echo "")
-    if [[ -z "$value" || "$value" == "null" ]]; then
-        echo "$default"
-    else
-        echo "$value"
-    fi
-}
-
-# Write a key=value to a hook state file (create or update)
-# Usage: write_hook_state "$file" "key" "value"
-write_hook_state() {
-    local file="$1" key="$2" value="$3"
-    local dir
-    dir=$(dirname "$file")
-    [[ -d "$dir" ]] || mkdir -p "$dir"
-    if [[ -f "$file" ]] && grep -q "^${key}=" "$file" 2>/dev/null; then
-        local tmp="${file}.tmp"
-        sed "s/^${key}=.*/${key}=${value}/" "$file" > "$tmp" && mv "$tmp" "$file"
-    else
-        echo "${key}=${value}" >> "$file"
-    fi
-}
-
 # Install ERR trap that outputs valid JSON on uncaught errors.
 # Call immediately after sourcing common.sh in hook scripts.
 install_err_trap() {

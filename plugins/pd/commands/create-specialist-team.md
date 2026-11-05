@@ -104,7 +104,7 @@ For each selected template:
 3. Gather workflow context:
    - Run `${CLAUDE_PLUGIN_ROOT}/scripts/pd-status` and take the active work item (several: the checked-out `workitem/<id>` branch's, else ask).
    - If found: read its README frontmatter for `id`, `phase` and `mode`. With no active work item, route to brainstorm.
-     Check which artifacts exist (prd.md, shape.md, plan.md)
+     Check which artifacts exist (README.md, shape.md, plan.md)
    - Format as:
      ```
      Active work item: {id}-{slug} ({mode} mode)

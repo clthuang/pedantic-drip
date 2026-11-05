@@ -314,34 +314,6 @@ test_finish_workitem_under_600_lines() {
     if [[ $lines -lt 600 ]]; then log_pass; else log_fail "finish-workitem.md is $lines lines (>=600)"; fi
 }
 
-# Feature 113 FR-2: AC-12 evidence helper script must be executable and emit
-# exactly 3 '=== ... ===' section headers (host bash, /bin/bash, test-hooks.sh).
-# Recursion guard: bash-version-capture.sh invokes test-hooks.sh in its 3rd
-# section. Without the env-var sentinel, we'd infinite-loop: test-hooks → cap
-# → test-hooks → cap → ... When BASH_VERSION_CAPTURE_RUNNING=1, this test
-# skips itself (the outer cap invocation captures the result instead).
-test_bash_version_capture_script_emits_three_sections() {
-    log_test "bash-version-capture.sh is executable and emits 3 section headers"
-    if [[ "${BASH_VERSION_CAPTURE_RUNNING:-0}" == "1" ]]; then
-        log_skip "recursion guard (invoked from bash-version-capture.sh)"
-        return
-    fi
-    local script="${PROJECT_ROOT}/plugins/pd/hooks/tests/bash-version-capture.sh"
-    if [[ ! -x "$script" ]]; then
-        log_fail "bash-version-capture.sh missing or not executable: $script"
-        return
-    fi
-    local out
-    out=$("$script" 2>&1 || true)
-    local count
-    count=$(printf '%s\n' "$out" | grep -c '^=== ' || true)
-    if [[ "$count" -eq 3 ]]; then
-        log_pass
-    else
-        log_fail "expected 3 section headers, got $count"
-    fi
-}
-
 # === Config Helper Tests ===
 
 # Helper: create a temp project
@@ -395,38 +367,6 @@ test_read_local_md_field_missing() {
     else
         log_fail "Expected 'main', got '$val'"
     fi
-}
-
-# Test: read/write_hook_state round-trip
-test_hook_state_roundtrip() {
-    log_test "read/write_hook_state round-trip"
-
-    source "${HOOKS_DIR}/lib/common.sh"
-    setup_temp_project
-
-    local state_file="${TEMP_PROJECT_DIR}/.claude/.hook-state"
-
-    write_hook_state "$state_file" "stop_count" "0"
-    write_hook_state "$state_file" "last_phase" "specify"
-
-    local count phase
-    count=$(read_hook_state "$state_file" "stop_count" "")
-    phase=$(read_hook_state "$state_file" "last_phase" "")
-
-    if [[ "$count" == "0" ]] && [[ "$phase" == "specify" ]]; then
-        # Test update
-        write_hook_state "$state_file" "stop_count" "5"
-        count=$(read_hook_state "$state_file" "stop_count" "")
-        if [[ "$count" == "5" ]]; then
-            log_pass
-        else
-            log_fail "Update failed: expected '5', got '$count'"
-        fi
-    else
-        log_fail "Expected count=0, phase=specify; got count=$count, phase=$phase"
-    fi
-
-    teardown_temp_project
 }
 
 # === Robustness Tests ===
@@ -620,7 +560,6 @@ main() {
     test_pre_commit_guard_from_subdirectory
     test_finish_workitem_contract_present
     test_finish_workitem_under_600_lines
-    test_bash_version_capture_script_emits_three_sections
 
     echo ""
     echo "--- Config Helper Tests ---"
@@ -628,7 +567,6 @@ main() {
 
     test_read_local_md_field
     test_read_local_md_field_missing
-    test_hook_state_roundtrip
 
     echo ""
     echo "--- Robustness Tests ---"
