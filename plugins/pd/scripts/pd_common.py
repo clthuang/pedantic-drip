@@ -9,7 +9,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 WORKITEM = "workitem"
@@ -441,13 +440,6 @@ def retro_triggers(entries):
     return found
 
 
-def now_stamp():
-    """`YYYY-MM-DD HH:MM±hh:mm`, the local time with its UTC offset."""
-    t = datetime.now().astimezone()
-    off = t.strftime("%z")
-    return t.strftime("%Y-%m-%d %H:%M") + off[:3] + ":" + off[3:]
-
-
 def slugify(title):
     words = [w for w in re.findall(r"[a-z0-9]+", title.lower()) if w not in STOPWORDS]
     return "-".join(words[:5])
@@ -509,7 +501,6 @@ def _self_test():
             "entry refs carry the -n suffix")
     c.check(es[0]["line"] == 4 and ISSUE_RE.match(es[0]["body"][0]), "entry line numbers and issue lines")
     c.check(set(sections("## Now\nx\n```\n## Fake\n```\n## Links\ny\n")) == {"Now", "Links"}, "sections skip fences")
-    c.check(re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}[+-]\d{2}:\d{2}", now_stamp()) is not None, "now_stamp")
     plan = ("## Plan\n### Wave 1\n#### Task 1: parse [parallel-safe]\n- files: a.py\n- uses: none\n"
             "- test cases:\n  - C1 [B1] (fixture: none): x\n### Wave 2\n#### Task 2: io\n- command: `t`\n")
     ts = parse_tasks(plan)

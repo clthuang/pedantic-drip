@@ -84,7 +84,6 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 - **`detect_project_root`:** walks up from PWD to the nearest `.git` (a directory in a main checkout, a file in a linked worktree); falls back to PWD. So a session in a linked worktree roots at the worktree, not the main checkout. A git submodule's `.git` is a file too, so a session inside a submodule roots at the submodule. An orphaned worktree (its `.git` file names a pruned `.git/worktrees/<name>`) also roots at itself.
 - **`escape_json "$string"`:** escapes backslashes, double quotes, newlines, carriage returns and tabs for a JSON string value.
 - **`read_local_md_field "$file" "$field" "$default" [preserve_spaces]`:** reads a frontmatter field from a `.local.md` file, such as `.claude/pd.local.md`; returns the default when the file or field is missing.
-- **`read_hook_state` / `write_hook_state`:** read and write one key in a `key=value` state file.
 - **`install_err_trap`:** an ERR trap that prints `{}` and exits 0, so an unexpected failure never breaks the session. Required in every hook that sources `common.sh`.
 
 ### `hooks/lib/commit_target.py`
