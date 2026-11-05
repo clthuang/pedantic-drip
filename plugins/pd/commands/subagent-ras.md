@@ -17,7 +17,8 @@ If no argument provided, display: `"Usage: /pd:subagent-ras <query>"`
 
 ## Execution
 
-Invoke the `researching` skill with the query argument. The skill handles the full pipeline:
-1. Parallel research (codebase + web + context)
-2. Thematic synthesis
-3. Structured output + save prompt
+1. **Research in parallel,** each dispatch following the `researching` skill's contract (one narrow question, pointers back):
+   - `pd:codebase-explorer` (model: sonnet) for the codebase;
+   - `pd:internet-researcher` (model: sonnet) for external sources.
+2. **Synthesize:** dispatch `pd:ras-synthesizer` (model: opus) with the query, both findings (or their unavailability notes) and the work context.
+3. **Report** its summary to the user.

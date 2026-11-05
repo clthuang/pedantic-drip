@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Helpers for the SessionStart hook's broken-pipe handling.
 # Feature 107. See docs/dev-guide/hook-development.md and
-# docs/features/107-fix-sessionstart-broken-pipe/design.md.
+# docs/dev_artifacts/workitems/107-fix-sessionstart-broken-pipe/design.md.
 #
 # REQUIRES caller to have set `trap '' PIPE` BEFORE invoking
 # safe_emit_hook_json. Without it, the bash process is SIGPIPE-killed

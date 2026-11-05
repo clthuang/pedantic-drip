@@ -1,6 +1,6 @@
 # Documentation Schema Reference
 
-Canonical file listings and metadata formats for each documentation tier. Used by the doc-writer agent and documentation skills to generate consistent project documentation.
+Canonical file listings and metadata formats for each documentation tier. Used by the documentation-writer agent and documentation skills to generate consistent project documentation.
 
 ## user-guide
 

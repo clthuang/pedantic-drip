@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validation script for agent-teams repository
+# Validation script for the pedantic-drip repository (the pd plugin)
 # Validates skills, agents, plugins, and commands
 
 set -e
@@ -346,7 +346,7 @@ validate_marketplace_json() {
 
 # Main validation
 echo "=========================================="
-echo "Agent Teams Repository Validation"
+echo "pedantic-drip Validation"
 echo "=========================================="
 echo ""
 

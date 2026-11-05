@@ -11,7 +11,7 @@ Claude Code plugin providing a structured development workflow—skills, command
 - **No backward compatibility** - This is private tooling with no external users. Delete old code, don't maintain compatibility shims.
 - **Branches for all modes** - All workflow modes (standard, small, express) create a `workitem/<id>` branch. Branches are lightweight.
 - **Retro before cleanup** - Retrospective runs BEFORE branch deletion so context is still available.
-- **Plugin portability** - Never use hardcoded `plugins/pd/` paths in agent, skill, or command files. Use two-location Glob: primary `~/.claude/plugins/cache/*/pd*/*/...`, fallback `plugins/*/...` (dev workspace). Mark fallback lines with "Fallback" or "dev workspace" so `validate.sh` can distinguish them from violations.
+- **Plugin portability** - Never use hardcoded `plugins/pd/` paths in agent, skill, or command files. Prefer `${CLAUDE_PLUGIN_ROOT}/...`; where a Glob is needed, use two-location Glob: primary `~/.claude/plugins/cache/*/pd*/*/...`, fallback `plugins/*/...` (dev workspace). Mark fallback lines with "Fallback" or "dev workspace" so `validate.sh` can distinguish them from violations (`docs/dev-guide/component-authoring.md`).
 - **Project-aware design** - pd is used across multiple projects. Paths resolution, configs, and state must be relative to the current project context — never assume a specific project root.
 - **Use uv for Python dependencies** - `uv add` for package management, never `pip install` directly. Run tests with the correct venv: `plugins/pd/.venv/bin/python -m pytest`.
 

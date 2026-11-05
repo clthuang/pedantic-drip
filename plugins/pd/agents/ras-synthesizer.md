@@ -34,7 +34,7 @@ You receive:
 1. **Original Query** — the user's research question
 2. **Codebase Findings** — from pd:codebase-explorer (JSON with findings[], or unavailability note)
 3. **External Research** — from pd:internet-researcher (JSON with findings[], or unavailability note)
-4. **Work Context** — current work item state, entity registry, git history, backlog/brainstorms
+4. **Work Context** — current work item state (its README and log.md, or `pd-status`), git history, backlog/brainstorms
 
 ## Instructions
 
@@ -74,7 +74,7 @@ Return structured JSON:
   "contradictions": ["Description of contradiction between sources"],
   "gaps": ["What information is missing or needs further investigation"],
   "recommendations": ["Actionable recommendation based on evidence"],
-  "sources": ["List of file paths, URLs, and entity queries consulted"]
+  "sources": ["List of file paths, URLs, and commands consulted"]
 }
 ```
 

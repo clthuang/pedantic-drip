@@ -42,7 +42,7 @@ You research documentation state to identify what needs updating. READ-ONLY.
 ## Input
 
 You receive:
-1. **Work item context** - spec.md content, files changed
+1. **Work item context** - shape.md `## Requirements`, files changed
 2. **Work item ID** - The {id}-{slug} identifier
 3. **Mode** - `scaffold` or `incremental` (determines analysis scope)
 4. **Tier timestamps** - pre-computed ISO 8601 timestamps per tier (from calling command)
@@ -91,7 +91,7 @@ This information feeds into Step 2d (frontmatter drift detection) and `affected_
 
 ### Step 2: Analyze the Work Item's Changes
 
-Read spec.md **In Scope** section. Identify changes by audience:
+Read shape.md's `### Scope` (under `## Requirements`). Identify changes by audience:
 
 **User-visible changes** (update user-facing docs):
 
