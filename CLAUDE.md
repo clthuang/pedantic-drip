@@ -153,7 +153,7 @@ scripts/release-pr.sh            # Release: opens the release PR into main
 
 A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin component edits.
 
-**Agent model tiers:** Every `subagent_type:` dispatch must include `model:` (opus/sonnet/haiku) matching the agent's frontmatter. Verify with: `grep -rn 'subagent_type:' plugins/pd/ | wc -l` and confirm each has a nearby `model:` line.
+**Agent model tiers:** Every `subagent_type:` dispatch must include `model:` (fable/opus/sonnet/haiku) matching the agent's frontmatter. Verify with: `grep -rn 'subagent_type:' plugins/pd/ | wc -l` and confirm each has a nearby `model:` line.
 
 **Reviewer prompt consistency:** Every review prompt carries the return schema pinned in `plugins/pd/references/workflow-results.md` ("The review call"), inline, per `plugins/pd/references/review-call.md` — never prose like "Return assessment with approval status".
 
