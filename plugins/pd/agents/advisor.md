@@ -1,7 +1,7 @@
 ---
 name: advisor
 description: Applies strategic or domain advisory lens to brainstorm problems via template injection. Use when (1) brainstorming skill Stage 2 dispatches advisory analysis, (2) secretary routes to brainstorm with advisory team config, (3) problem needs strategic perspective analysis.
-model: sonnet
+model: fable
 tools: [Read, Glob, Grep, WebFetch, WebSearch]
 color: cyan
 ---

@@ -132,7 +132,7 @@ assistant: "Example response explaining the delegation."
 **Frontmatter fields:**
 - **`name`** (required): lowercase with hyphens; `validate.sh` errors otherwise.
 - **`description`** (required): what the agent does and when to use it; the same warnings as a skill's.
-- **`model`** (required by convention): `opus`, `sonnet` or `haiku`. Every pd agent sets `opus` or `sonnet`; a missing `model:` is a `validate.sh` warning. Every `subagent_type:` dispatch passes the same `model:` (CLAUDE.md "Agent model tiers").
+- **`model`** (required by convention): `fable`, `opus`, `sonnet` or `haiku`. Every pd agent sets `opus` or `sonnet`, except `advisor`, which sets `fable`; a missing `model:` is a `validate.sh` warning. Every `subagent_type:` dispatch passes the same `model:` (CLAUDE.md "Agent model tiers").
 - **`effort`** (optional): pd uses `high` or `medium`; the role rules below require it for some agents.
 - **`tools`** (optional): the tools the agent may use. Omit it and the agent inherits every tool.
 - **`skills`** (optional): skills the agent loads, such as `[planning]` for `plan-reviewer`.
