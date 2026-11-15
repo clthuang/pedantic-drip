@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.4] - 2026-11-15
+
 ### Changed
 
 - **The `advisor` runs on Fable.** Its frontmatter sets `model: fable` in place of `sonnet`. `research-fanout` dispatches `pd:advisor` without a model, so the frontmatter decides, and an advisor's output is judgment work.
