@@ -298,7 +298,7 @@ runpy.run_path(script, run_name="__main__")
 def _traced_cases(repo):
     """(command, branch to be on, expected Popen argument lists) for every `seen` command of C1 to C24."""
     root = ["git", "-C", repo, "rev-parse", "--show-toplevel"]
-    show = lambda b: ["git", "-C", repo, "show-ref", "--verify", "--quiet", f"refs/heads/{b}"]
+    show = lambda b: ["git", "-C", repo, "for-each-ref", "--format=%(refname)", f"refs/heads/{b}", f"refs/remotes/*/{b}"]
     commit = lambda b: ["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}"]
     on_main = (["timeout 30 git commit -m x", "timeout -s KILL -k 5 30 git commit -m x",
                 "timeout --signal=KILL --kill-after 5 30 git commit -m x"]

@@ -304,14 +304,19 @@ def switch_target(sub, args, at):
     if sub == "switch":
         return names[0] if names else None
     # `git checkout <x>` switches only when <x> is its one name; `checkout [<x>] [--] <paths>` restores files
-    # (shortcut: a remote branch checked out by name, or a branch made earlier in the same command, counts as no switch; resolve those if they show up)
+    # (shortcut: a branch made earlier in the same command counts as no switch; resolve it if it shows up)
     if len(names) != 1 or "--" in words or names[0] in ("HEAD", "@"):  # `checkout HEAD` stays on the branch
         return None
     git = ["git", "-C", at]
-    if subprocess.run(git + ["show-ref", "--verify", "--quiet", f"refs/heads/{names[0]}"], capture_output=True).returncode == 0:
-        return names[0]
-    detached = subprocess.run(git + ["rev-parse", "--verify", "--quiet", f"{names[0]}^{{commit}}"], capture_output=True).returncode == 0
-    return "?" if detached else None
+    name = names[0]
+    refs = subprocess.run(git + ["for-each-ref", "--format=%(refname)", f"refs/heads/{name}", f"refs/remotes/*/{name}"],
+                          capture_output=True, text=True).stdout.split()
+    if f"refs/heads/{name}" in refs:
+        return name
+    if subprocess.run(git + ["rev-parse", "--verify", "--quiet", f"{name}^{{commit}}"], capture_output=True).returncode == 0:
+        return "?"  # detached
+    # no local branch or commit: git makes the local branch from a remote one of that name (checkout --guess)
+    return name if any(r.count("/") == name.count("/") + 3 and r.endswith(f"/{name}") for r in refs) else None
 
 
 def scan(cmd, here, switched):
