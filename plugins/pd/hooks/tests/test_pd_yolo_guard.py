@@ -175,6 +175,7 @@ def test_c7c_a_quoted_or_escaped_redirect_character_hides_no_operand(run_hook, y
     ("git push --force>/dev/null origin x", "git push --force origin x"),
     ("git push origin --delete>/dev/null x", "git push origin --delete x"),
     ("git push origin main>/dev/null", "git push origin main"),
+    ("((true); true); rm>/dev/null -rf /tmp/elsewhere", "rm -rf /tmp/elsewhere"),
 ])
 def test_c7d_a_redirect_glued_onto_a_word_hides_no_operand(run_hook, yolo, tmp_path, command, simple_command):
     repo = make_repo(tmp_path / "repo")

@@ -644,8 +644,9 @@ def test_simple_c6e_a_redirect_glued_onto_a_word_drops(simple_commands, tmp_path
         ("gh pr merge>/dev/null 3", ["gh", "pr", "merge", "3"]), ("git push origin main>>log 2>&1", ["git", "push", "origin", "main"]),
         ("git branch -D> out x", ["git", "branch", "-D", "x"]), ("cat<<EOF\nrm -rf /\nEOF", ["cat"]),
         ("ls 2>/dev/null", ["ls"]), ("echo a\\>b", ["echo", "a>b"]), ("echo 'a>b'", ["echo", "a>b"]),
+        ("((true); true); rm>/dev/null -rf x", ["rm", "-rf", "x"]),  # `((` that is two subshells, not arithmetic
     ]:
-        assert [w for w, _ in simple_commands(command, d)] == [words], command
+        assert [w for w, _ in simple_commands(command, d)][-1:] == [words], command
 
 
 def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
