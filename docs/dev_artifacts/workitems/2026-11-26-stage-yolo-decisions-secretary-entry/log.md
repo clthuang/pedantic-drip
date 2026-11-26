@@ -407,3 +407,14 @@ Follow-ups:
 Decisions: none
 Assumptions: none
 Closes: none
+
+## 2026-11-26 19:39+08:00 decision
+answers: capped@2026-11-26 19:30+08:00
+Q: Q10 is open at verify's three-cycle cap: one more cycle for Q10 only, defer it to the backlog, or a fresh full verify run?
+A (user, verbatim): "One more cycle, Q10 only (Recommended)"
+Plan: resume run wf_4014fca4-f44 with the cycle cap raised from 3 to 4 in its persisted script, so the review and cycles 1-3 replay from cache and one fixer and one QA pass run. A further parser bypass found by that QA pass goes to the backlog, not another cycle.
+
+## 2026-11-26 19:39+08:00 decision-2
+Q: Q8, the specify gate accepting a "No, not yet" sign-off, and B19's silent skip with no local base branch: join the fix round, or stay on the backlog?
+A (user, verbatim): "Stay on the backlog (Recommended)"
+Follow-ups: 2026-11-26-pd-stop-gate-finish-saves, 2026-11-26-phase-gate-specify-accepts-any, 2026-11-26-phase-gate-verify-s-risk
