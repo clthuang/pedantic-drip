@@ -265,3 +265,39 @@ def test_c16_git_failing_inside_the_check_fails_closed(run_hook, yolo, tmp_path)
 def test_c14_a_subagent_call_is_refused_like_the_main_session(run_hook, yolo, tmp_path):
     repo = make_repo(tmp_path / "repo")
     assert_hard_stop(run_hook(HOOK, bash_call("git push -f origin x", repo, agent_id="a1")), "git push -f origin x")
+
+
+@pytest.mark.parametrize("command", [
+    "git push origin $(git branch --show-current) --force",
+    "git push origin $(git branch --show-current):main",
+    "git reset $(git merge-base main HEAD) --hard",
+    "BR=$(git branch --show-current) git push --force",
+])
+def test_s1_words_after_an_unquoted_substitution_are_read(run_hook, yolo, tmp_path, command):
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
+    assert code == 2 and "Hard stop:" in err and "check failed" not in err
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout main && git push",
+    "git checkout main && git push origin HEAD",
+    "git switch main; git push",
+])
+def test_s2_a_push_after_a_switch_to_the_base_branch_is_refused(run_hook, yolo, tmp_path, command):
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
+    assert code == 2 and "Hard stop:" in err
+
+
+def test_s2_a_push_after_a_switch_to_a_feature_branch_passes(run_hook, yolo, tmp_path):
+    repo = make_repo(tmp_path / "repo", branch="main")
+    assert_allowed(run_hook(HOOK, bash_call("git checkout -b feat && git push", repo)))
+
+
+@pytest.mark.parametrize("command", [
+    "find . -type d -name build | xargs rm -rf",
+    "git ls-files -o --directory | xargs rm -rf",
+    "git worktree list | xargs git worktree remove",
+])
+def test_s3_removals_with_no_visible_operand_are_refused(run_hook, yolo, tmp_path, command):
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
+    assert code == 2 and "Hard stop:" in err
