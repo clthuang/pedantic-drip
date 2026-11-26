@@ -211,3 +211,20 @@ Verdict: changes requested (scoped: 12 of 14 resolved; R6 and R13 open; 3 new, k
 - R15 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:345 — the crash fallback misses a command split by a backslash-newline (git pu\<newline>sh -f).
 - R16 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:363 — under --separate-git-dir the common dir's parent isn't the checkout, so rm -rf <store>/agent_sandbox/x would be allowed.
 - R17 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:537 — a stage changed at finish skips the stage check, so the item can close without a review applying the new stage (B18).
+
+## 2026-11-26 15:32+08:00 review M3 — codex (fallback: no)
+Verdict: changes requested (scoped: R6, R15 and R17 resolved; R13 and R16 open; 1 new). Commit: 5d36aa0a.
+- R13 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:778 — still open: the pending-check output wasn't probed, only read from help text.
+- R16 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:363 — still open: a separate git dir named .git elsewhere (/store/.git) passes the basename test, so /store counts as the checkout.
+- R18 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:604 — at the Bash tool's timeout Claude Code moves the command to the background instead of stopping it, so the loop would start a second watcher.
+
+## 2026-11-26 15:32+08:00 capped design
+Deferred:
+- R13: now probed (gh 2.103.3, 2026-11-26): ductura/Institution_server PR 826 with 9 pending checks, gh pr checks exits 8 and --json name,bucket gives pending=9. Proposed: record it in the probes table.
+- R16: reproduced the class with --separate-git-dir (scratch repo, git 2.54.0). Proposed: drop the common-dir rule; a git worktree remove is exempt when git worktree list --porcelain shows that path on a pd/<id>/task-<n> branch (pd_common.worktrees, TASK_BRANCH); an rm -r operand is allowed only inside the command's own toplevel's agent_sandbox/.
+- R18: reproduced: gh pr checks --watch on that pending PR was moved to the background at 120 s, and perl alarm 15 didn't stop gh. Proposed: a new pd-pr-checks <pr> script polls gh pr checks --json name,bucket every 30 s for at most 540 s, prints the buckets and exits 0 (all passed or skipped), 1 (a failure), 3 (no checks), 8 (still pending) or 2 (gh failed); the conductor runs it with the Bash tool's timeout at 600000 ms, at most 7 times.
+Follow-ups: none
+Decisions: none
+Assumptions:
+- A3: Claude Code keeps moving a foreground Bash call that outlives its timeout to the background (seen 2026-11-26 in this session).
+Closes: none
