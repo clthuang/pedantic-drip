@@ -411,7 +411,7 @@ pd-pr-checks <pr> [--for <seconds>]       --for defaults to 540, so one call end
   stdout: the last poll's JSON list of {name, bucket}; nothing when the PR has no checks.
   exit 0  every bucket is pass or skipping
   exit 1  some bucket is fail or cancel
-  exit 3  no checks: gh exited 1 printing "no checks reported"
+  exit 3  no checks: gh exited 1 printing "no checks reported" (on stderr)
   exit 8  still pending when --for ran out
   exit 2  gh failed otherwise (no such PR, auth, network); gh's stderr passed through
 pd-pr-checks --self-test
@@ -804,6 +804,9 @@ Each output a contract parses, the variants probed, and what came back. Git 2.54
 | `gh pr checks <pr>` | one failing check (cli/cli PR 14927, public) | exit 1; `--json name,bucket` buckets fail=1, pass=11, skipping=8 | PrChecksCLI (B55) |
 | `gh pr checks <pr> --watch` | settled with a failure (cli/cli PR 14927) | exit 1 | PrChecksCLI (B55) |
 | `gh pr checks <pr>` | 9 pending checks (ductura/Institution_server PR 826, public, found by `gh search prs --checks pending`) | exit 8; `--json name,bucket` gives pending=9 | PrChecksCLI (B55) |
+| `gh pr checks <pr> --json name,bucket` | one failing check (cli/cli PR 14927) | exit 0: under `--json` a failure shows only in the buckets, so PrChecksCLI reads the buckets, never gh's exit code, when stdout parses as a list | PrChecksCLI (B55) |
+| `gh pr checks <pr> --json bucket` | no checks (PR #5) | exit 1, stdout empty, `no checks reported on the '…' branch` on stderr | PrChecksCLI (B55) |
+| `gh pr checks <pr> --json bucket` | pending | not probed: PR 826 had settled by the second probe. Plain gh exits 8 when pending, so PrChecksCLI's tests replay pending as exit 8 with the list on stdout | PrChecksCLI (B55) |
 | `gh pr checks <pr> --watch` under the Bash tool's 120 s timeout, inside `perl -e 'alarm 15; exec @ARGV'` | the same pending PR | Claude Code moved it to the background at 120 s ("moved to the background"); the alarm didn't stop gh. Hence PrChecksCLI (review M3 R18) | not used |
 | `git symbolic-ref -q HEAD` | a tag named like the branch (`main`) | `refs/heads/main`: a full ref, unaffected | YoloGuard |
 | `git symbolic-ref -q HEAD` | a `/` in the name (`feature/x`) | `refs/heads/feature/x`; dropping `refs/heads/` gives `feature/x` | YoloGuard |
