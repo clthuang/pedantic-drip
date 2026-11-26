@@ -342,8 +342,8 @@ Bash, each (words, dir) from simple_commands(command, cwd):
     owner resolves them and runs `! git commit` (or the --continue), or turns YOLO off (B54, B60)
   any failure past the fast path (an exception, simple_commands returning None, git failing) -> exit 2 with
     "pd-yolo-guard: check failed; command refused while YOLO is on" when the raw command holds $', $( or a
-    backtick, or when, with every ', " and \ deleted, it holds one of push merge branch worktree reset clean
-    rm commit --continue as a whole word (so git p'ush' -f is caught); otherwise exit 0 (B40)
+    backtick, or when, with every backslash-newline pair deleted first and then every ', " and \, it holds one of push merge branch worktree reset clean
+    rm commit --continue as a whole word (so git p'ush' -f and git pu\<newline>sh -f are caught); otherwise exit 0 (B40)
 DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-dir, --work-tree, --namespace,
 --no-pager; -C also moves dir):
   git push with -f, --force, --force-with-lease[=…], or a refspec starting "+" (git-push(1)'s per-ref --force)
@@ -360,9 +360,10 @@ DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-di
   git clean with --force or a word matching ^-[A-Za-z]*f
   rm with --recursive or a word matching ^-[A-Za-z]*[rR], and an operand (after --, or any non-option word)
     that, joined to dir and normalized, is outside <repo top>/agent_sandbox/; with no repo every operand is outside
-<repo top> is the main checkout: the parent of `git -C <dir> rev-parse --path-format=absolute --git-common-dir`.
-A fixer running in its own task worktree (implement-tasks.js:69-70) thus sees the same .claude/worktrees/
-(Probes of parsed output).
+<repo top> is the main checkout: the parent of `git -C <dir> rev-parse --path-format=absolute --git-common-dir`
+when that directory's basename is ".git"; otherwise (--separate-git-dir, a bare repository) the command's own
+`git -C <dir> rev-parse --show-toplevel`, which only narrows what is allowed. A fixer running in its own task
+worktree (implement-tasks.js:69-70) thus sees the main checkout's .claude/worktrees/ (Probes of parsed output).
 ```
 
 ```text
@@ -508,10 +509,10 @@ Harden-later backlog line: one backlog.md line per work item ending "(from: work
   by its reference <review entry ref>#<id>, e.g. review-2@2026-12-01 10:00+08:00#R3 (REF_RE, pd_common.py:38) (B49)
 Probe ruling, one per "B<n>: Probe:" expectation (B61):
   ## <ts> decision
-  Q: <the probe's question>
-  A (user, verbatim): "<quote>"
+  Q: <the probe's question>, asked through AskUserQuestion with the options "Met" and "Missed"
+  A (user, verbatim): "<the chosen option, starting Met or Missed>"
   Ruling: B<n>
-  Next: none | phase <from> -> <to> (back) | backlog <id>
+  Next: none (Met only) | phase <from> -> <to> (back) | backlog <id>
 ```
 
 ```text
@@ -531,20 +532,22 @@ plan tasks: the green-only reason set gains "mvp" when the item's stage is mvp (
 ```text
 modules: plugins/pd/scripts/phase-gate.sh
 contract: GateCLI
-design | create-plan | verify: the latest review entry holding a "Stage:" line; its stage differs from
+design | create-plan | verify | finish: the latest review entry holding a "Stage:" line; its stage differs from
   item_stage(README) -> "GATE FAIL [<phase>]: the review applied stage <a>; the work item is <b>" (B15).
   No such entry -> no stage check (B16). design and create-plan join the log_checks case for this check only
   (today it skips them, phase-gate.sh:199-206). The check runs only when <phase> equals the README's phase,
   the exit being taken: pd-lint's re-runs of passed gates (pd-lint:363-380) skip it, so the commit of a stage
-  change after Contracts passes (B18).
+  change after Contracts passes (B18). At finish, a stage changed since Verify thus needs a review call applying
+  the new stage before the work item can close (ConductorProse).
 specify: signed_off() (phase-gate.sh:84-89) also passes on "A (conductor, on the user's behalf):" when an
   earlier YOLO confirmation entry (LogEntries) carries the same "Session:" line (B30).
 verify: pc.risk_signals(root, "<merge-base of base_branch and HEAD>..HEAD") whose tag is neither in the README's
   risk list nor in risk_waivers -> "GATE FAIL [verify]: <tag> signal <path>:<line>: add risk: <tag> or a
   Risk: none (<tag>) decision" (B19, B20), at every depth.
 finish: each shape.md expectation starting "B<n>: Probe:" needs a decision entry with an "A (user, verbatim):"
-  line, a line "Ruling: B<n>" and a non-empty "Next:" line; one missing -> "GATE FAIL [finish]: the owner's
-  ruling on B<n> is missing" (B61, D8). On a stage-mvp work item, each harden-later issue line's reference must appear on a backlog.md line ending
+  line whose quote starts "Met" or "Missed", a line "Ruling: B<n>" and a "Next:" line; after "Missed", Next
+  must be a backward move (phase <from> -> <to> (back)) or a backlog id, never "none". Otherwise ->
+  "GATE FAIL [finish]: the owner's ruling on B<n> is missing or names no next step" (B61, D8). On a stage-mvp work item, each harden-later issue line's reference must appear on a backlog.md line ending
   "(from: workitems/<id>)" (B49).
 ```
 
@@ -580,7 +583,8 @@ workflow-transitions, a new "YOLO" section
   The owner says off -> `pd-yolo off --session ${CLAUDE_SESSION_ID}` (B60).
   Changing an open item's stage: a decision entry and the README's stage: edited, committed first; mvp to
     production past specify (README phase other than specify) also moves back to specify with Invalidates:;
-    production to mvp moves nothing back; a done item is refused, with a new production item proposed from its
+    production to mvp moves nothing back, and at finish the conductor makes a review call with
+    `pd-review-prompt verifying <dir>` before the finish gate; a done item is refused, with a new production item proposed from its
     harden-later backlog line (B17, B18, B46).
   Print mode's decisions carry the same record lines (workflow-transitions/SKILL.md:49; B29).
   Dispatch (workflow-transitions/SKILL.md:52): codebase-explorer, internet-researcher, investigation-agent and
@@ -597,8 +601,9 @@ planning
   "green-only (mvp)" at stage mvp (B48).
 finishing-branch, step 7 under YOLO (B55)
   The PR path's commands (finishing-branch/SKILL.md:30): `git push -u origin workitem/<id>`, then `gh pr create`.
-  Wait: `timeout 590 gh pr checks <pr> --watch --interval 30`, repeated while it exits 124 (timed out), for at
-    most 60 minutes. The wait ends at exit 0 (all passed), or at exit 1 with "no checks reported" (none) or
+  Wait: `gh pr checks <pr> --watch --interval 30` as a Bash call with the tool's timeout at 590000 ms (stock
+    macOS has no `timeout` binary), repeated after each timeout for at most 60 minutes in all. Pending checks
+    never end a --watch run, so they show only as that timeout; an exit 8 (pending, outside --watch) counts the same. The wait ends at exit 0 (all passed), or at exit 1 with "no checks reported" (none) or
     with failures, which `gh pr checks <pr> --json name,bucket` names (bucket "fail"). Any other exit, or
     exit 1 with neither (no such PR, a network error), -> "Hard stop: gh failed: <its output>".
   Failing checks and PR review comments get up to 3 fix cycles, each fix with its decision record; still failing
@@ -650,7 +655,7 @@ init
   - **Rejected owed-ruling blocker lines closed by the ruling:** a `qa`, `review` or `capped` entry can close any blocker without the owner (`pd_common.py:366-391`), and a line never written passes (review M1 R6).
   - **Rejected a "required rulings" list in `phase-gate.sh`:** it would put one work item's rule in a script every work item runs.
   - **Rejected a manual finish check:** it would edit signed-off text.
-  - **What `Next:` covers:** the follow-up after an adverse ruling. A favourable ruling writes `Next: none`.
+  - **What `Next:` covers:** the follow-up after an adverse ruling. The owner's own answer starts `Met` or `Missed`, so the gate can tell them apart: after `Missed`, `Next: none` fails (review M2 R6).
   - **Serves:** KISS. The signed-off text is the data, so nothing can drift from it.
 - **D9: risk detection moves into `pd_common`,** read by `pd-lint --risk` and `phase-gate.sh verify`.
   - **Rejected running `pd-lint --risk` from the gate and parsing its WARN lines:** that makes pd's own message text an API.
@@ -668,7 +673,7 @@ init
   - **Serves:** DRY.
 - **D13: no hash of the bar paragraph** (the owner's default 7 at the cap, `decision@` after `capped@` in `log.md`). The `Stage:` line and B13's first-line check do the binding.
   - **Accepted gap:** a conductor-built prompt missing the paragraph isn't caught (Non-goals).
-- **D14: the pull-request wait is a foreground loop of `timeout 590 gh pr checks --watch`.**
+- **D14: the pull-request wait is a foreground loop of `gh pr checks --watch`, each call capped by the Bash tool's own timeout.**
   - **Why foreground:** the Stop gate yields only to workflow and subagent tasks (`pd-stop-gate.sh:121-126`), so a background shell wait would have its stop held. Foreground Bash calls are capped at ten minutes.
   - **Probed** with gh 2.103.3, 2026-11-26:
     - **No checks:** `gh pr checks 5` prints `no checks reported on the 'feature/010-backlog-to-feature-link' branch` and exits 1.
@@ -696,8 +701,8 @@ Written as if the work item had already failed.
 | Parallel hooks lose a write. The Stop gate rewrites `<sid>.json` by load, change and replace (`pd-stop-gate.sh:33-45`, `:89-108`). | a lost read count, or YOLO flipped off | D1 and D2: a marker file and an append-only byte file. Test: 20 parallel counted calls leave a 20-byte file. |
 | Widening `ISSUE_RE` shifts the positional groups `open_blockers` reads (`pd_common.py:394-397`). | blockers misread: the wrong file, or a claim taken for the line | Named groups. Test: a blocker line and a `warning harden-later` line, parsed from one review entry. |
 | `test-workflows.mjs` finds the json blocks by position (`test-workflows.mjs:9-10`). | the drift test (B41) compares the wrong block and passes vacuously | It finds "The review call" block by its heading. Non-vacuity test: a field removed from the markdown copy only makes it fail. |
-| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Test: a `.claude/worktrees/x` removal passes while YOLO is on. The other callers stay hard stops on purpose (`grep -noE 'git (branch -D\|worktree remove[^`]*)'` over skills/ and commands/, 2026-11-26): `implementing/SKILL.md:27` removes a kept task worktree, under `.claude/worktrees/`, so it is exempt; `implementing/SKILL.md:33` (`git branch -D` after a wrong test) and `abandon-workitem.md:12` (`git branch -D`) each delete a branch, which is the owner's call. |
-| `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases, and only when the phase is the README's own (GateCLI). Tests: a work item written before this change, with no `Stage:` lines, passes `design`; a work item at implement whose design review applied production, after a move to mvp, passes `pd-lint` (B18, review M1 R1). |
+| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Tests: a `.claude/worktrees/x` removal passes while YOLO is on, from the main checkout and from a sibling task worktree; in a `--separate-git-dir` checkout, `rm -rf <store>/agent_sandbox/x` is refused (review M2 R16). The other callers stay hard stops on purpose (`grep -noE 'git (branch -D\|worktree remove[^`]*)'` over skills/ and commands/, 2026-11-26): `implementing/SKILL.md:27` removes a kept task worktree, under `.claude/worktrees/`, so it is exempt; `implementing/SKILL.md:33` (`git branch -D` after a wrong test) and `abandon-workitem.md:12` (`git branch -D`) each delete a branch, which is the owner's call. |
+| `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases, and only when the phase is the README's own (GateCLI). Tests: a work item written before this change, with no `Stage:` lines, passes `design`; a work item at implement whose design review applied production, after a move to mvp, passes `pd-lint` (B18, review M1 R1); a stage changed at finish fails the finish gate until a review applies it (review M2 R17). |
 | B29 now applies everywhere, and print mode already writes `A (conductor, on the user's behalf)` decisions (`workflow-transitions/SKILL.md:49`). | an old item's entries fail pd-lint in another repo | The census of 20 pd repos on 2026-11-26 found no such entry. The print-mode line gains the record lines in the same change. |
 
 Notes:
@@ -768,7 +773,13 @@ Each output a contract parses, the variants probed, and what came back. Git 2.54
 | `gh pr checks <pr>` | all passing (PR #35) | exit 0; `--json name,bucket` gives `[{"bucket":"pass","name":"validate"},{"bucket":"pass","name":"review"}]` | finishing-branch (B55) |
 | `gh pr checks <pr> --watch` | already settled (PR #35) | exit 0 | finishing-branch (B55) |
 | `gh pr checks <pr>` | no such PR (99999) | exit 1, no "no checks" line: "Hard stop: gh failed" | finishing-branch (B55) |
-| `gh pr checks <pr>` | pending, failing | not probed (no such PR in the last 60). `gh pr checks --help`: "8: Checks pending"; `gh help exit-codes`: 1 on failure. The live B55 probe covers them | finishing-branch (B55) |
+| `gh pr checks <pr>` | one failing check (cli/cli PR 14927, public) | exit 1; `--json name,bucket` buckets fail=1, pass=11, skipping=8 | finishing-branch (B55) |
+| `gh pr checks <pr> --watch` | settled with a failure (cli/cli PR 14927) | exit 1 | finishing-branch (B55) |
+| `gh pr checks <pr>` | pending | no pending PR found in cli/cli or microsoft/vscode; `gh pr checks --help` documents "8: Checks pending". Under `--watch` pending never ends the run, so the loop sees only its timeout | finishing-branch (B55) |
+| `git symbolic-ref -q HEAD` | a tag named like the branch (`main`) | `refs/heads/main`: a full ref, unaffected | YoloGuard |
+| `git symbolic-ref -q HEAD` | a `/` in the name (`feature/x`) | `refs/heads/feature/x`; dropping `refs/heads/` gives `feature/x` | YoloGuard |
+| `git symbolic-ref -q HEAD` | a chain, HEAD -> alias -> main | `refs/heads/main` (it follows the chain; `--no-recurse` gives `refs/heads/alias`). A push reaching main through an alias counts as a push to main, so the guard reads the followed form | YoloGuard |
+| `git rev-parse --path-format=absolute --git-common-dir` | `git init --separate-git-dir=<store>/store.git` | `<store>/store.git`, whose parent isn't the checkout (`git worktree list --porcelain` names `store.git` too), so the guard falls back to the command's own toplevel | YoloGuard (repo top) |
 
 ### Rename surfaces: suggestion to note
 

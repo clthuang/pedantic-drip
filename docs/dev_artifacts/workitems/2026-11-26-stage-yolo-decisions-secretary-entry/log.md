@@ -203,3 +203,11 @@ Verdict: changes requested. Commit: 579648df.
 - R12 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:749 — the suggestion-to-note rename has no surface inventory and misses review-ds-code.md:153 and review-ds-analysis.md:165.
 - R13 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:339 — the git and gh outputs parsed lack recorded probes of their variants.
 - R14 warning docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:673 — the census missed implementing/SKILL.md:27 and :33 and abandon-workitem.md:12.
+
+## 2026-11-26 15:23+08:00 review M2 — codex (fallback: no)
+Verdict: changes requested (scoped: 12 of 14 resolved; R6 and R13 open; 3 new, kept by pd-review-filter --range 579648df..415fa592). Commit: 415fa592.
+- R6 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:545 — still open: any non-empty Next: passes, so a "missed" ruling with Next: none closes B61.
+- R13 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:771 — still open: gh pending and failing outputs unprobed; the symbolic-ref probes lack the same-named tag, slash name and chain cases.
+- R15 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:345 — the crash fallback misses a command split by a backslash-newline (git pu\<newline>sh -f).
+- R16 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:363 — under --separate-git-dir the common dir's parent isn't the checkout, so rm -rf <store>/agent_sandbox/x would be allowed.
+- R17 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:537 — a stage changed at finish skips the stage check, so the item can close without a review applying the new stage (B18).
