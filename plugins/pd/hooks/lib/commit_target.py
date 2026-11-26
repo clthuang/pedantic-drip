@@ -123,8 +123,8 @@ def shell_text(cmd):
         if c in "'\"":
             quote = c
         elif c == "\\" and i + 1 < n:
-            if cmd[i + 1] != "\n":  # a backslash-newline joins the lines
-                out.append(cmd[i:i + 2])
+            if cmd[i + 1] != "\n":  # a backslash-newline joins the lines; `\;`, `` \` `` are characters, masked like quoted ones
+                out.append("\\" + QUOTED_PUNCT.get(cmd[i + 1], cmd[i + 1]))
             i += 2
             continue
         elif cmd.startswith("((", i):  # `$(( … ))` and `(( … ))`: `<<` in there is a shift
