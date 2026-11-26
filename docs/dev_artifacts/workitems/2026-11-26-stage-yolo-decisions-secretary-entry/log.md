@@ -161,3 +161,17 @@ Verdict: changes requested (cycle 1: 45 resolved, 2 reopened; new: 18 blocker, 1
 - C75 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: Goals name WebFetch and WebSearch.
 - C76 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B54, the owner resolves or turns YOLO off.
 - C77 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: citations now use entry references (decision-2@2026-11-26 14:05+08:00, decision@2026-11-26 14:14+08:00).
+
+## 2026-11-26 14:32+08:00 review C3 — calvin-runner (fallback: no)
+Verdict: changes requested (cycle 2: 30 resolved, 2 reopened; new: 25 blocker, 10 minor). Commit: f2d62b4c. Ledger: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-cycle-3.md. Not answered: the loop reached its cap; see the capped entry.
+
+## 2026-11-26 14:32+08:00 capped specify
+Deferred:
+- Mechanism rows, for Contracts (they ask how, not what): C22, C78, C79, C83, C84, C85, C91, C92, C93, C94, C95, C97, C98, C99, C101, C102, C103, C104, C105, C108, C109, C110, C111, C112.
+- Behaviour rows, for the owner's ruling: C53, C80, C81, C82, C86, C88, C89, C90, C100, C106, C107.
+Follow-ups: none
+Decisions: none
+Assumptions:
+- A1: a command the owner runs with "! <command>" reaches no PreToolUse hook (C87); to probe at Contracts.
+- A2: the automated review shows in gh pr checks as a check; verified in this repo, where PR #35 lists "review pass" beside "validate pass" (gh pr checks 35, 2026-11-26).
+Closes: none
