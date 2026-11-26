@@ -342,3 +342,5 @@ Flaky: task 1 and task 3 proofs after merge (re-run after merging task 7) — ag
 
 ## 2026-11-26 17:56+08:00 note-3
 Flaky: task 1, 3 and 8 proving commands: first post-merge run produced a JUnit report with no tests (re-run after merging task 8) — post-merge run 1 (agent_sandbox/junit/task-1.xml, task-3.xml, task-8.xml): pd-proof 'no tests in the report'; run 2 (task-1.xml, task-3.xml, task-8.xml): pass, 43, 14 and 91 tests; run 3 (task-1-3.xml, task-3-3.xml, task-8-3.xml): pass
+
+## 2026-11-26 17:57+08:00 phase implement -> verify
