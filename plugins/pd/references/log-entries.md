@@ -9,7 +9,7 @@ One block per entry kind (plan Part B §6). A work item's entries go in its `log
 - **Append-only.** An entry is never edited after its commit.
 - **References** to an entry are `<kind>@<YYYY-MM-DD> <HH:MM±hh:mm>`, plus `#<item id>` for one issue, follow-up or assumption inside it: `review@2026-10-14 11:30+08:00#R1`, `review-2@2026-10-14 11:30+08:00#R1`, `capped@2026-10-14 16:00+08:00#A1`.
 - **`Closes: <ref>[, <ref>…]`** in a later entry closes a blocker or an assumption. A `review` or `qa` entry reporting the fix, a `decision`, a `capped` entry, or a backward `phase` entry that replaced the artifact may close one. A blocker with a proposed rejection closes only through a `decision` whose answer is the user's.
-- **Issue lines** in a `review` or `qa` entry: `- <id> <blocker|warning|note> <file>:<line> — <claim>`. The ids are unique within the entry (`R1`, `Q1`).
+- **Issue lines** in a `review` or `qa` entry: `- <id> <blocker|warning|note>[ harden-later] <file>:<line> — <claim>`. The ids are unique within the entry (`R1`, `Q1`). The optional ` harden-later` token marks an issue a stage-mvp work item defers.
 - **Cited commits:** `Commit: <hash>` (or `Fixed by: <hash>` in a `defect`). `pd-lint` checks that each one exists.
 - **Figures** come from a primary source, cited in the entry: a gate log, git, or the workflow run's `journal.jsonl`.
 - **A converted legacy entry** carries a `Status: closed (legacy)` line; its blockers count as closed.
@@ -25,6 +25,41 @@ Q: criteria signed off?
 A (user, verbatim): "Yes, ship B1 to B4."
 ```
 
+**Decision record.** A decision answered `A (conductor, on the user's behalf):` (YOLO, or print mode) carries one line starting with each of these labels, in this order. `pd-lint` errors on a missing one.
+
+```markdown
+## 2026-11-26 15:55+08:00 decision
+Q: which name does the helper take?
+A (conductor, on the user's behalf): parse_config
+Session: <session id>
+Stage: <mvp|production>
+Pros/cons: <the options and what each costs>
+Trade-off: <what the choice gives up>
+Implications: <what follows from it>
+Premortem: <how it fails, and the check that would show it>
+```
+
+**YOLO confirmation.** The first entry a YOLO session writes to each item's log:
+
+```markdown
+## 2026-11-26 15:50+08:00 decision
+Q: Hard stop: turn YOLO on for this session?
+A (user, verbatim): "Yes, turn YOLO on."
+Session: <session id>
+```
+
+**Risk waiver.** A decision line `Risk: none (<tag>) — <reason>` waives that risk tag's signal at Verify.
+
+**Probe ruling,** one per `B<n>: Probe:` expectation, asked through AskUserQuestion with the options "Met" and "Missed":
+
+```markdown
+## 2026-11-26 17:00+08:00 decision
+Q: <the probe's question>
+A (user, verbatim): "<the chosen option, starting Met or Missed>"
+Ruling: B<n>
+Next: none (Met only) | phase <from> -> <to> (back) | backlog <id>
+```
+
 ### phase
 A phase transition. `(back)` marks a backward move, which names what it invalidates. Triage records each skipped stage, with the reason, in its own `phase triage -> <first stage>` entry.
 
@@ -36,15 +71,18 @@ Closes: review@2026-10-14 11:30+08:00#R2
 ```
 
 ### review
-One review call's result: the reviewer, whether Codex fell back, the verdict, the commit reviewed and one issue line per finding. A proposed rejection is a `Rejects:` line with file:line evidence; it doesn't close the blocker.
+One review call's result: the reviewer, whether Codex fell back, the verdict, the commit reviewed and one issue line per finding. A proposed rejection is a `Rejects:` line with file:line evidence; it doesn't close the blocker. A review entry of a review call (not a calvin cycle) carries a `Stage: <stage>` line, copied from the reply's stage.
 
 ```markdown
 ## 2026-10-14 11:30+08:00 review M1 — codex (fallback: no)
 Verdict: changes requested. Commit: 6ccfa3a5.
+Stage: production
 - R1 blocker src/pd/parse.py:41 — an empty input raises KeyError, not the contract's EmptyInput.
-- R2 warning src/pd/parse.py:88 — the retry loop is unused.
+- R2 warning harden-later src/pd/parse.py:88 — the retry loop is unused.
 Rejects: review@2026-10-13 10:05+08:00#R3 — src/pd/io.py:12 already closes the handle.
 ```
+
+**Harden-later backlog line.** At finish, a stage-mvp work item's `harden-later` issues get one `backlog.md` line ending `(from: workitems/<id>)`, naming each issue by its reference, for example `review-2@2026-12-01 10:00+08:00#R3`.
 
 ### qa
 One QA battery run: the commit it ran against, one `Ran:` line per `qa_battery` command, what passing each criterion would still allow, issue lines, a `Rejects:` line per proposed rejection of its own `Q` issues, and in Verify one `Fixed: <id> by <commit> — <test, or "removal">` line per fix, with a `Closes:` line naming the fixed review issues. Every `Rejects:` and `Closes:` ref names the entry that raised the issue.

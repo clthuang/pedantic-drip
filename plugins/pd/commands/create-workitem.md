@@ -1,6 +1,6 @@
 ---
 description: Create a work item and its branch, or promote a brainstorm, rca or backlog item
-argument-hint: "\"<title>\" [--from <brainstorms/<id>.md | rca/<id>.md | backlog#<id>>] [--mode standard|small|express] | --plan <plan> <slug> \"<title>\""
+argument-hint: "\"<title>\" [--from <brainstorms/<id>.md | rca/<id>.md | backlog#<id>>] [--mode standard|small|express] [--stage mvp|production] | --plan <plan> <slug> \"<title>\""
 ---
 
 # /pd:create-workitem
