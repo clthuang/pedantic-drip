@@ -41,7 +41,7 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NEW_BRANCH = {"checkout": {"-b", "-B", "--orphan"}, "switch": {"-c", "-C", "--create", "--force-create", "--orphan"}}
 UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
-QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT)}  # quoted punctuation is data, not a separator
+QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT + "`")}  # quoted punctuation (and backticks) is data, not a separator
 UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
 ANSI_C_ESCAPE = re.compile(r"""\\(?:([abeEfnrtv\\'"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2}))""")
 ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
@@ -361,19 +361,31 @@ def simple_commands(cmd, here):
         words = list(lex)
     except ValueError:
         return None
-    found, start, outer, subst = [], True, [], 0  # subst: open parens of the `$( … )` being skipped
+    found, start, outer, subst, ticked = [], True, [], 0, False  # subst: open parens of the `$( … )` being skipped; ticked: inside backticks
     for i, w in enumerate(words):
+        if ticked:  # a backtick substitution runs in a subshell: nothing in it counts or changes the directory
+            ticked = w.count("`") % 2 == 0
+            continue
+        if not is_sep(w) and w.count("`") % 2:
+            ticked, start = True, False
+            continue
         if is_sep(w):
-            opens, closes = w.count("("), w.count(")")
-            if subst or (opens and i and words[i - 1].endswith("$")):
-                subst = max(subst + opens - closes, 0)
-                continue
-            start = True
-            for ch in w:  # a `cd` inside `( … )` ends with it
+            for k, ch in enumerate(w):
                 if ch == "(":
-                    outer.append(here)
-                elif ch == ")" and outer:
-                    here = outer.pop()
+                    if subst or (k == 0 and i and words[i - 1].endswith("$")):
+                        subst += 1
+                    else:
+                        outer.append(here)
+                        start = True
+                elif ch == ")":
+                    if subst:
+                        subst -= 1
+                    else:
+                        if outer:
+                            here = outer.pop()
+                        start = True
+                elif not subst:  # `);` ends the substitution, then `;` starts the next command
+                    start = True
             continue
         if subst or not start:
             continue
