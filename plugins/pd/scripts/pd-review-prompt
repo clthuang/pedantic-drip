@@ -1,10 +1,96 @@
 #!/usr/bin/env python3
-"""pd-review-prompt: the review call's prompt body for a work item's stage (shape.md ReviewPromptCLI)."""
+"""pd-review-prompt: the review call's prompt body for a work item's stage (shape.md ReviewPromptCLI).
+
+  pd-review-prompt <skill> [<skill>] <work item dir>
+  pd-review-prompt --self-test
+Prints "Stage: <stage>", each skill's `## Review checklist`, the stage's section of references/stage-bars.md,
+then the review call's JSON schema. Exit 1 with `pd-review-prompt: <reason>` when a piece is missing.
+"""
+import argparse
+import re
 import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import Checks, item_stage, sections, split_frontmatter  # noqa: E402
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+SCHEMA_INTRO = "Return only a JSON object matching this schema."
+
+
+class Missing(Exception):
+    pass
+
+
+def section(path, name):
+    """`## name` of a markdown file, heading line included."""
+    found = sections(Path(path).read_text()).get(name)
+    if found is None:
+        raise Missing(f"{path} has no '## {name}' section")
+    return f"## {name}\n{found}\n"
+
+
+def build(skills, item_dir, plugin_root=PLUGIN_ROOT):
+    readme = Path(item_dir) / "README.md"
+    if not readme.is_file():
+        raise Missing(f"{readme} not found")
+    try:
+        stage = item_stage(split_frontmatter(readme.read_text())[0] or {})
+    except ValueError as e:
+        raise Missing(f"{readme}: {e}")
+    parts = [f"Stage: {stage}\n"]
+    for skill in skills:
+        if not re.fullmatch(r"[\w-]+", skill):
+            raise Missing(f"bad skill name {skill}")
+        parts.append(section(plugin_root / "skills" / skill / "SKILL.md", "Review checklist"))
+    parts.append(section(plugin_root / "references" / "stage-bars.md", stage))
+    results = plugin_root / "references" / "workflow-results.md"
+    block = re.search(r"```json\n(.*?)```", section(results, "The review call"), re.S)
+    if not block:
+        raise Missing(f"{results} has no json block under '## The review call'")
+    parts += [SCHEMA_INTRO + "\n", block.group(1)]
+    return "".join(parts)
 
 
 def main(argv):
-    raise NotImplementedError("pd-review-prompt")
+    ap = argparse.ArgumentParser(prog="pd-review-prompt")
+    ap.add_argument("args", nargs="*", help="<skill> [<skill>] <work item dir>")
+    ap.add_argument("--self-test", action="store_true")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    if len(a.args) < 2:
+        ap.error("a skill and a work item dir are required")
+    try:
+        text = build(a.args[:-1], a.args[-1])
+    except (Missing, OSError) as e:
+        print(f"pd-review-prompt: {e}", file=sys.stderr)
+        return 1
+    sys.stdout.write(text)
+    return 0
+
+
+def self_test():
+    c = Checks("pd-review-prompt")
+    with tempfile.TemporaryDirectory() as tmp:
+        item = Path(tmp)
+        c.check(_fails(["verifying"], item), "no README.md is refused")
+        (item / "README.md").write_text("---\nstage: mvp\n---\n")
+        out = build(["verifying"], item)
+        c.check(out.startswith("Stage: mvp\n") and "## mvp" in out and SCHEMA_INTRO in out, "mvp prompt")
+        (item / "README.md").write_text("---\nid: x\n---\n")
+        c.check(build(["verifying"], item).startswith("Stage: production\n"), "no stage key reads production")
+        c.check(_fails(["brainstorming"], item), "a skill with no checklist is refused")
+    return c.done()
+
+
+def _fails(skills, item):
+    try:
+        build(skills, item)
+    except Missing:
+        return True
+    return False
 
 
 if __name__ == "__main__":

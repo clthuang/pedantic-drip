@@ -47,7 +47,8 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 
 ```json
 {
-  "review": {"approved": false, "issues": [], "summary": ""},
+  "stage": "production",
+  "review": {"approved": false, "stage": "production", "issues": [], "summary": ""},
   "reviewed_by": "codex (fallback: no)",
   "qa": {"commit": "6ccfa3a5", "ran": [{"command": "", "result": "pass"}], "gaps": [], "issues": []},
   "fixes": [{"issue": "R1", "commit": "9f2c1a7e", "test": "tests/test_parse.py::test_empty_input"}],
@@ -57,6 +58,7 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 }
 ```
 
+- **`stage`:** the work item's stage, echoed from `args.stage`, and on the review as the review call returns it.
 - **`reviewed_by`:** who made the review call, as the `review` entry's heading names it: `codex (fallback: no)`, `<Claude reviewer> (fallback: yes)` or `<Claude reviewer> (codex off)`; `null` when no usable review came back.
 - **No usable review** (every reviewer failed, not a cap stop): `review.issues` holds one blocker, `{"id": "R0", "severity": "blocker", "category": "review", "file": <args.shape>, "line": 1, "claim": "no usable review: Codex and the Claude reviewer both failed", "evidence": ""}`. The fix cycles skip it; only a re-run review or the user's `decision` closes it.
 - **`qa`:** `ran` holds the `qa_battery` lines only. Failures come back in `qa.issues` at `shape.md:1`: a battery command with a `fail` line is a blocker, `QB<n>` (n its place in the battery); QA's other failing checks are warnings, `QX<n>`.
@@ -77,15 +79,36 @@ The structured output of pd's workflows and of the review call (plan §A4). Each
 
 ## The review call
 
+The JSON Schema of a review call's reply. `verify-change.js` restates it as `REVIEW`; `test-workflows.mjs` compares the two.
+
 ```json
 {
-  "approved": false,
-  "issues": [
-    {"id": "R1", "severity": "blocker", "category": "correctness", "file": "src/pd/parse.py", "line": 41, "claim": "", "evidence": ""}
-  ],
-  "summary": ""
+  "type": "object",
+  "required": ["approved", "stage", "issues", "summary"],
+  "properties": {
+    "approved": {"type": "boolean"},
+    "stage": {"enum": ["mvp", "production"]},
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "category", "file", "line", "claim", "evidence"],
+        "properties": {
+          "id": {"type": "string"},
+          "severity": {"enum": ["blocker", "warning", "note"]},
+          "category": {"type": "string"},
+          "file": {"type": "string"},
+          "line": {"type": "integer"},
+          "claim": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "summary": {"type": "string"}
+  }
 }
 ```
 
+- **`stage`:** echoes the prompt's first line, `Stage: <stage>`. `category` is `harden-later` for a finding the mvp bar demotes (`references/stage-bars.md`).
 - **Issue fields:** `id severity category file line claim evidence`. `severity` is `blocker`, `warning` or `note`. `approved` is true only with no blocker.
 - **A scoped re-review** returns `{"findings": [{"id", "status": "resolved | open | regressed", "evidence"}], "new_in_diff": [<issues>]}`. The conductor drops any new finding whose file and line fall outside the diff's hunks.

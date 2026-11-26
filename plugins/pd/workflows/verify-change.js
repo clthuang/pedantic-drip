@@ -9,10 +9,13 @@ export const meta = {
 }
 
 // args (plan §A4): {workitem_id, base, shape, plan, checklist (the verifying skill's checklist, inline), qa_battery: [cmd],
+//   stage ('mvp' | 'production'; the checklist's first line is `Stage: <stage>`),
 //   log (the work item's log.md: its run entries carry each task's case_map and greens), assumptions, codex (false when the user's toggle is off),
 //   codex_flags (the model and effort the user's CLAUDE.md names), reviewer (default pd:code-quality-reviewer), workflow_output_cap}
 if (!args || typeof args.workflow_output_cap !== 'number') throw new Error('verify-change needs args.workflow_output_cap (plan §A5 cap 1)')
 if (!args.log) throw new Error("verify-change needs args.log, the work item's log.md (its run entries carry each task's case_map)")
+if (!['mvp', 'production'].includes(args.stage)) throw new Error('verify-change needs args.stage, "mvp" or "production"')
+if (String(args.checklist).split('\n')[0] !== `Stage: ${args.stage}`) throw new Error(`verify-change needs args.checklist to start with the line "Stage: ${args.stage}"`)
 const START = budget.spent()
 let stopped = null, agentsUsed = 0, reviewedBy = null
 async function call(prompt, opts) {  // every agent passes the workflow cap first (§A5 cap 1); a dead agent is null
@@ -26,13 +29,13 @@ const arr = items => ({ type: 'array', items })
 const J = x => JSON.stringify(x)
 
 const ISSUE = obj({ id: str, severity: { enum: ['blocker', 'warning', 'note'] }, category: str, file: str, line: { type: 'integer' }, claim: str, evidence: str })
-const REVIEW = obj({ approved: { type: 'boolean' }, issues: arr(ISSUE), summary: str })
+const REVIEW = obj({ approved: { type: 'boolean' }, stage: { enum: ['mvp', 'production'] }, issues: arr(ISSUE), summary: str })
 const QA = obj({ commit: str, ran: arr(obj({ command: str, result: { enum: ['pass', 'fail'] } })), gaps: strs, issues: arr(ISSUE) })
 const FLAKE = obj({ test: str, runs: strs })
 const FIXED = obj({ fixes: arr(obj({ issue: str, commit: str, test: str })), rejections: arr(obj({ issue: str, evidence: str })) })
 // The result, pinned here and restated in references/workflow-results.md.
 const RESULT = obj({
-  stopped: { type: ['string', 'null'] }, agents_used: { type: 'integer' }, tokens: { type: 'integer' },
+  stage: { enum: ['mvp', 'production'] }, stopped: { type: ['string', 'null'] }, agents_used: { type: 'integer' }, tokens: { type: 'integer' },
   review: REVIEW, reviewed_by: { type: ['string', 'null'] }, qa: QA, fixes: FIXED.properties.fixes, rejections: FIXED.properties.rejections,
   cycles: { type: 'integer' }, flakes: arr(FLAKE),
 })
@@ -82,7 +85,7 @@ let [rv, qa] = await parallel([review, () => runQa(1, [])])
 if (!rv) reviewedBy = null
 // No usable review is itself a blocker (R0, workflow-results.md), so Verify can't pass without one.
 const NO_REVIEW = { id: 'R0', severity: 'blocker', category: 'review', file: args.shape, line: 1, claim: 'no usable review: Codex and the Claude reviewer both failed', evidence: '' }
-rv = rv || { approved: false, issues: stopped ? [] : [NO_REVIEW], summary: stopped ? 'not run: the workflow cap stopped the run' : NO_REVIEW.claim }
+rv = rv || { approved: false, stage: args.stage, issues: stopped ? [] : [NO_REVIEW], summary: stopped ? 'not run: the workflow cap stopped the run' : NO_REVIEW.claim }
 const fixes = [], rejections = [], flakes = [...((qa && qa.flakes) || [])]
 const fixed = id => fixes.some(f => f.issue === id), rejected = id => rejections.some(r => r.issue === id)
 // The fixer's blockers. QA's latest run is authoritative for its own issues: a claimed fix settles
@@ -102,4 +105,4 @@ QA's last run: ${J(qa)}`, { label: `fix:${cycles}`, phase: 'Fix', agentType: 'pd
   if (again) { qa = again; flakes.push(...(again.flakes || [])) }
 }
 const { flakes: _, ...qaResult } = qa || { commit: '', ran: [], gaps: [], issues: [] }
-return { review: rv, reviewed_by: reviewedBy, qa: qaResult, fixes, rejections, cycles, flakes, stopped, agents_used: agentsUsed, tokens: budget.spent() - START }
+return { stage: args.stage, review: rv, reviewed_by: reviewedBy, qa: qaResult, fixes, rejections, cycles, flakes, stopped, agents_used: agentsUsed, tokens: budget.spent() - START }
