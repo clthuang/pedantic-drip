@@ -46,6 +46,8 @@ UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
 ANSI_C_ESCAPE = re.compile(r"""\\(?:([abeEfnrtv\\'"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2}))""")
 ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 REDIRECT = re.compile(r"^\d*(?:<<?|>>?|<>)")  # a word that starts with a redirection operator
+GLUED_WORD = re.compile(r"[^\s;&|()]*$")  # the word the output ends in, so far
+FD_NUMBER = re.compile(r"\d*[<>]*")  # `2>`, `>>`: the redirect's own start, not a word it is glued onto
 
 
 def is_sep(w):
@@ -120,6 +122,8 @@ def shell_text(cmd):
         if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$"…"`: the `$` is not part of the word
             i += 1
             continue
+        if c in "<>" and not arith and not FD_NUMBER.fullmatch(GLUED_WORD.search("".join(out)).group()):
+            out.append(" ")  # `rm>/dev/null -rf x`: bash splits the redirect off the word it is glued onto
         if c in "'\"":
             quote = c
         elif c == "\\" and i + 1 < n:
