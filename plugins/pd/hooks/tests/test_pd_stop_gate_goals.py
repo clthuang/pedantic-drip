@@ -138,6 +138,13 @@ def test_c5_a_held_stop_resets_the_read_count(repo, run_hook, gate_home):
     assert code == 2 and reads.stat().st_size == 0
 
 
+def test_c5b_an_unresettable_read_counter_does_not_release_the_stop(repo, run_hook, gate_home):
+    (gate_home / ".claude" / "pd" / "gate" / f"{SESSION}.reads").mkdir()
+    set_now(repo.item, f"goal: {repo.wid} target finish session {SESSION}")
+    code, err = run_hook(GATE, payload(repo))
+    assert code == 2 and "pd gate:" in err
+
+
 def test_c6_existing_stop_gate_suite_passes():
     r = subprocess.run(["bash", str(GATE_BASH_SUITE)], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
