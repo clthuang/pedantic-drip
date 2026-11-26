@@ -123,9 +123,7 @@ if not goal:
     finish(0)
 f, m = goal
 fid, target = f["id"], m.group(2)
-if f["type"] != pc.WORKITEM:
-    finish(2, f"pd gate: goal {fid} is a {f['type']}; carry it to promotion. "
-              "Promotion moves the goal line to the new work item.")
+promotion = f["type"] != pc.WORKITEM  # a brainstorm or rca goal is held until promotion, after the yield and no-progress checks
 
 # 3. Yield to background work that will wake the session; a shell or monitor doesn't count.
 tasks = inp.get("background_tasks")
@@ -139,13 +137,13 @@ if busy:
     finish(0)
 
 # 4. The token cap: the latest decision entry's `Budget: workitem_token_budget=<n>` raise, else the config.
-entries = pc.parse_log(*pc.log_text(pc.WORKITEM, f["readme"]))
+entries = [] if promotion else pc.parse_log(*pc.log_text(pc.WORKITEM, f["readme"]))
 raises = [int(b.group(1)) for e in entries if e["kind"] == "decision"
           for b in map(BUDGET_RE.match, (l.strip() for l in e["body"])) if b]
 budget = raises[-1] if raises else number(cfg.get(pc.BUDGET_KEY))
 tokens = int(load(state(f)).get("tokens") or 0)
 increment = number(cfg.get("budget_increment")) or number(cfg.get(pc.BUDGET_KEY)) or budget
-if budget is not None and tokens >= budget:
+if not promotion and budget is not None and tokens >= budget:
     finish(2, f"pd gate: work item {fid} has used {tokens} tokens of its {pc.BUDGET_KEY} {budget}. "
               "Ask the owner: Hard stop: budget spent: continue or stop? (one AskUserQuestion). On continue, write a decision entry with "
               f"`Budget: {pc.BUDGET_KEY}={budget + increment}`; on stop, clear "
@@ -160,6 +158,10 @@ moved, sess["last_check"] = sess.get("last_check") != snap, snap
 if inp.get("stop_hook_active") and not moved:
     finish(2, f"pd gate: no progress on {fid} since the last check. "
               "Ask the owner: Hard stop: no progress since the last check: continue or stop? (one AskUserQuestion). On stop, clear the goal: line from ## Now and commit.")
+
+if promotion:
+    finish(2, f"pd gate: goal {fid} is a {f['type']}; carry it to promotion. "
+              "Promotion moves the goal line to the new work item.")
 
 # 6. The goal's conditions: open blockers, pd-lint on the work item's files, the target phase.
 reasons = [f"open blocker {b['ref']} {b['file']}:{b['line']} — {b['claim']}" for b in pc.open_blockers(entries)]
