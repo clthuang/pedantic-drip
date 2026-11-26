@@ -216,4 +216,561 @@ B61: `phase-gate.sh finish <dir>` on this work item -> it needs both rulings (B4
 
 ## Design
 
-<!-- Contracts stage. Design input: agent_sandbox/2026-11-26/pd-stage-yolo-proposal/proposal.md. Deferred from calvin (capped specify, log.md): the mechanism rows C22, C78, C79, C83-C85, C91-C95, C97-C99, C101-C105 and C108-C112 of agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-cycle-3.md, and assumption A1 (owner-run ! commands reach no hook). -->
+<!-- Design input: agent_sandbox/2026-11-26/pd-stage-yolo-proposal/proposal.md. The mechanism rows deferred from calvin (capped specify, log.md) are answered in "Deferred calvin rows" below. -->
+
+### Architecture
+
+Three new scripts and two new hooks, beside existing modules that each gain a narrow change. The conductor is the agent following the prose. Every hook reads the session's state files, and only `pd-yolo` and the hooks write them.
+
+```mermaid
+flowchart LR
+    P[commands and skills prose] -->|contract: ConductorProse| K[conductor]
+    U[Claude Code harness] -->|contract: HookInput| YG[hooks/pd-yolo-guard.sh]
+    U -->|contract: HookInput| RB[hooks/pd-read-budget.sh]
+    U -->|contract: HookInput| SG[hooks/pd-stop-gate.sh]
+    YG -->|contract: YoloGuard| K
+    RB -->|contract: ReadBudget| K
+    SG -->|contract: StopGate| K
+    YG -->|contract: SimpleCommands| CT[hooks/lib/commit_target.py]
+    RB -->|contract: SimpleCommands| CT
+    YG -->|contract: SessionState| ST[(gate dir: sid.yolo, sid.reads)]
+    RB -->|contract: SessionState| ST
+    SG -->|contract: SessionState| ST
+    Y[scripts/pd-yolo] -->|contract: SessionState| ST
+    K -->|contract: YoloCLI| Y
+    K -->|contract: ReviewPromptCLI| RP[scripts/pd-review-prompt]
+    RP -->|contract: StageBars| SB[references/stage-bars.md]
+    RP -->|contract: ReviewSchema| WR[references/workflow-results.md]
+    K -->|contract: VerifyArgs| VC[workflows/verify-change.js]
+    VC -->|contract: ReviewSchema| WR
+    K -->|contract: NewCLI| PN[scripts/pd-new]
+    K -->|contract: LintCLI| PL[scripts/pd-lint]
+    K -->|contract: GateCLI| PG[scripts/phase-gate.sh]
+    K -->|contract: StatusCLI| PS[scripts/pd-status]
+    K -->|contract: LogEntries| LG[(work item files)]
+    PL -->|contract: LogEntries| LG
+    PG -->|contract: LogEntries| LG
+    PN -->|contract: CommonHelpers| PC[scripts/pd_common.py]
+    PL -->|contract: CommonHelpers| PC
+    PG -->|contract: CommonHelpers| PC
+    PS -->|contract: CommonHelpers| PC
+    RP -->|contract: CommonHelpers| PC
+    SG -->|contract: CommonHelpers| PC
+    YG -->|contract: CommonHelpers| PC
+    RB -->|contract: CommonHelpers| PC
+```
+
+### Contracts
+
+```text
+modules: (Claude Code harness; external, read only)
+contract: HookInput
+The JSON on a hook's stdin (code.claude.com/docs/en/hooks), the fields these hooks read:
+  session_id       the session's id. A subagent's calls carry the parent's id: calvin-runner's ledger write
+                   passed pd-agent-write-guard.sh, which looks up gate/<session_id>.json (pd-agent-write-guard.sh:28),
+                   the file the specifying skill wrote under ${CLAUDE_SESSION_ID} (2026-11-26, this work item)
+  agent_id         present only on a subagent's calls; absent = the main session (agent_type can't tell: --agent sets it)
+  hook_event_name  PreToolUse | UserPromptSubmit | Stop
+  tool_name, tool_input   Bash {command}; Read {file_path}; AskUserQuestion {questions: [{question}]}
+  cwd
+  background_tasks Stop only, read as pd-stop-gate.sh:122-126 reads it
+Exit 2 with stderr refuses a PreToolUse call and hands stderr to the model; exit 0 with no output passes
+(docs/dev-guide/hook-development.md:55-56).
+Not documented; live probes at Verify: whether a `!` command fires PreToolUse (assumption A1); whether a refused
+AskUserQuestion is kept from the owner; whether a workflow's agent() calls carry agent_id.
+```
+
+```text
+modules: ~/.claude/pd/gate/<session id>.yolo, ~/.claude/pd/gate/<session id>.reads (runtime files beside the
+         Stop gate's <session id>.json, whose keys stay untouched)
+contract: SessionState
+<sid>.yolo   exists = YOLO on for that session; absent = off. Content: one line, the local ISO time it was created.
+             Written by pd-yolo (create, unlink). Read by pd-yolo-guard.sh and pd-yolo status.
+<sid>.reads  one byte per counted read call in the current turn; the count is the file's size.
+             pd-read-budget.sh appends (O_APPEND, one byte per call) and truncates it at UserPromptSubmit;
+             pd-stop-gate.sh truncates it whenever it holds a stop (exit 2).
+A <sid> not matching [\w.-]+ (as pd-stop-gate.sh:28): nothing is read or written.
+Invariants: a session that never runs `pd-yolo on` and a repo without main_read_budget create no file; neither
+file holds JSON, so no reader parses one and two parallel calls can't lose each other's write.
+```
+
+```text
+modules: plugins/pd/hooks/lib/commit_target.py
+contract: SimpleCommands
+simple_commands(cmd: str, here: str) -> list[tuple[list[str], str]] | None
+  Each top-level simple command of cmd, in order, as (words, directory it runs in). words start at the command
+  word (past PREFIXES, NAME=value words and WRAPPERS, via command_start), are unmasked (UNMASK) and have their
+  redirections dropped (drop_redirects). The directory follows `cd` as scan() does. None when shlex can't split
+  the line (an unclosed quote).
+  Read as commands (In): separators ; && || | & and newlines, ( … ) groups, single and double quotes, $'…',
+  backslash continuations, comments and heredoc bodies dropped (shell_text), the WRAPPERS table, if/then/!/{.
+  Not read (Out): the inside of $( … ) and backticks, eval, a shell's -c script (not recursed, unlike scan()),
+  aliases, functions, a variable holding a command, scripts.
+main() runs only under `if __name__ == "__main__":` so the hooks can import the module (today it runs at
+import, commit_target.py:360); pd-commit-lint.sh's `python3 lib/commit_target.py` call and scan() are unchanged.
+```
+
+```text
+modules: plugins/pd/scripts/pd-yolo
+contract: YoloCLI
+pd-yolo on --session <sid>       creates <sid>.yolo; prints "on"; exit 0
+pd-yolo off --session <sid>      removes it if present; prints "off"; exit 0
+pd-yolo status --session <sid>   prints "on" or "off"; exit 0
+pd-yolo --self-test
+Errors: a <sid> not matching [\w.-]+, an unsubstituted "${CLAUDE_SESSION_ID}" included -> exit 2,
+stderr "pd-yolo: bad session id <sid>", nothing written.
+Called only from the workflow-transitions skill, whose ${CLAUDE_SESSION_ID} the harness substitutes (D3).
+```
+
+```text
+modules: plugins/pd/hooks/pd-yolo-guard.sh (PreToolUse; matchers AskUserQuestion and Bash)
+contract: YoloGuard
+Fast path, in bash before any python: no gate/<session_id>.yolo -> exit 0 (B28).
+AskUserQuestion:
+  any questions[].question not starting "Hard stop:" -> exit 2, stderr: "pd YOLO: decide this yourself: write a
+    decision entry answered `A (conductor, on the user's behalf):` with the lines <DECISION_RECORD joined>. Only
+    a question starting 'Hard stop:' reaches the owner." (B26)
+  every question starting "Hard stop:" -> exit 0 (B27)
+  any failure -> exit 0, one stderr line "pd-yolo-guard: check failed; question allowed" (B40)
+Bash, each (words, dir) from simple_commands(command, cwd):
+  words match DESTRUCTIVE -> exit 2, stderr: "pd YOLO: `<words>` is a hard stop. Ask a 'Hard stop:' question
+    showing this command; on a yes the owner runs `! <command>`, or turns YOLO off. Never run it yourself." (B52, B53)
+  words are git commit | git merge --continue | git rebase --continue | git cherry-pick --continue, and
+    `git -C <dir> ls-files -u` prints anything -> exit 2, stderr naming the unmerged paths and both ways on: the
+    owner resolves them and runs `! git commit` (or the --continue), or turns YOLO off (B54, B60)
+  any failure past the fast path (an exception, simple_commands returning None, git failing) -> exit 2 with
+    "pd-yolo-guard: check failed; command refused while YOLO is on" when the raw command contains one of
+    push merge branch worktree reset clean rm commit --continue; otherwise exit 0 (B40)
+DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-dir, --work-tree, --namespace,
+--no-pager; -C also moves dir):
+  git push with -f, --force, --force-with-lease[=…], or a refspec starting "+" (git-push(1)'s per-ref --force)
+  git push with --delete or -d, or a refspec ":<ref>"
+  git push to the base branch (pc.base_branch): a refspec whose destination (after its last ":", else the whole
+    word without a leading "+") is <base>, refs/heads/<base>, or HEAD while on <base>; no refspec while on <base>
+    (git-push(1), push.default simple); --all or --mirror. The branch is read with `git symbolic-ref -q HEAD`,
+    refs/heads/ dropped (CLAUDE.md gotcha on :short). Value options -o, --push-option, --repo, --receive-pack
+    and --exec take the next word when written without "=".
+  gh pr merge, with any arguments
+  git branch with --delete or a word matching ^-[A-Za-z]*[dD][A-Za-z]*$
+  git worktree remove whose path (joined to dir, normalized) is outside <repo top>/.claude/worktrees/
+  git reset with --hard
+  git clean with --force or a word matching ^-[A-Za-z]*f
+  rm with --recursive or a word matching ^-[A-Za-z]*[rR], and an operand (after --, or any non-option word)
+    that, joined to dir and normalized, is outside <repo top>/agent_sandbox/; with no repo every operand is outside
+<repo top> is `git -C <dir> rev-parse --show-toplevel`.
+```
+
+```text
+modules: plugins/pd/hooks/pd-read-budget.sh (PreToolUse, matcher
+         Read|Grep|Bash|WebFetch|WebSearch|mcp__codegraph__codegraph_explore; UserPromptSubmit)
+contract: ReadBudget
+Fast path, in bash: no repo, or no line starting "main_read_budget:" in <repo top>/.claude/pd.local.md ->
+  exit 0, nothing written (B33).
+agent_id present -> exit 0, nothing counted (B36).
+UserPromptSubmit -> truncate <sid>.reads; exit 0 (B39).
+WebFetch, WebSearch -> exit 2, stderr: "pd read budget: web lookups go to pd:internet-researcher; dispatch it
+  with one narrow question." (B35)
+Counted (B38): Read; Grep; mcp__codegraph__codegraph_explore; Bash when some simple command's first word, by
+  basename, is in READ_WORDS = cat head tail less more sed awk grep egrep fgrep rg find fd.
+  Not counted: Glob, every other Bash command, and a Read whose file_path resolves under
+  <repo top>/<artifacts_root>/ or under $CLAUDE_PLUGIN_ROOT (B37).
+A counted call appends one byte. When the count then exceeds main_read_budget, and no work item's `## Now`
+  holds `run in flight: <name> session <session_id>` (read only at that moment, B57) -> exit 2, stderr:
+  "pd read budget: <n> reads this turn (budget <b>). Dispatch pd:codebase-explorer with one narrow question;
+  it returns pointers." (B34)
+main_read_budget must be a positive integer; any other value -> treated as unset, one stderr line.
+Any failure -> exit 0, one stderr line "pd-read-budget: check failed; call allowed" (B40).
+```
+
+```text
+modules: plugins/pd/hooks/pd-stop-gate.sh
+contract: StopGate
+Goal items: work items, brainstorms and rca items whose `## Now` holds this session's goal line (GOAL_RE,
+  pd-stop-gate.sh:22); today work items only (pd-stop-gate.sh:75, :115).
+A brainstorm or rca goal is reached when its status is done or abandoned. Until then the gate holds the stop:
+  "pd gate: goal <id> is a <type>; carry it to promotion. Promotion moves the goal line to the new work item." (B56)
+Token-cap and no-progress messages (pd-stop-gate.sh:140, :152): "Ask the owner: Hard stop: <question>" (B31).
+Goal reached (pd-stop-gate.sh:170) gains: "YOLO stays on until pd-yolo off or the session ends." (B32)
+Every exit 2 first truncates <sid>.reads (B39).
+Unchanged: token counting, the background-task yield, the work item token budget, the no-progress check.
+```
+
+```text
+modules: plugins/pd/scripts/pd-review-prompt
+contract: ReviewPromptCLI
+pd-review-prompt <skill> [<skill>] <work item dir>
+  stdout, in order:
+    line 1: "Stage: <stage>", where <stage> = pc.item_stage(the README's frontmatter)
+    each skill's "## Review checklist" section of <plugin root>/skills/<skill>/SKILL.md, heading included, verbatim
+    the "## <stage>" section of references/stage-bars.md, verbatim
+    the "The review call" json block of references/workflow-results.md, after the line "Return only this JSON."
+  exit 0 (B9, B10, B11)
+Errors: exit 1, stderr "pd-review-prompt: <reason>", stdout empty, when a skill has no such section, the
+directory has no README.md, or the stage-bars section or the schema block is missing (B12). Usage errors:
+argparse, exit 2.
+<plugin root> is the script's parent's parent. pd-review-prompt --self-test.
+```
+
+```text
+modules: plugins/pd/references/stage-bars.md
+contract: StageBars
+section "## mvp":         A blocker only when, left unfixed, an expectation in shape.md fails on the input it names, data is
+                lost or exposed, or a security hole opens. Anything else is severity warning, category
+                harden-later. Never relaxed: the security review for risk: security, blockers R0 and QB<n>, the
+                token budget, validation at trust boundaries.
+section "## production":  Each checklist item as written (today's bar).
+The two headings are the lookup keys; the paragraphs are read only by reviewers.
+```
+
+```text
+modules: plugins/pd/references/workflow-results.md ("The review call" json block);
+         plugins/pd/workflows/verify-change.js (ISSUE and REVIEW, verify-change.js:28-29)
+contract: ReviewSchema
+{"approved": bool,
+ "stage": "mvp" | "production",
+ "issues": [{"id": "R1", "severity": "blocker" | "warning" | "note", "category": str, "file": str,
+             "line": int, "claim": str, "evidence": str}],
+ "summary": str}
+stage echoes the prompt's first line (B45). category is "harden-later" for a finding the mvp bar demotes.
+Two copies by necessity: a workflow reads nothing but args. test-workflows.mjs compares the key sets of REVIEW
+and ISSUE with this block, found under its heading rather than by position (test-workflows.mjs:9-10 indexes
+blocks today) (B41).
+```
+
+```text
+modules: plugins/pd/workflows/verify-change.js
+contract: VerifyArgs
+args gain stage: "mvp" | "production", required. Before any agent() call it throws, naming the arg, when stage
+is missing or another value, or when args.checklist's first line isn't exactly "Stage: <args.stage>" (B13).
+REVIEW requires stage (ReviewSchema); the no-usable-review fallback (verify-change.js:84-85) sets stage: args.stage.
+RESULT gains stage, equal to args.stage (B14).
+```
+
+```text
+modules: plugins/pd/scripts/pd-new, plugins/pd/templates/README.md
+contract: NewCLI
+pd-new workitem "<title>" [--stage mvp|production] …   argparse choices=pc.STAGES; another value -> exit 2 (B4)
+  no --stage: load_config(root)["stage"]; a value outside STAGES -> Refused("config stage: <v>; allowed: mvp,
+  production"), so "pd-new: refused: …", exit 1, before any write (pd-new:192-194) (B5)
+  writes "stage: <s>" from the template line "stage: {{stage}}  # workitems only" (B1, B2, B3)
+  --stage on another item type -> Refused, as --mode is (pd-new:130-131)
+```
+
+```text
+modules: plugins/pd/scripts/pd_common.py
+contract: CommonHelpers
+STAGES = ("mvp", "production")
+CONFIG_DEFAULTS gains "stage": "production". main_read_budget has no default: absent means no budget.
+item_stage(fm) -> fm.get("stage") or "production"     a README without the key reads production, whatever the
+                                                      config default (B7)
+DECISION_RECORD = ("Session:", "Stage:", "Pros/cons:", "Trade-off:", "Implications:", "Premortem:")
+ISSUE_RE = ^- (?P<id>[A-Za-z]+\d+) (?P<sev>blocker|warning|note)(?: (?P<cat>harden-later))? (?P<file>\S+?):(?P<line>\d+) — (?P<claim>.+)$
+  named groups; open_blockers (pd_common.py:394-397) and its self-test (:502) move to them
+base_branch(root, cfg) -> str    cfg base_branch; for "auto", refs/remotes/origin/HEAD's target without
+                                 "origin/", else "main" (the rule of pd-session-start.sh:33-34)
+risk_signals(root, rng) -> list[tuple[tag, path, line]]   the detection moved out of pd-lint check_risk
+                                 (pd-lint:620-640): risk-patterns.md over the added lines of `git diff -U0 rng`,
+                                 skipping artifacts_root and test_paths
+risk_waivers(entries) -> set[str]   tags of decision lines matching
+                                 ^Risk: none \((security|migration)\)[\s:;,.—-]*\w   (B19, B20)
+```
+
+```text
+modules: plugins/pd/references/log-entries.md
+contract: LogEntries
+Issue line: - <id> <blocker|warning|note>[ harden-later] <file>:<line> — <claim>
+review entry of a review call (not a calvin cycle): a line "Stage: <stage>", copied from the reply's stage (B45)
+decision answered "A (conductor, on the user's behalf):": one line starting with each DECISION_RECORD label (B29)
+YOLO confirmation, the first entry a YOLO session writes to each item's log (B24, B51):
+  ## <ts> decision
+  Q: Hard stop: turn YOLO on for this session?
+  A (user, verbatim): "<the chosen option, starting Yes>"
+  Session: <session id>
+Risk waiver: a decision line "Risk: none (<tag>) — <reason>" (B19)
+Harden-later backlog line: one backlog.md line per work item ending "(from: workitems/<id>)", naming each issue
+  by its reference <review entry ref>#<id>, e.g. review-2@2026-12-01 10:00+08:00#R3 (REF_RE, pd_common.py:38) (B49)
+An owed owner ruling: a qa issue line "- Q<n> blocker <shape.md>:<line> — the owner's ruling on <B<n>> is owed",
+  closed by the ruling's "Closes: qa@<ts>#Q<n>" (this work item's B61; D8)
+```
+
+```text
+modules: plugins/pd/scripts/pd-lint
+contract: LintCLI
+check_frontmatter: ("stage", pc.STAGES) joins the vocabulary loop (pd-lint:160-163), so "stage: beta" is an
+  ERROR naming stage and beta (B6); no key, no error (B7); stage on another item type is an error, as mode is
+  (pd-lint:167-169)
+check_log: a decision with an "A (conductor, on the user's behalf):" line lacking a line for any DECISION_RECORD
+  label -> one ERROR naming each missing label (B29), in every repo and on every item status
+shape.md of a stage-mvp work item: "## Requirements" holds a B<n>: line and no line starting "Deferred:" -> WARN (B47)
+plan tasks: the green-only reason set gains "mvp" when the item's stage is mvp (pd-lint:333-335); at production
+  "green-only (mvp)" keeps today's error (B48)
+--risk: check_risk reads pc.risk_signals and drops tags in pc.risk_waivers; its output is otherwise unchanged
+```
+
+```text
+modules: plugins/pd/scripts/phase-gate.sh
+contract: GateCLI
+design | create-plan | verify: the latest review entry holding a "Stage:" line; its stage differs from
+  item_stage(README) -> "GATE FAIL [<phase>]: the review applied stage <a>; the work item is <b>" (B15).
+  No such entry -> no stage check (B16). design and create-plan join the log_checks case for this check only
+  (today it skips them, phase-gate.sh:199-206).
+specify: signed_off() (phase-gate.sh:84-89) also passes on "A (conductor, on the user's behalf):" when an
+  earlier YOLO confirmation entry (LogEntries) carries the same "Session:" line (B30).
+verify: pc.risk_signals(root, "<merge-base of base_branch and HEAD>..HEAD") whose tag is neither in the README's
+  risk list nor in risk_waivers -> "GATE FAIL [verify]: <tag> signal <path>:<line>: add risk: <tag> or a
+  Risk: none (<tag>) decision" (B19, B20), at every depth.
+finish: pc.open_blockers fails the gate, as at verify (phase-gate.sh:145-146) (B61, D8); on a stage-mvp work
+  item, each harden-later issue line's reference must appear on a backlog.md line ending
+  "(from: workitems/<id>)" (B49).
+```
+
+```text
+modules: plugins/pd/scripts/pd-status
+contract: StatusCLI
+Header "STATUS PHASE TYPE ID STAGE NOW": STAGE after ID, so the self-test's r[3] stays the id (pd-status:228-231).
+STAGE is item_stage(fm) for a work item and "-" for other types. An open work item (not done or abandoned) whose
+stage differs from the config's stage (default production) shows "<stage>*", and the table is then followed by
+"* stage differs from the project default (<default>)" (B8).
+```
+
+```text
+modules: plugins/pd/commands/secretary.md, plugins/pd/commands/init.md, plugins/pd/scripts/pd-init,
+         plugins/pd/skills/{workflow-transitions,specifying,planning,verifying,finishing-branch}/SKILL.md,
+         plugins/pd/references/review-call.md
+contract: ConductorProse
+secretary.md
+  argument-hint gains [--yolo] [--stage mvp|production] (secretary.md:3).
+  --yolo: before triage, invoke the workflow-transitions skill and follow its YOLO section.
+  Stage mvp (config or --stage): the two risk tags are the only standard-depth triggers, and the
+  phase triage entry cites "stage: mvp" (B23). --stage passes through to create-workitem (B59).
+  After the work item exists: without YOLO, one AskUserQuestion offers a goal run to finish (B21, B22); with
+  YOLO, the goal line is written without asking. Either way it is committed before Criteria starts.
+workflow-transitions, a new "YOLO" section
+  Confirm: an AskUserQuestion "Hard stop: turn YOLO on for this session?". On yes, run
+    `pd-yolo on --session ${CLAUDE_SESSION_ID}`, then `pd-yolo status`, which must print "on" (B24, B25).
+  Before the session's first entry in any item's log, write the YOLO confirmation entry (LogEntries), then the
+    decisions made before that item existed (B24, B51).
+  Every question that isn't a hard stop becomes a decision record (LogEntries, B26). Every hard stop is asked as
+    "Hard stop: …" (the hard-stop line, workflow-transitions/SKILL.md:45).
+  Promotion moves this session's goal line from the brainstorm or rca to the new work item (B56).
+  The owner says off -> `pd-yolo off --session ${CLAUDE_SESSION_ID}` (B60).
+  Changing an open item's stage: a decision entry and the README's stage: edited, committed first; mvp to
+    production past specify (README phase other than specify) also moves back to specify with Invalidates:;
+    production to mvp moves nothing back; a done item is refused, with a new production item proposed from its
+    harden-later backlog line (B17, B18, B46).
+  Print mode's decisions carry the same record lines (workflow-transitions/SKILL.md:49; B29).
+  Dispatch (workflow-transitions/SKILL.md:52): codebase-explorer, internet-researcher, investigation-agent and
+    skill-searcher at any stage.
+review-call.md
+  The prompt is `pd-review-prompt <skill> <work item dir>`'s output plus the inputs (replacing review-call.md:11-12).
+  The review entry copies the reply's stage into "Stage:" (B45).
+verifying
+  Args gain stage = item_stage; checklist = `pd-review-prompt verifying <dir>`'s output (B13).
+specifying
+  The edge-case bar's mvp form: a closing "Deferred:" line, judged at sign-off, by the conductor under YOLO (B47).
+  Sign-off under YOLO: answered on the owner's behalf, with the record (B30).
+planning
+  "green-only (mvp)" at stage mvp (B48).
+finishing-branch, step 7 under YOLO (B55)
+  The PR path's commands (finishing-branch/SKILL.md:30): `git push -u origin workitem/<id>`, then `gh pr create`.
+  Wait: `timeout 590 gh pr checks <pr> --watch --interval 30`, repeated while it exits 124 (timed out), for at
+    most 60 minutes. Exit 0, or "no checks reported" in the output, ends the wait.
+  Failing checks and PR review comments get up to 3 fix cycles, each fix with its decision record; still failing
+    -> "Hard stop: checks still failing".
+  "Hard stop: ready to merge?": yes -> pd-yolo off, `gh pr merge`, then steps 8 and 9 as today; no -> clear the
+    goal line, pd-yolo off; the PR stays open.
+  No remote or no gh -> "Hard stop: branch ready; no remote to open a pull request on".
+  Before step 6, a stage-mvp item's harden-later issues get their backlog line (B49).
+init
+  pd-init writes "stage: production" (B50). /pd:init asks mvp or production, then sets the key.
+```
+
+### Decisions
+
+- **D1: YOLO state is a marker file, `<sid>.yolo`.**
+  - **Rejected a `yolo` key in `<sid>.json`:** the Stop gate rewrites that file on every stop by load, change and replace (`pd-stop-gate.sh:33-45`, `:89-108`). A concurrent writer could lose the flag, and the guard's fast path would need a JSON parse before it could tell YOLO is off.
+  - **Rejected an environment variable:** none carries the session id to a Bash command (code.claude.com/docs/en/env-vars).
+  - **Serves:** KISS. Absence is the one "off" state, and a bash `[ -e ]` reads it.
+- **D2: the read count is an append-only byte file, `<sid>.reads`.** One `write(2)` with `O_APPEND` is atomic, so two parallel tool calls can't lose a count.
+  - **Rejected a counter in JSON:** two hooks reading and rewriting it in parallel lose an update, the failure D1 avoids.
+  - **Serves:** KISS.
+- **D3: `pd-yolo` takes `--session`, and only `workflow-transitions` calls it.** Only skills use `${CLAUDE_SESSION_ID}` today (`workflow-transitions/SKILL.md:44`, `specifying/SKILL.md` step 2); no command does.
+  - **Rejected calling it from `secretary.md`:** whether a command substitutes the variable is unverified.
+  - **Rejected a hook recording "the last session seen":** two sessions in one repo would cross.
+  - **Evidence that the hook's `session_id` is that value, subagents included:** HookInput.
+- **D4: one guard hook for AskUserQuestion and Bash, separate from the read budget.**
+  - **Why one guard:** both checks read the same marker and stop together at `pd-yolo off`.
+  - **Rejected a hook per expectation group:** two more `hooks.json` entries, each re-reading the marker.
+  - **Rejected folding the checks into `pre-commit-guard.sh` or `pd-commit-lint.sh`:** both fail open by design (`pre-commit-guard.sh:74`, `pd-commit-lint.sh:27`).
+  - **Why the read budget is separate:** it has its own config key and its own event (UserPromptSubmit).
+  - **Serves:** single responsibility.
+- **D5: fail policy per tool, after a fast path on the marker.**
+  - **AskUserQuestion fails open.**
+  - **Bash fails closed,** but only for a raw command containing one of the list's command words.
+  - **What the fast path buys:** a session without YOLO is never refused, even by a crash. That keeps the must-not "never change behaviour in a repo that sets none of the new keys" (C91).
+  - **Precedent:** `pd-agent-write-guard.sh:39` fails closed for the narrow set of calls reaching its check, while the shared `install_err_trap` fails open (`lib/common.sh:76`). The guard's python branch is that narrow set.
+  - **Rejected failing closed everywhere:** a crash would refuse `git status` in a YOLO session.
+- **D6: `simple_commands` goes into `commit_target.py`.** It reuses `shell_text`, `command_start` and `drop_redirects` (`commit_target.py:77-236`).
+  - **Rejected a regex on the raw command line:** quoted prose matches (`git commit -m "never rm -rf"`), the failure `commit_target.py` exists to avoid (its docstring, `:1-11`).
+  - **Rejected a copy of `scan()`'s loop:** two copies of the parser drift.
+  - **Rejected recursing into `-c` scripts:** the read budget's Non-goal leaves `bash -c` uncounted, and one function serves both hooks.
+  - **Serves:** DRY.
+- **D7: `harden-later` is an optional token in `ISSUE_RE`.** This keeps the signed-off literal `warning harden-later` (Goals, B49).
+  - **Who reads issue lines today:** only `open_blockers`, through `ISSUE_RE` (`pd_common.py:39`, `:394`). The format lives at `log-entries.md:12`.
+  - **Rejected a claim prefix (`— harden-later: …`):** it rewrites signed-off text.
+  - **Rejected a free category word:** one category is read (YAGNI).
+  - **What else moves:** the groups become named, so the readers' indexes can't shift.
+- **D8: B61 rides on open blockers.** Two changes carry it:
+  - **finish gains `open_blockers`,** as verify has (`phase-gate.sh:145-146`);
+  - **this work item's Verify writes the two owed-ruling issue lines** (LogEntries), each closed by its ruling's `Closes:`.
+  - **Rejected a "required rulings" list in `phase-gate.sh`:** it would put one work item's rule in a script every work item runs.
+  - **Rejected a manual finish check:** it would edit signed-off text.
+  - **Serves:** YAGNI.
+- **D9: risk detection moves into `pd_common`,** read by `pd-lint --risk` and `phase-gate.sh verify`.
+  - **Rejected running `pd-lint --risk` from the gate and parsing its WARN lines:** that makes pd's own message text an API.
+  - **Rejected a second copy of the pattern loop:** the copies drift.
+  - **Serves:** DRY.
+- **D10: `base_branch()` goes into `pd_common`,** following `pd-session-start.sh:33-34`. The verify gate and the guard's push rule need it, and neither sees the session's `{pd_base_branch}`.
+  - **Rejected a `--base` argument to `phase-gate.sh`:** every caller would have to resolve the branch itself.
+  - **Kept:** the bash copy in `pd-session-start.sh` (Risks note).
+- **D11: `pd-review-prompt` is a script.** The stage paragraph and the schema each come from one file, and B13 checks the prompt's first line exactly.
+  - **Rejected the conductor copying sections by hand,** as `review-call.md:11-12` asks today: the stage paragraph would vary per call.
+  - **Nearest existing script:** `pd-review-filter` filters a review's JSON after the call, a different job.
+  - **Serves:** DRY.
+- **D12: the bars live in one file, `references/stage-bars.md`.**
+  - **Rejected an mvp copy of each stage skill's checklist:** four skills times two copies.
+  - **Serves:** DRY.
+- **D13: no hash of the bar paragraph** (the owner's default 7 at the cap, `decision@` after `capped@` in `log.md`). The `Stage:` line and B13's first-line check do the binding.
+  - **Accepted gap:** a conductor-built prompt missing the paragraph isn't caught (Non-goals).
+- **D14: the pull-request wait is a foreground loop of `timeout 590 gh pr checks --watch`.**
+  - **Why foreground:** the Stop gate yields only to workflow and subagent tasks (`pd-stop-gate.sh:121-126`), so a background shell wait would have its stop held. Foreground Bash calls are capped at ten minutes.
+  - **Probed** with gh 2.103.3, 2026-11-26:
+    - **No checks:** `gh pr checks 5` prints `no checks reported on the 'feature/010-backlog-to-feature-link' branch` and exits 1.
+    - **All passing:** `gh pr checks 35` exits 0.
+    - **Already settled:** `--watch` on PR #35 exits 0.
+  - **Rejected `/steward` and `claude-mem:babysit`:** the owner starts those, and they watch for days.
+- **D15: the STAGE column goes after ID.** The `pd-status` self-test splits each row and reads `r[3]` as the id (`pd-status:228-231`).
+  - **Rejected placing it before ID:** that shifts the index.
+- **D16: every new test is pytest with `--junitxml`.**
+  - **Why:** pd-lint requires each plan task's command to write its JUnit path (`pd-lint:326-330`), and the 2026-11-03 plan proved its tasks this way.
+  - **How the hooks are tested:** they run as subprocesses, with JSON on stdin.
+  - **How the workflow is tested:** one pytest case runs `node plugins/pd/workflows/tests/test-workflows.mjs` and asserts exit 0. That file prints pass and fail but writes no JUnit.
+  - **CI:** its pytest line names files one by one (`ci.yml:42`), so it gains each new file.
+
+### Risks
+
+Written as if the work item had already failed.
+
+| Risk | Blast radius | Mitigation |
+|---|---|---|
+| A `!` command fires PreToolUse after all (A1). The interactive-mode docs say shell mode runs "without going through Claude" and say nothing of hooks (code.claude.com/docs/en/interactive-mode). | B53 and B54 dead-end: the owner's own `! git commit` is refused | Every YoloGuard refusal also names the YOLO-off way (B60), and `pd-yolo` itself is never refused. Live probe at Verify. |
+| A refused AskUserQuestion still reaches the owner. Exit 2 "blocks the tool call", but the docs don't say a blocked question stays hidden (code.claude.com/docs/en/hooks). | YOLO keeps asking (B26 fails live) | Live probe at Verify. Fallback in the same hook: `permissionDecision: deny` with the same reason (`docs/dev-guide/hook-development.md:67-69`). |
+| A workflow's agent() calls carry no `agent_id`, so the read budget counts them as the main session. Not documented (hooks docs). | a workflow run starved of reads | B57's stand-down while this session's `run in flight:` line exists. Test: a counted call over budget with that line present passes. |
+| `${CLAUDE_SESSION_ID}` isn't substituted where `pd-yolo on` runs. Only skills use it today (D3). | YOLO silently off: the owner is asked as usual | `pd-yolo` refuses a non-id (exit 2), the YOLO section checks `pd-yolo status` prints `on` (B24), and the live probe runs B24. |
+| Parallel hooks lose a write. The Stop gate rewrites `<sid>.json` by load, change and replace (`pd-stop-gate.sh:33-45`, `:89-108`). | a lost read count, or YOLO flipped off | D1 and D2: a marker file and an append-only byte file. Test: 20 parallel counted calls leave a 20-byte file. |
+| Widening `ISSUE_RE` shifts the positional groups `open_blockers` reads (`pd_common.py:394-397`). | blockers misread: the wrong file, or a claim taken for the line | Named groups. Test: a blocker line and a `warning harden-later` line, parsed from one review entry. |
+| `test-workflows.mjs` finds the json blocks by position (`test-workflows.mjs:9-10`). | the drift test (B41) compares the wrong block and passes vacuously | It finds "The review call" block by its heading. Non-vacuity test: a field removed from the markdown copy only makes it fail. |
+| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Test: a `.claude/worktrees/x` removal passes while YOLO is on. No other pd agent, workflow or skill runs a listed command (`grep -rnE` over agents/, workflows/, skills/ and commands/, 2026-11-26). |
+| `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases. Test: a work item written before this change, with no `Stage:` lines, passes `design`. |
+| B29 now applies everywhere, and print mode already writes `A (conductor, on the user's behalf)` decisions (`workflow-transitions/SKILL.md:49`). | an old item's entries fail pd-lint in another repo | The census of 20 pd repos on 2026-11-26 found no such entry. The print-mode line gains the record lines in the same change. |
+
+Notes:
+- **Base branch rule, two copies:** `base_branch()` repeats `pd-session-start.sh:33-34`'s auto rule in Python, and the copies could drift.
+- **A pull request's checks may not be registered yet** right after `gh pr create`. If so, the wait reads "no checks" and ends early. The `Hard stop: ready to merge?` question still comes before any merge.
+- **An `rm -r` in the session scratchpad is refused under YOLO,** since the scratchpad is outside `agent_sandbox/`.
+
+### Test strategy
+
+- **Runner and JUnit option:** `uv run --project plugins/pd pytest <files> --junitxml=<path>`, with each new file added to CI's pytest line (`ci.yml:42`). The new files:
+  - **`plugins/pd/hooks/tests/test_pd_yolo_guard.py`:** YoloGuard.
+  - **`plugins/pd/hooks/tests/test_pd_read_budget.py`:** ReadBudget.
+  - **`plugins/pd/hooks/tests/test_pd_stop_gate_goals.py`:** StopGate's changes.
+  - **`plugins/pd/hooks/lib/test_commit_target.py`:** existing; gains the `simple_commands` cases.
+  - **`plugins/pd/scripts/test_stage.py`:** pd-new, pd-lint, pd-status, phase-gate.sh and pd-review-prompt.
+  - **`plugins/pd/scripts/test_pd_yolo.py`:** YoloCLI.
+  - **`plugins/pd/scripts/test_yolo_prose.py`:** ConductorProse. Each prose surface is read, and its required lines are checked.
+  - **`plugins/pd/workflows/tests/test_workflows_node.py`:** one case running `node plugins/pd/workflows/tests/test-workflows.mjs`, which gains the VerifyArgs and ReviewSchema cases.
+- **Fixtures live in:**
+  - **`plugins/pd/scripts/conftest.py`:** its existing `pd_repo`.
+  - **A new `plugins/pd/hooks/tests/conftest.py`:**
+    - **`gate_home`:** a `tmp_path` HOME holding `.claude/pd/gate/`.
+    - **`run_hook(script, payload)`:** pipes HookInput JSON into the hook with `HOME` and `CLAUDE_PLUGIN_ROOT` set, and returns the exit code and stderr.
+- **Fakes:** none. Every test runs real git, real node and real python, in temporary repos, against a temporary HOME.
+- **Real resources tests may touch:**
+  - **Temporary repos:** git, and the scripts and hooks run as subprocesses inside them.
+  - **Read only:** the prose files named in ConductorProse, `stage-bars.md` and `workflow-results.md`.
+  - **Not touched:** the network and the real `~/.claude`.
+- **New paths beside fallbacks:** each test asserts a fact true only on the new path.
+  - **A read-budget refusal:** its stderr names `pd:codebase-explorer`, and `<sid>.reads` holds the counted bytes.
+  - **A YoloGuard refusal:** it quotes the refused simple command.
+  - **A stage gate failure:** it names both stages.
+  - **The drift test:** it fails when one field is removed from one copy.
+- **Cross-file invariants and their proofs:**
+  - **The review schema's two copies agree:** `test-workflows.mjs` (B41).
+  - **DECISION_RECORD's labels match everywhere:** `test_yolo_prose.py` checks that the labels in `log-entries.md`, workflow-transitions' YOLO section and the guard's stderr all match `pc.DECISION_RECORD`.
+  - **The new hooks are registered and documented:** `hooks.json` registers both, and `bash scripts/check-doc-drift.sh` checks the `README_FOR_DEV.md` hooks table against `hooks.json` (`README_FOR_DEV.md:213`).
+  - **Plugin components are valid:** `./validate.sh` passes.
+- **Live probes at Verify** (a headless `claude -p` session, as in the thin-pd bake-off):
+  - **Unverified harness behaviour:** A1, the AskUserQuestion refusal, and workflow agents' `agent_id`.
+  - **Conductor behaviour:** B17, B18, B21-B25, B46, B51 and B55.
+  - **Owner-run probes:** B43 and B44, each judged by the owner.
+
+### Expectations to contracts
+
+| Expectations | Contract | Test kind |
+|---|---|---|
+| B1-B5, B59 | NewCLI, CommonHelpers (B59 also ConductorProse) | script, `test_stage.py` (B59: prose and live probe) |
+| B6, B7 | LintCLI, CommonHelpers `item_stage` | script, `test_stage.py` |
+| B8 | StatusCLI | script, `test_stage.py` |
+| B9-B12 | ReviewPromptCLI, StageBars | script, `test_stage.py` |
+| B13, B14, B45 (verify-change half) | VerifyArgs, ReviewSchema | workflow, `test-workflows.mjs` |
+| B45 (conductor half) | ConductorProse (review-call.md), LogEntries | prose, `test_yolo_prose.py` |
+| B15, B16 | GateCLI | script, `test_stage.py` |
+| B17, B18, B46 | ConductorProse (workflow-transitions) | live probe |
+| B19, B20 | GateCLI, CommonHelpers `risk_signals` and `risk_waivers` | script, `test_stage.py` |
+| B21-B23 | ConductorProse (secretary.md) | prose and live probe |
+| B24, B25, B51, B60 | YoloCLI, SessionState, ConductorProse | script, `test_pd_yolo.py`; live probe |
+| B26-B28 | YoloGuard | hook, `test_pd_yolo_guard.py`; live probe for the AskUserQuestion refusal |
+| B29 | LintCLI, LogEntries, CommonHelpers `DECISION_RECORD` | script, `test_stage.py` |
+| B30 | GateCLI | script, `test_stage.py` |
+| B31, B32, B56 | StopGate | hook, `test_pd_stop_gate_goals.py` |
+| B33-B39, B57 | ReadBudget, SimpleCommands, SessionState, StopGate (B39's reset at a held stop) | hook, `test_pd_read_budget.py`, `test_pd_stop_gate_goals.py` |
+| B40 | YoloGuard, ReadBudget | hook: a corrupt or unreadable input per hook |
+| B41 | ReviewSchema | workflow, `test-workflows.mjs` |
+| B42 | the three reviewer agents and `retro-facilitator.md` (wording only) | prose, `test_yolo_prose.py` greps |
+| B43, B44 | owner-run probes | live, judged by the owner |
+| B47, B48 | LintCLI | script, `test_stage.py` |
+| B49 | GateCLI, LogEntries | script, `test_stage.py` |
+| B50 | ConductorProse (pd-init, init.md) | script (pd-init) and prose |
+| B52-B54 | YoloGuard, SimpleCommands | hook, `test_pd_yolo_guard.py`, `test_commit_target.py` |
+| B55 | ConductorProse (finishing-branch) | prose and live probe |
+| B61 | GateCLI (finish's open blockers), LogEntries | script, `test_stage.py`; this work item's own Verify |
+
+B42 edits four agent files' wording and touches no interface, so it has no contract block.
+
+### Deferred calvin rows
+
+The mechanism rows deferred at the specify cap (`agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-cycle-3.md`):
+
+| Row | Answered by |
+|---|---|
+| C22 | D13: no hash. Non-goals names the gap |
+| C78 | D3, YoloCLI, SessionState, HookInput (`session_id`) |
+| C79 | Expectations to contracts: the "live probe" column |
+| C83 | SimpleCommands: the lexical forms In and Out |
+| C84 | YoloGuard's DESTRUCTIVE push rules |
+| C85 | Risks: the guard refusing pd's own commands. The grep found only `implement-tasks.js:54` and `finishing-branch/SKILL.md:34` |
+| C91 | D5: an absent marker means YOLO off, checked before any python |
+| C92, C93 | D13: no hash, so nothing to re-review when a paragraph changes |
+| C94, C95, C112 | B58 was removed at the cap |
+| C97 | D7: `ISSUE_RE` is the only reader |
+| C98 | LogEntries: references carry the entry's `-n` suffix (REF_RE, `pd_common.py:38`) |
+| C99 | D8 |
+| C101, C102 | B44's probe records input, cache-write, cache-read and output tokens. Its fallback prices them at the report's own per-kind prices (Verify) |
+| C103 | Note: an owner-requested `pd-yolo off` lands in the transcript. The conductor also writes it as a `note` entry when an item exists |
+| C104 | Every owner ruling is already a `decision` entry quoted verbatim (`log-entries.md:19-26`) |
+| C105 | Resolved at the cap: the merge hard stop |
+| C108 | Both cite `decision-2@2026-11-26 14:14+08:00`, the row 29 ruling |
+| C109 | Note: a YOLO session that writes to no item (a specialist route) leaves its decisions in the transcript only |
+| C110 | `risk_waivers`' pattern |
+| C111 | ConductorProse: "past specify" means the README's phase is anything but specify |
