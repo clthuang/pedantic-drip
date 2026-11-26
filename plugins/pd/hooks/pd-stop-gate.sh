@@ -19,6 +19,7 @@ scripts = Path(sys.argv[1]).parent / "scripts"
 sys.path.insert(0, str(scripts))
 import pd_common as pc
 
+GOAL_TYPES = (pc.WORKITEM, "brainstorm", "rca")  # a brainstorm or rca item can carry a goal until it is promoted
 GOAL_RE = re.compile(r"^goal: (\S+) target (\S+) session (\S+)$")
 RUN_RE = re.compile(r"^run in flight: (\S+) session (\S+)")
 BUDGET_RE = re.compile(rf"^Budget: {pc.BUDGET_KEY}=(\d+)$")
@@ -75,12 +76,12 @@ cfg = pc.load_config(root)
 workitems = []
 for type_, fid, ctl in pc.find_items(pc.artifacts_dir(root, cfg)):
     try:
-        fm, body, _ = pc.split_frontmatter(ctl.read_text()) if type_ == pc.WORKITEM else (None, "", 0)
+        fm, body, _ = pc.split_frontmatter(ctl.read_text()) if type_ in GOAL_TYPES else (None, "", 0)
     except (OSError, ValueError):
         continue
-    if type_ == pc.WORKITEM:
+    if type_ in GOAL_TYPES:
         now = [l.strip() for l in pc.blank_fences(pc.sections(body).get("Now", "")).split("\n") if l.strip()]
-        workitems.append({"id": fid, "fm": fm or {}, "readme": ctl, "now": now})
+        workitems.append({"id": fid, "type": type_, "fm": fm or {}, "readme": ctl, "now": now})
 origin = pc.git(["remote", "get-url", "origin"], root, check=False)
 repo_key = hashlib.sha256((origin or str(root.resolve())).encode()).hexdigest()[:16]
 state = lambda f: gate / repo_key / f"{f['id']}.json"
@@ -92,7 +93,7 @@ total, counted = usage(inp.get("transcript_path")), int(sess.get("counted") or 0
 delta = total - counted if total > counted else 0
 sess["counted"] = max(total, counted)
 branch = pc.git(["rev-parse", "--abbrev-ref", "HEAD"], root, check=False) or ""
-here = next((f for f in workitems if branch in (f["fm"].get("branch"), f"{pc.BRANCH_PREFIX}{f['id']}")), None)
+here = next((f for f in workitems if f["type"] == pc.WORKITEM and branch in (f["fm"].get("branch"), f"{pc.BRANCH_PREFIX}{f['id']}")), None)
 if here and delta:
     p = state(here)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -106,17 +107,25 @@ if here and delta:
 
 def finish(code, reason=None):
     save(sess_path, sess)
+    reads = gate / f"{sid}.reads"
+    if code == 2 and reads.exists():  # a held stop starts a new turn for the read budget
+        reads.write_bytes(b"")
     if reason:
         print(reason, file=sys.stderr)
     sys.exit(code)
 
 
 # 2. Only this session's goal line arms the gate.
-goal = next(((f, m) for f in workitems for l in f["now"] for m in [GOAL_RE.match(l)] if m and m.group(3) == sid), None)
+# A finished (done or abandoned) brainstorm or rca item is past its goal; the goal line moved to its work item.
+goal = next(((f, m) for f in workitems for l in f["now"] for m in [GOAL_RE.match(l)]
+             if m and m.group(3) == sid and (f["type"] == pc.WORKITEM or f["fm"].get("status") not in ("done", "abandoned"))), None)
 if not goal:
     finish(0)
 f, m = goal
 fid, target = f["id"], m.group(2)
+if f["type"] != pc.WORKITEM:
+    finish(2, f"pd gate: goal {fid} is a {f['type']}; carry it to promotion. "
+              "Promotion moves the goal line to the new work item.")
 
 # 3. Yield to background work that will wake the session; a shell or monitor doesn't count.
 tasks = inp.get("background_tasks")
@@ -137,8 +146,8 @@ budget = raises[-1] if raises else number(cfg.get(pc.BUDGET_KEY))
 tokens = int(load(state(f)).get("tokens") or 0)
 increment = number(cfg.get("budget_increment")) or number(cfg.get(pc.BUDGET_KEY)) or budget
 if budget is not None and tokens >= budget:
-    finish(2, f"pd gate: work item {fid} has used {tokens} tokens of its {pc.BUDGET_KEY} {budget}. Ask the user "
-              "through AskUserQuestion: \"budget spent: continue or stop?\". On continue, write a decision entry with "
+    finish(2, f"pd gate: work item {fid} has used {tokens} tokens of its {pc.BUDGET_KEY} {budget}. "
+              "Ask the owner: Hard stop: budget spent: continue or stop? (one AskUserQuestion). On continue, write a decision entry with "
               f"`Budget: {pc.BUDGET_KEY}={budget + increment}`; on stop, clear "
               "the goal: line from ## Now and commit.")
 
@@ -149,8 +158,8 @@ log = f["readme"].parent / "log.md"
 snap = "|".join([head or ""] + [hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "" for p in (log, f["readme"])])
 moved, sess["last_check"] = sess.get("last_check") != snap, snap
 if inp.get("stop_hook_active") and not moved:
-    finish(2, f"pd gate: no progress on {fid} since the last check. Ask the user through AskUserQuestion: "
-              "\"no progress since the last check: continue or stop?\". On stop, clear the goal: line from ## Now and commit.")
+    finish(2, f"pd gate: no progress on {fid} since the last check. "
+              "Ask the owner: Hard stop: no progress since the last check: continue or stop? (one AskUserQuestion). On stop, clear the goal: line from ## Now and commit.")
 
 # 6. The goal's conditions: open blockers, pd-lint on the work item's files, the target phase.
 reasons = [f"open blocker {b['ref']} {b['file']}:{b['line']} — {b['claim']}" for b in pc.open_blockers(entries)]
@@ -167,7 +176,7 @@ if not reached:
     reasons.append(f"target {target} not reached (status {status}, phase {phase}): keep working toward it")
 if reasons:
     finish(2, f"pd gate: the goal on {fid} is not met.\n" + "\n".join(reasons))
-finish(2, f"pd gate: {fid} reached {target} with no open blockers: clear the goal: line from ## Now, commit, then stop.")
+finish(2, f"pd gate: {fid} reached {target} with no open blockers: clear the goal: line from ## Now, commit, then stop. YOLO stays on until pd-yolo off or the session ends.")
 PY
 
 python3 -c "$GATE_PY" "$HERE"
