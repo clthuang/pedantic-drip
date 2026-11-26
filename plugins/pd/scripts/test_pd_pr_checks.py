@@ -10,7 +10,8 @@ SCRIPT = Path(__file__).resolve().parent / "pd-pr-checks"
 
 # Replays FAKE_GH_REPLIES, a JSON list of [exit, stdout, stderr], one per call (the last repeats), and counts calls.
 FAKE_GH = f"""#!{sys.executable}
-import json, os, sys
+import json, os, sys, time
+time.sleep(float(os.environ.get("FAKE_GH_SLEEP", "0")))
 count_file = os.environ["FAKE_GH_COUNT"]
 with open(count_file, "a") as f:
     f.write("x")
@@ -27,7 +28,7 @@ def checks(*buckets):
     return json.dumps([{"name": f"c{i}", "bucket": b} for i, b in enumerate(buckets)])
 
 
-def run(tmp_path, replies, *args):
+def run(tmp_path, replies, *args, extra_env=None):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     gh = bindir / "gh"
@@ -36,7 +37,7 @@ def run(tmp_path, replies, *args):
     count = tmp_path / "count"
     count.write_text("")
     env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
-           "FAKE_GH_COUNT": str(count), "FAKE_GH_REPLIES": json.dumps(replies)}
+           "FAKE_GH_COUNT": str(count), "FAKE_GH_REPLIES": json.dumps(replies), **(extra_env or {})}
     start = time.monotonic()
     r = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=env)
     return r, len(count.read_text()), time.monotonic() - start
@@ -63,6 +64,12 @@ def test_c8_no_checks(tmp_path):
 
 def test_c9_pending_until_for_runs_out(tmp_path):
     r, _, took = run(tmp_path, [[8, checks("pending", "pass"), ""]], "7", "--for", "2")
+    assert r.returncode == 8
+    assert took < 10
+
+
+def test_c9b_a_stalled_gh_does_not_outlast_for(tmp_path):
+    r, _, took = run(tmp_path, [[0, checks("pass"), ""]], "7", "--for", "2", extra_env={"FAKE_GH_SLEEP": "30"})
     assert r.returncode == 8
     assert took < 10
 
