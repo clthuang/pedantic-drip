@@ -507,3 +507,17 @@ Next: none
 
 ## 2026-11-26 21:43+08:00 phase verify -> finish
 Verify passed: qa@2026-11-26 20:02+08:00 (all nine battery commands at 5ef3a72d), review@2026-11-26 19:30+08:00 R1-R8 fixed, Q10 fixed, Q11 and Q12 closed to the backlog per the owner ruling; live probes B17, B18, B23, B45, B46, B59 met.
+
+## 2026-11-26 21:51+08:00 qa
+Commit: eefd27cf
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: as qa@2026-11-26 20:02+08:00; this run checks only that the battery still passes after the finish-stage docs change.
+Run by the conductor at finish: the only change outside the artifacts since qa commit 5ef3a72d is CHANGELOG.md (git diff --name-only 5ef3a72d HEAD), which the verify gate counts as source because this repository sets no source_paths. Logs: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/qa-rerun-eefd27cf/ (pytest 373 passed).
