@@ -122,7 +122,7 @@ def shell_text(cmd):
         if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$"…"`: the `$` is not part of the word
             i += 1
             continue
-        if c in "<>" and not arith and not FD_NUMBER.fullmatch(GLUED_WORD.search("".join(out)).group()):
+        if c in "<>" and not FD_NUMBER.fullmatch(GLUED_WORD.search("".join(out)).group()):
             out.append(" ")  # `rm>/dev/null -rf x`: bash splits the redirect off the word it is glued onto
         if c in "'\"":
             quote = c
