@@ -418,3 +418,62 @@ Plan: resume run wf_4014fca4-f44 with the cycle cap raised from 3 to 4 in its pe
 Q: Q8, the specify gate accepting a "No, not yet" sign-off, and B19's silent skip with no local base branch: join the fix round, or stay on the backlog?
 A (user, verbatim): "Stay on the backlog (Recommended)"
 Follow-ups: 2026-11-26-pd-stop-gate-finish-saves, 2026-11-26-phase-gate-specify-accepts-any, 2026-11-26-phase-gate-verify-s-risk
+
+## 2026-11-26 20:02+08:00 run verify-change — finished (resumed)
+Session: c9b24375-514b-4e65-867c-d8156a1a427a  Agents: 10. Tokens: 74607. Cycles: 4 (cycle 4 run on the owner's ruling decision@2026-11-26 19:39+08:00; the review and cycles 1-3 replayed from the journal). Stopped: none. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/c9b24375-514b-4e65-867c-d8156a1a427a/subagents/workflows/wf_4014fca4-f44/journal.jsonl
+
+## 2026-11-26 20:02+08:00 qa
+Commit: 5ef3a72d
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: B52 — passing it still allows the >| and {fd}> redirects (Q11, Q12) and the forms shape.md:308 puts Out. Owner-run: B43, B44, B61. Not re-driven: B45's workflow side (verify-change never compares the echoed stage), B19 with no local base branch (backlog 2026-11-26-phase-gate-verify-s-risk), B9.
+Live probes (headless, `claude -p --plugin-dir plugins/pd` with the installed pd disabled, in copies of agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-repo; streams in agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/; cost $7.33 in all):
+- B17 met: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b17.jsonl; probe-b17 commit f2effd2 holds the decision entry, `stage: production`, and `phase design -> specify (back)` with `Invalidates:`, one commit before any other work.
+- B18 met: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b18.jsonl (item at specify); probe-b18 commit c62265e holds the decision entry and `stage: mvp`, no backward move. The first attempt (agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b18-design-fixture.jsonl) was blocked by pd-lint because the fixture item sat at design with no shape.md, a fixture gap.
+- B46 met: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b46.jsonl; refused with no change, proposing `/pd:create-workitem --from` the item's harden-later backlog line as a new production item.
+- B23 and B59 met: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b23.jsonl; in a repo with `stage: production`, `/pd:secretary --stage mvp` made the README `stage: mvp`, `mode: small` (not forced to standard), and its `phase triage -> specify` entry cites `stage: mvp`; the goal-run offer was answered `A (conductor, on the user's behalf): no`, as print mode requires.
+- Workflow agents carry agent_id: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/agentid.hooklog.jsonl shows the workflow agent's Bash call with agent_id af04c2a0782223875 and agent_type workflow-subagent; the main session's Skill and Workflow calls have agent_id null.
+- B26's model half not run headless: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/probe-out/b26.jsonl shows AskUserQuestion absent in print mode (ToolSearch select found nothing), so it joins the owner notes.
+- B45's reviewer half met: the pd-review-prompt output for an mvp scratch item (agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/b45-prompt.txt) went to Codex and to pd:code-quality-reviewer; both replies carry `"stage": "mvp"` (agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/b45-codex-reply.summary.json, agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/b45-claude-reply.summary.json).
+- Q3 warning plugins/pd/hooks/pd-read-budget.sh:101 — the ReadBudget contract runs the key check in bash, but it runs in Python, so every Read, Grep and Bash call starts python3 and git rev-parse even with no main_read_budget key (on the backlog: 2026-11-26-pd-read-budget-fast-path).
+- Q4 note .claude/pd.local.md:18 — the qa_battery self-test loop never runs pd-pr-checks, pd-review-prompt or pd-yolo --self-test (on the backlog: 2026-11-26-qa-battery-self-test-loop).
+- Q5 note plugins/pd/scripts/phase-gate.sh:100 — the specify gate's failure message names only the user sign-off, also when a conductor sign-off fails (on the backlog: 2026-11-26-phase-gate-specify-failure-message).
+- Q8 warning plugins/pd/hooks/pd-stop-gate.sh:109 — finish() saves the session file unguarded before the guarded read-counter reset, so an unwritable gate directory lets a held stop through (on the backlog: 2026-11-26-pd-stop-gate-finish-saves).
+- Q11 blocker plugins/pd/hooks/lib/commit_target.py:362 — the noclobber redirect >| is read as a pipe by simple_commands' shlex, so a B52 hard stop whose operands follow it passes the YOLO guard.
+- Q12 blocker plugins/pd/hooks/lib/commit_target.py:48 — a named-fd redirect {fd}>file, after a space, is not recognised by REDIRECT, so the operands after it are hidden from the YOLO guard (zsh and bash 4.1+ accept the form).
+- Q13 note plugins/pd/hooks/lib/commit_target.py:125 — the Q10 split in shell_text also changes scan(), which pd-commit-lint and the pre-commit guard read: `git commit>/dev/null -m x` is now seen as a commit, matching bash, where the SimpleCommands block (shape.md:310) says scan() is unchanged.
+Fixed: Q10 by 9f918117, 5ef3a72d — plugins/pd/hooks/lib/test_commit_target.py::test_simple_c6e_a_redirect_glued_onto_a_word_drops, plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_c7d_a_redirect_glued_onto_a_word_hides_no_operand
+Closes: qa@2026-11-26 19:30+08:00#Q10
+
+## 2026-11-26 20:02+08:00 capped verify
+Deferred:
+- Q11, Q12 (blockers found by the QA pass after the owner's extra cycle): to the follow-up below.
+- Q13 (note): the scan() side effect of the Q10 fix, for the owner's ruling at finish.
+Follow-ups:
+- 2026-11-26-yolo-guard-parser-bypasses-left
+Decisions: none
+Assumptions: none
+Closes: none
+
+## 2026-11-26 20:02+08:00 decision
+answers: capped@2026-11-26 20:02+08:00
+Q: Q11 and Q12, parser bypasses found by the QA pass after the extra cycle: another cycle, or the backlog?
+A (conductor): the backlog, per the owner's ruling decision@2026-11-26 19:39+08:00, whose chosen option reads "Any further parser bypass QA finds goes to the backlog, not another cycle." Filed as 2026-11-26-yolo-guard-parser-bypasses-left.
+Closes: qa@2026-11-26 20:02+08:00#Q11, qa@2026-11-26 20:02+08:00#Q12
+
+## 2026-11-26 20:02+08:00 note
+Live probes for the owner to try later (claude -p answers no AskUserQuestion and takes no ! command; B26's probe showed the tool is absent in print mode). Each runs in an interactive session with this branch's plugin: `claude --plugin-dir <repo>/plugins/pd` in a scratch repo that ran pd-init.
+- A1: `pd-yolo on`, then `! git branch -d <a throwaway branch>`. Expect: the branch is deleted, no hook refusal (a `!` command reaches no PreToolUse hook).
+- B21: `/pd:secretary "<a feature request>"`. Expect: after the item exists, one AskUserQuestion offers a goal run to finish; on yes, `## Now` holds `goal: <id> target finish session <id>`, committed before Criteria.
+- B22: the same, answered no. Expect: no `goal:` line.
+- B24: `/pd:secretary --yolo "<request>"`. Expect: first a `Hard stop:` question confirming YOLO; on yes `pd-yolo status` prints `on`, and the item's first log entry is the confirmation decision with `Session: <id>`.
+- B25: the same, answered no. Expect: YOLO stays off and the run goes on as B21.
+- B51: in a new session, `/pd:secretary --yolo` on the item B24 left. Expect: the confirmation is asked again, the new session's confirmation entry and a new `goal:` line are written.
+- B26's model half and whether a refused question stays hidden: with YOLO on, ask for anything through AskUserQuestion. Expect: the hook refuses it, no question reaches you, and the conductor writes a decision record carrying Session, Stage, Pros/cons, Trade-off, Implications and Premortem.
