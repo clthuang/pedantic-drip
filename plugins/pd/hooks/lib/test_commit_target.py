@@ -636,6 +636,18 @@ def test_simple_c6d_a_quoted_or_escaped_redirect_character_is_data(simple_comman
     assert [w for w, _ in simple_commands("git push -f >out 2>&1", d)] == [["git", "push", "-f"]]  # a real redirect still drops
 
 
+def test_simple_c6e_a_redirect_glued_onto_a_word_drops(simple_commands, tmp_path):
+    d = str(tmp_path)
+    for command, words in [
+        ("rm>/dev/null -rf x", ["rm", "-rf", "x"]), ("rm</dev/null -rf x", ["rm", "-rf", "x"]),
+        ("git reset>/dev/null --hard", ["git", "reset", "--hard"]), ("git reset --hard>/dev/null", ["git", "reset", "--hard"]),
+        ("gh pr merge>/dev/null 3", ["gh", "pr", "merge", "3"]), ("git push origin main>>log 2>&1", ["git", "push", "origin", "main"]),
+        ("git branch -D> out x", ["git", "branch", "-D", "x"]), ("cat<<EOF\nrm -rf /\nEOF", ["cat"]),
+        ("ls 2>/dev/null", ["ls"]), ("echo a\\>b", ["echo", "a>b"]), ("echo 'a>b'", ["echo", "a>b"]),
+    ]:
+        assert [w for w, _ in simple_commands(command, d)] == [words], command
+
+
 def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
     d = str(tmp_path)
     assert [w for w, _ in simple_commands("cat <<EOF\nrm -rf /\nEOF", d)] == [["cat"]]

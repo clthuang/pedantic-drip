@@ -166,6 +166,21 @@ def test_c7c_a_quoted_or_escaped_redirect_character_hides_no_operand(run_hook, y
     assert_hard_stop(run_hook(HOOK, bash_call(command, repo)), simple_command)
 
 
+@pytest.mark.parametrize("command, simple_command", [
+    ("rm>/dev/null -rf /tmp/elsewhere", "rm -rf /tmp/elsewhere"), ("rm</dev/null -rf /tmp/elsewhere", "rm -rf /tmp/elsewhere"),
+    ("git>/dev/null reset --hard", "git reset --hard"), ("gh>/dev/null pr merge 3", "gh pr merge 3"),
+    ("git reset>/dev/null --hard", "git reset --hard"), ("git branch>/dev/null -D x", "git branch -D x"),
+    ("gh pr>/dev/null merge 3", "gh pr merge 3"), ("gh pr merge>/dev/null 3", "gh pr merge 3"),
+    ("git reset --hard>/dev/null", "git reset --hard"), ("git branch -D>/dev/null x", "git branch -D x"),
+    ("git push --force>/dev/null origin x", "git push --force origin x"),
+    ("git push origin --delete>/dev/null x", "git push origin --delete x"),
+    ("git push origin main>/dev/null", "git push origin main"),
+])
+def test_c7d_a_redirect_glued_onto_a_word_hides_no_operand(run_hook, yolo, tmp_path, command, simple_command):
+    repo = make_repo(tmp_path / "repo")
+    assert_hard_stop(run_hook(HOOK, bash_call(command, repo)), simple_command)
+
+
 def test_c8_push_without_refspec_depends_on_the_branch(run_hook, yolo, tmp_path):
     on_main = make_repo(tmp_path / "main-repo", branch="main")
     on_item = make_repo(tmp_path / "item-repo")
