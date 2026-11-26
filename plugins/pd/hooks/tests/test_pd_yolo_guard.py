@@ -135,6 +135,7 @@ DESTRUCTIVE = [
     "git push -f origin x", "git push --force-with-lease=x origin x", "git push origin +x",
     "git push --delete origin x", "git push origin :x", "git push origin main",
     "git push origin HEAD:refs/heads/main", "git push --all origin", "gh pr merge 3 --squash",
+    "gh --repo owner/repo pr merge 3", "gh -R owner/repo pr merge 3",
     "git branch -D x", "git branch -d x", "git branch --delete x", "git reset --hard HEAD~1",
     "git clean -fd", "git clean --force", "rm -rf /tmp/elsewhere", "git -C other push -f origin x",
     "cd sub && git push -f origin x", "git status && git push -f",
@@ -191,6 +192,7 @@ def test_c12_unmerged_paths_block_the_commit(run_hook, yolo, tmp_path, kind, com
     code, err = run_hook(HOOK, bash_call(command, conflicted_repo(tmp_path / "conflict", kind)))
     assert code == 2
     assert "conflicted.txt" in err and "! git commit" in err and "pd-yolo off" in err
+    assert "Hard stop:" in err and "Resolve them" not in err
 
 
 def test_c12_a_clean_repo_may_commit(run_hook, yolo, tmp_path):
