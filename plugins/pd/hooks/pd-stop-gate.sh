@@ -108,8 +108,12 @@ if here and delta:
 def finish(code, reason=None):
     save(sess_path, sess)
     reads = gate / f"{sid}.reads"
-    if code == 2 and reads.exists():  # a held stop starts a new turn for the read budget
-        reads.write_bytes(b"")
+    if code == 2:  # a held stop starts a new turn for the read budget; failing to reset must not release the stop
+        try:
+            if reads.exists():
+                reads.write_bytes(b"")
+        except OSError:
+            pass
     if reason:
         print(reason, file=sys.stderr)
     sys.exit(code)
