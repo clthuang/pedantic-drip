@@ -240,3 +240,11 @@ answers: capped@2026-11-26 15:32+08:00
 Q: which design review blockers are resolved?
 A (conductor): the scoped re-reviews marked M1's R1-R5 and R7-R12 resolved (review M2), M1's R6 and M2's R6, R15 and R17 resolved (review M3); M1's R13 and M2's R13 and R16, carried into M3's R13 and R16, and M3's R18 were fixed in commit 007bdfdb as the owner ruled (decision@2026-11-26 15:43+08:00).
 Closes: review@2026-11-26 15:11+08:00#R1, review@2026-11-26 15:11+08:00#R2, review@2026-11-26 15:11+08:00#R3, review@2026-11-26 15:11+08:00#R4, review@2026-11-26 15:11+08:00#R5, review@2026-11-26 15:11+08:00#R6, review@2026-11-26 15:11+08:00#R7, review@2026-11-26 15:11+08:00#R8, review@2026-11-26 15:11+08:00#R9, review@2026-11-26 15:11+08:00#R10, review@2026-11-26 15:11+08:00#R11, review@2026-11-26 15:11+08:00#R12, review@2026-11-26 15:11+08:00#R13, review@2026-11-26 15:23+08:00#R6, review@2026-11-26 15:23+08:00#R13, review@2026-11-26 15:23+08:00#R15, review@2026-11-26 15:23+08:00#R16, review@2026-11-26 15:23+08:00#R17, review@2026-11-26 15:32+08:00#R13, review@2026-11-26 15:32+08:00#R16, review@2026-11-26 15:32+08:00#R18
+
+## 2026-11-26 15:55+08:00 decision
+Q: the live checks at Verify can't run in headless claude -p (no answered questions, no ! commands), while the signed-off criteria say headless: switch to an interactive session the owner drives, or run headless where possible?
+A (user, verbatim): "Headless where possible"
+
+## 2026-11-26 15:55+08:00 decision-2
+Q: the diff will match pd's security risk pattern, and the hooks are safety controls: tag risk: security, or record Risk: none (security)?
+A (user, verbatim): "Tag risk: security (Recommended)"

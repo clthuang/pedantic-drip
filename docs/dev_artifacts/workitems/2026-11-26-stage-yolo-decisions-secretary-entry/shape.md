@@ -44,7 +44,7 @@
 
 ### Expectations
 
-Each one observable, with a unique id. Plan turns them into test cases. Lines marked **(live probe)** describe the conductor's behaviour in a session; Verify checks them in a headless `claude -p` run, as the thin-pd bake-off did.
+Each one observable, with a unique id. Plan turns them into test cases. Lines marked **(live probe)** describe the conductor's behaviour in a session. Verify checks them in a headless `claude -p` run where it can, and records the rest, those needing an answered question or a `!` command, as notes for the owner to try later (`decision@2026-11-26 15:55+08:00`).
 
 **Stage: where it lives**
 
@@ -116,7 +116,7 @@ B52: while YOLO is on for this session, a Bash command line from any caller (mai
 - `git push` whose refspec targets the base branch;
 - `gh pr merge`;
 - `git branch` with `-D`, `-d` or `--delete`;
-- `git worktree remove` of a path outside `.claude/worktrees/` (pd's task worktrees, which `implement-tasks` removes itself, stay allowed);
+- `git worktree remove` of a worktree not on a `pd/<id>/task-<n>` branch (pd's task worktrees, which `implement-tasks` removes itself, stay allowed wherever they live: the owner's ruling at the design cap, `decision@2026-11-26 15:43+08:00`);
 - `git reset --hard`;
 - `git clean` with `-f`;
 - `rm` with `-r`, `-R` or `-rf` on a path outside `agent_sandbox/`.
@@ -732,19 +732,25 @@ Notes:
 
 ### Test strategy
 
-- **Runner and JUnit option:** `uv run --project plugins/pd pytest <files> --junitxml=<path>`, with each new file added to CI's pytest line (`ci.yml:42`). The new files:
+- **Runner and JUnit option:** `uv run --project plugins/pd pytest <files> --junitxml=<path>`, with each new file added to CI's pytest line (`ci.yml:42`). Each plan task owns its test files, so tasks in one wave share none:
+  - **`plugins/pd/scripts/test_pd_common_stage.py`:** CommonHelpers, and `pd-lint --risk` reading them.
+  - **`plugins/pd/hooks/lib/test_commit_target.py`:** existing; gains the `simple_commands` cases.
+  - **`plugins/pd/scripts/test_pd_yolo.py`:** YoloCLI.
+  - **`plugins/pd/scripts/test_pd_pr_checks.py`:** PrChecksCLI, with `--for` set to a few seconds.
+  - **`plugins/pd/scripts/test_severity_note.py`:** B42's searches.
   - **`plugins/pd/hooks/tests/test_pd_yolo_guard.py`:** YoloGuard.
   - **`plugins/pd/hooks/tests/test_pd_read_budget.py`:** ReadBudget.
   - **`plugins/pd/hooks/tests/test_pd_stop_gate_goals.py`:** StopGate's changes.
-  - **`plugins/pd/hooks/lib/test_commit_target.py`:** existing; gains the `simple_commands` cases.
-  - **`plugins/pd/scripts/test_stage.py`:** pd-new, pd-lint, pd-status, phase-gate.sh and pd-review-prompt.
-  - **`plugins/pd/scripts/test_pd_yolo.py`:** YoloCLI.
-  - **`plugins/pd/scripts/test_pd_pr_checks.py`:** PrChecksCLI, with `--for` set to a few seconds.
-  - **`plugins/pd/scripts/test_yolo_prose.py`:** ConductorProse. Each prose surface is read, and its required lines are checked.
+  - **`plugins/pd/scripts/test_stage_new_status.py`:** pd-new, pd-status and pd-init.
+  - **`plugins/pd/scripts/test_stage_lint_gate.py`:** pd-lint and phase-gate.sh.
+  - **`plugins/pd/scripts/test_pd_review_prompt.py`:** ReviewPromptCLI and StageBars.
   - **`plugins/pd/workflows/tests/test_workflows_node.py`:** one case running `node plugins/pd/workflows/tests/test-workflows.mjs`, which gains the VerifyArgs and ReviewSchema cases.
+  - **`plugins/pd/scripts/test_yolo_prose.py`:** ConductorProse. Each prose surface is read, and its required lines are checked.
+  - **`plugins/pd/scripts/test_registration_docs.py`:** `hooks.json`, CI and the docs.
+  - **Existing suites that write no JUnit** (the scripts' `--self-test`, the bash suites, `test-workflows.mjs`, `validate.sh`, `check-doc-drift.sh`): each task's test file runs the ones its own files touch, one case each, asserting exit 0.
 - **Fixtures live in:**
   - **`plugins/pd/scripts/conftest.py`:** its existing `pd_repo`.
-  - **A new `plugins/pd/hooks/tests/conftest.py`:**
+  - **A new `plugins/pd/hooks/conftest.py`,** above both `hooks/lib/` and `hooks/tests/`:
     - **`gate_home`:** a `tmp_path` HOME holding `.claude/pd/gate/`.
     - **`run_hook(script, payload)`:** pipes HookInput JSON into the hook with `HOME` and `CLAUDE_PLUGIN_ROOT` set, and returns the exit code and stderr.
 - **Fakes:**
@@ -768,11 +774,11 @@ Notes:
   - **DECISION_RECORD's labels match everywhere:** `test_yolo_prose.py` checks that the labels in `log-entries.md`, workflow-transitions' YOLO section and the guard's stderr all match `pc.DECISION_RECORD`.
   - **The new hooks are registered and documented:** `hooks.json` registers both, and `bash scripts/check-doc-drift.sh` checks the `README_FOR_DEV.md` hooks table against `hooks.json` (`README_FOR_DEV.md:213`).
   - **Plugin components are valid:** `./validate.sh` passes.
-- **Live probes at Verify.** These run in an interactive session the owner drives, because `claude -p` can't answer AskUserQuestion or take a `!` command (code.claude.com/docs/en/hooks#tools-that-require-user-interaction).
-  - **The session:** `claude --plugin-dir plugins/pd`, so the branch's plugin runs and the installed release doesn't. It works in a scratch repo, `pd-init`ed under `agent_sandbox/<date>/<id>/probe-repo`.
-  - **Unverified harness behaviour:** A1 (the owner types `! git branch -d <a throwaway branch>` with YOLO on), whether a refused AskUserQuestion stays hidden, and whether workflow agents carry `agent_id` (a `verify-change` run under a set budget).
-  - **Conductor behaviour:** B17, B18, B21-B25, B46 and B51 in the scratch repo. B55 runs on this work item's own pull request, at its finish.
-  - **Evidence:** each probe's session transcript path and the lines showing its outcome go into a `qa` entry.
+- **Live probes at Verify, headless where possible** (the owner's ruling, `decision@2026-11-26 15:55+08:00`). Each run is `claude -p --plugin-dir plugins/pd --session-id <a fresh uuid> --output-format stream-json --verbose` in a scratch repo `pd-init`ed under `agent_sandbox/<date>/<id>/probe-repo`, so the branch's plugin runs and the installed release doesn't.
+  - **Headless:** B17, B18 and B46 (stage-change requests on prepared items); B23 and B59 (`/pd:secretary --stage mvp`); a refused AskUserQuestion reaching the model as a refusal (B26, with the marker made for the run's `--session-id`); and whether a workflow's agents carry `agent_id` (a one-agent Workflow run under a PreToolUse hook, passed with `--settings`, that logs each call's `agent_id`).
+  - **Notes for the owner to try later:** `claude -p` answers no AskUserQuestion and takes no `!` command (code.claude.com/docs/en/hooks#tools-that-require-user-interaction). So A1 (`! git branch -d <a throwaway branch>` with YOLO on), B21, B22, B24, B25, B51's re-confirmation, and whether a refused question stays hidden from the owner each go into a `note` entry with the steps to run them.
+  - **B55** runs on this work item's own pull request, at its finish, in the owner's session.
+  - **Evidence:** each headless run's stream-json path and the lines showing its outcome go into a `qa` entry.
   - **Owner-run probes:** B43 and B44, each with its ruling entry (LogEntries, B61).
 
 ### Probes of parsed output
@@ -824,32 +830,32 @@ B42 renames a severity value, so its surfaces come from `grep -rnE 'suggestion' 
 
 | Expectations | Contract | Test kind |
 |---|---|---|
-| B1-B5, B59 | NewCLI, CommonHelpers (B59 also ConductorProse) | script, `test_stage.py` (B59: prose and live probe) |
-| B6, B7 | LintCLI, CommonHelpers `item_stage` | script, `test_stage.py` |
-| B8 | StatusCLI | script, `test_stage.py` |
-| B9-B12 | ReviewPromptCLI, StageBars | script, `test_stage.py` |
+| B1-B5, B59 | NewCLI, CommonHelpers (B59 also ConductorProse) | script, `test_stage_new_status.py` (B59: prose and headless probe) |
+| B6, B7 | LintCLI, CommonHelpers `item_stage` | script, `test_stage_lint_gate.py`, `test_pd_common_stage.py` |
+| B8 | StatusCLI | script, `test_stage_new_status.py` |
+| B9-B12 | ReviewPromptCLI, StageBars | script, `test_pd_review_prompt.py` |
 | B13, B14, B45 (verify-change half) | VerifyArgs, ReviewSchema | workflow, `test-workflows.mjs` |
 | B45 (conductor half) | ConductorProse (review-call.md), LogEntries | prose, `test_yolo_prose.py` |
-| B15, B16 | GateCLI | script, `test_stage.py` |
-| B17, B18, B46 | ConductorProse (workflow-transitions) | live probe |
-| B19, B20 | GateCLI, CommonHelpers `risk_signals` and `risk_waivers` | script, `test_stage.py` |
+| B15, B16 | GateCLI | script, `test_stage_lint_gate.py` |
+| B17, B18, B46 | ConductorProse (workflow-transitions) | prose, `test_yolo_prose.py`; headless probe |
+| B19, B20 | GateCLI, CommonHelpers `risk_signals` and `risk_waivers` | script, `test_stage_lint_gate.py`, `test_pd_common_stage.py` |
 | B21-B23 | ConductorProse (secretary.md) | prose and live probe |
 | B24, B25, B51, B60 | YoloCLI, SessionState, ConductorProse | script, `test_pd_yolo.py`; live probe |
 | B26-B28 | YoloGuard | hook, `test_pd_yolo_guard.py`; live probe for the AskUserQuestion refusal |
-| B29 | LintCLI, LogEntries, CommonHelpers `DECISION_RECORD` | script, `test_stage.py` |
-| B30 | GateCLI | script, `test_stage.py` |
+| B29 | LintCLI, LogEntries, CommonHelpers `DECISION_RECORD` | script, `test_stage_lint_gate.py` |
+| B30 | GateCLI | script, `test_stage_lint_gate.py` |
 | B31, B32, B56 | StopGate | hook, `test_pd_stop_gate_goals.py` |
 | B33-B39, B57 | ReadBudget, SimpleCommands, SessionState, StopGate (B39's reset at a held stop) | hook, `test_pd_read_budget.py`, `test_pd_stop_gate_goals.py` |
 | B40 | YoloGuard, ReadBudget | hook: a corrupt or unreadable input per hook |
 | B41 | ReviewSchema | workflow, `test-workflows.mjs` |
-| B42 | the surfaces in "Rename surfaces: suggestion to note" (wording only) | prose, `test_yolo_prose.py` greps |
+| B42 | the surfaces in "Rename surfaces: suggestion to note" (wording only) | prose, `test_severity_note.py` searches |
 | B43, B44 | owner-run probes | live, judged by the owner |
-| B47, B48 | LintCLI | script, `test_stage.py` |
-| B49 | GateCLI, LogEntries | script, `test_stage.py` |
+| B47, B48 | LintCLI | script, `test_stage_lint_gate.py` |
+| B49 | GateCLI, LogEntries | script, `test_stage_lint_gate.py` |
 | B50 | ConductorProse (pd-init, init.md) | script (pd-init) and prose |
 | B52-B54 | YoloGuard, SimpleCommands | hook, `test_pd_yolo_guard.py`, `test_commit_target.py` |
 | B55 | ConductorProse (finishing-branch), PrChecksCLI | script, `test_pd_pr_checks.py` (a fake `gh` on PATH); prose and live probe |
-| B61 | GateCLI (finish's probe rulings), LogEntries | script, `test_stage.py`; this work item's own finish |
+| B61 | GateCLI (finish's probe rulings), LogEntries | script, `test_stage_lint_gate.py`; this work item's own finish |
 
 B42 edits wording in six files and touches no interface, so it has no contract block.
 

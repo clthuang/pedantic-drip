@@ -5,6 +5,7 @@ title: Stage, YOLO decisions, secretary entry point, main-session read budget
 status: active
 phase: create-plan
 mode: standard
+risk: [security]
 branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ---
 # Stage, YOLO decisions, secretary entry point, main-session read budget
