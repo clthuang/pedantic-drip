@@ -218,6 +218,8 @@ Hooks run automatically, registered in `plugins/pd/hooks/hooks.json`. `scripts/c
 | `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `pd-agent-write-guard` | PreToolUse (Write\|Edit) | QA writes only under `agent_sandbox/`; `calvin-runner` writes only its recorded ledger path (exit 2 otherwise) |
 | `pd-session-start` | SessionStart (startup\|resume\|clear\|compact) | The project's active and blocked items, next ready items, retros owed and leftover worktrees; offers `/pd:init` or `/pd:adopt`. Firing on `compact` keeps the summary after compaction |
+| `pd-yolo-guard` | PreToolUse (AskUserQuestion\|Bash) | While YOLO is on for the session (`pd-yolo on`), refuses a question that isn't a "Hard stop:" and a destructive command (exit 2) |
+| `pd-read-budget` | PreToolUse (Read\|Grep\|Bash\|WebFetch\|WebSearch\|codegraph_explore), UserPromptSubmit | With `main_read_budget` set, refuses the main session's read calls past the budget in a turn and points at `pd:codebase-explorer`; subagents are never limited |
 | `pd-stop-gate` | Stop | Holds a goal run until its target is reached with no open blocker and `pd-lint` passing; yields to background workflows; the per-work-item token cap |
 
 `pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py`, a worker the wrapper calls; it isn't registered on its own. Writing a hook: [docs/dev-guide/hook-development.md](docs/dev-guide/hook-development.md).
@@ -228,7 +230,7 @@ Each phase command in `plugins/pd/commands/` is a thin entry point: it invokes i
 
 - **State lives in committed files:** a work item is a folder holding `README.md` (frontmatter and `## Now`), `log.md` (append-only history), `shape.md`, `plan.md` (none in express mode) and, on a trigger, `retro.md`; a plan, brainstorm or rca item is one Markdown file with its own `## Log`. [docs/technical/workflow-artifacts.md](docs/technical/workflow-artifacts.md) gives each file's contents.
 - **Everything else is computed** by `plugins/pd/scripts/pd-status`: progress, next ready items, open blockers and assumptions, retros owed, leftover worktrees.
-- **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-worktrees`, `pd-html.py`, `pd-init`, `pd-adopt`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
+- **The scripts** in `plugins/pd/scripts/` (`pd-new`, `phase-gate.sh`, `pd-lint`, `pd-status`, `pd-proof`, `pd-review-filter`, `pd-worktrees`, `pd-html.py`, `pd-init`, `pd-adopt`, `pd-yolo`, `pd-review-prompt`, `pd-pr-checks`, and the shared `pd_common.py`) are documented in [docs/technical/api-reference.md](docs/technical/api-reference.md).
 - **The workflows** (`plugins/pd/workflows/`) are the stages' only fan-outs:
   - **`implement-tasks`:** one implementer per task in its own worktree, the merger landing each wave's parallel-safe tasks, then its sequential ones; up to three fix cycles;
   - **`verify-change`:** the review call beside QA, then up to three fixer cycles;

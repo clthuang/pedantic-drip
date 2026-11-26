@@ -99,6 +99,15 @@ Build JSON with `jq -nc --arg`, or escape each value with `escape_json()`. Write
 - **`pd_log_session_start_diagnostic`:** `pd_log_diagnostic` for `pd-session-start.sh`, writing to `$PD_SESSION_START_LOG`, default `~/.claude/pd/session-start.log`.
 - **`install_session_start_traps`:** an ERR trap that logs a diagnostic, and an EXIT trap that prints `{}` when the hook exits non-zero and always exits 0. `validate.sh` accepts it in place of `install_err_trap`.
 
+## Registered Hooks
+
+| Hook | Event (matcher) |
+|------|-----------------|
+| `pd-yolo-guard` | PreToolUse (AskUserQuestion, Bash) |
+| `pd-read-budget` | PreToolUse (reads and searches), UserPromptSubmit |
+
+The rest are in the README_FOR_DEV.md table above. A new hook is registered in `hooks.json` and named in that table; `scripts/check-doc-drift.sh` fails otherwise.
+
 ## Testing Hooks
 
 Four hooks have their own suite (`plugins/pd/hooks/tests/test-pd-*.sh`); `pre-commit-guard`, `cleanup-stale-versions` and the shared library are tested in the integration suite, `test-hooks.sh`. [commands-reference.md](commands-reference.md) lists every suite CI runs:

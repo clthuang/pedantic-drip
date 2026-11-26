@@ -78,6 +78,7 @@ State, outside git:
 ## Module Interfaces
 
 - **`scripts/pd_common.py`** — the shared library: config (`load_config`, `artifacts_dir`), items (`find_items`, `split_frontmatter`), logs (`split_log`, `parse_log`, `parse_tasks`) and the computed views (`open_blockers`, `open_assumptions`, `retro_triggers`), and the worktree helpers (`worktrees`, `run_in_flight`). Every Python script and `phase-gate.sh` import it (`pd-proof` and `pd-review-filter` only for its self-test helper `Checks`); none keeps a cache.
+- **Session and review scripts** — `pd-yolo` (the YOLO marker), `pd-review-prompt` (the review call's prompt) and `pd-pr-checks` (a pull request's checks).
 - **The scripts' CLIs** — [api-reference.md](api-reference.md).
 - **Workflow results** — each workflow script pins its own `RESULT` schema, `plugins/pd/references/workflow-results.md` restates it, and `test-workflows.mjs` checks that the two agree.
 - **Log entries** — pinned once in `plugins/pd/references/log-entries.md`; `pd-lint` checks each entry's shape.
@@ -89,6 +90,8 @@ The hooks, their events and their purpose: [README_FOR_DEV.md's hooks table](../
 - **Block with exit 2, the reason on stderr:**
   - **`pd-commit-lint`** (PreToolUse Bash): a `git commit` whose staged artifacts fail `pd-lint --staged`. A linter crash or usage error is reported and never blocks.
   - **`pd-agent-write-guard`** (PreToolUse Write|Edit): a `qa-executor` write outside `agent_sandbox/`, or a `calvin-runner` write anywhere but its recorded ledger path. It fails closed: when its own check fails, the write is refused.
+  - **`pd-yolo-guard`** (PreToolUse AskUserQuestion, Bash): while YOLO is on, a question that isn't a "Hard stop:" and a destructive command.
+  - **`pd-read-budget`** (PreToolUse reads, UserPromptSubmit): a main-session read call past `main_read_budget` in a turn, and WebFetch and WebSearch at once.
   - **`pd-stop-gate`** (Stop): the stop, for the reasons in [Goal runs and the Stop gate](#goal-runs-and-the-stop-gate).
 - **Never block:** `cleanup-stale-versions`, `pd-session-start`, `pre-commit-guard` (its reminders reach Claude as `additionalContext`) and `pre-edit-unicode-guard` (it warns on stderr).
 
