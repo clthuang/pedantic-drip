@@ -27,7 +27,6 @@ sys.path.insert(0, str(HERE))
 import pd_common as pc  # noqa: E402
 
 GATE = HERE / "phase-gate.sh"
-RISK_PATTERNS = HERE.parent / "references" / "risk-patterns.md"
 DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}-")
 BACKLOG_RE = re.compile(r"^- \[( |x)\] (\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)$")
 GOAL_RE = re.compile(r"^goal: (\S+) target (\S+) session (\S+)$")
@@ -618,29 +617,14 @@ class Linter:
                 self.err(p, text[:m.start()].count("\n") + 1, f"test imports {rel}, which no contract's modules: line names")
 
     def check_risk(self, rng):
-        patterns = re.findall(r"^- (security|migration) (path|line): `(.+)`$", RISK_PATTERNS.read_text(), re.M)
         feat = self.branch_workitem()
         tags = set(pc.as_list(((feat or {}).get("fm") or {}).get("risk")))
-        diff = pc.git(["diff", "-U0", "--diff-filter=ACMR", rng], self.root)
-        added, cur = {}, None
-        for line in diff.split("\n"):
-            if line.startswith("+++ "):
-                cur = line[6:] if line.startswith("+++ b/") else None
-                added.setdefault(cur, [])
-            elif line.startswith("+") and cur:
-                added[cur].append(line[1:])
-        # pd's own records ("Tokens:" in every run entry) and test code ("Permission denied" in an error case) are no surface.
-        skip = [pc.dir_prefix(self.rel(self.art))] + self.paths("test_paths")
-        hits = set()
-        for tag, kind, rx in patterns:
-            r = re.compile(rx, re.I)
-            for f, lines in added.items():
-                if f and not any(f.startswith(s) for s in skip) and (r.search(f) if kind == "path" else any(r.search(l) for l in lines)):
-                    hits.add((tag, f))
-        for tag, f in sorted(hits):
+        if feat:
+            tags |= pc.risk_waivers(pc.parse_log(*pc.log_text(feat["type"], feat["path"])))
+        for tag, f, line in pc.risk_signals(self.root, rng):
             if tag not in tags:
-                self.warn(self.root / f, 1, f"risk signal ({tag}) and the work item has no risk: [{tag}] tag: "
-                                            "set it, or the user clears it with a decision entry")
+                self.warn(self.root / f, line, f"risk signal ({tag}) and the work item has no risk: [{tag}] tag: "
+                                               "set it, or the user clears it with a decision entry")
 
 
 # --- T3.5f: --archive and --sweep ---------------------------------------------
