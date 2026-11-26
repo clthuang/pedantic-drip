@@ -105,6 +105,14 @@ def is_outside_sandbox_removal(args, at):
     return any(not sandbox or not os.path.realpath(os.path.join(at, o)).startswith(sandbox) for o in operands)
 
 
+def gh_subcommand(args):
+    """`args` without gh's leading global options: `--repo owner/repo pr merge 3` -> `pr merge 3`."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in ("-R", "--repo", "--hostname") else 1
+    return args[i:]
+
+
 def check_command(command, cwd):
     commands = simple_commands(command, cwd)
     if commands is None:
@@ -112,7 +120,7 @@ def check_command(command, cwd):
     for words, at in commands:
         name = os.path.basename(words[0])
         if name == "gh":
-            if words[1:3] == ["pr", "merge"]:
+            if gh_subcommand(words[1:])[:2] == ["pr", "merge"]:
                 hard_stop(words)
             continue
         if name == "rm":
@@ -142,8 +150,9 @@ def check_command(command, cwd):
                 raise RuntimeError(r.stderr)
             paths = sorted({line.split("\t", 1)[1] for line in r.stdout.splitlines() if "\t" in line})
             if paths:
-                refuse(f"pd YOLO: unmerged paths: {', '.join(paths)}. Resolve them and run `! git commit` (or the "
-                       f"--continue) yourself, or turn YOLO off with `pd-yolo off`. Never run it yourself.")
+                refuse(f"pd YOLO: unmerged paths: {', '.join(paths)}. Ask a 'Hard stop:' question "
+                       f"naming them; the owner resolves them and runs `! git commit` (or the --continue), or turns YOLO off "
+                       f"with `pd-yolo off`. Never resolve or commit them yourself.")
 
 
 def main():
