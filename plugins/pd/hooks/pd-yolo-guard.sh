@@ -120,7 +120,8 @@ def check_command(command, cwd):
     for words, at in commands:
         name = os.path.basename(words[0])
         if name == "gh":
-            if gh_subcommand(words[1:])[:2] == ["pr", "merge"]:
+            rest = gh_subcommand(words[1:])
+            if rest[:1] == ["pr"] and gh_subcommand(rest[1:])[:1] == ["merge"]:  # `gh pr -R o/r merge` too
                 hard_stop(words)
             continue
         if name == "rm":
