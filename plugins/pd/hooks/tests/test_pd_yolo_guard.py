@@ -136,6 +136,7 @@ DESTRUCTIVE = [
     "git push --delete origin x", "git push origin :x", "git push origin main",
     "git push origin HEAD:refs/heads/main", "git push --all origin", "gh pr merge 3 --squash",
     "gh --repo owner/repo pr merge 3", "gh -R owner/repo pr merge 3",
+    "gh pr --repo owner/repo merge 3", "gh pr -R owner/repo merge 3", "gh pr --repo=o/r merge 3",
     "git branch -D x", "git branch -d x", "git branch --delete x", "git reset --hard HEAD~1",
     "git clean -fd", "git clean --force", "rm -rf /tmp/elsewhere", "git -C other push -f origin x",
     "cd sub && git push -f origin x", "git status && git push -f",
