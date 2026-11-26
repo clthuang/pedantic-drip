@@ -63,6 +63,14 @@ def test_c1_no_budget_allows_everything_and_writes_nothing(make_repo, run_hook, 
         assert os.listdir(gate_home / ".claude" / "pd" / "gate") == []
 
 
+def test_c2b_budget_holds_when_the_gate_directory_does_not_exist_yet(make_repo, run_hook, gate_home):
+    (gate_home / ".claude" / "pd" / "gate").rmdir()
+    repo = make_repo("main_read_budget: 3")
+    for _ in range(3):
+        assert_allowed(call(run_hook, repo))
+    assert_refused(call(run_hook, repo), "4 reads this turn (budget 3)")
+
+
 def test_c2_fourth_read_is_refused(make_repo, run_hook, reads_file):
     repo = make_repo("main_read_budget: 3")
     for n in (1, 2, 3):
