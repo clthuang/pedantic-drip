@@ -175,3 +175,8 @@ Assumptions:
 - A1: a command the owner runs with "! <command>" reaches no PreToolUse hook (C87); to probe at Contracts.
 - A2: the automated review shows in gh pr checks as a check; verified in this repo, where PR #35 lists "review pass" beside "validate pass" (gh pr checks 35, 2026-11-26).
 Closes: none
+
+## 2026-11-26 14:37+08:00 decision
+Q: calvin hit its cap with 37 questions open: apply the behaviour defaults, move the mechanism questions to Contracts and sign off; split into three work items; or one more calvin pass?
+A (user, verbatim): "Defaults, then sign off (Recommended)"
+answers: capped@2026-11-26 14:32+08:00

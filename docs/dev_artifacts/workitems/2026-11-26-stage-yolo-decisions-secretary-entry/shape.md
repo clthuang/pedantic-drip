@@ -31,6 +31,7 @@
 - **No change to the safety rails:** fix-cycle caps, the token budget (`workitem_token_budget`, enforced by the `Stop` gate), the security review for `risk: security`, and blockers `R0` and `QB<n>`. `main_read_budget` is unrelated to the token budget: it is a per-turn count of read calls.
 - **The read budget doesn't catch every way to read a file:** reads inside `$(...)`, `eval`, `bash -c`, scripts and interpreters go uncounted.
 - **The YOLO hooks bind the conductor's ordinary path, not a determined bypass:** the conductor could run `pd-yolo off` itself. Every such step lands in `log.md` or the transcript, where the owner can see it.
+- **A conductor-built review prompt isn't fully bound:** one carrying the right `Stage:` line without the stage paragraph isn't caught. `verify-change`'s check (B13) binds Verify only (owner's default 7 at the cap).
 - **No enforcement that research agents return only pointers:** the `researching` skill asks for it, and this change assumes it.
 - **No choice of the main session's model:** that stays the owner's `/model` setting.
 - **YOLO never merges on its own:** the merge stays the owner's call (`decision-2@2026-11-26 14:05+08:00`, `decision@2026-11-26 14:14+08:00`). After the owner's yes at `Hard stop: ready to merge?`, YOLO turns off and finish's merge and cleanup run as they do today (B55).
@@ -59,16 +60,15 @@ B59: `/pd:secretary --stage mvp "<request>"` in a repo whose config has `stage: 
 
 **Stage: how it reaches reviewers**
 
-B9: `pd-review-prompt verifying <work item dir>` on a work item with `stage: mvp` -> exit 0. Stdout's first line is `Stage: mvp (bar <h>)`, where `<h>` is the first 8 hex digits of the SHA-256 of the mvp paragraph of `references/stage-bars.md`. It is followed by the verifying skill's `## Review checklist` section verbatim, that paragraph, and the review-call schema of `references/workflow-results.md`
-B10: the same on a work item with `stage: production` -> stdout's first line is `Stage: production (bar <h>)`, with the production paragraph's hash. It carries the production paragraph and not the mvp one
+B9: `pd-review-prompt verifying <work item dir>` on a work item with `stage: mvp` -> exit 0. Stdout's first line is `Stage: mvp`, followed by the verifying skill's `## Review checklist` section verbatim, the mvp paragraph of `references/stage-bars.md`, and the review-call schema of `references/workflow-results.md`
+B10: the same on a work item with `stage: production` -> stdout's first line is `Stage: production`, and it carries the production paragraph and not the mvp one
 B11: `pd-review-prompt designing planning <work item dir>` (a small work item's joint review) -> both skills' checklists, one stage paragraph and one schema
 B12: `pd-review-prompt <skill> <dir>` where the skill has no `## Review checklist` section, or the directory has no README -> exit 1, a message on stderr, and nothing on stdout
-B13: `verify-change` started with no `stage` in its args, a `stage` other than `mvp` or `production`, or an `args.checklist` whose first line isn't `Stage: <args.stage> (bar <8 hex digits>)` -> it throws an error naming the arg before any agent runs
+B13: `verify-change` started with no `stage` in its args, a `stage` other than `mvp` or `production`, or an `args.checklist` whose first line isn't `Stage: <args.stage>` -> it throws an error naming the arg before any agent runs
 B14: a finished `verify-change` run -> its result carries `stage`, equal to the `stage` arg it was given
-B45: a review call (by the conductor, or inside `verify-change`) -> the reviewer's JSON carries `stage` and `bar` fields echoing its prompt's first line, and the `review` entry's `Stage:` line copies both: `Stage: <stage> (bar <h>)`
-B15: `phase-gate.sh design|create-plan|verify <dir>` -> it takes the latest `review` entry that carries a `Stage:` line. When that line's stage differs from the README's `stage:`, or its bar hash differs from the current hash of that stage's paragraph, it prints `GATE FAIL [<phase>]: ...` naming both values, exit 1
+B45: a review call (by the conductor, or inside `verify-change`) -> the reviewer's JSON carries a `stage` field echoing its prompt's `Stage:` line, and the `review` entry's `Stage:` line copies that field
+B15: `phase-gate.sh design|create-plan|verify <dir>` -> it takes the latest `review` entry that carries a `Stage:` line. When that line's stage differs from the README's `stage:`, it prints `GATE FAIL [<phase>]: ...` naming both stages, exit 1
 B16: `review` entries with no `Stage:` line (calvin cycles, and entries written before this change) -> `phase-gate.sh` skips them. When no `review` entry carries one, the stage check doesn't apply, since today's gates don't require a review before Verify
-B58: `pd-lint` on a work item with a `stage:` key whose `review` entry, by a reviewer other than `calvin-runner`, lacks a `Stage:` line -> `pd-lint: ERROR ...` naming the entry, exit 1
 
 **Stage: changing it on an open work item**
 
@@ -78,7 +78,7 @@ B46: (live probe) the owner asks to change the stage of a work item with `status
 
 **Stage: what mvp relaxes**
 
-B47: Criteria on a work item at `stage: mvp` -> `shape.md`'s edge cases end with a `Deferred:` line (`Deferred: none` when nothing is deferred), and `pd-lint` warns on an mvp work item whose `shape.md` has no such line. Which edge cases stay is judged at the criteria sign-off
+B47: Criteria on a work item at `stage: mvp` -> `shape.md`'s edge cases end with a `Deferred:` line (`Deferred: none` when nothing is deferred), and `pd-lint` warns on an mvp work item whose `shape.md` has no such line. Which edge cases stay is judged at the criteria sign-off; under YOLO the conductor judges, with a decision record
 B48: `pd-lint` on a plan task with `proof: green-only (mvp)` -> no error on a work item at `stage: mvp`. On one at `stage: production`, today's error `proof: green-only needs a reason`
 B49: `phase-gate.sh finish <dir>` on an mvp work item whose `review` entries hold `warning harden-later` lines -> `GATE FAIL [finish]: ...` until `backlog.md` has one line ending `(from: workitems/<id>)` that names each such issue by its reference, `review@<timestamp>#<id>`
 B50: `pd-init` (the script) on a repo with no `.claude/pd.local.md` -> the written config has `stage: production`. `/pd:init` (the command) then asks mvp or production through AskUserQuestion and sets the key to the answer
@@ -120,13 +120,13 @@ B52: while YOLO is on for this session, a Bash command line from any caller (mai
 - `git reset --hard`;
 - `git clean` with `-f`;
 - `rm` with `-r`, `-R` or `-rf` on a path outside `agent_sandbox/`.
-B53: such a refusal -> stderr tells the conductor to show the command in the `Hard stop:` question; on approval the owner runs it with `! <command>`. The hook keeps no allow-once state, so the conductor never runs a refused command itself
-B54: while YOLO is on for this session, `git commit`, `git merge --continue`, `git rebase --continue` or `git cherry-pick --continue` while the repo is mid-merge, mid-rebase or mid-cherry-pick -> refused. Stderr says to ask a `Hard stop:` question naming the conflicted files; the owner resolves them, or turns YOLO off (B60) so the conductor can. `implement-tasks`' merger is unaffected: on a conflict it aborts the merge and never resolves it (`plugins/pd/agents/merger.md:27`)
+B53: such a refusal -> stderr tells the conductor to show the command in the `Hard stop:` question; on approval the owner runs it with `! <command>`, whose output lands in the session, and the run carries on. An agent refused this way reports the refusal in its result, and the conductor asks the `Hard stop:` question. The hook keeps no allow-once state, so the conductor never runs a refused command itself
+B54: while YOLO is on for this session, `git commit`, `git merge --continue`, `git rebase --continue` or `git cherry-pick --continue` while the repo has unmerged paths (a conflicted merge, rebase or cherry-pick) -> refused. Stderr says to ask a `Hard stop:` question naming the conflicted files; the owner resolves them and finishes with `! git commit` or `! git merge --continue`, or turns YOLO off (B60) so the conductor can. `implement-tasks`' merger is unaffected: on a conflict it aborts the merge and never resolves it (`plugins/pd/agents/merger.md:27`)
 B55: (live probe) a YOLO run reaching the end of finish -> it does these, in order:
 - **It opens a pull request:** it pushes the branch and opens one.
-- **It waits for the checks:** until `gh pr checks` shows no pending check on the PR's head.
-- **It fixes what they raise:** the failing checks and the review comments on the PR, each fix with its decision record, for up to 3 fix cycles.
-- **It asks:** `Hard stop: ready to merge?`. On yes, it runs `pd-yolo off`, then finish's merge and cleanup run as they do today. On no, it clears the `goal:` line and the PR stays open.
+- **It waits for the checks:** until `gh pr checks` shows no pending check on the PR's head, the PR has no checks, or 60 minutes pass. The automated review is one of these checks (`review` beside `validate` on PR #35).
+- **It fixes what they raise:** the failing checks and the review comments on the PR, each fix with its decision record, for up to 3 fix cycles. Still failing or still commented after the third: `Hard stop: checks still failing`.
+- **It asks:** `Hard stop: ready to merge?`. On yes, it runs `pd-yolo off`, merges that pull request with `gh pr merge`, and finish's cleanup runs as today. On no, it clears the `goal:` line, runs `pd-yolo off`, and the PR stays open.
 - **With no remote or no `gh`:** it skips the pull request and asks `Hard stop: branch ready; no remote to open a pull request on`.
 
 **YOLO: the Stop gate**
@@ -149,7 +149,7 @@ B57: while this session's `run in flight: <run-name> session <session id>` line 
 
 **Existing sync problems**
 
-B41: a field of the review-call schema, the new `stage` and `bar` fields included, changed in only one of `workflows/verify-change.js` and `references/workflow-results.md` -> `node plugins/pd/workflows/tests/test-workflows.mjs` (a `qa_battery` command) fails, naming both files
+B41: a field of the review-call schema, the new `stage` field included, changed in only one of `workflows/verify-change.js` and `references/workflow-results.md` -> `node plugins/pd/workflows/tests/test-workflows.mjs` (a `qa_battery` command) fails, naming both files
 B42: in `security-reviewer.md`, `ds-analysis-reviewer.md` and `ds-code-reviewer.md` -> no line matches `blocker | warning | suggestion` or contains the table cell `| suggestion |`, and their severity enums read `blocker | warning | note`; `retro-facilitator.md`'s severity line reads `blocker vs warning vs note`. The fix-text field named `suggestion` in their output schemas is a field name, not a severity, and stays
 
 **Measures (owner-run probes at Verify, judged by the owner)**
@@ -161,7 +161,7 @@ B61: `phase-gate.sh finish <dir>` on this work item -> it needs both rulings (B4
 ### Scope
 
 - **In:**
-  - **Stage:** the `STAGES` vocabulary; the `stage:` config key and frontmatter field; `pd-new --stage` and `/pd:secretary --stage`; changes to `pd-lint`, `pd-status`, `phase-gate.sh` and `pd-init`; the new `pd-review-prompt` script; `references/stage-bars.md`; `verify-change`'s `stage` arg; the `stage` and `bar` fields in the review-call schema and the `Stage:` line on review entries; the mvp forms of `specifying`'s edge-case rule and `planning`'s `proof: green-only` rule; finish turning harden-later warnings into a backlog line.
+  - **Stage:** the `STAGES` vocabulary; the `stage:` config key and frontmatter field; `pd-new --stage` and `/pd:secretary --stage`; changes to `pd-lint`, `pd-status`, `phase-gate.sh` and `pd-init`; the new `pd-review-prompt` script; `references/stage-bars.md`; `verify-change`'s `stage` arg; the `stage` field in the review-call schema and the `Stage:` line on review entries; the mvp forms of `specifying`'s edge-case rule and `planning`'s `proof: green-only` rule; finish turning harden-later warnings into a backlog line.
   - **Risk detection:** `phase-gate.sh verify` runs `pd-lint --risk`.
   - **Entry point:** `/pd:secretary`'s goal-run offer.
   - **YOLO:** `--yolo`; the new `pd-yolo on|off|status` command and the session state it keeps; the AskUserQuestion hook; the destructive-command and merge-conflict hook; the decision-record lines and their `pd-lint` check; the `Hard stop:` prefix in the `Stop` gate's messages and in `workflow-transitions`; the YOLO sign-off rule in `specifying` and `phase-gate.sh specify`; the gate holding brainstorm and RCA goals; finish's pull-request step under YOLO.
@@ -200,8 +200,8 @@ B61: `phase-gate.sh finish <dir>` on this work item -> it needs both rulings (B4
 - **The token cap:** a run that overspends never asks otherwise. The thin-pd bake-off logged a 61× overrun (`docs/dev_artifacts/plans/2026-10-14-thin-pd/bake-off.md:182`, F21).
 - **No progress:** a stuck run would loop forever.
 - **A merge conflict** (B54): a wrong resolution can silently lose work.
-- **A destructive operation:** exactly the commands B52 lists, each hard to undo.
-- **The merge itself** (B55): it is outward-facing, and the owner keeps it.
+- **A destructive operation:** the commands B52 lists other than `gh pr merge` and pushes to the base branch, each hard to undo.
+- **The merge itself** (B55, and B52's `gh pr merge` and pushes to the base branch): it is outward-facing, and the owner keeps it.
 
 **Must-nots**
 - **Never answer the YOLO confirmation on the owner's behalf:** it is the one consent that turns autonomy on.
@@ -216,4 +216,4 @@ B61: `phase-gate.sh finish <dir>` on this work item -> it needs both rulings (B4
 
 ## Design
 
-<!-- Contracts stage. Design input: agent_sandbox/2026-11-26/pd-stage-yolo-proposal/proposal.md -->
+<!-- Contracts stage. Design input: agent_sandbox/2026-11-26/pd-stage-yolo-proposal/proposal.md. Deferred from calvin (capped specify, log.md): the mechanism rows C22, C78, C79, C83-C85, C91-C95, C97-C99, C101-C105 and C108-C112 of agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-cycle-3.md, and assumption A1 (owner-run ! commands reach no hook). -->
