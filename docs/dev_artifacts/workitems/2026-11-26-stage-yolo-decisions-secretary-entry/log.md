@@ -573,3 +573,22 @@ Closes: review@2026-11-26 22:19+08:00#S1, review@2026-11-26 22:19+08:00#S2, revi
 
 ## 2026-11-26 22:47+08:00 phase verify -> finish
 Exit check: phase-gate.sh verify passes at the qa commit above; the security reviewer re-checks only its findings S1-S5 next.
+
+## 2026-11-26 23:08+08:00 review finish — security-reviewer
+Verdict: changes requested (1 blocker). Commit: e0903491. Scoped re-check of its own findings S1-S5 over git diff 9a6c11b7..e0903491 -- plugins/pd; read-only, code not run. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/security-recheck-finish.json.
+Reproduced by the conductor at e0903491 with YOLO on, in a scratch repo on main with branch workitem/x present (agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/s8-probe): `git switch -c workitem/x` then a newline or `;` and a push exit 0, `git push -u origin HEAD` alone exits 2.
+- S1 note plugins/pd/hooks/lib/commit_target.py:382 — Closed. Words after an unquoted $( … ) are now read for the inputs I cited and for the obvious variants.
+- S2 note plugins/pd/hooks/pd-yolo-guard.sh:67 — Closed for the cited input and its siblings: a push that follows a switch to the base branch in the same line is refused. The fix itself opened a new hole, filed as S8.
+- S3 note plugins/pd/hooks/pd-yolo-guard.sh:107 — Closed. A recursive rm or a `git worktree remove` that xargs runs, or that shows no operand, is refused.
+- S4 warning plugins/pd/hooks/pd-yolo-guard.sh:111 — Unchanged and not made worse. rm operands are still joined to the working directory as literal text, with no `~` or `$VAR` expansion.
+- S5 warning plugins/pd/hooks/pd-yolo-guard.sh:160 — Unchanged and not made worse. The B54 check still looks only for unmerged index entries, so `git add <file>` in one call followed by `git commit` in the next goes through.
+- S8 blocker plugins/pd/hooks/pd-yolo-guard.sh:67 — New with the S2 fix (regression). The guard now assumes every switch earlier in the line succeeds. If the switch fails and the push still runs after a `;` or a newline, a push from the base branch is allowed. The old code refused it.
+Closes: review@2026-11-26 22:19+08:00#S1, review@2026-11-26 22:19+08:00#S2, review@2026-11-26 22:19+08:00#S3
+
+## 2026-11-26 23:08+08:00 decision
+Q: the security re-check closed S1-S3, but the S2 fix opened S8: the YOLO guard trusts that a switch earlier in the line succeeds, so on main a failed `git switch -c <existing branch>` then `;` or a newline and a push is allowed. Fix S8 now (another seeded verify-change run with only S8, then the reviewer re-checks S8 only; any new form goes to the backlog), or waive S8 to the backlog?
+A (user, verbatim): "Fix S8 now (Recommended)"
+
+## 2026-11-26 23:08+08:00 phase finish -> verify (back)
+Reason: security re-check blocker S8 (review@2026-11-26 23:08+08:00), a regression from the S2 fix, fixed in a verify-change run seeded with it, per the decision above.
+Invalidates: nothing
