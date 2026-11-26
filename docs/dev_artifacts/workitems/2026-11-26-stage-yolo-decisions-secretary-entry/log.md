@@ -344,3 +344,66 @@ Flaky: task 1 and task 3 proofs after merge (re-run after merging task 7) — ag
 Flaky: task 1, 3 and 8 proving commands: first post-merge run produced a JUnit report with no tests (re-run after merging task 8) — post-merge run 1 (agent_sandbox/junit/task-1.xml, task-3.xml, task-8.xml): pd-proof 'no tests in the report'; run 2 (task-1.xml, task-3.xml, task-8.xml): pass, 43, 14 and 91 tests; run 3 (task-1-3.xml, task-3-3.xml, task-8-3.xml): pass
 
 ## 2026-11-26 17:57+08:00 phase implement -> verify
+
+## 2026-11-26 19:30+08:00 run verify-change — finished
+Session: c9b24375-514b-4e65-867c-d8156a1a427a  Agents: 8. Tokens: 203404. Cycles: 3. Stopped: none. Journal: ~/.claude/projects/-Users-terry-projects-pedantic-drip/c9b24375-514b-4e65-867c-d8156a1a427a/subagents/workflows/wf_4014fca4-f44/journal.jsonl
+
+## 2026-11-26 19:30+08:00 review verify — codex (fallback: no)
+Verdict: changes requested (8 blockers, 1 warning). Commit: c6b80fa0. Reviewed: 5a393377..c6b80fa0.
+- R1 blocker plugins/pd/hooks/lib/commit_target.py:368 — Command substitutions can hide subsequent destructive commands or assign them the wrong working directory.
+- R2 blocker plugins/pd/hooks/pd-yolo-guard.sh:115 — A supported gh global option bypasses the mandatory PR-merge refusal.
+- R3 blocker plugins/pd/scripts/phase-gate.sh:93 — An explicit refusal to enable YOLO authorizes conductor criteria sign-off.
+- R4 blocker plugins/pd/hooks/pd-stop-gate.sh:112 — A read-counter reset failure disables an otherwise blocking Stop decision.
+- R5 blocker plugins/pd/hooks/pd-stop-gate.sh:126 — Brainstorm and RCA goals bypass background-work yielding and the no-progress safeguard.
+- R6 blocker plugins/pd/hooks/pd-read-budget.sh:90 — The read budget does not work on first use when ~/.claude/pd/gate does not exist.
+- R7 blocker plugins/pd/scripts/pd-pr-checks:25 — --for does not bound execution because each gh subprocess has no timeout.
+- R8 blocker plugins/pd/scripts/test_stage_lint_gate.py:140 — Task 9 C4 does not assert its stated nonblocking warning outcome.
+- R9 warning docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/log.md:305 — Task 2's recorded first-run receipt points to the wrong artifact.
+
+## 2026-11-26 19:30+08:00 qa
+Commit: 8d9cb91a
+Ran: `./validate.sh` -> pass
+Ran: `bash plugins/pd/hooks/tests/test-hooks.sh` -> pass
+Ran: `bash scripts/test-release.sh` -> pass
+Ran: `bash -ec 'for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done'` -> pass
+Ran: `bash -ec 'for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done'` -> pass
+Ran: `python3 plugins/pd/scripts/pd_common.py --self-test` -> pass
+Ran: `uv run --script plugins/pd/scripts/pd-html.py --self-test` -> pass
+Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
+Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
+Criteria gaps: B52 — passing it still allows a redirect glued onto a word (Q10), and the forms shape.md:308 puts Out (a command inside $(…), backticks or bash -c). Prose-grep only (test_yolo_prose.py): B17, B18, B46, B21-B25, B51, B55; the live probes follow. Owner-run: B43, B44, B61. Not re-driven in the last pass: B45 (verify-change never compares the stage the reviewer echoes), B19 (risk_declared skips silently with no local base branch), B9.
+- Q3 warning plugins/pd/hooks/pd-read-budget.sh:101 — the ReadBudget contract runs the key check in bash, but it runs in Python, so every Read, Grep and Bash call starts python3 and git rev-parse even with no main_read_budget key (open since the QA pass at c6b80fa0).
+- Q4 note .claude/pd.local.md:18 — the qa_battery self-test loop never runs pd-pr-checks, pd-review-prompt or pd-yolo --self-test (each exits 0 by hand at 8d9cb91a).
+- Q5 note plugins/pd/scripts/phase-gate.sh:100 — the specify gate's failure message names only the user sign-off, also when a conductor sign-off fails for a missing or refused same-session YOLO confirmation.
+- Q8 warning plugins/pd/hooks/pd-stop-gate.sh:109 — finish() saves the session file unguarded before the guarded read-counter reset, so an unwritable gate directory lets a held stop through (open since the QA pass at 80dc7576).
+- Q10 blocker plugins/pd/hooks/lib/commit_target.py:358 — A redirect glued onto a word with no space bypasses the YOLO guard for every hard-stop form in B52.
+Fixed: R1 by b8b1e36c — plugins/pd/hooks/lib/test_commit_target.py::test_simple_c6b_commands_after_a_substitution_keep_their_place
+Fixed: R2 by b2f154e7 — plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_c7_destructive_commands_are_hard_stops
+Fixed: Q1 by b2f154e7 — plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_c12_unmerged_paths_block_the_commit
+Fixed: R3 by e2cadecd — plugins/pd/scripts/test_stage_lint_gate.py::test_c11b_a_refusal_to_turn_yolo_on_is_not_a_confirmation
+Fixed: R5 by 7e7af3fe — plugins/pd/hooks/tests/test_pd_stop_gate_goals.py::test_c3b_promotion_hold_yields_to_background_work_and_stops_nagging
+Fixed: R4 by f263d02a — plugins/pd/hooks/tests/test_pd_stop_gate_goals.py::test_c5b_an_unresettable_read_counter_does_not_release_the_stop
+Fixed: R6 by 865eec5a — plugins/pd/hooks/tests/test_pd_read_budget.py::test_c2b_budget_holds_when_the_gate_directory_does_not_exist_yet
+Fixed: R7 by 7e9304ec — plugins/pd/scripts/test_pd_pr_checks.py::test_c9b_a_stalled_gh_does_not_outlast_for
+Fixed: R8 by 80dc7576 — plugins/pd/scripts/test_stage_lint_gate.py::test_c4_deferred_line_warns_at_mvp
+Fixed: Q6 by 896d7098, bad7fc1f — plugins/pd/hooks/lib/test_commit_target.py::test_simple_c6c_an_escaped_character_is_data, which checks `echo \`; rm -rf build`, `echo a\`b x; git clean -fd`, `echo \; rm x`
+Fixed: Q7 by 21ca3ca5 — plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_c7_destructive_commands_are_hard_stops, with new cases `gh pr --repo owner/repo merge 3`, `gh pr -R owner/repo merge 3` and `gh pr --repo=o/r merge 3`. All three failed at 0575a43c and pass at 21ca3ca5. Full battery at bad7fc1f: pytest plugins/pd 351 passed, test-hooks.sh 22/22, every test-pd-*.sh and test-phase-gate.sh passed, and validate.sh passed.
+Fixed: Q9 by 8d9cb91a — Test commit 43431537. The new tests are test_simple_c6d_a_quoted_or_escaped_redirect_character_is_data in plugins/pd/hooks/lib/test_commit_target.py and test_c7c_a_quoted_or_escaped_redirect_character_hides_no_operand in plugins/pd/hooks/tests/test_pd_yolo_guard.py. The second one runs the six commands from the finding through pd-yolo-guard.sh. Before the fix all 7 tests failed: the guard exited 0. After the fix the two test files give 123 passed. The full battery also passes: pytest plugins/pd 358 passed, test-hooks.sh 22/22, the test-pd-*.sh loop all pass, and validate.sh passes. The fix is in plugins/pd/hooks/lib/commit_target.py at line 44, where QUOTED_PUNCT now masks `<` and `>` as well. A quoted or escaped `<` or `>` therefore stays an ordinary argument, and drop_redirects no longer drops it. Real redirects like `>out 2>&1` are still dropped, and the test checks that.
+Closes: review@2026-11-26 19:30+08:00#R1, review@2026-11-26 19:30+08:00#R2, review@2026-11-26 19:30+08:00#R3, review@2026-11-26 19:30+08:00#R5, review@2026-11-26 19:30+08:00#R4, review@2026-11-26 19:30+08:00#R6, review@2026-11-26 19:30+08:00#R7, review@2026-11-26 19:30+08:00#R8
+
+## 2026-11-26 19:30+08:00 note
+Correction to the run implement-tasks entry's task 2 runs line (review verify R9, checked: agent_sandbox/junit/task-2-first.xml holds 15 tests, 12 failed, an earlier run; task-2-first-2.xml holds 57 tests, 8 failed): the merger's first-commit JUnit for task 2 is agent_sandbox/junit/task-2-first-2.xml.
+
+## 2026-11-26 19:30+08:00 capped verify
+Deferred:
+- Q10 (blocker, open after the third fix cycle; checked: simple_commands('git reset --hard>/dev/null') returns ['git','reset','--hard>/dev/null'] at 8d9cb91a): a redirect glued onto a word (`git reset --hard>/dev/null`, `rm>/dev/null -rf x`, `gh pr merge>/dev/null 3`, `git push origin main>/dev/null`) passes the YOLO guard, against SimpleCommands' "redirections dropped" (shape.md:304). Proposed: simple_commands splits unquoted redirect operators out of each word before drop_redirects, with a test per hard-stop form of B52 glued at the command, subcommand, flag and refspec.
+- Q3, Q4, Q5, Q8 (warnings and notes): to the follow-ups below.
+Follow-ups:
+- 2026-11-26-pd-read-budget-fast-path
+- 2026-11-26-qa-battery-self-test-loop
+- 2026-11-26-phase-gate-specify-failure-message
+- 2026-11-26-pd-stop-gate-finish-saves
+- 2026-11-26-phase-gate-specify-accepts-any
+Decisions: none
+Assumptions: none
+Closes: none
