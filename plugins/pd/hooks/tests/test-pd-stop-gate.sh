@@ -90,7 +90,7 @@ now "$A" "goal: $FID target finish session S1"
 
 # --- stop_hook_active with no progress -------------------------------------------------------
 run "$(hook "$A" S1)"; expect "a first check records the state" 2 "not reached"
-run "$(hook "$A" S1 true)"; expect "stop_hook_active, nothing moved: ask continue or stop" 2 "no progress since the last check: continue or stop?"
+run "$(hook "$A" S1 true)"; expect "stop_hook_active, nothing moved: ask continue or stop" 2 "Ask the owner: Hard stop: no progress since the last check: continue or stop?"
 git -C "$A" commit -q --allow-empty -m progress
 run "$(hook "$A" S1 true)"; expect "stop_hook_active after a commit: not stuck" 2 "not reached" "no progress"
 
@@ -132,7 +132,7 @@ B="$TMP/b"; mkrepo "$B" $'workitem_token_budget: 100\n'
 FB="$B/docs/dev_artifacts/workitems/$FID"
 now "$B" "goal: $FID target finish session S3"
 usage 100 50 20 > "$TMP/t-S3.jsonl"
-run "$(hook "$B" S3)"; expect "past workitem_token_budget: ask continue or stop" 2 "budget spent: continue or stop?"
+run "$(hook "$B" S3)"; expect "past workitem_token_budget: ask continue or stop" 2 "Ask the owner: Hard stop: budget spent: continue or stop?"
 grep -qF 'workitem_token_budget=200' <<<"$ERR" && PASSED=$((PASSED + 1)) || { FAILED=$((FAILED + 1)); echo "FAIL: the raise defaults to workitem_token_budget"; }
 STATES=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | wc -l | tr -d ' ')
 STATE_B=$(ls "$HOME"/.claude/pd/gate/*/"$FID.json" | grep -v "^$STATE_A$")
@@ -150,6 +150,7 @@ printf '## Requirements\n\nB1: an empty input -> EmptyInput is raised\n' > "$FD/
 run "$(hook "$A" S1)"; expect "past the target, its exit check failing: not reached" 2 "target specify not reached"
 printf '## 2026-10-15 09:00+08:00 decision\nQ: criteria signed off?\nA (user, verbatim): "Yes."\n' >> "$FD/log.md"
 run "$(hook "$A" S1)"; expect "target reached, no blockers: clear the goal: line" 2 "reached specify with no open blockers" "not met"
+expect "the goal reached: YOLO stays on" 2 "YOLO stays on until pd-yolo off or the session ends."
 now "$A" "Done."
 run "$(hook "$A" S1)"; expect "the goal: line gone: the run ends" 0
 
