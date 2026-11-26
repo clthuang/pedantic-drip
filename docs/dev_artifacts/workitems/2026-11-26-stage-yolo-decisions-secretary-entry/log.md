@@ -228,3 +228,10 @@ Decisions: none
 Assumptions:
 - A3: Claude Code keeps moving a foreground Bash call that outlives its timeout to the background (seen 2026-11-26 in this session).
 Closes: none
+
+## 2026-11-26 15:43+08:00 decision
+Q: the Contracts review hit its cap with R13, R16 and R18 open, each reproduced with a fix ready: apply them and go to Plan, apply them and run a fourth review, or defer the PR wait?
+A (user, verbatim): "Apply fixes, go to Plan (Recommended)"
+answers: capped@2026-11-26 15:32+08:00
+
+## 2026-11-26 15:43+08:00 phase design -> create-plan

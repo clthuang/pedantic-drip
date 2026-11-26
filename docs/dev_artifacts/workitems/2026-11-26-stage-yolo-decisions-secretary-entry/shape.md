@@ -220,7 +220,7 @@ B61: `phase-gate.sh finish <dir>` on this work item -> it needs both rulings (B4
 
 ### Architecture
 
-Three new scripts and two new hooks, beside existing modules that each gain a narrow change. The conductor is the agent following the prose. Every hook reads the session's state files, and only `pd-yolo` and the hooks write them.
+Three new scripts (`pd-yolo`, `pd-review-prompt`, `pd-pr-checks`), one new reference (`stage-bars.md`) and two new hooks, beside existing modules that each gain a narrow change. The conductor is the agent following the prose. Every hook reads the session's state files, and only `pd-yolo` and the hooks write them.
 
 ```mermaid
 flowchart LR
@@ -241,6 +241,7 @@ flowchart LR
     K -->|contract: ReviewPromptCLI| RP[scripts/pd-review-prompt]
     RP -->|contract: StageBars| SB[references/stage-bars.md]
     RP -->|contract: ReviewSchema| WR[references/workflow-results.md]
+    K -->|contract: PrChecksCLI| PRC[scripts/pd-pr-checks]
     K -->|contract: VerifyArgs| VC[workflows/verify-change.js]
     VC -->|contract: ReviewSchema| WR
     K -->|contract: NewCLI| PN[scripts/pd-new]
@@ -355,15 +356,15 @@ DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-di
     and --exec take the next word when written without "=".
   gh pr merge, with any arguments
   git branch with --delete or a word matching ^-[A-Za-z]*[dD][A-Za-z]*$
-  git worktree remove whose path (joined to dir, normalized) is outside <repo top>/.claude/worktrees/
+  git worktree remove of a path (joined to dir, normalized) that `git -C <dir> worktree list --porcelain`
+    doesn't show on a pd/<id>/task-<n> branch (pc.worktrees and pc.TASK_BRANCH, pd_common.py:243-265)
   git reset with --hard
   git clean with --force or a word matching ^-[A-Za-z]*f
   rm with --recursive or a word matching ^-[A-Za-z]*[rR], and an operand (after --, or any non-option word)
-    that, joined to dir and normalized, is outside <repo top>/agent_sandbox/; with no repo every operand is outside
-<repo top> is the main checkout: the parent of `git -C <dir> rev-parse --path-format=absolute --git-common-dir`
-when that directory's basename is ".git"; otherwise (--separate-git-dir, a bare repository) the command's own
-`git -C <dir> rev-parse --show-toplevel`, which only narrows what is allowed. A fixer running in its own task
-worktree (implement-tasks.js:69-70) thus sees the main checkout's .claude/worktrees/ (Probes of parsed output).
+    that, joined to dir and normalized, is outside <top>/agent_sandbox/, where <top> is
+    `git -C <dir> rev-parse --show-toplevel`; with no repo every operand is outside
+Task worktrees are known by their branch, not their path, so a fixer running in its own task worktree
+(implement-tasks.js:69-70) may remove its predecessor in any repository layout (review M3 R16).
 ```
 
 ```text
@@ -400,6 +401,23 @@ Token-cap and no-progress messages (pd-stop-gate.sh:140, :152): "Ask the owner: 
 Goal reached (pd-stop-gate.sh:170) gains: "YOLO stays on until pd-yolo off or the session ends." (B32)
 Every exit 2 first truncates <sid>.reads (B39).
 Unchanged: token counting, the background-task yield, the work item token budget, the no-progress check.
+```
+
+```text
+modules: plugins/pd/scripts/pd-pr-checks
+contract: PrChecksCLI
+pd-pr-checks <pr> [--for <seconds>]       --for defaults to 540, so one call ends inside the Bash tool's 600 s cap
+  Polls `gh pr checks <pr> --json name,bucket` every 30 seconds until no bucket is "pending", or --for seconds pass.
+  stdout: the last poll's JSON list of {name, bucket}; nothing when the PR has no checks.
+  exit 0  every bucket is pass or skipping
+  exit 1  some bucket is fail or cancel
+  exit 3  no checks: gh exited 1 printing "no checks reported"
+  exit 8  still pending when --for ran out
+  exit 2  gh failed otherwise (no such PR, auth, network); gh's stderr passed through
+pd-pr-checks --self-test
+Called only by finishing-branch under YOLO (B55). No existing script waits on remote state; pd-status reads local
+files only. The sleeping happens inside the script, so no foreground `sleep` command and no `--watch` run that
+outlives a tool call (review M3 R18).
 ```
 
 ```text
@@ -601,11 +619,9 @@ planning
   "green-only (mvp)" at stage mvp (B48).
 finishing-branch, step 7 under YOLO (B55)
   The PR path's commands (finishing-branch/SKILL.md:30): `git push -u origin workitem/<id>`, then `gh pr create`.
-  Wait: `gh pr checks <pr> --watch --interval 30` as a Bash call with the tool's timeout at 590000 ms (stock
-    macOS has no `timeout` binary), repeated after each timeout for at most 60 minutes in all. Pending checks
-    never end a --watch run, so they show only as that timeout; an exit 8 (pending, outside --watch) counts the same. The wait ends at exit 0 (all passed), or at exit 1 with "no checks reported" (none) or
-    with failures, which `gh pr checks <pr> --json name,bucket` names (bucket "fail"). Any other exit, or
-    exit 1 with neither (no such PR, a network error), -> "Hard stop: gh failed: <its output>".
+  Wait: `pd-pr-checks <pr>` (PrChecksCLI) as a Bash call with the tool's timeout at 600000 ms, repeated while it
+    exits 8, at most 7 times (60 minutes). Exit 0 ends the wait; 3 (no checks) ends it too; 1 hands the failing
+    checks it printed to the fix cycles; 2 -> "Hard stop: gh failed: <its stderr>".
   Failing checks and PR review comments get up to 3 fix cycles, each fix with its decision record; still failing
     -> "Hard stop: checks still failing".
   "Hard stop: ready to merge?": yes -> `pd-yolo off --session ${CLAUDE_SESSION_ID}`, `gh pr merge`, then steps 8 and
@@ -673,8 +689,12 @@ init
   - **Serves:** DRY.
 - **D13: no hash of the bar paragraph** (the owner's default 7 at the cap, `decision@` after `capped@` in `log.md`). The `Stage:` line and B13's first-line check do the binding.
   - **Accepted gap:** a conductor-built prompt missing the paragraph isn't caught (Non-goals).
-- **D14: the pull-request wait is a foreground loop of `gh pr checks --watch`, each call capped by the Bash tool's own timeout.**
+- **D14: the pull-request wait is a foreground loop of `pd-pr-checks`, a script that polls and stops on its own clock.**
   - **Why foreground:** the Stop gate yields only to workflow and subagent tasks (`pd-stop-gate.sh:121-126`), so a background shell wait would have its stop held. Foreground Bash calls are capped at ten minutes.
+  - **Why a script, not `gh pr checks --watch`:** a `--watch` call outliving the tool's timeout is moved to the background, not stopped, and gh ignored a `perl` alarm (both reproduced, Probes of parsed output). A loop of such calls would start a second watcher.
+  - **Rejected stock `timeout`:** macOS ships none.
+  - **Rejected a background wait with a Stop-gate exception for shell tasks:** the gate leaves shells out on purpose (`pd-stop-gate.sh:121`).
+  - **Serves:** KISS. One call is one bounded poll loop with a closed set of exits.
   - **Probed** with gh 2.103.3, 2026-11-26:
     - **No checks:** `gh pr checks 5` prints `no checks reported on the 'feature/010-backlog-to-feature-link' branch` and exits 1.
     - **All passing:** `gh pr checks 35` exits 0.
@@ -701,7 +721,7 @@ Written as if the work item had already failed.
 | Parallel hooks lose a write. The Stop gate rewrites `<sid>.json` by load, change and replace (`pd-stop-gate.sh:33-45`, `:89-108`). | a lost read count, or YOLO flipped off | D1 and D2: a marker file and an append-only byte file. Test: 20 parallel counted calls leave a 20-byte file. |
 | Widening `ISSUE_RE` shifts the positional groups `open_blockers` reads (`pd_common.py:394-397`). | blockers misread: the wrong file, or a claim taken for the line | Named groups. Test: a blocker line and a `warning harden-later` line, parsed from one review entry. |
 | `test-workflows.mjs` finds the json blocks by position (`test-workflows.mjs:9-10`). | the drift test (B41) compares the wrong block and passes vacuously | It finds "The review call" block by its heading. Non-vacuity test: a field removed from the markdown copy only makes it fail. |
-| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Tests: a `.claude/worktrees/x` removal passes while YOLO is on, from the main checkout and from a sibling task worktree; in a `--separate-git-dir` checkout, `rm -rf <store>/agent_sandbox/x` is refused (review M2 R16). The other callers stay hard stops on purpose (`grep -noE 'git (branch -D\|worktree remove[^`]*)'` over skills/ and commands/, 2026-11-26): `implementing/SKILL.md:27` removes a kept task worktree, under `.claude/worktrees/`, so it is exempt; `implementing/SKILL.md:33` (`git branch -D` after a wrong test) and `abandon-workitem.md:12` (`git branch -D`) each delete a branch, which is the owner's call. |
+| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | a worktree on a `pd/<id>/task-<n>` branch is exempt, wherever it lives, and B55 runs `pd-yolo off` before the merge and cleanup. Tests: removing a worktree on a `pd/<id>/task-1` branch passes while YOLO is on, from the main checkout and from a sibling task worktree, while a worktree on another branch is refused; in a `--separate-git-dir` checkout, `rm -rf <store>/agent_sandbox/x` is refused (review M2 R16, M3 R16). The other callers stay hard stops on purpose (`grep -noE 'git (branch -D\|worktree remove[^`]*)'` over skills/ and commands/, 2026-11-26): `implementing/SKILL.md:27` removes a kept task worktree, on its task branch, so it is exempt; `implementing/SKILL.md:33` (`git branch -D` after a wrong test) and `abandon-workitem.md:12` (`git branch -D`) each delete a branch, which is the owner's call. |
 | `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases, and only when the phase is the README's own (GateCLI). Tests: a work item written before this change, with no `Stage:` lines, passes `design`; a work item at implement whose design review applied production, after a move to mvp, passes `pd-lint` (B18, review M1 R1); a stage changed at finish fails the finish gate until a review applies it (review M2 R17). |
 | B29 now applies everywhere, and print mode already writes `A (conductor, on the user's behalf)` decisions (`workflow-transitions/SKILL.md:49`). | an old item's entries fail pd-lint in another repo | The census of 20 pd repos on 2026-11-26 found no such entry. The print-mode line gains the record lines in the same change. |
 
@@ -719,6 +739,7 @@ Notes:
   - **`plugins/pd/hooks/lib/test_commit_target.py`:** existing; gains the `simple_commands` cases.
   - **`plugins/pd/scripts/test_stage.py`:** pd-new, pd-lint, pd-status, phase-gate.sh and pd-review-prompt.
   - **`plugins/pd/scripts/test_pd_yolo.py`:** YoloCLI.
+  - **`plugins/pd/scripts/test_pd_pr_checks.py`:** PrChecksCLI, with `--for` set to a few seconds.
   - **`plugins/pd/scripts/test_yolo_prose.py`:** ConductorProse. Each prose surface is read, and its required lines are checked.
   - **`plugins/pd/workflows/tests/test_workflows_node.py`:** one case running `node plugins/pd/workflows/tests/test-workflows.mjs`, which gains the VerifyArgs and ReviewSchema cases.
 - **Fixtures live in:**
@@ -731,6 +752,7 @@ Notes:
   - **The reviewer, QA and fixer agents:** canned replies stand in for them (`test-workflows.mjs:86-90`).
   - **What the stubs can prove:** the arg checks (B13), which throw before any recorded `agent` call, and the result's `stage` (B14).
   - **What needs a real reviewer:** whether it echoes the stage (B45's reviewer half), left to the live probes.
+  - **GitHub:** for `test_pd_pr_checks.py`, a `gh` script first on PATH replays each probed output (pass, fail, pending, no checks, no such PR) and the pending-then-pass sequence.
   - **Everything else is real:** git, node and python, in temporary repos, against a temporary HOME.
 - **Real resources tests may touch:**
   - **Temporary repos:** git, and the scripts and hooks run as subprocesses inside them.
@@ -765,21 +787,22 @@ Each output a contract parses, the variants probed, and what came back. Git 2.54
 | `git symbolic-ref -q HEAD` | detached HEAD | empty, exit 1 (read as "not on the base branch") | YoloGuard |
 | `git symbolic-ref -q refs/remotes/origin/HEAD` | no remote | empty, exit 1 (`base_branch` falls back to `main`) | CommonHelpers |
 | `git symbolic-ref -q refs/remotes/origin/HEAD` | a clone | `refs/remotes/origin/main` | CommonHelpers |
-| `git rev-parse --show-toplevel` | inside `.claude/worktrees/w1` | the worktree's own path (why R2 broke) | not used |
-| `git rev-parse --path-format=absolute --git-common-dir` | inside `.claude/worktrees/w1` | the main checkout's `.git` | YoloGuard (repo top) |
+| `git rev-parse --show-toplevel` | inside `.claude/worktrees/w1` | the worktree's own path | YoloGuard (`rm` operands) |
+| `git rev-parse --path-format=absolute --git-common-dir` | inside `.claude/worktrees/w1` | the main checkout's `.git` | not used (review M3 R16) |
 | `git diff -U0` headers | a path with a space | `+++ b/sp ace.txt`, unquoted | CommonHelpers `risk_signals` |
 | `git diff -U0` headers | a non-ASCII path | `+++ "b/caf\303\251.txt"`, quoted, so it is skipped, as `pd-lint:627-628` skips it today | CommonHelpers `risk_signals` |
-| `gh pr checks <pr>` | no checks (PR #5) | `no checks reported on the 'feature/010-backlog-to-feature-link' branch`, exit 1 | finishing-branch (B55) |
-| `gh pr checks <pr>` | all passing (PR #35) | exit 0; `--json name,bucket` gives `[{"bucket":"pass","name":"validate"},{"bucket":"pass","name":"review"}]` | finishing-branch (B55) |
-| `gh pr checks <pr> --watch` | already settled (PR #35) | exit 0 | finishing-branch (B55) |
-| `gh pr checks <pr>` | no such PR (99999) | exit 1, no "no checks" line: "Hard stop: gh failed" | finishing-branch (B55) |
-| `gh pr checks <pr>` | one failing check (cli/cli PR 14927, public) | exit 1; `--json name,bucket` buckets fail=1, pass=11, skipping=8 | finishing-branch (B55) |
-| `gh pr checks <pr> --watch` | settled with a failure (cli/cli PR 14927) | exit 1 | finishing-branch (B55) |
-| `gh pr checks <pr>` | pending | no pending PR found in cli/cli or microsoft/vscode; `gh pr checks --help` documents "8: Checks pending". Under `--watch` pending never ends the run, so the loop sees only its timeout | finishing-branch (B55) |
+| `gh pr checks <pr>` | no checks (PR #5) | `no checks reported on the 'feature/010-backlog-to-feature-link' branch`, exit 1 | PrChecksCLI (B55) |
+| `gh pr checks <pr>` | all passing (PR #35) | exit 0; `--json name,bucket` gives `[{"bucket":"pass","name":"validate"},{"bucket":"pass","name":"review"}]` | PrChecksCLI (B55) |
+| `gh pr checks <pr> --watch` | already settled (PR #35) | exit 0 | PrChecksCLI (B55) |
+| `gh pr checks <pr>` | no such PR (99999) | exit 1, no "no checks" line: "Hard stop: gh failed" | PrChecksCLI (B55) |
+| `gh pr checks <pr>` | one failing check (cli/cli PR 14927, public) | exit 1; `--json name,bucket` buckets fail=1, pass=11, skipping=8 | PrChecksCLI (B55) |
+| `gh pr checks <pr> --watch` | settled with a failure (cli/cli PR 14927) | exit 1 | PrChecksCLI (B55) |
+| `gh pr checks <pr>` | 9 pending checks (ductura/Institution_server PR 826, public, found by `gh search prs --checks pending`) | exit 8; `--json name,bucket` gives pending=9 | PrChecksCLI (B55) |
+| `gh pr checks <pr> --watch` under the Bash tool's 120 s timeout, inside `perl -e 'alarm 15; exec @ARGV'` | the same pending PR | Claude Code moved it to the background at 120 s ("moved to the background"); the alarm didn't stop gh. Hence PrChecksCLI (review M3 R18) | not used |
 | `git symbolic-ref -q HEAD` | a tag named like the branch (`main`) | `refs/heads/main`: a full ref, unaffected | YoloGuard |
 | `git symbolic-ref -q HEAD` | a `/` in the name (`feature/x`) | `refs/heads/feature/x`; dropping `refs/heads/` gives `feature/x` | YoloGuard |
 | `git symbolic-ref -q HEAD` | a chain, HEAD -> alias -> main | `refs/heads/main` (it follows the chain; `--no-recurse` gives `refs/heads/alias`). A push reaching main through an alias counts as a push to main, so the guard reads the followed form | YoloGuard |
-| `git rev-parse --path-format=absolute --git-common-dir` | `git init --separate-git-dir=<store>/store.git` | `<store>/store.git`, whose parent isn't the checkout (`git worktree list --porcelain` names `store.git` too), so the guard falls back to the command's own toplevel | YoloGuard (repo top) |
+| `git rev-parse --path-format=absolute --git-common-dir` | `git init --separate-git-dir=<store>/store.git` | `<store>/store.git`, whose parent isn't the checkout, and `git worktree list --porcelain` names `store.git` as the main record; linked records still carry their path and branch | YoloGuard reads only the linked records' branches |
 
 ### Rename surfaces: suggestion to note
 
@@ -825,7 +848,7 @@ B42 renames a severity value, so its surfaces come from `grep -rnE 'suggestion' 
 | B49 | GateCLI, LogEntries | script, `test_stage.py` |
 | B50 | ConductorProse (pd-init, init.md) | script (pd-init) and prose |
 | B52-B54 | YoloGuard, SimpleCommands | hook, `test_pd_yolo_guard.py`, `test_commit_target.py` |
-| B55 | ConductorProse (finishing-branch) | prose and live probe |
+| B55 | ConductorProse (finishing-branch), PrChecksCLI | script, `test_pd_pr_checks.py` (a fake `gh` on PATH); prose and live probe |
 | B61 | GateCLI (finish's probe rulings), LogEntries | script, `test_stage.py`; this work item's own finish |
 
 B42 edits wording in six files and touches no interface, so it has no contract block.

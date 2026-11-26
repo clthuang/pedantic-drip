@@ -3,7 +3,7 @@ id: 2026-11-26-stage-yolo-decisions-secretary-entry
 type: workitem
 title: Stage, YOLO decisions, secretary entry point, main-session read budget
 status: active
-phase: design
+phase: create-plan
 mode: standard
 branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ---
@@ -13,7 +13,7 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 
 ## Now
 
-Next: `/pd:design --workitem=2026-11-26-stage-yolo-decisions-secretary-entry`. Contracts must answer the mechanism rows deferred at the specify cap (listed in shape.md `## Design`) and probe assumption A1.
+Next: `/pd:create-plan --workitem=2026-11-26-stage-yolo-decisions-secretary-entry`. The plan covers 19 contract blocks; its review re-reads the three contracts changed at the design cap (YoloGuard's worktree and rm rules, PrChecksCLI, the probes table).
 
 ## Links
 
