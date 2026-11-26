@@ -36,3 +36,15 @@ A (user, verbatim): "Option C (Recommended)"
 ## 2026-11-26 13:24+08:00 decision
 Q: fix the two existing sync problems (workflow-results.md restating pinned schemas; suggestion vs note in three reviewer agents) in this work item?
 A (user, verbatim): "Include both (Recommended)"
+
+## 2026-11-26 13:30+08:00 decision
+Q: is this the right problem? "pd costs too many tokens and over-builds early work: the main session reads raw text itself, every phase stops for you, and every review applies a production-grade bar whatever the work's maturity."
+A (user, verbatim): "Yes, that's it (Recommended)"
+
+## 2026-11-26 13:30+08:00 decision
+Q: which of these mean success: YOLO runs unattended, MVP is visibly lighter, main session stays lean, decisions are auditable?
+A (user, verbatim): "YOLO runs unattended, MVP is visibly lighter, Main session stays lean, Decisions are auditable"
+
+## 2026-11-26 13:33+08:00 decision
+Q: in YOLO, which user-owned questions (criteria sign-off, calvin's intent questions) still reach the user?
+A (user, verbatim): "if YOLO is on, confirm with the user wants it on and after confirmation, YOLO takes priority. Agents can make key decisions on users' behalf with the decision logs that we newly defined"
