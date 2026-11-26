@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+"""pd-yolo: stub."""
+raise NotImplementedError("pd-yolo")
