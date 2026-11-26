@@ -3,6 +3,7 @@
 
   pd-new <workitem|plan|brainstorm|rca> "<title>" [--from <path under the artifacts root | backlog#<id>>]
          [--mode standard|small|express]                       (--mode: work items only)
+         [--stage mvp|production]                              (--stage: work items only; default: config stage)
   pd-new workitem --plan <plan id or path> <slug> "<title>"     (fills that roadmap's `planned: <slug>`)
   pd-new backlog "<title>" [--from workitems/<id>]
   pd-new --self-test
@@ -20,7 +21,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pd_common import (BRANCH_PREFIX, ID_RE, TYPE_DIRS, WORKITEM, Checks, artifacts_dir, load_config,  # noqa: E402
+from pd_common import (BRANCH_PREFIX, ID_RE, STAGES, TYPE_DIRS, WORKITEM, Checks, artifacts_dir, load_config,  # noqa: E402
                        make_repo, repo_root, slugify, split_frontmatter)
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
@@ -122,13 +123,18 @@ def add_backlog(art, title, origin):
     return path
 
 
-def create(root, item_type, title, origin=None, mode=None, plan_slug=None):
+def create(root, item_type, title, origin=None, mode=None, plan_slug=None, stage=None):
     cfg = load_config(root)
     art = artifacts_dir(root, cfg)
+    if stage and item_type != WORKITEM:
+        raise Refused("--stage applies to work items only")
     if item_type == "backlog":
         return add_backlog(art, title, origin)
     if mode and item_type != WORKITEM:
         raise Refused("--mode applies to work items only")
+    stage = stage or cfg["stage"]
+    if item_type == WORKITEM and stage not in STAGES:
+        raise Refused(f"config stage: {stage}; allowed: {', '.join(STAGES)}")
     if item_type == WORKITEM and len(title) > TITLE_MAX:
         raise Refused(f"title is {len(title)} characters (at most {TITLE_MAX}): pass a short name, "
                       "and keep the full request as log.md's first note entry")
@@ -156,7 +162,8 @@ def create(root, item_type, title, origin=None, mode=None, plan_slug=None):
     mode = mode or "standard"
     values = {"id": item_id, "type": item_type, "title": title, "status": "active",
               "phase": ("implement" if mode == "express" else "specify") if workitem else "",
-              "mode": mode if workitem else "", "branch": f"{BRANCH_PREFIX}{item_id}" if workitem else "",
+              "mode": mode if workitem else "", "stage": stage if workitem else "",
+              "branch": f"{BRANCH_PREFIX}{item_id}" if workitem else "",
               "origin": origin or "", "risk": "", "issue": issue,
               "now": "Created by pd-new." + (f" {note}" if note else "")}
     readme = render((TEMPLATES / "README.md").read_text(), values, single_file=not workitem)
@@ -182,13 +189,14 @@ def main(argv):
     ap.add_argument("title")
     ap.add_argument("--from", dest="origin")
     ap.add_argument("--mode", choices=("standard", "small", "express"))
+    ap.add_argument("--stage", choices=STAGES)
     ap.add_argument("--plan", nargs=2, metavar=("PLAN", "SLUG"))
     a = ap.parse_args(argv)
     if a.plan and a.type != WORKITEM:
         ap.error("--plan applies to work items only")
     root = repo_root()
     try:
-        path = create(root, a.type, a.title, a.origin, a.mode, a.plan)
+        path = create(root, a.type, a.title, a.origin, a.mode, a.plan, a.stage)
     except Refused as e:
         print(f"pd-new: refused: {e}", file=sys.stderr)
         return 1
