@@ -1,3 +1,84 @@
 #!/usr/bin/env python3
-"""pd-pr-checks: stub."""
-raise NotImplementedError("pd-pr-checks")
+"""pd-pr-checks: wait for a pull request's checks to settle.
+
+  pd-pr-checks <pr> [--for <seconds>]   poll `gh pr checks <pr> --json name,bucket` every 30 s (--for defaults to 540)
+  pd-pr-checks --self-test
+stdout: the last poll's JSON list. Exit 0 all pass or skipping; 1 some fail or cancel; 3 no checks;
+8 still pending when --for ran out; 2 gh failed otherwise (its stderr passed through).
+"""
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import Checks  # noqa: E402
+
+POLL_SECONDS = 30
+DEFAULT_WINDOW_SECONDS = 540
+
+
+def poll(pr):
+    """(exit code, or None while pending; the poll's stdout)."""
+    r = subprocess.run(["gh", "pr", "checks", pr, "--json", "name,bucket"], capture_output=True, text=True)
+    try:
+        buckets = [item["bucket"] for item in json.loads(r.stdout)]
+    except (ValueError, TypeError, KeyError):
+        if r.returncode == 1 and "no checks reported" in r.stderr:
+            return 3, ""
+        sys.stderr.write(r.stderr)
+        return 2, ""
+    # gh's own exit code is unreliable under --json (a failure exits 0), so the buckets decide.
+    if "pending" in buckets:
+        return None, r.stdout
+    return (1 if {"fail", "cancel"} & set(buckets) else 0), r.stdout
+
+
+def wait(pr, window, sleep=time.sleep, now=time.monotonic):
+    deadline = now() + window
+    while True:
+        code, out = poll(pr)
+        if code is not None:
+            return code, out
+        remaining = deadline - now()
+        if remaining <= 0:
+            return 8, out
+        sleep(min(POLL_SECONDS, remaining))
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="pd-pr-checks")
+    ap.add_argument("pr", nargs="?")
+    ap.add_argument("--for", dest="window", type=int, default=DEFAULT_WINDOW_SECONDS)
+    ap.add_argument("--self-test", action="store_true")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    if a.pr is None:
+        ap.error("a pull request is required")
+    code, out = wait(a.pr, a.window)
+    sys.stdout.write(out)
+    return code
+
+
+def self_test():
+    c = Checks("pd-pr-checks")
+    global poll
+    real_poll = poll
+    replies = iter([(None, "p"), (0, "ok")])
+    slept = []
+    try:
+        poll = lambda pr: next(replies)  # noqa: E731
+        c.check(wait("1", 40, sleep=slept.append) == (0, "ok") and slept == [30], "pending then pass")
+        poll = lambda pr: (None, "p")  # noqa: E731
+        clock = iter(range(0, 1000, 5))
+        c.check(wait("1", 12, sleep=lambda s: None, now=lambda: next(clock))[0] == 8, "still pending exits 8")
+    finally:
+        poll = real_poll
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
