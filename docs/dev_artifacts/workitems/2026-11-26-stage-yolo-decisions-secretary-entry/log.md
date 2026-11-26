@@ -288,3 +288,7 @@ Verdict: approved (scoped: N1 and N2 resolved, no new finding). Commit: 5ae4bdc3
 Closes: review@2026-11-26 16:30+08:00#N1, review@2026-11-26 16:30+08:00#N2
 
 ## 2026-11-26 16:35+08:00 phase create-plan -> implement
+
+## 2026-11-26 16:39+08:00 decision
+Q: run the work item to finish as a goal run, stage by stage, or stop here?
+A (user, verbatim): "Yes, goal run to finish (Recommended)"
