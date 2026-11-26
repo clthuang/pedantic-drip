@@ -105,6 +105,18 @@ def test_c3_brainstorm_or_rca_goal_holds_the_stop(repo, run_hook, kind, title):
     assert run_hook(GATE, payload(repo)) == (0, "")
 
 
+@pytest.mark.parametrize("kind,title", [("brainstorm", "Better onboarding"), ("rca", "Crash on empty input")])
+def test_c3b_promotion_hold_yields_to_background_work_and_stops_nagging(repo, run_hook, kind, title):
+    item_id, path = single_file_item(repo, kind, title)
+    set_field(path, "status", "active")
+    set_now(path, f"goal: {item_id} target finish session {SESSION}")
+    running = [{"type": "subagent", "status": "running"}]
+    assert run_hook(GATE, payload(repo, background_tasks=running)) == (0, "")
+    assert run_hook(GATE, payload(repo))[0] == 2  # first hold
+    code, err = run_hook(GATE, payload(repo, stop_hook_active=True))  # nothing moved since
+    assert code == 2 and "no progress" in err
+
+
 def test_c4_promoted_brainstorm_defers_to_its_work_item(repo, run_hook):
     item_id, path = single_file_item(repo, "brainstorm", "Better onboarding")
     set_field(path, "status", "done")
