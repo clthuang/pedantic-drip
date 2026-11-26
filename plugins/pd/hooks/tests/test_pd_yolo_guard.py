@@ -301,3 +301,36 @@ def test_s2_a_push_after_a_switch_to_a_feature_branch_passes(run_hook, yolo, tmp
 def test_s3_removals_with_no_visible_operand_are_refused(run_hook, yolo, tmp_path, command):
     code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
     assert code == 2 and "Hard stop:" in err
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout main && git pull && git merge --no-ff workitem/x && git push",
+    "git checkout main && git push",
+    "git checkout main && git push origin HEAD",
+])
+def test_q1_a_checkout_of_a_base_branch_that_exists_only_on_the_remote_counts_as_a_switch(run_hook, yolo, tmp_path, command):
+    repo = make_repo(tmp_path / "repo")
+    git(tmp_path, "clone", "-q", "--bare", str(repo), str(tmp_path / "origin.git"))
+    git(tmp_path / "origin.git", "symbolic-ref", "HEAD", "refs/heads/main")  # so origin/HEAD, and the base branch, is main
+    git(repo, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    git(repo, "fetch", "-q", "origin")
+    git(repo, "branch", "-D", "main")
+    code, err = run_hook(HOOK, bash_call(command, repo))
+    assert code == 2 and "Hard stop:" in err and "check failed" not in err
+
+
+@pytest.mark.parametrize("command", [
+    "find . -name build | xargs rm -rf agent_sandbox/tmp",
+    "find . -name build | xargs rm -rf agent_sandbox/tmp --",
+])
+def test_q2_a_recursive_rm_fed_by_xargs_is_refused_even_with_an_operand_in_the_sandbox(run_hook, yolo, tmp_path, command):
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
+    assert code == 2 and "Hard stop:" in err and "check failed" not in err
+
+
+def test_q2_a_worktree_remove_fed_by_xargs_is_refused_even_with_a_task_worktree_operand(run_hook, yolo, tmp_path):
+    main = make_repo(tmp_path / "main", branch="main")
+    task1 = tmp_path / "w1"
+    git(main, "worktree", "add", "-q", "-b", "pd/2026-11-26-x/task-1", str(task1))
+    code, err = run_hook(HOOK, bash_call(f"git worktree list | xargs git worktree remove {task1}", main))
+    assert code == 2 and "Hard stop:" in err and "check failed" not in err
