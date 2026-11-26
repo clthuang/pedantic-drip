@@ -90,7 +90,8 @@ def signed_off():
         if e["kind"] != "decision":
             continue
         answered_by_user = any(l.startswith("A (user, verbatim):") for l in e["body"])
-        if answered_by_user and any(l.strip().lower() == "q: hard stop: turn yolo on for this session?" for l in e["body"]):
+        said_yes = any(l.startswith("A (user, verbatim):") and l.split(":", 1)[1].strip().strip("\"'“”").lower().startswith("yes") for l in e["body"])
+        if said_yes and any(l.strip().lower() == "q: hard stop: turn yolo on for this session?" for l in e["body"]):
             confirmed.add(session_of(e))
         if any(l.strip().lower() == "q: criteria signed off?" for l in e["body"]) and (
                 answered_by_user or (any(l.startswith("A (conductor, on the user's behalf):") for l in e["body"])
