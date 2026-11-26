@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/pd:secretary` is the single entry point again.** After it creates a work item it offers a goal run to finish, so the `Stop` gate carries the work through every stage. `--stage mvp|production` and `--yolo` pass through to the item.
+- **Stage: mvp or production.** A `stage:` config key (asked by `/pd:init`, default `production`) and a work item's `stage:` frontmatter, set with `pd-new --stage` or `/pd:secretary --stage`. At mvp only `risk: security` and `risk: migration` force standard depth, and reviewers block only on a failing expectation, lost or exposed data, or a security hole; everything else becomes a harden-later warning that lands on the backlog before finish. Moving an item from mvp to production past Criteria sends it back to Criteria; a done item's stage can't change.
+- **YOLO mode.** `/pd:secretary --yolo` asks once, as a "Hard stop:" question, then the session decides for you: each decision is a `decision` entry with `Session:`, `Stage:`, `Pros/cons:`, `Trade-off:`, `Implications:` and `Premortem:`. A new `pd-yolo-guard` hook refuses any other question and the destructive commands (`gh pr merge`, a push to the base branch, force pushes, branch and foreign worktree deletes, `rm -r` outside `agent_sandbox/`, `reset --hard`, `clean`). `pd-yolo on|off|status` sets it per session. Under YOLO, finish opens the PR, waits with the new `pd-pr-checks`, answers check failures and review comments, and asks you before the merge.
+- **A main-session read budget.** With `main_read_budget` set, the new `pd-read-budget` hook refuses the main session's read calls past the budget in one turn and points at `pd:codebase-explorer`, so research runs in cheaper agents; subagents are never limited.
+
+### Changed
+
+- **Reviewers name the stage they applied.** `pd-review-prompt` builds the review prompt with its `Stage:` line and the stage's bar, the review schema gains `stage`, and `verify-change` takes the stage. The reviewer agents' third severity is `note`, in place of `suggestion`.
+- **The `Stop` gate holds brainstorm and RCA goals** until they are promoted, and the gate resets the read budget's counter each turn.
+
 ## [8.0.4] - 2026-11-15
 
 ### Changed
