@@ -610,6 +610,15 @@ def test_simple_c6_not_recursed(simple_commands, tmp_path):
     assert not any(w[0] == "cat" for w, _ in simple_commands("echo $(cat f)", d))
 
 
+def test_simple_c6b_commands_after_a_substitution_keep_their_place(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert ["git", "reset", "--hard", "HEAD"] in [w for w, _ in simple_commands("echo $(date); git reset --hard HEAD", d)]
+    found = simple_commands("echo `printf x; cd agent_sandbox; printf x`; rm -rf build", d)
+    assert [(w, c) for w, c in found if w[0] == "rm"] == [(["rm", "-rf", "build"], d)]
+    assert not any(w[0] == "printf" for w, _ in found)
+    assert ["rm", "x"] in [w for w, _ in simple_commands("echo '`' ; rm x", d)]
+
+
 def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
     d = str(tmp_path)
     assert [w for w, _ in simple_commands("cat <<EOF\nrm -rf /\nEOF", d)] == [["cat"]]
