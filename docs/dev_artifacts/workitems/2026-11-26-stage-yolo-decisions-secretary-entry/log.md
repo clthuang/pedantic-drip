@@ -248,3 +248,31 @@ A (user, verbatim): "Headless where possible"
 ## 2026-11-26 15:55+08:00 decision-2
 Q: the diff will match pd's security risk pattern, and the hooks are safety controls: tag risk: security, or record Risk: none (security)?
 A (user, verbatim): "Tag risk: security (Recommended)"
+
+## 2026-11-26 16:23+08:00 review P1 — codex (fallback: no)
+Verdict: changes requested (13 blockers). Commit: 6e7f7348. Every claim checked at file:line before fixing (validate.sh:738 runs check-doc-drift.sh; pd-lint:549-552 resolves the item from the branch; finishing-branch/SKILL.md:20 runs the finish gate at step 4).
+- R1 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:272 — Task 11 can't pass validate.sh at the Wave 3 base: check-doc-drift.sh:58-61 rejects the unregistered wave-2 hooks, registered only by Task 12 in the same parallel wave.
+- R2 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:73 — Task 1's waiver case is vacuous: HEAD~1..HEAD after the waiver commit no longer holds the api.py change, and pd_repo leaves main checked out, so branch_workitem finds no item.
+- R3 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:255 — no case proves the YOLO path starts the goal run, or that --yolo on an existing item writes the new session's goal line (B51).
+- R4 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:265 — no case covers B55's review-comment handling, with passing checks, or the hard stop when comments remain.
+- R5 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:147 — B54's rebase --continue and cherry-pick --continue, and the guard reading the selected repo's index (--git-dir, --work-tree), are unproved.
+- R6 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:148 — B40's crash and unreadable-state paths are never injected.
+- R7 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:213 — the stage check at finish, and a newer unstaged review after a mismatching staged one, are untested.
+- R8 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:159 — the read budget's agent_type-without-agent_id, a non-default artifacts_root and the full READ_WORDS list are unproved.
+- R9 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:210 — B29's case never removes Session: or Stage:, so a checker requiring four labels passes.
+- R10 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:219 — B49's case holds one issue, not several across entries with suffixed references.
+- R11 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:235 — no case asserts the mvp paragraph's blocker rule itself.
+- R12 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:237 — B45's reviewer half has neither a test nor a probe in plan.md.
+- R13 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/plan.md:268 — the harden-later backlog line was placed before step 6, after step 4's finish gate that requires it.
+
+## 2026-11-26 16:23+08:00 review-2 P1 — calvin-runner (fallback: no)
+Verdict: changes requested (6 blocker, 24 warning, 35 note). Commit: 6e7f7348. Ledger: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-plan-cycle-1.md. Each row answered by the conductor (wording, consistency or mechanism; no row asked for the owner's intent).
+- Q8 blocker — conductor: the suite rule is now the grep that finds suites naming an edited file (run 2026-11-26); each task's last case lists its suites; Tasks 1, 4, 7, 8, 9 and 12 gained the missing ones.
+- Q25 blocker — conductor: same as review P1 R2; the case uses main..HEAD on the work item's branch.
+- Q31 blocker — conductor: no new interface; C9 relies on the sleep never running past --for (PrChecksCLI), and C11 waits about 30 seconds.
+- Q55 blocker — conductor: the copied block is the lines between the json fences, fences left out.
+- Q58 blocker — conductor: secretary.md starts the goal run per workflow-transitions' "Goal runs", whose ${CLAUDE_SESSION_ID} writes the line; ConductorProse says so.
+- Q59 blocker — conductor: create-workitem.md joins Task 11 for its argument-hint; $ARGUMENTS already reaches pd-new (create-workitem.md:10).
+- Q3, Q4, Q5, Q7, Q9, Q12, Q14, Q17, Q19, Q22, Q23, Q34, Q35, Q38, Q43, Q46, Q49, Q51, Q61, Q62, Q63 warning — conductor: answered in plan.md's shared terms, probes or the named cases (README stage line written by the case, run_hook env, stderr scope, pending exit, case independence, "fails until", the installed plugin disabled for probes, B45 and B55 evidence, the guard's stderr labels, B54's commands, goal line text, the 13 files named, finish's stage check, B55's comments and wait loop).
+- Q26, Q33, Q57 warning — conductor: checked, no change: WRAPPERS gives sudo's -u an argument (commit_target.py:26); every fix-text field reads "suggestion": "How to fix it"; test-workflows.mjs names each check it runs.
+- Notes (35) — read; none changes what an executor builds.

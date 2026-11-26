@@ -579,7 +579,8 @@ stage differs from the config's stage (default production) shows "<stage>*", and
 ```
 
 ```text
-modules: plugins/pd/commands/secretary.md, plugins/pd/commands/init.md, plugins/pd/scripts/pd-init,
+modules: plugins/pd/commands/secretary.md, plugins/pd/commands/init.md, plugins/pd/commands/create-workitem.md,
+         plugins/pd/scripts/pd-init,
          plugins/pd/skills/{workflow-transitions,specifying,planning,verifying,finishing-branch}/SKILL.md,
          plugins/pd/references/review-call.md
 contract: ConductorProse
@@ -589,7 +590,11 @@ secretary.md
   Stage mvp (config or --stage): the two risk tags are the only standard-depth triggers, and the
   phase triage entry cites "stage: mvp" (B23). --stage passes through to create-workitem (B59).
   After the work item exists: without YOLO, one AskUserQuestion offers a goal run to finish (B21, B22); with
-  YOLO, the goal line is written without asking. Either way it is committed before Criteria starts.
+  YOLO, the goal run starts without asking. Either way it starts per workflow-transitions' "Goal runs", whose
+  ${CLAUDE_SESSION_ID} writes the goal line (D3), committed before Criteria starts. On an existing item,
+  --yolo writes the new session's goal line in place of the old session's (B51).
+create-workitem.md
+  argument-hint gains [--stage mvp|production]; the existing $ARGUMENTS carries it to pd-new (create-workitem.md:10).
 workflow-transitions, a new "YOLO" section
   Confirm: an AskUserQuestion "Hard stop: turn YOLO on for this session?". On yes, run
     `pd-yolo on --session ${CLAUDE_SESSION_ID}`, then `pd-yolo status --session ${CLAUDE_SESSION_ID}`, which must print "on" (B24, B25).
@@ -622,12 +627,15 @@ finishing-branch, step 7 under YOLO (B55)
   Wait: `pd-pr-checks <pr>` (PrChecksCLI) as a Bash call with the tool's timeout at 600000 ms, repeated while it
     exits 8, at most 7 times (60 minutes). Exit 0 ends the wait; 3 (no checks) ends it too; 1 hands the failing
     checks it printed to the fix cycles; 2 -> "Hard stop: gh failed: <its stderr>".
-  Failing checks and PR review comments get up to 3 fix cycles, each fix with its decision record; still failing
-    -> "Hard stop: checks still failing".
-  "Hard stop: ready to merge?": yes -> `pd-yolo off --session ${CLAUDE_SESSION_ID}`, `gh pr merge`, then steps 8 and
+  After each wait the review comments are read with `gh pr view <pr> --comments` and
+    `gh api repos/{owner}/{repo}/pulls/<pr>/comments`.
+  Failing checks and actionable review comments get up to 3 fix cycles, each fix with its decision record; each
+    cycle pushes, then waits again. Still failing or commented after the third -> "Hard stop: checks still failing".
+  "Hard stop: ready to merge?", once the checks have settled with no failure and no open comment: yes -> `pd-yolo off --session ${CLAUDE_SESSION_ID}`, `gh pr merge`, then steps 8 and
     9 as today; no -> clear the goal line, the same pd-yolo off; the PR stays open.
   No remote or no gh -> "Hard stop: branch ready; no remote to open a pull request on".
-  Before step 6, a stage-mvp item's harden-later issues get their backlog line (B49).
+  Before the first phase-gate.sh finish call (step 4), a stage-mvp item's harden-later issues get their
+    backlog line (B49), since that gate fails without it.
 init
   pd-init writes "stage: production" (B50). /pd:init asks mvp or production, then sets the key.
 ```
@@ -752,7 +760,7 @@ Notes:
   - **`plugins/pd/scripts/conftest.py`:** its existing `pd_repo`.
   - **A new `plugins/pd/hooks/conftest.py`,** above both `hooks/lib/` and `hooks/tests/`:
     - **`gate_home`:** a `tmp_path` HOME holding `.claude/pd/gate/`.
-    - **`run_hook(script, payload)`:** pipes HookInput JSON into the hook with `HOME` and `CLAUDE_PLUGIN_ROOT` set, and returns the exit code and stderr.
+    - **`run_hook(script, payload, env=None)`:** pipes HookInput JSON into the hook with `HOME` and `CLAUDE_PLUGIN_ROOT` set, plus any `env` entries, and returns the exit code and stderr.
 - **Fakes:**
   - **The Workflow runtime:** `test-workflows.mjs` stubs `agent`, `parallel`, `pipeline`, `budget`, `log` and `phase` (`test-workflows.mjs:26-36`).
   - **The reviewer, QA and fixer agents:** canned replies stand in for them (`test-workflows.mjs:86-90`).
@@ -774,10 +782,11 @@ Notes:
   - **DECISION_RECORD's labels match everywhere:** `test_yolo_prose.py` checks that the labels in `log-entries.md`, workflow-transitions' YOLO section and the guard's stderr all match `pc.DECISION_RECORD`.
   - **The new hooks are registered and documented:** `hooks.json` registers both, and `bash scripts/check-doc-drift.sh` checks the `README_FOR_DEV.md` hooks table against `hooks.json` (`README_FOR_DEV.md:213`).
   - **Plugin components are valid:** `./validate.sh` passes.
-- **Live probes at Verify, headless where possible** (the owner's ruling, `decision@2026-11-26 15:55+08:00`). Each run is `claude -p --plugin-dir plugins/pd --session-id <a fresh uuid> --output-format stream-json --verbose` in a scratch repo `pd-init`ed under `agent_sandbox/<date>/<id>/probe-repo`, so the branch's plugin runs and the installed release doesn't.
+- **Live probes at Verify, headless where possible** (the owner's ruling, `decision@2026-11-26 15:55+08:00`). Each run is `claude -p --plugin-dir <repo root>/plugins/pd --settings <a file disabling the installed pd plugin> --session-id <a fresh uuid> --output-format stream-json --verbose` in a scratch repo `pd-init`ed under `agent_sandbox/<date>/<id>/probe-repo`, so the branch's plugin runs and the installed release doesn't.
   - **Headless:** B17, B18 and B46 (stage-change requests on prepared items); B23 and B59 (`/pd:secretary --stage mvp`); a refused AskUserQuestion reaching the model as a refusal (B26, with the marker made for the run's `--session-id`); and whether a workflow's agents carry `agent_id` (a one-agent Workflow run under a PreToolUse hook, passed with `--settings`, that logs each call's `agent_id`).
   - **Notes for the owner to try later:** `claude -p` answers no AskUserQuestion and takes no `!` command (code.claude.com/docs/en/hooks#tools-that-require-user-interaction). So A1 (`! git branch -d <a throwaway branch>` with YOLO on), B21, B22, B24, B25, B51's re-confirmation, and whether a refused question stays hidden from the owner each go into a `note` entry with the steps to run them.
-  - **B55** runs on this work item's own pull request, at its finish, in the owner's session.
+  - **B45's reviewer half,** in the conductor's session at Verify: `pd-review-prompt verifying <an mvp scratch item>` goes to the Codex reviewer and to `pd:code-quality-reviewer`, and each reply's `stage` must be `mvp`.
+  - **B55** runs on this work item's own pull request, at its finish, in the owner's session, under YOLO if the owner confirms it then; otherwise it joins the notes.
   - **Evidence:** each headless run's stream-json path and the lines showing its outcome go into a `qa` entry.
   - **Owner-run probes:** B43 and B44, each with its ruling entry (LogEntries, B61).
 
