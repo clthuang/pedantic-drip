@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pd_common import (ID_RE, OLD_ITEM_DIR, PHASES, REF_RE, STATUSES, STRAY_PREFIX, TASK_BRANCH, TYPE_DIRS,  # noqa: E402
-                       WORKITEM, Checks, artifacts_dir, blank_fences, find_items, git, is_unadopted, load_config,
+                       WORKITEM, Checks, artifacts_dir, blank_fences, find_items, git, is_unadopted, item_stage, load_config,
                        log_text, make_repo, old_names, open_assumptions, open_blockers, parse_log, repo_root,
                        retro_triggers, run_in_flight, sections, shown, split_frontmatter, worktrees)
 
@@ -145,9 +145,18 @@ def report(root):
                 i["status"] = "done"
     rank = lambda v, order: order.index(v) if v in order else len(order)
     items.sort(key=lambda i: (rank(i["status"], STATUSES), rank(i["fm"].get("phase"), PHASES), i["id"]))
-    out = migrate + ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} NOW"]
+    default_stage = cfg["stage"]
+    out = migrate + ["Items", f"{'STATUS':<10} {'PHASE':<12} {'TYPE':<10} {'ID':<36} {'STAGE':<11} NOW"]
+    differs = False
     for i in items:
-        out.append(f"{i['status'] or '?':<10} {i['fm'].get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {i['now'][:60]}")
+        stage = "-"
+        if i["type"] == WORKITEM:
+            stage = item_stage(i["fm"])
+            if i["status"] not in ("done", "abandoned") and stage != default_stage:
+                stage, differs = stage + "*", True
+        out.append(f"{i['status'] or '?':<10} {i['fm'].get('phase') or '-':<12} {i['type']:<10} {i['id']:<36} {stage:<11} {i['now'][:60]}")
+    if differs:
+        out.append(f"* stage differs from the project default ({default_stage})")
 
     blocks = {"Plans": [l for i in items for l in i["roadmap"]]}
     blocks["Open blockers"] = [

@@ -5,6 +5,7 @@ title: {{title}}
 status: {{status}}
 phase: {{phase}}  # workitems only
 mode: {{mode}}  # workitems only
+stage: {{stage}}  # workitems only
 origin: {{origin}}  # optional
 branch: {{branch}}  # workitems only
 risk: {{risk}}  # workitems only, optional
