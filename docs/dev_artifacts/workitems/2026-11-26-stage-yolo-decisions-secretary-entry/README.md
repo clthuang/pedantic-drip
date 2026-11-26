@@ -3,7 +3,7 @@ id: 2026-11-26-stage-yolo-decisions-secretary-entry
 type: workitem
 title: Stage, YOLO decisions, secretary entry point, main-session read budget
 status: active
-phase: verify
+phase: finish
 mode: standard
 risk: [security]
 branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
@@ -15,8 +15,7 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ## Now
 
 goal: 2026-11-26-stage-yolo-decisions-secretary-entry target finish session c9b24375-514b-4e65-867c-d8156a1a427a
-run in flight: verify-change session c9b24375-514b-4e65-867c-d8156a1a427a
-Next: the seeded verify-change run fixes security findings S1-S3; then the verify gate, phase verify -> finish, and the security reviewer re-checks only S1-S5.
+Next: the security reviewer re-checks S1-S5 (its own findings); then the metrics entry, the retro trigger check, close, and the PR path with B55 on this item's own PR; merge only on the owner's yes; after the merge, remove the temporary .git/info/exclude block.
 
 ## Links
 
