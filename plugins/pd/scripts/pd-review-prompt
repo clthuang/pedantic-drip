@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""pd-review-prompt: the review call's prompt body for a work item's stage (shape.md ReviewPromptCLI)."""
+import sys
+
+
+def main(argv):
+    raise NotImplementedError("pd-review-prompt")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
