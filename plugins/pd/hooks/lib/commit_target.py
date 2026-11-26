@@ -350,6 +350,49 @@ def scan(cmd, here, switched):
                     switched[repo_of(at)] = target
 
 
+def simple_commands(cmd, here):
+    """Each top-level simple command of `cmd`, in order, as (words, directory it runs in); None when shlex can't
+    split the line. Words start at the command word, unmasked, redirections dropped. A shell's `-c` script and
+    `$( … )` are not read (unlike scan())."""
+    try:
+        lex = shlex.shlex(shell_text(cmd), posix=True, punctuation_chars=PUNCT)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        words = list(lex)
+    except ValueError:
+        return None
+    found, start, outer, subst = [], True, [], 0  # subst: open parens of the `$( … )` being skipped
+    for i, w in enumerate(words):
+        if is_sep(w):
+            opens, closes = w.count("("), w.count(")")
+            if subst or (opens and i and words[i - 1].endswith("$")):
+                subst = max(subst + opens - closes, 0)
+                continue
+            start = True
+            for ch in w:  # a `cd` inside `( … )` ends with it
+                if ch == "(":
+                    outer.append(here)
+                elif ch == ")" and outer:
+                    here = outer.pop()
+            continue
+        if subst or not start:
+            continue
+        start = False
+        at = command_start(words, i, here)
+        if at is None:
+            continue
+        j, cwd, wrapped = at
+        args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[j:]))
+        if words[j] == "cd":
+            if not wrapped:
+                dirs = [a for a in args[1:] if not a.startswith("-")]
+                if dirs or len(args) == 1:
+                    here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
+        elif args:
+            found.append(([a.translate(UNMASK) for a in args], cwd))
+    return found
+
+
 def main():
     d = json.load(sys.stdin)
     hit = scan(d.get("tool_input", {}).get("command", ""), d.get("cwd") or ".", {})
@@ -357,4 +400,5 @@ def main():
         print(f"{hit[0]}\t{hit[1]}")
 
 
-main()
+if __name__ == "__main__":
+    main()
