@@ -87,6 +87,7 @@ else:
 if not counted:
     sys.exit(0)
 
+reads.parent.mkdir(parents=True, exist_ok=True)
 fd = os.open(reads, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
 try:
     os.write(fd, b".")
