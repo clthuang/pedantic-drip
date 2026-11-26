@@ -186,3 +186,20 @@ Q: criteria signed off?
 A (user, verbatim): "Signed off"
 
 ## 2026-11-26 14:38+08:00 phase specify -> design
+
+## 2026-11-26 15:11+08:00 review M1 — codex (fallback: no)
+Verdict: changes requested. Commit: 579648df.
+- R1 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:557 — production to mvp after Contracts can't commit: pd-lint re-runs the design and create-plan gates at implement (pd-lint:363-380), whose stage check then rejects the earlier review.
+- R2 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:355 — the fixer runs in its own worktree (implement-tasks.js:69-70), so rev-parse --show-toplevel puts .claude/worktrees/ under it and the previous attempt's removal is refused.
+- R3 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:371 — WebFetch and WebSearch are refused while a workflow runs; B57 says the budget refuses nothing then.
+- R4 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:341 — the crash fallback's raw-word test passes git p'ush' -f, a quoted form SimpleCommands reads.
+- R5 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:338 — the conflict probe ignores --git-dir and --work-tree, so it can inspect another repository than the guarded command.
+- R6 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:522 — open blockers can be closed by qa, review or capped entries without the owner (pd_common.py:366-391), pass when never written, and don't check the adverse-ruling next step (B61).
+- R7 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:550 — pd-yolo status and off are called without --session, which YoloCLI requires.
+- R8 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:435 — comparing key sets misses a type, requiredness or enum change (B41).
+- R9 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:446 — workflow-results.md's verify-change result block (workflow-results.md:48-57) gains stage too, and test-workflows.mjs:93-94 compares it.
+- R10 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:713 — claude -p can't host AskUserQuestion or a "!" command, so the live probes need an interactive harness, saved evidence and their network use named.
+- R11 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:698 — "Fakes: none" omits test-workflows.mjs's stubs of agent, parallel, pipeline, budget, log and phase (test-workflows.mjs:26-36).
+- R12 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:749 — the suggestion-to-note rename has no surface inventory and misses review-ds-code.md:153 and review-ds-analysis.md:165.
+- R13 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:339 — the git and gh outputs parsed lack recorded probes of their variants.
+- R14 warning docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md:673 — the census missed implementing/SKILL.md:27 and :33 and abandon-workitem.md:12.

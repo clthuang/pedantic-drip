@@ -319,7 +319,8 @@ pd-yolo status --session <sid>   prints "on" or "off"; exit 0
 pd-yolo --self-test
 Errors: a <sid> not matching [\w.-]+, an unsubstituted "${CLAUDE_SESSION_ID}" included -> exit 2,
 stderr "pd-yolo: bad session id <sid>", nothing written.
-Called only from the workflow-transitions skill, whose ${CLAUDE_SESSION_ID} the harness substitutes (D3).
+Called only from skills (workflow-transitions, finishing-branch), whose ${CLAUDE_SESSION_ID} the harness
+substitutes (D3).
 ```
 
 ```text
@@ -336,11 +337,13 @@ Bash, each (words, dir) from simple_commands(command, cwd):
   words match DESTRUCTIVE -> exit 2, stderr: "pd YOLO: `<words>` is a hard stop. Ask a 'Hard stop:' question
     showing this command; on a yes the owner runs `! <command>`, or turns YOLO off. Never run it yourself." (B52, B53)
   words are git commit | git merge --continue | git rebase --continue | git cherry-pick --continue, and
-    `git -C <dir> ls-files -u` prints anything -> exit 2, stderr naming the unmerged paths and both ways on: the
+    `git <that command's global options> ls-files -u` (its -C, -c, --git-dir, --work-tree and --namespace kept,
+    so it reads the guarded command's index) prints anything -> exit 2, stderr naming the unmerged paths and both ways on: the
     owner resolves them and runs `! git commit` (or the --continue), or turns YOLO off (B54, B60)
   any failure past the fast path (an exception, simple_commands returning None, git failing) -> exit 2 with
-    "pd-yolo-guard: check failed; command refused while YOLO is on" when the raw command contains one of
-    push merge branch worktree reset clean rm commit --continue; otherwise exit 0 (B40)
+    "pd-yolo-guard: check failed; command refused while YOLO is on" when the raw command holds $', $( or a
+    backtick, or when, with every ', " and \ deleted, it holds one of push merge branch worktree reset clean
+    rm commit --continue as a whole word (so git p'ush' -f is caught); otherwise exit 0 (B40)
 DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-dir, --work-tree, --namespace,
 --no-pager; -C also moves dir):
   git push with -f, --force, --force-with-lease[=…], or a refspec starting "+" (git-push(1)'s per-ref --force)
@@ -357,7 +360,9 @@ DESTRUCTIVE (B52), read after git's global options (-C <dir>, -c <k=v>, --git-di
   git clean with --force or a word matching ^-[A-Za-z]*f
   rm with --recursive or a word matching ^-[A-Za-z]*[rR], and an operand (after --, or any non-option word)
     that, joined to dir and normalized, is outside <repo top>/agent_sandbox/; with no repo every operand is outside
-<repo top> is `git -C <dir> rev-parse --show-toplevel`.
+<repo top> is the main checkout: the parent of `git -C <dir> rev-parse --path-format=absolute --git-common-dir`.
+A fixer running in its own task worktree (implement-tasks.js:69-70) thus sees the same .claude/worktrees/
+(Probes of parsed output).
 ```
 
 ```text
@@ -368,14 +373,15 @@ Fast path, in bash: no repo, or no line starting "main_read_budget:" in <repo to
   exit 0, nothing written (B33).
 agent_id present -> exit 0, nothing counted (B36).
 UserPromptSubmit -> truncate <sid>.reads; exit 0 (B39).
+Run in flight (B57): before either refusal below, the hook looks for `run in flight: <name> session <session_id>`
+  in each work item README's `## Now`; found -> exit 0. It reads the READMEs only on the way to a refusal.
 WebFetch, WebSearch -> exit 2, stderr: "pd read budget: web lookups go to pd:internet-researcher; dispatch it
   with one narrow question." (B35)
 Counted (B38): Read; Grep; mcp__codegraph__codegraph_explore; Bash when some simple command's first word, by
   basename, is in READ_WORDS = cat head tail less more sed awk grep egrep fgrep rg find fd.
   Not counted: Glob, every other Bash command, and a Read whose file_path resolves under
   <repo top>/<artifacts_root>/ or under $CLAUDE_PLUGIN_ROOT (B37).
-A counted call appends one byte. When the count then exceeds main_read_budget, and no work item's `## Now`
-  holds `run in flight: <name> session <session_id>` (read only at that moment, B57) -> exit 2, stderr:
+A counted call appends one byte. When the count then exceeds main_read_budget -> exit 2, stderr:
   "pd read budget: <n> reads this turn (budget <b>). Dispatch pd:codebase-explorer with one narrow question;
   it returns pointers." (B34)
 main_read_budget must be a positive integer; any other value -> treated as unset, one stderr line.
@@ -403,7 +409,8 @@ pd-review-prompt <skill> [<skill>] <work item dir>
     line 1: "Stage: <stage>", where <stage> = pc.item_stage(the README's frontmatter)
     each skill's "## Review checklist" section of <plugin root>/skills/<skill>/SKILL.md, heading included, verbatim
     the "## <stage>" section of references/stage-bars.md, verbatim
-    the "The review call" json block of references/workflow-results.md, after the line "Return only this JSON."
+    the "The review call" json block of references/workflow-results.md, after the line "Return only a JSON
+    object matching this schema."
   exit 0 (B9, B10, B11)
 Errors: exit 1, stderr "pd-review-prompt: <reason>", stdout empty, when a skill has no such section, the
 directory has no README.md, or the stage-bars section or the schema block is missing (B12). Usage errors:
@@ -423,18 +430,27 @@ The two headings are the lookup keys; the paragraphs are read only by reviewers.
 ```
 
 ```text
-modules: plugins/pd/references/workflow-results.md ("The review call" json block);
-         plugins/pd/workflows/verify-change.js (ISSUE and REVIEW, verify-change.js:28-29)
+modules: plugins/pd/references/workflow-results.md ("The review call" json block, and the review nested in the
+         verify-change result block, workflow-results.md:46-57);
+         plugins/pd/workflows/verify-change.js (ISSUE and REVIEW, verify-change.js:23-29)
 contract: ReviewSchema
-{"approved": bool,
- "stage": "mvp" | "production",
- "issues": [{"id": "R1", "severity": "blocker" | "warning" | "note", "category": str, "file": str,
-             "line": int, "claim": str, "evidence": str}],
- "summary": str}
+"The review call" block becomes the JSON Schema itself, structurally equal to REVIEW:
+{"type": "object", "required": ["approved", "stage", "issues", "summary"],
+ "properties": {
+   "approved": {"type": "boolean"},
+   "stage": {"enum": ["mvp", "production"]},
+   "issues": {"type": "array", "items": {"type": "object",
+     "required": ["id", "severity", "category", "file", "line", "claim", "evidence"],
+     "properties": {"id": {"type": "string"}, "severity": {"enum": ["blocker", "warning", "note"]},
+       "category": {"type": "string"}, "file": {"type": "string"}, "line": {"type": "integer"},
+       "claim": {"type": "string"}, "evidence": {"type": "string"}}}},
+   "summary": {"type": "string"}}}
 stage echoes the prompt's first line (B45). category is "harden-later" for a finding the mvp bar demotes.
-Two copies by necessity: a workflow reads nothing but args. test-workflows.mjs compares the key sets of REVIEW
-and ISSUE with this block, found under its heading rather than by position (test-workflows.mjs:9-10 indexes
-blocks today) (B41).
+The verify-change result block gains "stage" at its top level and inside its "review" (VerifyArgs).
+Two copies by necessity: a workflow reads nothing but args. test-workflows.mjs compares REVIEW with "The review
+call" block, found under its heading rather than by position (test-workflows.mjs:9-10 indexes blocks today):
+object keys unordered, "required" as a set, every type and enum compared. A name, type, requiredness or enum
+changed on one side fails it (B41).
 ```
 
 ```text
@@ -443,7 +459,8 @@ contract: VerifyArgs
 args gain stage: "mvp" | "production", required. Before any agent() call it throws, naming the arg, when stage
 is missing or another value, or when args.checklist's first line isn't exactly "Stage: <args.stage>" (B13).
 REVIEW requires stage (ReviewSchema); the no-usable-review fallback (verify-change.js:84-85) sets stage: args.stage.
-RESULT gains stage, equal to args.stage (B14).
+RESULT gains stage, equal to args.stage (B14). Its restatement in workflow-results.md (the verify-change block,
+:46-57) gains "stage" too, since test-workflows.mjs:93-94 compares RESULT's keys with that block.
 ```
 
 ```text
@@ -489,8 +506,12 @@ YOLO confirmation, the first entry a YOLO session writes to each item's log (B24
 Risk waiver: a decision line "Risk: none (<tag>) — <reason>" (B19)
 Harden-later backlog line: one backlog.md line per work item ending "(from: workitems/<id>)", naming each issue
   by its reference <review entry ref>#<id>, e.g. review-2@2026-12-01 10:00+08:00#R3 (REF_RE, pd_common.py:38) (B49)
-An owed owner ruling: a qa issue line "- Q<n> blocker <shape.md>:<line> — the owner's ruling on <B<n>> is owed",
-  closed by the ruling's "Closes: qa@<ts>#Q<n>" (this work item's B61; D8)
+Probe ruling, one per "B<n>: Probe:" expectation (B61):
+  ## <ts> decision
+  Q: <the probe's question>
+  A (user, verbatim): "<quote>"
+  Ruling: B<n>
+  Next: none | phase <from> -> <to> (back) | backlog <id>
 ```
 
 ```text
@@ -513,14 +534,17 @@ contract: GateCLI
 design | create-plan | verify: the latest review entry holding a "Stage:" line; its stage differs from
   item_stage(README) -> "GATE FAIL [<phase>]: the review applied stage <a>; the work item is <b>" (B15).
   No such entry -> no stage check (B16). design and create-plan join the log_checks case for this check only
-  (today it skips them, phase-gate.sh:199-206).
+  (today it skips them, phase-gate.sh:199-206). The check runs only when <phase> equals the README's phase,
+  the exit being taken: pd-lint's re-runs of passed gates (pd-lint:363-380) skip it, so the commit of a stage
+  change after Contracts passes (B18).
 specify: signed_off() (phase-gate.sh:84-89) also passes on "A (conductor, on the user's behalf):" when an
   earlier YOLO confirmation entry (LogEntries) carries the same "Session:" line (B30).
 verify: pc.risk_signals(root, "<merge-base of base_branch and HEAD>..HEAD") whose tag is neither in the README's
   risk list nor in risk_waivers -> "GATE FAIL [verify]: <tag> signal <path>:<line>: add risk: <tag> or a
   Risk: none (<tag>) decision" (B19, B20), at every depth.
-finish: pc.open_blockers fails the gate, as at verify (phase-gate.sh:145-146) (B61, D8); on a stage-mvp work
-  item, each harden-later issue line's reference must appear on a backlog.md line ending
+finish: each shape.md expectation starting "B<n>: Probe:" needs a decision entry with an "A (user, verbatim):"
+  line, a line "Ruling: B<n>" and a non-empty "Next:" line; one missing -> "GATE FAIL [finish]: the owner's
+  ruling on B<n> is missing" (B61, D8). On a stage-mvp work item, each harden-later issue line's reference must appear on a backlog.md line ending
   "(from: workitems/<id>)" (B49).
 ```
 
@@ -547,7 +571,7 @@ secretary.md
   YOLO, the goal line is written without asking. Either way it is committed before Criteria starts.
 workflow-transitions, a new "YOLO" section
   Confirm: an AskUserQuestion "Hard stop: turn YOLO on for this session?". On yes, run
-    `pd-yolo on --session ${CLAUDE_SESSION_ID}`, then `pd-yolo status`, which must print "on" (B24, B25).
+    `pd-yolo on --session ${CLAUDE_SESSION_ID}`, then `pd-yolo status --session ${CLAUDE_SESSION_ID}`, which must print "on" (B24, B25).
   Before the session's first entry in any item's log, write the YOLO confirmation entry (LogEntries), then the
     decisions made before that item existed (B24, B51).
   Every question that isn't a hard stop becomes a decision record (LogEntries, B26). Every hard stop is asked as
@@ -574,11 +598,13 @@ planning
 finishing-branch, step 7 under YOLO (B55)
   The PR path's commands (finishing-branch/SKILL.md:30): `git push -u origin workitem/<id>`, then `gh pr create`.
   Wait: `timeout 590 gh pr checks <pr> --watch --interval 30`, repeated while it exits 124 (timed out), for at
-    most 60 minutes. Exit 0, or "no checks reported" in the output, ends the wait.
+    most 60 minutes. The wait ends at exit 0 (all passed), or at exit 1 with "no checks reported" (none) or
+    with failures, which `gh pr checks <pr> --json name,bucket` names (bucket "fail"). Any other exit, or
+    exit 1 with neither (no such PR, a network error), -> "Hard stop: gh failed: <its output>".
   Failing checks and PR review comments get up to 3 fix cycles, each fix with its decision record; still failing
     -> "Hard stop: checks still failing".
-  "Hard stop: ready to merge?": yes -> pd-yolo off, `gh pr merge`, then steps 8 and 9 as today; no -> clear the
-    goal line, pd-yolo off; the PR stays open.
+  "Hard stop: ready to merge?": yes -> `pd-yolo off --session ${CLAUDE_SESSION_ID}`, `gh pr merge`, then steps 8 and
+    9 as today; no -> clear the goal line, the same pd-yolo off; the PR stays open.
   No remote or no gh -> "Hard stop: branch ready; no remote to open a pull request on".
   Before step 6, a stage-mvp item's harden-later issues get their backlog line (B49).
 init
@@ -594,7 +620,7 @@ init
 - **D2: the read count is an append-only byte file, `<sid>.reads`.** One `write(2)` with `O_APPEND` is atomic, so two parallel tool calls can't lose a count.
   - **Rejected a counter in JSON:** two hooks reading and rewriting it in parallel lose an update, the failure D1 avoids.
   - **Serves:** KISS.
-- **D3: `pd-yolo` takes `--session`, and only `workflow-transitions` calls it.** Only skills use `${CLAUDE_SESSION_ID}` today (`workflow-transitions/SKILL.md:44`, `specifying/SKILL.md` step 2); no command does.
+- **D3: `pd-yolo` takes `--session`, and only skills call it** (`workflow-transitions`, and `finishing-branch` for B55's off). Only skills use `${CLAUDE_SESSION_ID}` today (`workflow-transitions/SKILL.md:44`, `specifying/SKILL.md` step 2); no command does.
   - **Rejected calling it from `secretary.md`:** whether a command substitutes the variable is unverified.
   - **Rejected a hook recording "the last session seen":** two sessions in one repo would cross.
   - **Evidence that the hook's `session_id` is that value, subagents included:** HookInput.
@@ -620,12 +646,12 @@ init
   - **Rejected a claim prefix (`— harden-later: …`):** it rewrites signed-off text.
   - **Rejected a free category word:** one category is read (YAGNI).
   - **What else moves:** the groups become named, so the readers' indexes can't shift.
-- **D8: B61 rides on open blockers.** Two changes carry it:
-  - **finish gains `open_blockers`,** as verify has (`phase-gate.sh:145-146`);
-  - **this work item's Verify writes the two owed-ruling issue lines** (LogEntries), each closed by its ruling's `Closes:`.
+- **D8: B61 reads the expectations themselves.** The finish gate finds each `B<n>: Probe:` line in `shape.md` (B43 and B44 are the only ones in the repo, by `grep -rlE '^B[0-9]+: Probe:'`, 2026-11-26) and requires that probe's ruling entry: the owner's verbatim answer, `Ruling: B<n>` and `Next:` (GateCLI, LogEntries).
+  - **Rejected owed-ruling blocker lines closed by the ruling:** a `qa`, `review` or `capped` entry can close any blocker without the owner (`pd_common.py:366-391`), and a line never written passes (review M1 R6).
   - **Rejected a "required rulings" list in `phase-gate.sh`:** it would put one work item's rule in a script every work item runs.
   - **Rejected a manual finish check:** it would edit signed-off text.
-  - **Serves:** YAGNI.
+  - **What `Next:` covers:** the follow-up after an adverse ruling. A favourable ruling writes `Next: none`.
+  - **Serves:** KISS. The signed-off text is the data, so nothing can drift from it.
 - **D9: risk detection moves into `pd_common`,** read by `pd-lint --risk` and `phase-gate.sh verify`.
   - **Rejected running `pd-lint --risk` from the gate and parsing its WARN lines:** that makes pd's own message text an API.
   - **Rejected a second copy of the pattern loop:** the copies drift.
@@ -665,13 +691,13 @@ Written as if the work item had already failed.
 |---|---|---|
 | A `!` command fires PreToolUse after all (A1). The interactive-mode docs say shell mode runs "without going through Claude" and say nothing of hooks (code.claude.com/docs/en/interactive-mode). | B53 and B54 dead-end: the owner's own `! git commit` is refused | Every YoloGuard refusal also names the YOLO-off way (B60), and `pd-yolo` itself is never refused. Live probe at Verify. |
 | A refused AskUserQuestion still reaches the owner. Exit 2 "blocks the tool call", but the docs don't say a blocked question stays hidden (code.claude.com/docs/en/hooks). | YOLO keeps asking (B26 fails live) | Live probe at Verify. Fallback in the same hook: `permissionDecision: deny` with the same reason (`docs/dev-guide/hook-development.md:67-69`). |
-| A workflow's agent() calls carry no `agent_id`, so the read budget counts them as the main session. Not documented (hooks docs). | a workflow run starved of reads | B57's stand-down while this session's `run in flight:` line exists. Test: a counted call over budget with that line present passes. |
+| A workflow's agent() calls carry no `agent_id`, so the read budget counts them as the main session. Not documented (hooks docs). | a workflow run starved of reads | B57's stand-down while this session's `run in flight:` line exists. Test: a counted call over budget, and a WebFetch, each pass with that line present. |
 | `${CLAUDE_SESSION_ID}` isn't substituted where `pd-yolo on` runs. Only skills use it today (D3). | YOLO silently off: the owner is asked as usual | `pd-yolo` refuses a non-id (exit 2), the YOLO section checks `pd-yolo status` prints `on` (B24), and the live probe runs B24. |
 | Parallel hooks lose a write. The Stop gate rewrites `<sid>.json` by load, change and replace (`pd-stop-gate.sh:33-45`, `:89-108`). | a lost read count, or YOLO flipped off | D1 and D2: a marker file and an append-only byte file. Test: 20 parallel counted calls leave a 20-byte file. |
 | Widening `ISSUE_RE` shifts the positional groups `open_blockers` reads (`pd_common.py:394-397`). | blockers misread: the wrong file, or a claim taken for the line | Named groups. Test: a blocker line and a `warning harden-later` line, parsed from one review entry. |
 | `test-workflows.mjs` finds the json blocks by position (`test-workflows.mjs:9-10`). | the drift test (B41) compares the wrong block and passes vacuously | It finds "The review call" block by its heading. Non-vacuity test: a field removed from the markdown copy only makes it fail. |
-| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Test: a `.claude/worktrees/x` removal passes while YOLO is on. No other pd agent, workflow or skill runs a listed command (`grep -rnE` over agents/, workflows/, skills/ and commands/, 2026-11-26). |
-| `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases. Test: a work item written before this change, with no `Stage:` lines, passes `design`. |
+| The guard refuses pd's own commands in a YOLO run: the implement-tasks fixer's `git worktree remove --force` (`implement-tasks.js:54`), finish cleanup's `git branch -d` (`finishing-branch/SKILL.md:34`). | Execute or finish stalls | `.claude/worktrees/` is exempt (task worktrees live there, `CLAUDE.md` "Worktree directory"), and B55 runs `pd-yolo off` before the merge and cleanup. Test: a `.claude/worktrees/x` removal passes while YOLO is on. The other callers stay hard stops on purpose (`grep -noE 'git (branch -D\|worktree remove[^`]*)'` over skills/ and commands/, 2026-11-26): `implementing/SKILL.md:27` removes a kept task worktree, under `.claude/worktrees/`, so it is exempt; `implementing/SKILL.md:33` (`git branch -D` after a wrong test) and `abandon-workitem.md:12` (`git branch -D`) each delete a branch, which is the owner's call. |
+| `phase-gate.sh design` and `create-plan` now run log checks they skipped (`phase-gate.sh:199-206`). | existing work items fail their design or plan gate | Only the stage check runs at those phases, and only when the phase is the README's own (GateCLI). Tests: a work item written before this change, with no `Stage:` lines, passes `design`; a work item at implement whose design review applied production, after a move to mvp, passes `pd-lint` (B18, review M1 R1). |
 | B29 now applies everywhere, and print mode already writes `A (conductor, on the user's behalf)` decisions (`workflow-transitions/SKILL.md:49`). | an old item's entries fail pd-lint in another repo | The census of 20 pd repos on 2026-11-26 found no such entry. The print-mode line gains the record lines in the same change. |
 
 Notes:
@@ -695,11 +721,16 @@ Notes:
   - **A new `plugins/pd/hooks/tests/conftest.py`:**
     - **`gate_home`:** a `tmp_path` HOME holding `.claude/pd/gate/`.
     - **`run_hook(script, payload)`:** pipes HookInput JSON into the hook with `HOME` and `CLAUDE_PLUGIN_ROOT` set, and returns the exit code and stderr.
-- **Fakes:** none. Every test runs real git, real node and real python, in temporary repos, against a temporary HOME.
+- **Fakes:**
+  - **The Workflow runtime:** `test-workflows.mjs` stubs `agent`, `parallel`, `pipeline`, `budget`, `log` and `phase` (`test-workflows.mjs:26-36`).
+  - **The reviewer, QA and fixer agents:** canned replies stand in for them (`test-workflows.mjs:86-90`).
+  - **What the stubs can prove:** the arg checks (B13), which throw before any recorded `agent` call, and the result's `stage` (B14).
+  - **What needs a real reviewer:** whether it echoes the stage (B45's reviewer half), left to the live probes.
+  - **Everything else is real:** git, node and python, in temporary repos, against a temporary HOME.
 - **Real resources tests may touch:**
   - **Temporary repos:** git, and the scripts and hooks run as subprocesses inside them.
   - **Read only:** the prose files named in ConductorProse, `stage-bars.md` and `workflow-results.md`.
-  - **Not touched:** the network and the real `~/.claude`.
+  - **Not touched by pytest:** the network and the real `~/.claude`. The live probes below use the model, and B55 uses GitHub.
 - **New paths beside fallbacks:** each test asserts a fact true only on the new path.
   - **A read-budget refusal:** its stderr names `pd:codebase-explorer`, and `<sid>.reads` holds the counted bytes.
   - **A YoloGuard refusal:** it quotes the refused simple command.
@@ -710,10 +741,50 @@ Notes:
   - **DECISION_RECORD's labels match everywhere:** `test_yolo_prose.py` checks that the labels in `log-entries.md`, workflow-transitions' YOLO section and the guard's stderr all match `pc.DECISION_RECORD`.
   - **The new hooks are registered and documented:** `hooks.json` registers both, and `bash scripts/check-doc-drift.sh` checks the `README_FOR_DEV.md` hooks table against `hooks.json` (`README_FOR_DEV.md:213`).
   - **Plugin components are valid:** `./validate.sh` passes.
-- **Live probes at Verify** (a headless `claude -p` session, as in the thin-pd bake-off):
-  - **Unverified harness behaviour:** A1, the AskUserQuestion refusal, and workflow agents' `agent_id`.
-  - **Conductor behaviour:** B17, B18, B21-B25, B46, B51 and B55.
-  - **Owner-run probes:** B43 and B44, each judged by the owner.
+- **Live probes at Verify.** These run in an interactive session the owner drives, because `claude -p` can't answer AskUserQuestion or take a `!` command (code.claude.com/docs/en/hooks#tools-that-require-user-interaction).
+  - **The session:** `claude --plugin-dir plugins/pd`, so the branch's plugin runs and the installed release doesn't. It works in a scratch repo, `pd-init`ed under `agent_sandbox/<date>/<id>/probe-repo`.
+  - **Unverified harness behaviour:** A1 (the owner types `! git branch -d <a throwaway branch>` with YOLO on), whether a refused AskUserQuestion stays hidden, and whether workflow agents carry `agent_id` (a `verify-change` run under a set budget).
+  - **Conductor behaviour:** B17, B18, B21-B25, B46 and B51 in the scratch repo. B55 runs on this work item's own pull request, at its finish.
+  - **Evidence:** each probe's session transcript path and the lines showing its outcome go into a `qa` entry.
+  - **Owner-run probes:** B43 and B44, each with its ruling entry (LogEntries, B61).
+
+### Probes of parsed output
+
+Each output a contract parses, the variants probed, and what came back. Git 2.54.0 (Apple Git-157) and gh 2.103.3, run 2026-11-26 in scratch repos under the session scratchpad, except where a PR number is named.
+
+| Command | Variant | Result | Read by |
+|---|---|---|---|
+| `git ls-files -u` | clean index | empty, exit 0 | YoloGuard (B54) |
+| `git ls-files -u` | a conflicted `git merge` | 3 lines for one file (stages 1-3); `git diff --name-only --diff-filter=U` prints `f` | YoloGuard (B54) |
+| `git symbolic-ref -q HEAD` | on a branch | `refs/heads/main`, exit 0 | YoloGuard (push to base) |
+| `git symbolic-ref -q HEAD` | detached HEAD | empty, exit 1 (read as "not on the base branch") | YoloGuard |
+| `git symbolic-ref -q refs/remotes/origin/HEAD` | no remote | empty, exit 1 (`base_branch` falls back to `main`) | CommonHelpers |
+| `git symbolic-ref -q refs/remotes/origin/HEAD` | a clone | `refs/remotes/origin/main` | CommonHelpers |
+| `git rev-parse --show-toplevel` | inside `.claude/worktrees/w1` | the worktree's own path (why R2 broke) | not used |
+| `git rev-parse --path-format=absolute --git-common-dir` | inside `.claude/worktrees/w1` | the main checkout's `.git` | YoloGuard (repo top) |
+| `git diff -U0` headers | a path with a space | `+++ b/sp ace.txt`, unquoted | CommonHelpers `risk_signals` |
+| `git diff -U0` headers | a non-ASCII path | `+++ "b/caf\303\251.txt"`, quoted, so it is skipped, as `pd-lint:627-628` skips it today | CommonHelpers `risk_signals` |
+| `gh pr checks <pr>` | no checks (PR #5) | `no checks reported on the 'feature/010-backlog-to-feature-link' branch`, exit 1 | finishing-branch (B55) |
+| `gh pr checks <pr>` | all passing (PR #35) | exit 0; `--json name,bucket` gives `[{"bucket":"pass","name":"validate"},{"bucket":"pass","name":"review"}]` | finishing-branch (B55) |
+| `gh pr checks <pr> --watch` | already settled (PR #35) | exit 0 | finishing-branch (B55) |
+| `gh pr checks <pr>` | no such PR (99999) | exit 1, no "no checks" line: "Hard stop: gh failed" | finishing-branch (B55) |
+| `gh pr checks <pr>` | pending, failing | not probed (no such PR in the last 60). `gh pr checks --help`: "8: Checks pending"; `gh help exit-codes`: 1 on failure. The live B55 probe covers them | finishing-branch (B55) |
+
+### Rename surfaces: suggestion to note
+
+B42 renames a severity value, so its surfaces come from `grep -rnE 'suggestion' plugins/pd docs/dev-guide README.md README_FOR_DEV.md`, with lines using `suggestion` as the fix-text field name left out (2026-11-26). Markdown carries no symbols for a call-graph query.
+
+| Hit | Mark |
+|---|---|
+| `agents/security-reviewer.md:50` (severity enum), `:69` (table cell) | change |
+| `agents/ds-analysis-reviewer.md:110`, `:119` (enums), `:142` (table cell) | change |
+| `agents/ds-code-reviewer.md:116` (enum), `:134` (table cell) | change |
+| `agents/retro-facilitator.md:61` (`blocker vs warning vs suggestion`) | change |
+| `commands/review-ds-code.md:153` ("List suggestions"), in the severity list at `:148-153` | change, to notes |
+| `commands/review-ds-analysis.md:165` ("List suggestions"), in the severity list at `:160-165` | change, to notes |
+| `agents/design-reviewer.md:79`, `agents/plan-reviewer.md:79` ("Feature suggestion", prose, not a severity) | left as is |
+| `skills/creating-specialist-teams/references/code-analyzer.template.md:43` (`{suggestion}` fix text) | left as is |
+| `docs/dev_artifacts/` work items and retros | history, left as is |
 
 ### Expectations to contracts
 
@@ -737,16 +808,16 @@ Notes:
 | B33-B39, B57 | ReadBudget, SimpleCommands, SessionState, StopGate (B39's reset at a held stop) | hook, `test_pd_read_budget.py`, `test_pd_stop_gate_goals.py` |
 | B40 | YoloGuard, ReadBudget | hook: a corrupt or unreadable input per hook |
 | B41 | ReviewSchema | workflow, `test-workflows.mjs` |
-| B42 | the three reviewer agents and `retro-facilitator.md` (wording only) | prose, `test_yolo_prose.py` greps |
+| B42 | the surfaces in "Rename surfaces: suggestion to note" (wording only) | prose, `test_yolo_prose.py` greps |
 | B43, B44 | owner-run probes | live, judged by the owner |
 | B47, B48 | LintCLI | script, `test_stage.py` |
 | B49 | GateCLI, LogEntries | script, `test_stage.py` |
 | B50 | ConductorProse (pd-init, init.md) | script (pd-init) and prose |
 | B52-B54 | YoloGuard, SimpleCommands | hook, `test_pd_yolo_guard.py`, `test_commit_target.py` |
 | B55 | ConductorProse (finishing-branch) | prose and live probe |
-| B61 | GateCLI (finish's open blockers), LogEntries | script, `test_stage.py`; this work item's own Verify |
+| B61 | GateCLI (finish's probe rulings), LogEntries | script, `test_stage.py`; this work item's own finish |
 
-B42 edits four agent files' wording and touches no interface, so it has no contract block.
+B42 edits wording in six files and touches no interface, so it has no contract block.
 
 ### Deferred calvin rows
 
@@ -759,7 +830,7 @@ The mechanism rows deferred at the specify cap (`agent_sandbox/2026-11-26/2026-1
 | C79 | Expectations to contracts: the "live probe" column |
 | C83 | SimpleCommands: the lexical forms In and Out |
 | C84 | YoloGuard's DESTRUCTIVE push rules |
-| C85 | Risks: the guard refusing pd's own commands. The grep found only `implement-tasks.js:54` and `finishing-branch/SKILL.md:34` |
+| C85 | Risks: the guard refusing pd's own commands, with each caller the grep found |
 | C91 | D5: an absent marker means YOLO off, checked before any python |
 | C92, C93 | D13: no hash, so nothing to re-review when a paragraph changes |
 | C94, C95, C112 | B58 was removed at the cap |
