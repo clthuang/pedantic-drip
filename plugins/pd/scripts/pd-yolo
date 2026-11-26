@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""pd-yolo: turn YOLO on or off for one Claude Code session.
+
+  pd-yolo on|off|status --session <sid>
+  pd-yolo --self-test
+State is the file ~/.claude/pd/gate/<sid>.yolo (exists = on). A <sid> not matching [\\w.-]+ exits 2, nothing written.
+"""
+import argparse
+import os
+import re
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pd_common import Checks  # noqa: E402
+
+SESSION_ID = re.compile(r"[\w.-]+")
+
+
+def yolo_file(sid):
+    return Path(os.environ["HOME"]) / ".claude" / "pd" / "gate" / f"{sid}.yolo"
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="pd-yolo")
+    ap.add_argument("action", nargs="?", choices=["on", "off", "status"])
+    ap.add_argument("--session")
+    ap.add_argument("--self-test", action="store_true")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    if a.action is None or a.session is None:
+        ap.error("an action and --session are required")
+    if not SESSION_ID.fullmatch(a.session):
+        print(f"pd-yolo: bad session id {a.session}", file=sys.stderr)
+        return 2
+    path = yolo_file(a.session)
+    if a.action == "on":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(datetime.now().astimezone().isoformat(timespec="seconds") + "\n")
+    elif a.action == "off":
+        path.unlink(missing_ok=True)
+    print("on" if path.exists() else "off")
+    return 0
+
+
+def self_test():
+    c = Checks("pd-yolo")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HOME"] = tmp
+        c.check(main(["on", "--session", "s1"]) == 0 and yolo_file("s1").exists(), "on creates the file")
+        c.check(main(["off", "--session", "s1"]) == 0 and not yolo_file("s1").exists(), "off removes it")
+        c.check(main(["status", "--session", "../x"]) == 2, "a bad session id exits 2")
+        c.check(not yolo_file("s2").parent.joinpath("s2.yolo").exists(), "status writes nothing")
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
