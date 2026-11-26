@@ -88,7 +88,7 @@ B34: `main_read_budget: 3`, main session (the hook input has no `agent_type`): t
 B35: `main_read_budget` set, main session: WebFetch or WebSearch -> refused on the first call, and stderr names `pd:internet-researcher`
 B36: the same calls from a subagent (the hook input has `agent_type`) -> allowed, and not counted
 B37: main session, Read of a file under `artifacts_root` or under the plugin root -> allowed, and not counted
-B38: counted calls are Read, Grep, `mcp__codegraph__codegraph_explore`, and any Bash command line in which a simple command's first word is `cat`, `head`, `tail`, `less`, `more`, `sed`, `awk`, `grep`, `egrep`, `fgrep`, `rg`, `find` or `fd`. Glob, `ls` and every other Bash command are not counted
+B38: main session with the budget set, a call to Read, Grep or `mcp__codegraph__codegraph_explore`, or a Bash command line in which a simple command's first word is `cat`, `head`, `tail`, `less`, `more`, `sed`, `awk`, `grep`, `egrep`, `fgrep`, `rg`, `find` or `fd` -> counts toward the budget, while Glob, `ls` and every other Bash command do not
 B39: a turn starts at each user prompt and each time the `Stop` gate holds a stop -> the count goes back to zero at both
 B40: the read-budget hook or the YOLO hook failing to run (a crash, unreadable state) -> the call is allowed, with one line on stderr naming the hook
 
