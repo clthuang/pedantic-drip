@@ -58,7 +58,7 @@ If phase data is missing or incomplete, note "Insufficient phase data" and produ
 Extract from Review History:
 
 - Recurring issue categories across phases (testability, scope, assumptions, etc.)
-- Severity distribution (blocker vs warning vs suggestion)
+- Severity distribution (blocker vs warning vs note)
 - Which reviewer types flagged most issues
 - Issue resolution patterns (fixed on first attempt vs multiple iterations)
 

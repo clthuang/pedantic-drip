@@ -107,7 +107,7 @@ If all external tools are unavailable:
   "pitfalls_detected": [
     {
       "pitfall": "Name of the pitfall",
-      "severity": "blocker | warning | suggestion",
+      "severity": "blocker | warning | note",
       "location": "file:line or section reference",
       "description": "What the issue is",
       "evidence": "Why this is a problem",
@@ -116,7 +116,7 @@ If all external tools are unavailable:
   ],
   "code_issues": [
     {
-      "severity": "blocker | warning | suggestion",
+      "severity": "blocker | warning | note",
       "location": "file:line",
       "description": "Code-level issue",
       "suggestion": "How to fix it"
@@ -139,7 +139,7 @@ If all external tools are unavailable:
 |-------|---------|------------------|
 | blocker | Invalidates conclusions or produces incorrect results | Yes |
 | warning | May affect reliability but doesn't invalidate results | No |
-| suggestion | Would improve analysis quality | No |
+| note | Would improve analysis quality | No |
 
 **Approval rule:** `approved: true` only when zero blockers.
 

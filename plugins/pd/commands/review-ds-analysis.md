@@ -162,7 +162,7 @@ After the synthesis completes, present findings and offer follow-up:
 1. Display summary
 2. List blockers (if any) -- must fix
 3. List warnings -- should fix
-4. List suggestions -- consider fixing
+4. List notes -- consider fixing
 5. Display pitfalls detected with evidence
 6. Display methodology concerns
 7. Display verification results

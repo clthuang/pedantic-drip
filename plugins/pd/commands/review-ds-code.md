@@ -150,7 +150,7 @@ Present findings from the final synthesis (or degraded output) with severity lev
 1. Display summary
 2. List blockers (if any) — must fix
 3. List warnings — should fix
-4. List suggestions — consider fixing
+4. List notes — consider fixing
 5. Display strengths — what was done well
 
 Then offer follow-up:
