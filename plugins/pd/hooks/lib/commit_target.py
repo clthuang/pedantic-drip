@@ -41,7 +41,7 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NEW_BRANCH = {"checkout": {"-b", "-B", "--orphan"}, "switch": {"-c", "-C", "--create", "--force-create", "--orphan"}}
 UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
-QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT + "`")}  # quoted punctuation (and backticks) is data, not a separator
+QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT + "`<>")}  # quoted punctuation, backticks and redirect characters are data, not syntax
 UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
 ANSI_C_ESCAPE = re.compile(r"""\\(?:([abeEfnrtv\\'"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2}))""")
 ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
