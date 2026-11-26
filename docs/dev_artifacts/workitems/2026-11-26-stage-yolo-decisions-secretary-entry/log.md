@@ -126,3 +126,38 @@ Verdict: changes requested (20 blocker, 27 minor). Commit: 248eae94. Ledger: age
 - C45 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: cites bake-off.md:182 (F21).
 - C46 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the must-not now says workflow results only record the stage they applied.
 - C47 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the old entry point chained phases (secretary orchestrate); B21 is its check.
+
+## 2026-11-26 14:25+08:00 review C2 — calvin-runner (fallback: no)
+Verdict: changes requested (cycle 1: 45 resolved, 2 reopened; new: 18 blocker, 12 minor). Commit: 31ef972c. Ledger: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/calvin-cycle-2.md. All rows answered by the conductor; the owner sees the result at sign-off.
+- C22 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the prompt's first line carries the stage paragraph's hash, the reviewer echoes it (B45), and B15 compares it with the current hash, so a prompt without pd-review-prompt's paragraph fails the gate.
+- C42 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B61, finish needs both rulings, and a negative one names the owner's next step.
+- C48 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B24, decisions made before the first item exists go to that item's log after the confirmation entry.
+- C49 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B24, every item a YOLO session first writes to gets its own confirmation entry, the promoted work item included.
+- C50 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B51, the new session's confirmation entry goes to the existing item's log.
+- C51 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B60, pd-yolo on|off|status keeps the session's state; the owner turns YOLO off by asking.
+- C52 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B55, a yes runs pd-yolo off and finish's merge and cleanup run as today; a no clears the goal line and leaves the PR open.
+- C53 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B55, settled means gh pr checks shows no pending check; up to 3 fix cycles; no remote or no gh skips the PR.
+- C54 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B52's list is the whole destructive set; Out names single-file rm, find -delete and scripts.
+- C55 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B53, no allow-once state; the owner runs an approved command with "! <command>".
+- C56 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B52 refuses gh pr merge and pushes to the base branch.
+- C57 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — probe: implement-tasks.js:54 has a fix agent run "git worktree remove --force" on its task worktree, and merger.md:27 says the merger aborts on conflict and never resolves. B52 applies to every caller but exempts .claude/worktrees/; B54 can't block the merger.
+- C58 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B40, the destructive and merge-conflict hook fails closed on a matching command; the read and AskUserQuestion hooks fail open.
+- C59 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B59 added.
+- C60 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B47 now checks a Deferred: line (pd-lint warns without one); which cases stay is judged at sign-off.
+- C61 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B44 counts cache reads (the re-sends), and falls back to the transcripts' usage fields if the report can't split main from subagent transcripts.
+- C62 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B16 skips review entries without a Stage: line (calvin cycles, older entries); B58 makes pd-lint require Stage: on review-call entries.
+- C63 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B42 pins exact patterns.
+- C64 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B17, B18, B46 and B55 are marked (live probe), checked in a headless claude -p run at Verify.
+- C65 blocker docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the harden-later issue line reads "warning harden-later" (Goals, B49).
+- C66 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B49, one backlog line per work item naming each issue as review@<timestamp>#<id>.
+- C67 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B19 matches "Risk: none (<tag>)" followed by any reason.
+- C68 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — probe: workflow-transitions/SKILL.md:12 defines "run in flight: <run-name> session <session id>"; B57 cites it.
+- C69 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B38, the list is the rule.
+- C70 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the prefix only lets a question through and unlocks nothing (B53); edge case added.
+- C71 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B50 separates the script from the command.
+- C72 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the must-not separates today's census from "from now on".
+- C73 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: the echo shows the reviewer's prompt carried the stage paragraph, for the conductor's own review calls too.
+- C74 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B17, no backward move while still in specify.
+- C75 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: Goals name WebFetch and WebSearch.
+- C76 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: B54, the owner resolves or turns YOLO off.
+- C77 minor docs/dev_artifacts/workitems/2026-11-26-stage-yolo-decisions-secretary-entry/shape.md — conductor: citations now use entry references (decision-2@2026-11-26 14:05+08:00, decision@2026-11-26 14:14+08:00).
