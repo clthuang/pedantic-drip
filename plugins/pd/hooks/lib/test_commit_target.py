@@ -554,3 +554,81 @@ def test_wrapper_value_options_separated(repo):
 
 def test_one_digit_hex_escape(repo):
     assert seen("bash -c $'git\\x9 commit -m x'", repo) == f"{repo}\t\n"
+
+
+# --- simple_commands (shape.md SimpleCommands) ---
+
+@pytest.fixture
+def simple_commands():
+    """The function, imported at call time so a module that still runs main() at import fails in the test body."""
+    def call(cmd, here):
+        import sys
+        sys.path.insert(0, _LIB)
+        try:
+            import commit_target
+            return commit_target.simple_commands(cmd, here)
+        finally:
+            sys.path.remove(_LIB)
+    return call
+
+
+def _norm(result):
+    return [(words, os.path.normpath(where)) for words, where in result]
+
+
+def test_simple_c1_pipeline(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert _norm(simple_commands("git log | grep x", d)) == [(["git", "log"], d), (["grep", "x"], d)]
+
+
+def test_simple_c2_quoted_text_is_data(simple_commands, tmp_path):
+    got = simple_commands('git commit -m "never rm -rf /"', str(tmp_path))
+    assert [w for w, _ in got] == [["git", "commit", "-m", "never rm -rf /"]]
+    assert not any(w[0] == "rm" for w, _ in got)
+
+
+def test_simple_c3_cd_scopes_directory(simple_commands, tmp_path):
+    d = str(tmp_path)
+    got = {w[0]: where for w, where in _norm(simple_commands("cd sub && rm -rf build; cd .. && git status", d))}
+    assert got["rm"] == os.path.join(d, "sub")
+    assert got["git"] == d
+
+
+def test_simple_c4_wrappers_and_redirects(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert [w for w, _ in simple_commands("env FOO=1 sudo -u me git push -f origin x", d)] == [["git", "push", "-f", "origin", "x"]]
+    assert [w for w, _ in simple_commands("git push -f >out 2>&1", d)] == [["git", "push", "-f"]]
+
+
+def test_simple_c5_unclosed_quote(simple_commands, tmp_path):
+    assert simple_commands('git push "x', str(tmp_path)) is None
+
+
+def test_simple_c6_not_recursed(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert [w for w, _ in simple_commands('bash -c "cat f"', d)] == [["bash", "-c", "cat f"]]
+    assert not any(w[0] == "cat" for w, _ in simple_commands("echo $(cat f)", d))
+
+
+def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert [w for w, _ in simple_commands("cat <<EOF\nrm -rf /\nEOF", d)] == [["cat"]]
+    assert [w for w, _ in simple_commands("( git add . ) && git commit -m x", d)] == [["git", "add", "."], ["git", "commit", "-m", "x"]]
+
+
+def test_simple_c8_import_is_silent_and_scan_unchanged():
+    r = subprocess.run(["python3", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import commit_target", _LIB],
+                       input="", capture_output=True, text=True, env=_ENV)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    r = subprocess.run(["bash", os.path.join(_HOOKS, "tests", "test-pd-commit-lint.sh")], capture_output=True, text=True, env=_ENV)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_simple_c9_fixtures(run_hook, gate_home, tmp_path):
+    cwd = tmp_path / "plain"
+    cwd.mkdir()
+    code, stderr = run_hook(os.path.join(_HOOKS, "pd-commit-lint.sh"),
+                            {"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": str(cwd), "session_id": "s1"})
+    assert (code, stderr) == (0, "")
+    assert (gate_home / ".claude" / "pd" / "gate").is_dir()
+    assert list((gate_home / ".claude" / "pd" / "gate").iterdir()) == []
