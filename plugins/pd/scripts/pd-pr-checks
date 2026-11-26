@@ -20,9 +20,12 @@ POLL_SECONDS = 30
 DEFAULT_WINDOW_SECONDS = 540
 
 
-def poll(pr):
-    """(exit code, or None while pending; the poll's stdout)."""
-    r = subprocess.run(["gh", "pr", "checks", pr, "--json", "name,bucket"], capture_output=True, text=True)
+def poll(pr, timeout):
+    """(exit code, or None while pending; the poll's stdout). A gh still running after `timeout` seconds is pending."""
+    try:
+        r = subprocess.run(["gh", "pr", "checks", pr, "--json", "name,bucket"], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 8, ""
     try:
         buckets = [item["bucket"] for item in json.loads(r.stdout)]
     except (ValueError, TypeError, KeyError):
@@ -39,7 +42,7 @@ def poll(pr):
 def wait(pr, window, sleep=time.sleep, now=time.monotonic):
     deadline = now() + window
     while True:
-        code, out = poll(pr)
+        code, out = poll(pr, max(deadline - now(), 1))
         if code is not None:
             return code, out
         remaining = deadline - now()
@@ -70,9 +73,9 @@ def self_test():
     replies = iter([(None, "p"), (0, "ok")])
     slept = []
     try:
-        poll = lambda pr: next(replies)  # noqa: E731
+        poll = lambda pr, timeout: next(replies)  # noqa: E731
         c.check(wait("1", 40, sleep=slept.append) == (0, "ok") and slept == [30], "pending then pass")
-        poll = lambda pr: (None, "p")  # noqa: E731
+        poll = lambda pr, timeout: (None, "p")  # noqa: E731
         clock = iter(range(0, 1000, 5))
         c.check(wait("1", 12, sleep=lambda s: None, now=lambda: next(clock))[0] == 8, "still pending exits 8")
     finally:
