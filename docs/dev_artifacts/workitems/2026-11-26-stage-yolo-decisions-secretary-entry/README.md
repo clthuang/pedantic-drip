@@ -3,7 +3,7 @@ id: 2026-11-26-stage-yolo-decisions-secretary-entry
 type: workitem
 title: Stage, YOLO decisions, secretary entry point, main-session read budget
 status: active
-phase: specify
+phase: design
 mode: standard
 branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ---
@@ -13,7 +13,7 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 
 ## Now
 
-Created by pd-new.
+Next: `/pd:design --workitem=2026-11-26-stage-yolo-decisions-secretary-entry`. Contracts must answer the mechanism rows deferred at the specify cap (listed in shape.md `## Design`) and probe assumption A1.
 
 ## Links
 

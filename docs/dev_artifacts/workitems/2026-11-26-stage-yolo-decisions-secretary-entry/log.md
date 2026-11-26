@@ -180,3 +180,9 @@ Closes: none
 Q: calvin hit its cap with 37 questions open: apply the behaviour defaults, move the mechanism questions to Contracts and sign off; split into three work items; or one more calvin pass?
 A (user, verbatim): "Defaults, then sign off (Recommended)"
 answers: capped@2026-11-26 14:32+08:00
+
+## 2026-11-26 14:38+08:00 decision
+Q: criteria signed off?
+A (user, verbatim): "Signed off"
+
+## 2026-11-26 14:38+08:00 phase specify -> design
