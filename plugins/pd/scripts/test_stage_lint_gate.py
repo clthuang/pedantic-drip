@@ -138,6 +138,7 @@ def test_c4_deferred_line_warns_at_mvp(pd_repo):
     (item(pd_repo) / "shape.md").write_text(f"# Shape\n\n{REQS}")
     code, out = lint(pd_repo)
     assert [l for l in warnings(out) if "Deferred:" in l]
+    assert code == 0 and not errors(out), out
     (item(pd_repo) / "shape.md").write_text(f"# Shape\n\n{REQS}\nDeferred: none\n")
     code, out = lint(pd_repo)
     assert not [l for l in warnings(out) if "Deferred:" in l]
