@@ -397,6 +397,12 @@ def simple_commands(cmd, here):
     """Each top-level simple command of `cmd`, in order, as (words, directory it runs in); None when shlex can't
     split the line. Words start at the command word, unmasked, redirections dropped. A shell's `-c` script and
     `$( … )` are not read (unlike scan())."""
+    found = xargs_simple_commands(cmd, here)
+    return None if found is None else [(words, cwd) for words, cwd, _ in found]
+
+
+def xargs_simple_commands(cmd, here):
+    """simple_commands with a third item per command: whether xargs runs it, appending operands the words don't show."""
     try:
         lex = shlex.shlex(shell_text(cmd), posix=True, punctuation_chars=PUNCT)
         lex.whitespace_split = True
@@ -444,7 +450,7 @@ def simple_commands(cmd, here):
                 if dirs or len(args) == 1:
                     here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
         elif args:
-            found.append(([a.translate(UNMASK) for a in args], cwd))
+            found.append(([a.translate(UNMASK) for a in args], cwd, "xargs" in words[i:j]))
     return found
 
 

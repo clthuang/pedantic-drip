@@ -20,7 +20,7 @@ hooks_dir = sys.argv[1]
 sys.path.insert(0, os.path.join(hooks_dir, "lib"))
 sys.path.insert(0, os.path.join(hooks_dir, "..", "scripts"))
 import pd_common as pc
-from commit_target import NEW_BRANCH, repo_of, simple_commands, switch_target
+from commit_target import NEW_BRANCH, repo_of, switch_target, xargs_simple_commands
 
 GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
@@ -76,11 +76,11 @@ def is_destructive_push(args, at, switched_to=None):
     return False
 
 
-def is_foreign_worktree_removal(args, at):
+def is_foreign_worktree_removal(args, at, xargs_fed):
     if not args or args[0] != "remove":
         return False
     paths = [a for a in args[1:] if not a.startswith("-")]
-    if not paths:  # paths come from xargs or are missing: can't tell which worktree
+    if xargs_fed or not paths:  # xargs appends paths, or they are missing: can't tell which worktree
         return True
     listed = pc.worktrees(at)
     if listed is None:
@@ -93,7 +93,7 @@ def is_foreign_worktree_removal(args, at):
     return False
 
 
-def is_outside_sandbox_removal(args, at):
+def is_outside_sandbox_removal(args, at, xargs_fed):
     recursive, operands, options_over = False, [], False
     for a in args:
         if options_over or not a.startswith("-"):
@@ -104,6 +104,8 @@ def is_outside_sandbox_removal(args, at):
             recursive = True
     if not recursive:
         return False
+    if xargs_fed:  # xargs appends operands the words don't show
+        return True
     top = pc.git(["rev-parse", "--show-toplevel"], at, check=False)
     sandbox = os.path.join(top, "agent_sandbox") + os.sep if top else None
     return not operands or any(not sandbox or not os.path.realpath(os.path.join(at, o)).startswith(sandbox) for o in operands)
@@ -118,11 +120,11 @@ def gh_subcommand(args):
 
 
 def check_command(command, cwd):
-    commands = simple_commands(command, cwd)
+    commands = xargs_simple_commands(command, cwd)
     if commands is None:
         raise RuntimeError("simple_commands could not split the line")
     switched = {}  # repository -> branch an earlier command in this line moved HEAD to
-    for words, at in commands:
+    for words, at, xargs_fed in commands:
         name = os.path.basename(words[0])
         if name == "gh":
             rest = gh_subcommand(words[1:])
@@ -130,7 +132,7 @@ def check_command(command, cwd):
                 hard_stop(words)
             continue
         if name == "rm":
-            if is_outside_sandbox_removal(words[1:], at):
+            if is_outside_sandbox_removal(words[1:], at, xargs_fed):
                 hard_stop(words)
             continue
         if name != "git":
@@ -148,7 +150,7 @@ def check_command(command, cwd):
         destructive = (
             (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir))))
             or (sub == "branch" and any(a == "--delete" or FLAG_BRANCH_DELETE.match(a) for a in args))
-            or (sub == "worktree" and is_foreign_worktree_removal(args, repo_dir))
+            or (sub == "worktree" and is_foreign_worktree_removal(args, repo_dir, xargs_fed))
             or (sub == "reset" and "--hard" in args)
             or (sub == "clean" and any(a == "--force" or (not a.startswith("--") and FLAG_F.match(a)) for a in args))
         )
