@@ -521,3 +521,22 @@ Ran: `node plugins/pd/workflows/tests/test-workflows.mjs` -> pass
 Ran: `uv run --project plugins/pd pytest -q plugins/pd` -> pass
 Criteria gaps: as qa@2026-11-26 20:02+08:00; this run checks only that the battery still passes after the finish-stage docs change.
 Run by the conductor at finish: the only change outside the artifacts since qa commit 5ef3a72d is CHANGELOG.md (git diff --name-only 5ef3a72d HEAD), which the verify gate counts as source because this repository sets no source_paths. Logs: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/qa-rerun-eefd27cf/ (pytest 373 passed).
+
+## 2026-11-26 22:19+08:00 review finish — security-reviewer
+Verdict: changes requested (3 blockers, 2 warnings, 2 notes). Commit: 9a6c11b7. Branch diff main...HEAD outside docs/dev_artifacts (60 files); read-only, code not run. Not read in full: pd-review-prompt, pd-new, pd-init, pd-lint, pd-status, the rest of phase-gate.sh, test files beyond targeted greps. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/security-review-finish.json.
+Reproduced by the conductor at 9a6c11b7 with YOLO on in a scratch repo on a work item branch: S1 (`git push origin $(git branch --show-current) --force`, `git reset $(git merge-base main HEAD) --hard`), S2 (`git checkout main && git pull && git merge --no-ff workitem/x && git push`) and S3 (`find . -type d -name build | xargs rm -rf`) each exit 0; the controls `git push --force` and `rm -rf build` exit 2.
+- S1 blocker plugins/pd/hooks/lib/commit_target.py:401 — The guard drops every word that comes after an unquoted $( … ) in a command. A --force or --hard written after a command substitution is never seen, so the destructive command runs under YOLO. This is worse than the filed limit, which only says commands inside $( … ) are not read.
+- S2 blocker plugins/pd/hooks/pd-yolo-guard.sh:67 — A push to the base branch is not refused when the same command line first checks out the base branch. The guard reads HEAD before the line runs, while it is still the work item branch. Pd's own merge command in finishing-branch step 7 passes the guard and pushes to main. shape.md:37 and :204 say YOLO must never do this.
+- S3 blocker plugins/pd/hooks/pd-yolo-guard.sh:105 — An `rm -r` whose paths come from xargs (or from no visible operand at all) is allowed under YOLO. B40 says that when the guard can't decide, a wrong pass costs more than a wrong refusal, but here it passes.
+- S4 warning plugins/pd/hooks/pd-yolo-guard.sh:105 — rm operands are joined to the working directory as literal text, with no tilde or variable expansion. From a working directory inside agent_sandbox/, `rm -rf ~/…` or `rm -rf $HOME/…` is judged to be inside the sandbox, but bash deletes outside it.
+- S5 warning plugins/pd/hooks/pd-yolo-guard.sh:149 — The B54 conflict guard checks only for unmerged index entries at commit time. If the conductor stages its own resolution in an earlier Bash call, the conflict is cleared and its commit goes through, even though the refusal text says 'Never resolve or commit them yourself.'
+- S6 note plugins/pd/scripts/phase-gate.sh:98 — A YOLO confirmation entry and a conductor sign-off entry that both lack a `Session:` line count as the same session, because None matches None.
+- S7 note plugins/pd/hooks/pd-yolo-guard.sh:139 — These inputs also get past the guard, but they read as deliberate bypasses rather than ordinary commands (shape.md:33 accepts deliberate bypasses), so they are below the reporting bar and listed only so the backlog item can absorb them.
+
+## 2026-11-26 22:19+08:00 decision
+Q: the security review's blockers S1-S3 in the YOLO guard send the item back to Verify: a focused fix of S1-S3 (a verify-change run seeded with them, no new Codex review; S4-S7 and any new parser form QA finds go to the backlog), a full verify-change run, or waive them to the backlog?
+A (user, verbatim): "Focused fix of S1-S3 (Recommended)"
+
+## 2026-11-26 22:19+08:00 phase finish -> verify (back)
+Reason: security review blockers S1-S3 (review@2026-11-26 22:19+08:00), fixed in a verify-change run seeded with them, per the decision above.
+Invalidates: nothing
