@@ -134,7 +134,7 @@ def shell_text(cmd):
         elif c == "&" and ((out and out[-1][-1] in "<>") or cmd.startswith(">", i + 1)):  # `2>&1`, `&>f`: a redirect, not a separator
             i += 1
             continue
-        elif c == "#" and (not out or out[-1][-1] in " \t" + PUNCT):  # a comment runs to the end of its line
+        elif c == "#" and (not out or out[-1][-1] in " \t" + PUNCT and not out[-1].startswith("\\")):  # a comment runs to the end of its line; `\ #` is a word
             j = cmd.find("\n", i)
             i = n if j < 0 else j
             continue
