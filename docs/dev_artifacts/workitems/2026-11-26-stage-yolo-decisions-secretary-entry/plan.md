@@ -32,6 +32,7 @@ Every task's files are disjoint from the others in its wave. All but Task 11 are
   - **No such PR:** exits 1 with `no pull requests found` on stderr.
 - **Which existing suites a task runs:** every suite whose text names a file the task edits, found by `grep -lF <file name>` over the bash and pytest suites under `plugins/pd`, `test-workflows.mjs`, `validate.sh` and `scripts/check-doc-drift.sh` (run 2026-11-26), plus the `--self-test` of each edited script. Task 1 also runs the self-tests of the scripts that import `pd_common`. Each task's last case lists them.
   - **Suites that write no JUnit** (the self-tests, the bash suites, `test-workflows.mjs`, `validate.sh`, `check-doc-drift.sh`) run inside the task's pytest file, one case each, asserting exit 0. Existing pytest files go on the task's command line.
+  - **Two suites wait for Wave 3:** `validate.sh` and `check-doc-drift.sh`, which `test_explorer_codegraph.py` also runs. They fail on a hook script that `hooks.json` doesn't register (`check-doc-drift.sh:58-61`, run by `validate.sh:738`), and the merger re-runs every landed task's proof after each merge (`merger.md:28`). Tasks 5 and 6 land their hooks in Wave 2, and Task 12 registers them in Wave 3. So only Tasks 11 and 12 run these two; Tasks 4, 7 and 8, whose files they name, leave them out (review P2 N1).
 - **Absence cases:** each names its search and that search's scope.
 - **Unchanged behaviour:** a case for behaviour that holds today also asserts a fact true only after the change (B7, B16, B28, B33).
 - **Each case builds its own state.** "After C1" means the case first repeats C1's steps; no case relies on another having run.
@@ -74,7 +75,7 @@ Every task's files are disjoint from the others in its wave. All but Task 11 are
   - C5 [B20] (fixture: none): risk_waivers returns {"security"} for a decision entry holding `Risk: none (security) — the matches are pd's own message text`, and an empty set for `Risk: none (security)` with no reason, for `Risk: none (perf) — x`, and for that waiver line inside a note entry.
   - C6 [B19] (fixture: pd_repo): base_branch returns "develop" for config `base_branch: develop`; for `auto` in a repo with no remote, "main"; for `auto` in a clone of a repo whose HEAD branch is "trunk", "trunk".
   - C7 [B19, B20] (fixture: pd_repo): on the work item's branch `workitem/<id>` (so pd-lint's branch_workitem finds the item, `pd-lint:549-552`), after C4's commit, `pd-lint --risk main..HEAD` prints `pd-lint: WARN <root>/src/pkg/api.py:1: risk signal (security) and the work item has no risk: [security] tag: set it, or the user clears it with a decision entry`, the text it prints today; after a second commit adding a decision entry with C5's waiver line to the item's log, the same `main..HEAD`, which still holds the api.py change, prints no WARN.
-  - C8 [B7, B49] (fixture: none): the self-tests of pd_common.py (`python3 plugins/pd/scripts/pd_common.py --self-test`), pd-lint, pd-status and pd-new, `bash plugins/pd/scripts/test-phase-gate.sh`, `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh` and `node plugins/pd/workflows/tests/test-workflows.mjs` each exit 0; test_pd_status_leftovers.py and test_worktree_callers.py pass on the same command line.
+  - C8 [B7, B49] (fixture: none): the self-tests of pd_common.py (`python3 plugins/pd/scripts/pd_common.py --self-test`) and of every script importing it, pd-lint, pd-status, pd-new, pd-adopt, pd-init, pd-proof, pd-review-filter and pd-html.py (`uv run --script plugins/pd/scripts/pd-html.py --self-test`), as ci.yml:37-40 runs them, `bash plugins/pd/scripts/test-phase-gate.sh`, `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh` and `node plugins/pd/workflows/tests/test-workflows.mjs` each exit 0; test_pd_status_leftovers.py and test_worktree_callers.py pass on the same command line.
 
 #### Task 2: simple_commands in commit_target, and the shared hook fixtures [parallel-safe]
 - contract: shape.md ## Design, SimpleCommands; Test strategy, `plugins/pd/hooks/conftest.py`
@@ -125,7 +126,7 @@ Every task's files are disjoint from the others in its wave. All but Task 11 are
   - C3 [B42] (fixture: none): the severity lists in review-ds-code.md and review-ds-analysis.md say `List notes` where they said `List suggestions`.
   - C4 [B42] (fixture: none): each of the three reviewer agents still has the fix-text field `"suggestion": "How to fix it"` in its output schema, so only severities changed.
   - C5 [B42] (fixture: none): every hit of `grep -rnE 'suggestion' plugins/pd/agents plugins/pd/commands` is a fix-text field (`"suggestion":`), or the `Feature suggestion` prose in design-reviewer.md and plan-reviewer.md that shape.md "Rename surfaces" leaves as is.
-  - C6 [B42] (fixture: none): `./validate.sh` and `bash plugins/pd/hooks/tests/test-hooks.sh`, run from the repository root, each exit 0.
+  - C6 [B42] (fixture: none): `bash plugins/pd/hooks/tests/test-hooks.sh`, run from the repository root, exits 0.
 
 ### Wave 2
 
@@ -186,7 +187,7 @@ Every task's files are disjoint from the others in its wave. All but Task 11 are
   - C3 [B56] (fixture: run_hook, gate_home): a brainstorm item, status active, whose `## Now` holds `goal: <id> target finish session s1` is held, with stderr `pd gate: goal <id> is a brainstorm; carry it to promotion. Promotion moves the goal line to the new work item.`; an rca item likewise names its type; a goal line naming another session doesn't hold the stop.
   - C4 [B56] (fixture: run_hook, gate_home): the brainstorm at status done, and the goal line moved to the work item promoted from it, at phase design and target finish: the stop is held with the work item's own goal message, naming the work item's id and not the brainstorm's.
   - C5 [B39] (fixture: run_hook, gate_home): s1.reads at 5 bytes: a held stop leaves it at 0 bytes; an allowed stop (no goal line) leaves it at 5.
-  - C6 [B31, B32] (fixture: none): `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh`, its message assertions moved to the new texts, and `./validate.sh` each exit 0.
+  - C6 [B31, B32] (fixture: none): `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh` exits 0, its message assertions moved to the new texts.
 
 #### Task 8: stage in pd-new, pd-status and pd-init [parallel-safe]
 - contract: shape.md ## Design, NewCLI; StatusCLI; ConductorProse's pd-init line
@@ -204,7 +205,7 @@ Every task's files are disjoint from the others in its wave. All but Task 11 are
   - C7 [B8] (fixture: pd_repo): with config `stage: production`, open work items at mvp and production, a done work item at mvp and a brainstorm: pd-status's header is `STATUS PHASE TYPE ID STAGE NOW`; the rows show `mvp*`, `production`, `mvp` without a star, and `-`; the table is followed by `* stage differs from the project default (production)`.
   - C8 [B7] (fixture: pd_repo): a work item README with no stage key shows `production` in the STAGE column with no star, and no footer is printed when no row differs.
   - C9 [B50] (fixture: none): `pd-init` on a temporary git repo with no .claude/pd.local.md writes a config whose frontmatter has `stage: production`.
-  - C10 [B1, B8, B50] (fixture: none): `pd-new --self-test`, `pd-status --self-test` and `pd-init --self-test` (its field set at `pd-init:146` now including stage), `bash plugins/pd/hooks/tests/test-pd-commit-lint.sh`, `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh` and `bash scripts/check-doc-drift.sh` each exit 0; the existing test_pd_status_leftovers.py, test_worktree_callers.py and test_commit_target.py pass on the same command line.
+  - C10 [B1, B8, B50] (fixture: none): `pd-new --self-test`, `pd-status --self-test` and `pd-init --self-test` (its field set at `pd-init:146` now including stage), `bash plugins/pd/hooks/tests/test-pd-commit-lint.sh` and `bash plugins/pd/hooks/tests/test-pd-stop-gate.sh` each exit 0; the existing test_pd_status_leftovers.py, test_worktree_callers.py and test_commit_target.py pass on the same command line.
 
 #### Task 9: stage, decision records, risk and probe rulings in pd-lint and phase-gate.sh [parallel-safe]
 - contract: shape.md ## Design, LintCLI; GateCLI; LogEntries
