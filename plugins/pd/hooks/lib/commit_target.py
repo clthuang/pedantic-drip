@@ -219,13 +219,33 @@ def skip_wrapper(words, j, here):
     return j, here
 
 
+def is_subst_open(words, i):
+    """words[i] opens a `$( … )`: a punctuation word starting with `(` right after a word ending in `$`."""
+    return is_sep(words[i]) and words[i][0] == "(" and i > 0 and words[i - 1].endswith("$")
+
+
+def after_subst(words, i):
+    """Index of the word after the `$( … )` that words[i] opens; the word itself when `)` is followed by more punctuation (`);`)."""
+    depth = 0
+    for k in range(i, len(words)):
+        if not is_sep(words[k]):
+            continue
+        for n, ch in enumerate(words[k]):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0:
+                return k + 1 if n == len(words[k]) - 1 else k
+    return len(words)
+
+
 def command_start(words, i, here):
     """Where the command that starts at words[i] really is, past prefixes, `NAME=value` words and wrappers:
     (index, directory it runs in, whether a wrapper stands before it), or None when no command runs."""
     wrapped = False
-    while i < len(words) and not is_sep(words[i]):
+    while i < len(words) and (not is_sep(words[i]) or is_subst_open(words, i)):
         w = words[i]
-        if w in PREFIXES or ASSIGNMENT.match(w):
+        if is_sep(w):  # `NAME=$( … ) cmd`
+            i = after_subst(words, i)
+        elif w in PREFIXES or ASSIGNMENT.match(w):
             i += 1
         elif w in WRAPPERS:
             wrapped = True
@@ -354,6 +374,20 @@ def scan(cmd, here, switched):
                     switched[repo_of(at)] = target
 
 
+def command_words(words, j):
+    """The words of the command at words[j], up to its separator; a `$( … )` inside it stays as its `$`."""
+    out = []
+    while j < len(words):
+        if not is_sep(words[j]):
+            out.append(words[j])
+            j += 1
+        elif is_subst_open(words, j):
+            j = after_subst(words, j)
+        else:
+            break
+    return out
+
+
 def simple_commands(cmd, here):
     """Each top-level simple command of `cmd`, in order, as (words, directory it runs in); None when shlex can't
     split the line. Words start at the command word, unmasked, redirections dropped. A shell's `-c` script and
@@ -398,7 +432,7 @@ def simple_commands(cmd, here):
         if at is None:
             continue
         j, cwd, wrapped = at
-        args = drop_redirects(itertools.takewhile(lambda x: not is_sep(x), words[j:]))
+        args = drop_redirects(command_words(words, j))
         if words[j] == "cd":
             if not wrapped:
                 dirs = [a for a in args[1:] if not a.startswith("-")]

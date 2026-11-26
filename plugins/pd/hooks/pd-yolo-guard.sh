@@ -20,7 +20,7 @@ hooks_dir = sys.argv[1]
 sys.path.insert(0, os.path.join(hooks_dir, "lib"))
 sys.path.insert(0, os.path.join(hooks_dir, "..", "scripts"))
 import pd_common as pc
-from commit_target import simple_commands
+from commit_target import NEW_BRANCH, repo_of, simple_commands, switch_target
 
 GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
@@ -47,7 +47,7 @@ def current_branch(at):
     return ref.removeprefix("refs/heads/") if ref else None
 
 
-def is_destructive_push(args, at):
+def is_destructive_push(args, at, switched_to=None):
     positional, skip = [], False
     for a in args:
         if skip:
@@ -64,7 +64,9 @@ def is_destructive_push(args, at):
     if any(r.startswith("+") or r.startswith(":") for r in refspecs):
         return True
     base = pc.base_branch(pc.repo_root(at), pc.load_config(pc.repo_root(at)))
-    branch = current_branch(at)
+    branch = switched_to or current_branch(at)  # a switch earlier in the line moves HEAD before the push runs
+    if branch == "?":  # switched somewhere unknown: assume the base branch
+        branch = base
     if not refspecs:
         return branch == base
     for r in refspecs:
@@ -78,6 +80,8 @@ def is_foreign_worktree_removal(args, at):
     if not args or args[0] != "remove":
         return False
     paths = [a for a in args[1:] if not a.startswith("-")]
+    if not paths:  # paths come from xargs or are missing: can't tell which worktree
+        return True
     listed = pc.worktrees(at)
     if listed is None:
         raise RuntimeError("git worktree list failed")
@@ -102,7 +106,7 @@ def is_outside_sandbox_removal(args, at):
         return False
     top = pc.git(["rev-parse", "--show-toplevel"], at, check=False)
     sandbox = os.path.join(top, "agent_sandbox") + os.sep if top else None
-    return any(not sandbox or not os.path.realpath(os.path.join(at, o)).startswith(sandbox) for o in operands)
+    return not operands or any(not sandbox or not os.path.realpath(os.path.join(at, o)).startswith(sandbox) for o in operands)
 
 
 def gh_subcommand(args):
@@ -117,6 +121,7 @@ def check_command(command, cwd):
     commands = simple_commands(command, cwd)
     if commands is None:
         raise RuntimeError("simple_commands could not split the line")
+    switched = {}  # repository -> branch an earlier command in this line moved HEAD to
     for words, at in commands:
         name = os.path.basename(words[0])
         if name == "gh":
@@ -136,8 +141,12 @@ def check_command(command, cwd):
                 repo_dir = os.path.join(repo_dir, os.path.expanduser(words[j + 1]))
             j += 2 if words[j] in GLOBAL_WITH_VALUE else 1
         options, sub, args = words[1:j], (words[j] if j < len(words) else ""), words[j + 1:]
+        if sub in NEW_BRANCH:
+            target = switch_target(sub, args, repo_dir)
+            if target is not None:
+                switched[repo_of(repo_dir)] = target
         destructive = (
-            (sub == "push" and is_destructive_push(args, repo_dir))
+            (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir))))
             or (sub == "branch" and any(a == "--delete" or FLAG_BRANCH_DELETE.match(a) for a in args))
             or (sub == "worktree" and is_foreign_worktree_removal(args, repo_dir))
             or (sub == "reset" and "--hard" in args)
