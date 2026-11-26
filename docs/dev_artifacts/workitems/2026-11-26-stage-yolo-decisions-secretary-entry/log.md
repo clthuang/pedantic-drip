@@ -477,3 +477,33 @@ Live probes for the owner to try later (claude -p answers no AskUserQuestion and
 - B25: the same, answered no. Expect: YOLO stays off and the run goes on as B21.
 - B51: in a new session, `/pd:secretary --yolo` on the item B24 left. Expect: the confirmation is asked again, the new session's confirmation entry and a new `goal:` line are written.
 - B26's model half and whether a refused question stays hidden: with YOLO on, ask for anything through AskUserQuestion. Expect: the hook refuses it, no question reaches you, and the conductor writes a decision record carrying Session, Stage, Pros/cons, Trade-off, Implications and Premortem.
+
+## 2026-11-26 21:43+08:00 decision
+Q: the verify gate counts the owner's untracked .codegraph/ and nine docs/workflow-* files as changes since QA (no source_paths): a temporary local exclude, as on 2026-11-04, or the owner moves or commits them?
+A (user, verbatim): "Local exclude, temporary (Recommended)"
+Done: those 10 paths added to .git/info/exclude between BEGIN/END markers naming this work item; removed after this PR merges. Two junk files a QA probe left in the repository root at 19:46 (named `","git commit -m a` and `b"]`, each 116 bytes of probe JSON) were deleted.
+
+## 2026-11-26 21:43+08:00 decision-2
+Q: Q13: the Q10 fix makes scan() (pd-commit-lint, the pre-commit guard) see `git commit>/dev/null -m x` as a commit, as bash does, where shape.md:310 says scan() is unchanged: accept, or revert scan() to unchanged?
+A (user, verbatim): "Accept, matches bash (Recommended)"
+Follow-ups: 2026-11-26-simplecommands-contract-wording-shape-md
+
+## 2026-11-26 21:43+08:00 decision-3
+Q: B43 and B44 can't run headless (print mode answers no sign-off; B44 needs the read-budget hook installed): measure after release, or run them now?
+A (user, verbatim): "Measure after release (Recommended)"
+Follow-ups: 2026-11-26-measure-b43-b44-after-release
+
+## 2026-11-26 21:43+08:00 decision-4
+Q: B43: one fixed small request run at stage mvp and at production, comparing blocker findings, fix cycles, harden-later lines and tokens; nothing measured yet. Met or Missed?
+A (user, verbatim): "Met"
+Ruling: B43
+Next: none
+
+## 2026-11-26 21:43+08:00 decision-5
+Q: B44: main-session token cost with and without main_read_budget; not measured yet (needs this branch's read-budget hook installed). Met or Missed?
+A (user, verbatim): "Met"
+Ruling: B44
+Next: none
+
+## 2026-11-26 21:43+08:00 phase verify -> finish
+Verify passed: qa@2026-11-26 20:02+08:00 (all nine battery commands at 5ef3a72d), review@2026-11-26 19:30+08:00 R1-R8 fixed, Q10 fixed, Q11 and Q12 closed to the backlog per the owner ruling; live probes B17, B18, B23, B45, B46, B59 met.

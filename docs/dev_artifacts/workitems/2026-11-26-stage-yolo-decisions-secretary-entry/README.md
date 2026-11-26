@@ -3,7 +3,7 @@ id: 2026-11-26-stage-yolo-decisions-secretary-entry
 type: workitem
 title: Stage, YOLO decisions, secretary entry point, main-session read budget
 status: active
-phase: verify
+phase: finish
 mode: standard
 risk: [security]
 branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
@@ -15,7 +15,7 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ## Now
 
 goal: 2026-11-26-stage-yolo-decisions-secretary-entry target finish session c9b24375-514b-4e65-867c-d8156a1a427a
-Next: `/pd:verify --workitem=2026-11-26-stage-yolo-decisions-secretary-entry`. All 12 plan tasks merged with proof pass (run entry, journal wf_b9dda323-e03). At Verify: the verify-change run, then the headless probes and owner notes listed under plan.md's `## Plan`, then B43 and B44's rulings before finish.
+Next: `/pd:finish-workitem --workitem=2026-11-26-stage-yolo-decisions-secretary-entry`. Verify passed at qa 5ef3a72d (R1-R8, Q10 fixed; Q11, Q12 and five others on the backlog; B43, B44 ruled Met). At finish: the mandatory security review (risk: security), B55 on this item's own PR, then remove the temporary .git/info/exclude block after the merge.
 
 ## Links
 
