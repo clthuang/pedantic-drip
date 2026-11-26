@@ -260,6 +260,15 @@ def test_c11_conductor_sign_off_needs_a_yolo_confirmation(pd_repo):
         assert code == 1 and "GATE FAIL [specify]" in out, args
 
 
+def test_c11b_a_refusal_to_turn_yolo_on_is_not_a_confirmation(pd_repo):
+    set_fm(pd_repo, phase="specify")
+    (item(pd_repo) / "shape.md").write_text(f"# Shape\n\n{REQS}")
+    refusal = [CONFIRM[0], 'A (user, verbatim): "No, keep YOLO off"']
+    (item(pd_repo) / "log.md").write_text(entry(1, "decision", *refusal, "Session: s1") + entry(2, "decision", *SIGNOFF, "Session: s1"))
+    code, out = gate(pd_repo, "specify")
+    assert code == 1 and "GATE FAIL [specify]" in out, out
+
+
 def test_c12_harden_later_lines_need_a_backlog_line(pd_repo):
     set_fm(pd_repo, stage="mvp", phase="finish")
     ts = "2026-11-26 10:01+08:00"
