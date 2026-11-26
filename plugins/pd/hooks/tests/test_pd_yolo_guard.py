@@ -148,6 +148,12 @@ def test_c7_destructive_commands_are_hard_stops(run_hook, yolo, tmp_path, comman
     assert_hard_stop(run_hook(HOOK, bash_call(command, repo)), command.split("&& ")[-1])
 
 
+@pytest.mark.parametrize("command", ["rm -rf /tmp/elsewhere", "git reset --hard HEAD", "gh pr merge 1"])
+def test_c7b_an_escaped_backtick_hides_no_command(run_hook, yolo, tmp_path, command):
+    repo = make_repo(tmp_path / "repo")
+    assert_hard_stop(run_hook(HOOK, bash_call("echo \\`; " + command, repo)), command)
+
+
 def test_c8_push_without_refspec_depends_on_the_branch(run_hook, yolo, tmp_path):
     on_main = make_repo(tmp_path / "main-repo", branch="main")
     on_item = make_repo(tmp_path / "item-repo")

@@ -619,6 +619,13 @@ def test_simple_c6b_commands_after_a_substitution_keep_their_place(simple_comman
     assert ["rm", "x"] in [w for w, _ in simple_commands("echo '`' ; rm x", d)]
 
 
+def test_simple_c6c_an_escaped_backtick_is_a_character(simple_commands, tmp_path):
+    d = str(tmp_path)
+    assert simple_commands("echo \\`; rm -rf build", d) == [(["echo", "`"], d), (["rm", "-rf", "build"], d)]
+    assert ["git", "clean", "-fd"] in [w for w, _ in simple_commands("echo a\\`b x; git clean -fd", d)]
+    assert simple_commands("echo \\; rm x", d) == [(["echo", ";", "rm", "x"], d)]  # `\;` is an argument, not a separator
+
+
 def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
     d = str(tmp_path)
     assert [w for w, _ in simple_commands("cat <<EOF\nrm -rf /\nEOF", d)] == [["cat"]]
