@@ -627,6 +627,15 @@ def test_simple_c6c_an_escaped_character_is_data(simple_commands, tmp_path):
     assert simple_commands("echo \\ #; rm x", d) == [(["echo", " #"], d), (["rm", "x"], d)]  # `\ #` starts no comment
 
 
+def test_simple_c6d_a_quoted_or_escaped_redirect_character_is_data(simple_commands, tmp_path):
+    d = str(tmp_path)
+    for command in ("rm -rf \\> /tmp/x", "rm -rf '>' /tmp/x", 'rm -rf ">" /tmp/x'):
+        assert [w for w, _ in simple_commands(command, d)] == [["rm", "-rf", ">", "/tmp/x"]], command
+    assert [w for w, _ in simple_commands("git branch \\> -D x", d)] == [["git", "branch", ">", "-D", "x"]]
+    assert [w for w, _ in simple_commands("rm -rf \\</tmp/x", d)] == [["rm", "-rf", "</tmp/x"]]
+    assert [w for w, _ in simple_commands("git push -f >out 2>&1", d)] == [["git", "push", "-f"]]  # a real redirect still drops
+
+
 def test_simple_c7_heredoc_and_group(simple_commands, tmp_path):
     d = str(tmp_path)
     assert [w for w, _ in simple_commands("cat <<EOF\nrm -rf /\nEOF", d)] == [["cat"]]

@@ -156,6 +156,16 @@ def test_c7b_an_escaped_character_hides_no_command(run_hook, yolo, tmp_path, com
     assert_hard_stop(run_hook(HOOK, bash_call("echo \\ #; " + command, repo)), command)
 
 
+@pytest.mark.parametrize("command, simple_command", [
+    ("rm -rf \\> /tmp/elsewhere", "rm -rf > /tmp/elsewhere"), ("rm -rf '>' /tmp/elsewhere", "rm -rf > /tmp/elsewhere"),
+    ('rm -rf ">" /tmp/elsewhere', "rm -rf > /tmp/elsewhere"), ("git branch \\> -D x", "git branch > -D x"),
+    ("git reset \\> --hard", "git reset > --hard"), ("rm -rf \\</tmp/elsewhere", "rm -rf </tmp/elsewhere"),
+])
+def test_c7c_a_quoted_or_escaped_redirect_character_hides_no_operand(run_hook, yolo, tmp_path, command, simple_command):
+    repo = make_repo(tmp_path / "repo")
+    assert_hard_stop(run_hook(HOOK, bash_call(command, repo)), simple_command)
+
+
 def test_c8_push_without_refspec_depends_on_the_branch(run_hook, yolo, tmp_path):
     on_main = make_repo(tmp_path / "main-repo", branch="main")
     on_item = make_repo(tmp_path / "item-repo")
