@@ -17,7 +17,7 @@ GitHub rulesets protect them:
 - **`stable`:** no force push or deletion.
 - **`v*` tags:** no update or deletion.
 
-The rulesets don't stop a fast-forward of `stable` or a new `v*` tag. In Claude Code sessions in this repository, the project hook `.claude/hooks/protect-release-refs.py` refuses a `git push`, `gh release create` or `gh api` call on `git/refs` that would write either (`gh release create <tag> --verify-tag`, for a tag CI already published, is allowed). Other API endpoints, such as `releases`, aren't checked.
+The rulesets don't stop a fast-forward of `stable` or a new `v*` tag. In Claude Code sessions in this repository, the project hook `.claude/hooks/protect-release-refs.py` refuses a `git push`, `gh release create` (or its alias `new`) or `gh api` call on `git/refs` that would write either (`gh release create <tag> --verify-tag`, for a tag CI already published, is allowed). Other API endpoints, such as `releases`, aren't checked.
 
 All plugin code lives in `plugins/pd/`.
 
