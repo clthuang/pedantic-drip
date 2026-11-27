@@ -386,3 +386,13 @@ def test_q2_a_worktree_remove_fed_by_xargs_is_refused_even_with_a_task_worktree_
     git(main, "worktree", "add", "-q", "-b", "pd/2026-11-26-x/task-1", str(task1))
     code, err = run_hook(HOOK, bash_call(f"git worktree list | xargs git worktree remove {task1}", main))
     assert code == 2 and "Hard stop:" in err and "check failed" not in err
+
+
+@pytest.mark.parametrize("command", [
+    "echo main | xargs git push origin",
+    "xargs git push origin < refs.txt",
+])
+def test_p1_a_push_fed_by_xargs_is_refused_from_a_feature_branch(run_hook, yolo, tmp_path, command):
+    repo = make_repo(tmp_path / "repo", branch="feat")
+    code, err = run_hook(HOOK, bash_call(command, repo))
+    assert code == 2 and "Hard stop:" in err and "check failed" not in err
