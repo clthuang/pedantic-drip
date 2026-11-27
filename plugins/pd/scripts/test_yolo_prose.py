@@ -231,3 +231,10 @@ def test_p2_probe_ruling_is_a_hard_stop_asked_at_finish():
     has_all(flat(LOG_ENTRIES), "Q: Hard stop: <the probe's question>")
     has_all(flat(TRANSITIONS), "a probe ruling")
     has_all(flat(FINISHING), "Probe ruling", "`Hard stop:` AskUserQuestion", "Met", "Missed")
+
+
+def test_p4_signoff_is_not_in_the_prefixed_hard_stop_list():
+    # The sign-off is logged as the exact line `Q: criteria signed off?` (phase-gate.sh), and YOLO answers it itself.
+    hard_stop_line = next(l for l in TRANSITIONS.read_text().splitlines() if l.startswith("- **Every hard stop is an AskUserQuestion"))
+    assert "sign-off" not in hard_stop_line
+    has_all(flat(SPECIFYING), "`Q: criteria signed off?`", "every mode except YOLO")
