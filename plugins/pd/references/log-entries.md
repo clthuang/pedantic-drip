@@ -50,11 +50,11 @@ Session: <session id>
 
 **Risk waiver.** A decision line `Risk: none (<tag>) — <reason>` waives that risk tag's signal at Verify.
 
-**Probe ruling,** one per `B<n>: Probe:` expectation, asked through AskUserQuestion with the options "Met" and "Missed":
+**Probe ruling,** one per `B<n>: Probe:` expectation, asked through a `Hard stop:` AskUserQuestion with the options "Met" and "Missed":
 
 ```markdown
 ## 2026-11-26 17:00+08:00 decision
-Q: <the probe's question>
+Q: Hard stop: <the probe's question>
 A (user, verbatim): "<the chosen option, starting Met or Missed>"
 Ruling: B<n>
 Next: none (Met only) | phase <from> -> <to> (back) | backlog <id>
