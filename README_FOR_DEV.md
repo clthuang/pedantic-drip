@@ -17,7 +17,7 @@ GitHub rulesets protect them:
 - **`stable`:** no force push or deletion.
 - **`v*` tags:** no update or deletion.
 
-The rulesets don't stop a fast-forward of `stable` or a new `v*` tag. In Claude Code sessions in this repository, the project hook `.claude/hooks/protect-release-refs.py` refuses a `git push`, `gh release create` (or its alias `new`) or `gh api` call on `git/refs` that would write either (`gh release create <tag> --verify-tag`, for a tag CI already published, is allowed). Other API endpoints, such as `releases`, aren't checked.
+The rulesets don't stop a fast-forward of `stable` or a new `v*` tag. In Claude Code sessions in this repository, the project hook `.claude/hooks/protect-release-refs.py` refuses a `git push`, `gh release create` (or its alias `new`), `gh release edit --tag` or `gh api` call on `git/refs` that would write either (with `--verify-tag`, for a tag CI already published, the two `gh release` forms are allowed). Other API endpoints, such as `releases`, aren't checked.
 
 All plugin code lives in `plugins/pd/`.
 
@@ -89,7 +89,7 @@ The installed copy changes only through a release, which reaches installs throug
 | `scripts/check-doc-drift.sh` | Checks the component counts in `README.md` and `plugins/pd/README.md`, and the hooks table below, against the filesystem; fails on retired terms in the living docs; run by `validate.sh` |
 | `scripts/test-release.sh` | Tests the release scripts and `protect-release-refs.py`; run by `test-all.sh` |
 | `.github/workflows/ci.yml` | The `validate` check on PRs into and pushes to `main`; then, on a push, the `publish` job |
-| `.claude/hooks/protect-release-refs.py` | Project hook: refuses a `git push`, `gh release create` or `gh api` `git/refs` write to `stable` or a `v*` tag in Claude Code sessions here |
+| `.claude/hooks/protect-release-refs.py` | Project hook: refuses a `git push`, `gh release create`/`edit` or `gh api` `git/refs` write to `stable` or a `v*` tag in Claude Code sessions here |
 | `.github/workflows/claude-review.yml` | Claude Code reviews each same-repo PR into `main` and posts a PR comment. It skips fork PRs and PRs that change only `docs/`, and does nothing until the `CLAUDE_CODE_OAUTH_TOKEN` secret (from `claude setup-token`) is set |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
 | `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |
