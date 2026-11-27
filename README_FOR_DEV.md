@@ -45,7 +45,7 @@ There is one path.
 1. On a clean `main` equal to `origin/main`, with `gh` and `jq` installed:
 
    ```bash
-   scripts/release-pr.sh patch|minor|major   # required: the bump, by semver
+   scripts/release-pr.sh minor   # required: the bump by semver, patch, minor or major
    ```
 
    It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses when:

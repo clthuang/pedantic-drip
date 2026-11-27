@@ -302,14 +302,7 @@ validate_plugin_json() {
         return 1
     fi
 
-    # Validate version format: X.Y.Z
-    local version=$(jq -r '.version // empty' "$file")
-    if [ -n "$version" ]; then
-        if ! echo "$version" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+$"; then
-            log_error "$file: version '$version' must be in X.Y.Z format"
-            return 1
-        fi
-    fi
+    # The version's rules live in scripts/check-version.sh, run below.
 
     return 0
 }
