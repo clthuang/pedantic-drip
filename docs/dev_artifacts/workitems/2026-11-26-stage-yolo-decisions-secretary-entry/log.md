@@ -731,3 +731,16 @@ Verdict: approved. Commit: a3c937ce. Scoped re-check of the P1 fix (git diff 988
 
 ## 2026-11-27 12:30+08:00 phase verify -> finish
 Exit check: phase-gate.sh verify passes at the qa commit above; P1-P3 closed, the P1 fix approved by the security reviewer.
+
+## 2026-11-27 12:41+08:00 review finish — claude-review (PR #37, second run)
+Verdict: comments (1 warning, 1 note). Commit: 16730cc2. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/pr37-claude-review-2.md. P4 verified by the conductor at workflow-transitions/SKILL.md:45, specifying/SKILL.md:16 and phase-gate.sh:96; main's line 45 has no prefix rule, so this branch introduced it.
+- P4 warning plugins/pd/skills/workflow-transitions/SKILL.md:45 — The docs disagree on the criteria sign-off, so the specify gate can fail on a correctly asked question: workflow-transitions:45 lists the criteria sign-off as a hard stop needing the 'Hard stop:' prefix in every mode; specifying/SKILL.md:16 says it is a hard stop in every mode except YOLO, where the conductor answers it; phase-gate.sh:96 accepts only the exact line 'Q: criteria signed off?', so a sign-off logged as 'Q: Hard stop: criteria signed off?' fails.
+- P5 note plugins/pd/hooks/pd-yolo-guard.sh:77 — the push check compares the destination only with the literal main or refs/heads/main, so HEAD:heads/main and glob refspecs reach the base branch (already on the backlog: 2026-11-26-yolo-guard-security-review-warnings, S7).
+
+## 2026-11-27 12:41+08:00 decision
+Q: the second PR review's P4 (the criteria sign-off contradiction this branch introduced): fix it then merge (non-blocking PR comments after that go to the backlog), or backlog it and merge now?
+A (user, verbatim): "Fix it, then merge (Recommended)"
+
+## 2026-11-27 12:41+08:00 phase finish -> verify (back)
+Reason: PR review comment P4 (review@2026-11-27 12:41+08:00), fixed before the merge per the decision above; the item reopens from done.
+Invalidates: nothing
