@@ -288,6 +288,18 @@ def test_s2_a_push_after_a_switch_to_the_base_branch_is_refused(run_hook, yolo, 
     assert code == 2 and "Hard stop:" in err
 
 
+@pytest.mark.parametrize("command", [
+    "git switch main; git switch nosuch; git push",
+    "git switch main; git switch nosuch; git push origin HEAD",
+    "git checkout main; git switch -c workitem/x; git push -u origin HEAD",
+    "git switch main && git switch nosuch || git push origin HEAD",
+])
+def test_q4_a_later_switch_does_not_hide_an_earlier_switch_to_the_base_branch(run_hook, yolo, tmp_path, command):
+    """Owner ruling (decision@2026-11-27 09:18+08:00): any switch target in the line counts, not only the last."""
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo")))
+    assert code == 2 and "Hard stop:" in err
+
+
 def test_s2_a_push_after_a_switch_to_a_feature_branch_passes_off_the_base_branch(run_hook, yolo, tmp_path):
     repo = make_repo(tmp_path / "repo", branch="workitem/x")
     assert_allowed(run_hook(HOOK, bash_call("git checkout -b feat && git push", repo)))
