@@ -645,3 +645,17 @@ Closes: qa@2026-11-27 09:14+08:00#Q1, qa@2026-11-27 09:14+08:00#Q2, qa@2026-11-2
 
 ## 2026-11-27 09:50+08:00 phase verify -> finish
 Exit check: phase-gate.sh verify passes at the qa commit above; the security reviewer re-checks S8 and the switch tracking next.
+
+## 2026-11-27 09:51+08:00 metrics
+Mode: standard. Tokens: 16434779 (source: ~/.claude/pd/gate/35d90c4f9cf7bb47/2026-11-26-stage-yolo-decisions-secretary-entry.json).
+Budget: workitem_token_budget=unset
+
+## 2026-11-27 09:51+08:00 note
+Incident (2026-11-26, about 23:10): while building the S8-seeded args, the conductor ran an unquoted shell heredoc whose body quoted S8's example commands in backticks. The shell ran them as command substitutions in this checkout: it created branches workitem/x and feat at 0e725ce6, pushed both to origin, and left the checkout on feat. main was untouched (5a393377) and no CI ran. The conductor returned to the work item branch and deleted both local branches, then deleted both remote branches with the owner's approval (AskUserQuestion answer: "Delete both remote branches (Recommended)"). Lesson saved to the conductor's memory: quote heredoc delimiters when the body holds backticks or $( ).
+
+## 2026-11-27 09:52+08:00 review finish — security-reviewer
+Verdict: approved. Commit: ffcc5955. Scoped re-check of S8 and the push check's switch tracking over git diff e0903491..ffcc5955 -- plugins/pd/hooks; read-only, code not run. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/security-recheck-2-finish.json.
+- S8 note plugins/pd/hooks/pd-yolo-guard.sh:68 — Closed. An earlier switch in the line can no longer hide a base-branch HEAD from a push. Switch targets are now only added to the branches checked, so the real HEAD is always among them.
+- S9 note plugins/pd/hooks/pd-yolo-guard.sh:148 — Already present in 9a6c11b7, not a regression: some git commands other than checkout and switch also move HEAD, and the guard does not track them. `git rebase origin/main main && git push` from a work item branch is allowed and pushes main. (on the backlog: 2026-11-27-yolo-guard-head-moves-untracked)
+- S10 note plugins/pd/hooks/pd-yolo-guard.sh:68 — Already present in 9a6c11b7, not a regression: when a push runs in another repository and no switch appears in the line, the guard reads the branch of the wrong repository. Example: `pushd ../main-checkout && git push`, or `git --git-dir=../m/.git --work-tree=../m push`, where that checkout is on main. (on the backlog: 2026-11-27-yolo-guard-head-moves-untracked)
+Closes: review@2026-11-26 23:08+08:00#S8
