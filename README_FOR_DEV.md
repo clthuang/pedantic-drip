@@ -32,7 +32,7 @@ All plugin code lives in `plugins/pd/`.
 
 One version: `version` in `plugins/pd/.claude-plugin/plugin.json`, plain `X.Y.Z`. `marketplace.json` carries none. Between releases `main` keeps the last released version.
 
-The maintainer chooses the bump at release time (patch, minor or major) by semver. Nothing computes it from change volume or commit prefixes.
+The maintainer chooses the bump at release time (patch, minor or major) by semver: new features are minor. The script has no default, and nothing computes it from change volume or commit prefixes.
 
 `validate.sh` checks the version through `scripts/check-version.sh`: it is `X.Y.Z`, at least the highest `v*` tag, a new version has its `CHANGELOG.md` section, and `marketplace.json` has no version.
 
@@ -45,7 +45,7 @@ There is one path.
 1. On a clean `main` equal to `origin/main`, with `gh` and `jq` installed:
 
    ```bash
-   scripts/release-pr.sh [patch|minor|major]   # default patch
+   scripts/release-pr.sh patch|minor|major   # required: the bump, by semver
    ```
 
    It bumps `plugin.json`, promotes `[Unreleased]` to `[X.Y.Z] - date`, and opens a PR from `release/vX.Y.Z` into `main`. It refuses when:
