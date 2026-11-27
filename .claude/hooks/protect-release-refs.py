@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash): refuse a command that would move `stable` or write a v* release tag: a git push,
-`gh release create <tag>` or `gh release edit --tag <tag>` (each allowed with --verify-tag, which needs the tag
-already published) or `gh api` on git/refs.
+`gh release create <tag>`, `gh release edit` with --tag <tag> or --draft=false (each allowed with --verify-tag, which
+needs the tag already published) or `gh api` on git/refs.
 
 Only CI's publish job (scripts/publish-release.sh) writes those refs. The marketplace follows `stable` with
 autoUpdate, so a stray push ships to every install, and GitHub's rulesets stop neither a fast-forward of
@@ -105,12 +105,13 @@ def gh_offending(words):
             flag_values[flag] = value
         i += 1
     if words_only[:1] == ["release"] and "--verify-tag" not in args:
-        tag = ""
+        tags = []
         if words_only[1:2] in (["create"], ["new"]):
-            tag = words_only[2] if len(words_only) > 2 else ""
-        elif words_only[1:2] == ["edit"]:  # --tag renames the release, creating that tag if it's missing
-            tag = flag_values.get("--tag", "")
-        return tag if RELEASE_REF.fullmatch(tag) else None
+            tags = words_only[2:3]
+        elif words_only[1:2] == ["edit"]:  # each creates a missing tag: --tag renames the release, and
+            publishes_draft = flag_values.get("--draft", "").lower() in ("false", "f", "0")  # publishing a draft
+            tags = [flag_values.get("--tag", "")] + (words_only[2:3] if publishes_draft else [])
+        return next((t for t in tags if RELEASE_REF.fullmatch(t)), None)
     if args[:1] == ["api"] and any("git/refs" in w for w in args):
         return next((w for w in args if GH_REFS_RELEASE_REF.search(w)), None)
     return None
