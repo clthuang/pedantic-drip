@@ -698,3 +698,8 @@ Fixed: P1 by a3c937ce — plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_p1_
 Fixed: P3 by b6ac4eb3 — plugins/pd/scripts/pd-yolo --self-test 'status writes nothing' now calls status on s2 (fails 3/4 with status mutated to write the file)
 Closes: review@2026-11-27 10:39+08:00#P1, review@2026-11-27 10:39+08:00#P3
 Rejects: review@2026-11-27 10:39+08:00#P2 — The gap is real, but closing it is a contract change. shape.md:528-530 pins the probe-ruling entry as `Q: <the probe's question>, asked through AskUserQuestion with the options "Met" and "Missed"`, and shape.md:565 and :678 pin the gate's accepted answer as `A (user, verbatim)`. The pd-yolo-guard (plugins/pd/hooks/pd-yolo-guard.sh main()) refuses any question that doesn't start with `Hard stop:`. The fix needs the contract to say the probe question starts with `Hard stop:`, and `plugins/pd/skills/workflow-transitions/SKILL.md:45` needs to list the probe ruling among hard stops. The skills could also say when to ask it, since only references/log-entries.md:53 mentions it. Changing the guard or phase-gate.sh `probe_rulings` instead would break the owner-only ruling the contract requires. The user must rule on the shape.md change.
+
+## 2026-11-27 12:19+08:00 decision
+Q: the fixer rejected P2 (qa@2026-11-27 10:50+08:00, Rejects review@2026-11-27 10:39+08:00#P2) as a contract change, since shape.md:528-530 pins the probe ruling as asked through AskUserQuestion with the options Met and Missed. Is prefixing the question with 'Hard stop:' a contract change (back to design), not one (fix it now), or backlog P2 and merge?
+A (user, verbatim): "Not a contract change, fix it (Recommended)"
+The rejection is overruled: shape.md stays; the next seeded run fixes P2.

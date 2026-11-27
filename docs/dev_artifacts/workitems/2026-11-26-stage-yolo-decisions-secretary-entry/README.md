@@ -14,7 +14,8 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 
 ## Now
 
-Next: the owner rules on the fixer's rejection of P2 (contract change or not); then the verify gate, phase verify -> finish, the security reviewer re-checks P1, close, push to PR #37, the owner's yes before the merge.
+run in flight: verify-change session c9b24375-514b-4e65-867c-d8156a1a427a
+Next: the seeded run fixes P2 (the probe ruling is a 'Hard stop:' question); then the verify gate, phase verify -> finish, the security reviewer re-checks P1, close, push to PR #37, the owner's yes before the merge.
 
 ## Links
 
