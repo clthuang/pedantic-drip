@@ -41,11 +41,13 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 NEW_BRANCH = {"checkout": {"-b", "-B", "--orphan"}, "switch": {"-c", "-C", "--create", "--force-create", "--orphan"}}
 UNKNOWN = {"-", "--detach", "-d"}
 DELIM = re.compile(r"""(-?)[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\.|[^\s;&|()<>'"\\])+)""")  # after `<<`: [-] word
-QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT)}  # quoted punctuation is data, not a separator
+QUOTED_PUNCT = {c: chr(0xE000 + k) for k, c in enumerate(PUNCT + "`<>")}  # quoted punctuation, backticks and redirect characters are data, not syntax
 UNMASK = {ord(v): k for k, v in QUOTED_PUNCT.items()}
 ANSI_C_ESCAPE = re.compile(r"""\\(?:([abeEfnrtv\\'"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2}))""")
 ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 REDIRECT = re.compile(r"^\d*(?:<<?|>>?|<>)")  # a word that starts with a redirection operator
+GLUED_WORD = re.compile(r"[^\s;&|()]*$")  # the word the output ends in, so far
+FD_NUMBER = re.compile(r"\d*[<>]*")  # `2>`, `>>`: the redirect's own start, not a word it is glued onto
 
 
 def is_sep(w):
@@ -120,11 +122,13 @@ def shell_text(cmd):
         if c == "$" and cmd[i + 1:i + 2] in ("'", '"'):  # `$"…"`: the `$` is not part of the word
             i += 1
             continue
+        if c in "<>" and not FD_NUMBER.fullmatch(GLUED_WORD.search("".join(out)).group()):
+            out.append(" ")  # `rm>/dev/null -rf x`: bash splits the redirect off the word it is glued onto
         if c in "'\"":
             quote = c
         elif c == "\\" and i + 1 < n:
-            if cmd[i + 1] != "\n":  # a backslash-newline joins the lines
-                out.append(cmd[i:i + 2])
+            if cmd[i + 1] != "\n":  # a backslash-newline joins the lines; `\;`, `` \` `` are characters, masked like quoted ones
+                out.append("\\" + QUOTED_PUNCT.get(cmd[i + 1], cmd[i + 1]))
             i += 2
             continue
         elif cmd.startswith("((", i):  # `$(( … ))` and `(( … ))`: `<<` in there is a shift
@@ -134,7 +138,7 @@ def shell_text(cmd):
         elif c == "&" and ((out and out[-1][-1] in "<>") or cmd.startswith(">", i + 1)):  # `2>&1`, `&>f`: a redirect, not a separator
             i += 1
             continue
-        elif c == "#" and (not out or out[-1][-1] in " \t" + PUNCT):  # a comment runs to the end of its line
+        elif c == "#" and (not out or out[-1][-1] in " \t" + PUNCT and not out[-1].startswith("\\")):  # a comment runs to the end of its line; `\ #` is a word
             j = cmd.find("\n", i)
             i = n if j < 0 else j
             continue
@@ -215,13 +219,33 @@ def skip_wrapper(words, j, here):
     return j, here
 
 
+def is_subst_open(words, i):
+    """words[i] opens a `$( … )`: a punctuation word starting with `(` right after a word ending in `$`."""
+    return is_sep(words[i]) and words[i][0] == "(" and i > 0 and words[i - 1].endswith("$")
+
+
+def after_subst(words, i):
+    """Index of the word after the `$( … )` that words[i] opens; the word itself when `)` is followed by more punctuation (`);`)."""
+    depth = 0
+    for k in range(i, len(words)):
+        if not is_sep(words[k]):
+            continue
+        for n, ch in enumerate(words[k]):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0:
+                return k + 1 if n == len(words[k]) - 1 else k
+    return len(words)
+
+
 def command_start(words, i, here):
     """Where the command that starts at words[i] really is, past prefixes, `NAME=value` words and wrappers:
     (index, directory it runs in, whether a wrapper stands before it), or None when no command runs."""
     wrapped = False
-    while i < len(words) and not is_sep(words[i]):
+    while i < len(words) and (not is_sep(words[i]) or is_subst_open(words, i)):
         w = words[i]
-        if w in PREFIXES or ASSIGNMENT.match(w):
+        if is_sep(w):  # `NAME=$( … ) cmd`
+            i = after_subst(words, i)
+        elif w in PREFIXES or ASSIGNMENT.match(w):
             i += 1
         elif w in WRAPPERS:
             wrapped = True
@@ -280,14 +304,19 @@ def switch_target(sub, args, at):
     if sub == "switch":
         return names[0] if names else None
     # `git checkout <x>` switches only when <x> is its one name; `checkout [<x>] [--] <paths>` restores files
-    # (shortcut: a remote branch checked out by name, or a branch made earlier in the same command, counts as no switch; resolve those if they show up)
+    # (shortcut: a branch made earlier in the same command counts as no switch; resolve it if it shows up)
     if len(names) != 1 or "--" in words or names[0] in ("HEAD", "@"):  # `checkout HEAD` stays on the branch
         return None
     git = ["git", "-C", at]
-    if subprocess.run(git + ["show-ref", "--verify", "--quiet", f"refs/heads/{names[0]}"], capture_output=True).returncode == 0:
-        return names[0]
-    detached = subprocess.run(git + ["rev-parse", "--verify", "--quiet", f"{names[0]}^{{commit}}"], capture_output=True).returncode == 0
-    return "?" if detached else None
+    name = names[0]
+    refs = subprocess.run(git + ["for-each-ref", "--format=%(refname)", f"refs/heads/{name}", f"refs/remotes/*/{name}"],
+                          capture_output=True, text=True).stdout.split()
+    if f"refs/heads/{name}" in refs:
+        return name
+    if subprocess.run(git + ["rev-parse", "--verify", "--quiet", f"{name}^{{commit}}"], capture_output=True).returncode == 0:
+        return "?"  # detached
+    # no local branch or commit: git makes the local branch from a remote one of that name (checkout --guess)
+    return name if any(r.count("/") == name.count("/") + 3 and r.endswith(f"/{name}") for r in refs) else None
 
 
 def scan(cmd, here, switched):
@@ -350,6 +379,81 @@ def scan(cmd, here, switched):
                     switched[repo_of(at)] = target
 
 
+def command_words(words, j):
+    """The words of the command at words[j], up to its separator; a `$( … )` inside it stays as its `$`."""
+    out = []
+    while j < len(words):
+        if not is_sep(words[j]):
+            out.append(words[j])
+            j += 1
+        elif is_subst_open(words, j):
+            j = after_subst(words, j)
+        else:
+            break
+    return out
+
+
+def simple_commands(cmd, here):
+    """Each top-level simple command of `cmd`, in order, as (words, directory it runs in); None when shlex can't
+    split the line. Words start at the command word, unmasked, redirections dropped. A shell's `-c` script and
+    `$( … )` are not read (unlike scan())."""
+    found = xargs_simple_commands(cmd, here)
+    return None if found is None else [(words, cwd) for words, cwd, _ in found]
+
+
+def xargs_simple_commands(cmd, here):
+    """simple_commands with a third item per command: whether xargs runs it, appending operands the words don't show."""
+    try:
+        lex = shlex.shlex(shell_text(cmd), posix=True, punctuation_chars=PUNCT)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        words = list(lex)
+    except ValueError:
+        return None
+    found, start, outer, subst, ticked = [], True, [], 0, False  # subst: open parens of the `$( … )` being skipped; ticked: inside backticks
+    for i, w in enumerate(words):
+        if ticked:  # a backtick substitution runs in a subshell: nothing in it counts or changes the directory
+            ticked = w.count("`") % 2 == 0
+            continue
+        if not is_sep(w) and w.count("`") % 2:
+            ticked, start = True, False
+            continue
+        if is_sep(w):
+            for k, ch in enumerate(w):
+                if ch == "(":
+                    if subst or (k == 0 and i and words[i - 1].endswith("$")):
+                        subst += 1
+                    else:
+                        outer.append(here)
+                        start = True
+                elif ch == ")":
+                    if subst:
+                        subst -= 1
+                    else:
+                        if outer:
+                            here = outer.pop()
+                        start = True
+                elif not subst:  # `);` ends the substitution, then `;` starts the next command
+                    start = True
+            continue
+        if subst or not start:
+            continue
+        start = False
+        at = command_start(words, i, here)
+        if at is None:
+            continue
+        j, cwd, wrapped = at
+        args = drop_redirects(command_words(words, j))
+        if words[j] == "cd":
+            if not wrapped:
+                dirs = [a for a in args[1:] if not a.startswith("-")]
+                if dirs or len(args) == 1:
+                    here = os.path.join(here, os.path.expanduser((dirs or ["~"])[0].translate(UNMASK)))
+        elif args:
+            found.append(([a.translate(UNMASK) for a in args], cwd, "xargs" in words[i:j]))
+    return found
+
+
 def main():
     d = json.load(sys.stdin)
     hit = scan(d.get("tool_input", {}).get("command", ""), d.get("cwd") or ".", {})
@@ -357,4 +461,5 @@ def main():
         print(f"{hit[0]}\t{hit[1]}")
 
 
-main()
+if __name__ == "__main__":
+    main()

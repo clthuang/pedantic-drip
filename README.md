@@ -86,7 +86,7 @@ The full diagram, with every check and review, is the Mermaid source [docs/workf
 
 | Command | Purpose |
 |---------|---------|
-| `/pd:secretary` | Triage an idea, request or bug into a work item, brainstorm, RCA or specialist |
+| `/pd:secretary [--yolo] [--stage mvp\|production]` | Triage an idea, request or bug into a work item, brainstorm, RCA or specialist; `--yolo` runs it without questions, `--stage` sets the new item's stage |
 | `/pd:brainstorm [topic]` | Explore an idea into an evidence-backed PRD |
 | `/pd:root-cause-analysis` | Find all root causes of a bug or failure |
 | `/pd:create-workitem <title>` | Create a work item and its branch, or promote a brainstorm, RCA or backlog item |

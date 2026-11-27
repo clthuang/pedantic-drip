@@ -46,6 +46,8 @@ Each project's settings live in `.claude/pd.local.md`, written by `/pd:init`. Ke
 | `base_branch` | `auto` | Merge target: origin's HEAD, else `main` |
 | `qa_battery` | none | The QA commands Verify requires; `phase-gate.sh verify` fails without it |
 | `workflow_output_cap` | none (`/pd:init` writes `2000000`) | Output tokens per workflow run |
+| `stage` | `production` | `mvp` or `production`: the bar a work item's reviews hold it to; `/pd:secretary --stage` sets a new item's |
+| `main_read_budget` | unset | Counted read calls per turn the main session may make before the read-budget hook points it at `pd:codebase-explorer` |
 | `workitem_token_budget` | unset | Tokens per work item, checked by the Stop hook |
 
 ## Running Tests

@@ -35,11 +35,11 @@ jobs:
         run: |
           set -e
           for t in plugins/pd/hooks/tests/test-pd-*.sh plugins/pd/scripts/test-phase-gate.sh; do bash "$t"; done
-          for s in pd-adopt pd-init pd-lint pd-new pd-proof pd-review-filter pd-status; do "plugins/pd/scripts/$s" --self-test; done
+          for s in pd-adopt pd-init pd-lint pd-new pd-pr-checks pd-proof pd-review-filter pd-review-prompt pd-status pd-yolo; do "plugins/pd/scripts/$s" --self-test; done
           python3 plugins/pd/scripts/pd_common.py --self-test
           uv run --script plugins/pd/scripts/pd-html.py --self-test
           node plugins/pd/workflows/tests/test-workflows.mjs
-          uv run --project plugins/pd pytest -q plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py plugins/pd/hooks/lib/test_project_root.py plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py plugins/pd/scripts/test_explorer_codegraph.py plugins/pd/hooks/lib/test_commit_target.py
+          uv run --project plugins/pd pytest -q plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py plugins/pd/hooks/lib/test_project_root.py plugins/pd/scripts/test_pd_worktrees.py plugins/pd/scripts/test_pd_status_leftovers.py plugins/pd/scripts/test_worktree_callers.py plugins/pd/scripts/test_explorer_codegraph.py plugins/pd/hooks/lib/test_commit_target.py plugins/pd/scripts/test_pd_common_stage.py plugins/pd/scripts/test_pd_yolo.py plugins/pd/scripts/test_pd_pr_checks.py plugins/pd/scripts/test_severity_note.py plugins/pd/hooks/tests/test_pd_yolo_guard.py plugins/pd/hooks/tests/test_pd_read_budget.py plugins/pd/hooks/tests/test_pd_stop_gate_goals.py plugins/pd/scripts/test_stage_new_status.py plugins/pd/scripts/test_stage_lint_gate.py plugins/pd/scripts/test_pd_review_prompt.py plugins/pd/workflows/tests/test_workflows_node.py plugins/pd/scripts/test_yolo_prose.py plugins/pd/scripts/test_registration_docs.py
 
       - name: Released CHANGELOG sections unchanged
         if: github.event_name == 'pull_request'

@@ -20,7 +20,7 @@ export HOME=$(mktemp -d); unset ENTITY_DB_PATH
 bash scripts/check-doc-drift.sh
 
 # Script self-tests (stdlib Python)
-for s in pd-lint pd-proof pd-adopt pd-new pd-status pd-init pd-review-filter; do python3 plugins/pd/scripts/$s --self-test; done
+for s in pd-lint pd-proof pd-adopt pd-new pd-status pd-init pd-review-filter pd-yolo pd-review-prompt pd-pr-checks; do python3 plugins/pd/scripts/$s --self-test; done
 python3 plugins/pd/scripts/pd_common.py --self-test
 uv run --script plugins/pd/scripts/pd-html.py --self-test
 

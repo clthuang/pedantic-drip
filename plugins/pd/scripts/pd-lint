@@ -27,7 +27,6 @@ sys.path.insert(0, str(HERE))
 import pd_common as pc  # noqa: E402
 
 GATE = HERE / "phase-gate.sh"
-RISK_PATTERNS = HERE.parent / "references" / "risk-patterns.md"
 DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}-")
 BACKLOG_RE = re.compile(r"^- \[( |x)\] (\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*) — (\S.*)$")
 GOAL_RE = re.compile(r"^goal: (\S+) target (\S+) session (\S+)$")
@@ -157,7 +156,7 @@ class Linter:
             self.err(p, lineno(p, "id:"), f"id {fm['id']} does not match its name {it['id']}")
         if fm.get("type") and fm["type"] != t:
             self.err(p, lineno(p, "type:"), f"type: {fm['type']}, but it lives in {pc.TYPE_DIRS[t]}/")
-        for key, allowed in (("type", pc.TYPES), ("status", pc.STATUSES), ("phase", pc.PHASES), ("mode", pc.MODES)):
+        for key, allowed in (("type", pc.TYPES), ("status", pc.STATUSES), ("phase", pc.PHASES), ("mode", pc.MODES), ("stage", pc.STAGES)):
             v = fm.get(key)
             if v not in (None, "") and v not in allowed:
                 self.err(p, lineno(p, f"{key}:"), f"{key}: {v} is not one of {', '.join(allowed)}")
@@ -165,7 +164,7 @@ class Linter:
             if r not in pc.RISKS:
                 self.err(p, lineno(p, "risk:"), f"risk: {r} is not one of {', '.join(pc.RISKS)}")
         if not workitem:
-            for k in ("phase", "mode", "branch", "risk"):
+            for k in ("phase", "mode", "stage", "branch", "risk"):
                 if k in fm:
                     self.err(p, lineno(p, f"{k}:"), f"{k}: is for work items only")
         if "roadmap" in fm and t != "plan":
@@ -274,6 +273,9 @@ class Linter:
                     self.err(shape, lineno(shape, line), f"duplicate expectation id B{m.group(1)}")
                 else:
                     ids.append(m.group(1))
+        if ids and it["fm"].get("stage") == "mvp" and not any(
+                l.startswith("Deferred:") for l in pc.blank_fences(pc.sections(shape.read_text()).get("Requirements", "")).split("\n")):
+            self.warn(shape, lineno(shape, "## Requirements"), "an mvp work item's ## Requirements ends with a `Deferred:` line (`Deferred: none` if empty)")
         return set(ids)
 
     def at_head(self, path):
@@ -330,9 +332,10 @@ class Linter:
                 self.err(src, ln, f"task {n}: the command doesn't write its junit path {junit}")
             proof = f.get("proof")
             if proof:
-                m = re.fullmatch(r"green-only \((refactor|infra|fixture)\)", proof)
+                reasons = ("refactor", "infra", "fixture") + (("mvp",) if fm.get("stage") == "mvp" else ())
+                m = re.fullmatch(rf"green-only \(({'|'.join(reasons)})\)", proof)
                 if not m:
-                    self.err(src, ln, f"task {n}: proof: green-only needs a reason: refactor, infra or fixture")
+                    self.err(src, ln, f"task {n}: proof: green-only needs a reason: {', '.join(reasons[:-1])} or {reasons[-1]}")
                 elif m.group(1) == "refactor":
                     tests = [w.split("::")[0] for w in cmd.strip("`").split()
                              if TEST_NAME_RE.search(w.split("::")[0]) or any(w.startswith(x) for x in self.paths("test_paths"))]
@@ -416,6 +419,10 @@ class Linter:
                 if not answers or not all(ANSWER_RE.match(l) for l in answers):
                     self.err(logp, ln, "a decision's answer line is `A (user, verbatim): …`, `A (conductor): …` "
                                        "or `A (conductor, on the user's behalf): …`")
+                if any(l.startswith("A (conductor, on the user's behalf):") for l in answers):
+                    lacking = [lab for lab in pc.DECISION_RECORD if not any(l.startswith(lab) for l in e["body"])]
+                    if lacking:
+                        self.err(logp, ln, "a decision answered on the user's behalf lacks its record lines: " + ", ".join(lacking))
             for i, l in enumerate(e["body"], 1):
                 self.commits += [(logp, ln + i, h) for h in COMMIT_RE.findall(l)]
         fm = it["fm"]
@@ -618,29 +625,14 @@ class Linter:
                 self.err(p, text[:m.start()].count("\n") + 1, f"test imports {rel}, which no contract's modules: line names")
 
     def check_risk(self, rng):
-        patterns = re.findall(r"^- (security|migration) (path|line): `(.+)`$", RISK_PATTERNS.read_text(), re.M)
         feat = self.branch_workitem()
         tags = set(pc.as_list(((feat or {}).get("fm") or {}).get("risk")))
-        diff = pc.git(["diff", "-U0", "--diff-filter=ACMR", rng], self.root)
-        added, cur = {}, None
-        for line in diff.split("\n"):
-            if line.startswith("+++ "):
-                cur = line[6:] if line.startswith("+++ b/") else None
-                added.setdefault(cur, [])
-            elif line.startswith("+") and cur:
-                added[cur].append(line[1:])
-        # pd's own records ("Tokens:" in every run entry) and test code ("Permission denied" in an error case) are no surface.
-        skip = [pc.dir_prefix(self.rel(self.art))] + self.paths("test_paths")
-        hits = set()
-        for tag, kind, rx in patterns:
-            r = re.compile(rx, re.I)
-            for f, lines in added.items():
-                if f and not any(f.startswith(s) for s in skip) and (r.search(f) if kind == "path" else any(r.search(l) for l in lines)):
-                    hits.add((tag, f))
-        for tag, f in sorted(hits):
+        if feat:
+            tags |= pc.risk_waivers(pc.parse_log(*pc.log_text(feat["type"], feat["path"])))
+        for tag, f, line in pc.risk_signals(self.root, rng):
             if tag not in tags:
-                self.warn(self.root / f, 1, f"risk signal ({tag}) and the work item has no risk: [{tag}] tag: "
-                                            "set it, or the user clears it with a decision entry")
+                self.warn(self.root / f, line, f"risk signal ({tag}) and the work item has no risk: [{tag}] tag: "
+                                               "set it, or the user clears it with a decision entry")
 
 
 # --- T3.5f: --archive and --sweep ---------------------------------------------

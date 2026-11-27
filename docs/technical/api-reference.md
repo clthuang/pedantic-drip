@@ -77,6 +77,30 @@ pd-review-filter (--diff <file> | --range <A..B>) [<review.json>]    # the revie
 
 Prints the review JSON with `new_in_diff` cut to the findings whose file:line lies inside a hunk of the diff's new side, and names each dropped finding on stderr. Schema: `references/workflow-results.md`.
 
+## pd-yolo — YOLO on or off for a session
+
+```
+pd-yolo on|off|status --session <sid>
+```
+
+State is the file `~/.claude/pd/gate/<sid>.yolo`; it exists while YOLO is on. A session id not matching `[\w.-]+` exits 2 and writes nothing.
+
+## pd-review-prompt — the review call's prompt body
+
+```
+pd-review-prompt <skill> [<skill>] <work item dir>
+```
+
+Prints `Stage: <stage>`, each skill's `## Review checklist`, the stage's section of `references/stage-bars.md`, then the review call's JSON schema. Exits 1 with `pd-review-prompt: <reason>` when a piece is missing.
+
+## pd-pr-checks — wait for a pull request's checks
+
+```
+pd-pr-checks <pr> [--for <seconds>]   # polls gh every 30 s, 540 s by default
+```
+
+Prints the last poll's JSON list. Exits 0 when all pass or skip, 1 when some fail or cancel, 3 with no checks, 8 still pending when `--for` ran out, 2 when gh failed otherwise.
+
 ## pd-init — set a project up
 
 ```

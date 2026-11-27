@@ -81,10 +81,21 @@ def expectations():
     if dups:
         fail("duplicate expectation ids: " + ", ".join("B" + i for i in dups))
 
+def session_of(e):
+    return next((l[len("Session:"):].strip() for l in e["body"] if l.startswith("Session:")), None)
+
 def signed_off():
+    confirmed = set()  # sessions that turned YOLO on, in the log's order: a sign-off before its confirmation doesn't count
     for e in entries:
-        if e["kind"] == "decision" and any(l.strip().lower() == "q: criteria signed off?" for l in e["body"]) \
-                and any(l.startswith("A (user, verbatim):") for l in e["body"]):
+        if e["kind"] != "decision":
+            continue
+        answered_by_user = any(l.startswith("A (user, verbatim):") for l in e["body"])
+        said_yes = any(l.startswith("A (user, verbatim):") and l.split(":", 1)[1].strip().strip("\"'“”").lower().startswith("yes") for l in e["body"])
+        if said_yes and any(l.strip().lower() == "q: hard stop: turn yolo on for this session?" for l in e["body"]):
+            confirmed.add(session_of(e))
+        if any(l.strip().lower() == "q: criteria signed off?" for l in e["body"]) and (
+                answered_by_user or (any(l.startswith("A (conductor, on the user's behalf):") for l in e["body"])
+                                     and session_of(e) in confirmed)):
             return
     fail("log.md has no sign-off: a decision entry with `Q: criteria signed off?` and `A (user, verbatim): …`")
 
@@ -110,6 +121,60 @@ def tasks_merged(tasks):
     missing = [str(t["n"]) for t in tasks if t["n"] not in merged]
     if missing:
         fail("no run entry records these tasks merged with their proof passing: " + ", ".join(missing))
+
+def item_fm():
+    return pc.split_frontmatter(read("README.md"))[0] or {}
+
+def stage_matches_review():
+    """The latest review entry with a `Stage:` line decides; entries without one are skipped. Only the exit being taken
+    checks it (pd-lint's re-runs of passed gates skip it), so a stage change after Contracts commits."""
+    fm = item_fm()
+    if fm.get("phase") != phase:
+        return
+    applied = [l[len("Stage:"):].strip() for e in entries if e["kind"] == "review" for l in e["body"] if l.startswith("Stage:")]
+    if applied and applied[-1] != pc.item_stage(fm):
+        fail(f"the review applied stage {applied[-1]}; the work item is {pc.item_stage(fm)}")
+
+def risk_declared():
+    root = pc.repo_root(d)
+    cfg = pc.load_config(root)
+    base = pc.git(["merge-base", pc.base_branch(root, cfg), "HEAD"], root, check=False)
+    if not base:
+        return
+    declared = set(pc.as_list(item_fm().get("risk"))) | pc.risk_waivers(entries)
+    for tag, path, line in pc.risk_signals(root, f"{base}..HEAD"):
+        if tag not in declared:
+            fail(f"{tag} signal {path}:{line}: add risk: {tag} or a Risk: none ({tag}) decision")
+
+def harden_later_on_backlog():
+    if pc.item_stage(item_fm()) != "mvp":
+        return
+    refs = [f"{e['ref']}#{m['id']}" for e in entries if e["kind"] == "review" for l in e["body"]
+            for m in [pc.ISSUE_RE.match(l)] if m and m["cat"]]
+    if not refs:
+        return
+    root = pc.repo_root(d)
+    backlog = pc.artifacts_dir(root, pc.load_config(root)) / "backlog.md"
+    ending = f"(from: workitems/{d.name})"
+    lines = [l for l in (backlog.read_text().split("\n") if backlog.is_file() else []) if l.rstrip().endswith(ending)]
+    named = lambda line, ref: re.search(re.escape(ref) + r"(?!\w)", line)
+    best = max(lines, key=lambda l: sum(bool(named(l, r)) for r in refs), default="")
+    missing = [r for r in refs if not named(best, r)]
+    if missing:
+        fail(f"harden-later issues missing from the one backlog.md line ending {ending}: " + ", ".join(missing))
+
+def probe_rulings():
+    for n in re.findall(r"^B(\d+): Probe:", pc.blank_fences(reqs), re.M):
+        for e in entries:
+            body = e["body"]
+            if e["kind"] != "decision" or f"Ruling: B{n}" not in body:
+                continue
+            verdict = next((m.group(1) for l in body for m in [re.match(r'^A \(user, verbatim\): "(Met|Missed)\b', l)] if m), None)
+            nxt = next((l[len("Next:"):].strip() for l in body if l.startswith("Next:")), "")
+            if verdict == "Met" and nxt or verdict == "Missed" and re.match(r"(phase \S+ -> \S+ \(back\)|backlog \S+)$", nxt):
+                break
+        else:
+            fail(f"the owner's ruling on B{n} is missing or names no next step")
 
 def verify():
     root = pc.repo_root(d)
@@ -144,6 +209,10 @@ def verify():
                 fail(f"source, test or fixture files changed since the qa commit {commit}; run QA again: " + ", ".join(code[:5]))
     for b in pc.open_blockers(entries):
         fail(f"open blocker {b['ref']} {b['file']}:{b['line']} — {b['claim']}")
+    risk_declared()
+
+if phase in ("design", "create-plan", "verify", "finish"):
+    stage_matches_review()
 
 if phase == "specify":
     expectations()
@@ -155,6 +224,8 @@ elif phase == "implement":
 elif phase == "verify":
     verify()
 elif phase == "finish":
+    probe_rulings()
+    harden_later_on_backlog()
     triggers = pc.retro_triggers(entries)
     if triggers and not (d / "retro.md").is_file():
         fail("retro.md missing: log.md records a retro trigger (" + ", ".join(triggers) + ")")
@@ -197,7 +268,7 @@ case "$PHASE" in
 esac
 
 case "$PHASE" in
-  specify|express|implement|verify|finish)
+  specify|design|create-plan|express|implement|verify|finish)
     # A checker that crashes, or never ran, fails the gate: only its closing line proves it finished.
     out=$(log_checks); rc=$?
     while IFS= read -r line; do [ -n "$line" ] && [ "$line" != LOG_CHECKS_DONE ] && say "$line"; done <<< "$out"

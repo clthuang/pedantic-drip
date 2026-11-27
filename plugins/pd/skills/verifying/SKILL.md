@@ -12,7 +12,7 @@ The Verify stage (`phase: verify`) asks: does the merged branch do what the crit
 1. **Phase entry** per `workflow-transitions`, on the work item's branch with a clean tree.
 2. **Derive the args** for `verify-change` from the committed files:
    - `workitem_id`; `shape` and `plan` (the files' paths); `base`: `git merge-base HEAD <base_branch>`;
-   - `checklist`: this skill's `## Review checklist` section, verbatim;
+   - `stage`: the work item's stage (`item_stage` of the README); `checklist`: the output of `pd-review-prompt verifying <work item dir>` (`${CLAUDE_PLUGIN_ROOT}/scripts/pd-review-prompt`);
    - `qa_battery` from `.claude/pd.local.md` (none set: stop and ask the user to set it; `phase-gate.sh verify` fails without it), plus the migration's up-and-down commands on a fixture database when the work item has `risk: migration`;
    - `log`: the work item's `log.md` path; the reviewer reads each task's `case_map`, `greens` and `skipped` from the `run implement-tasks` entries (all of them: a resumed run lists only the tasks it landed), so the args stay small enough to pass inline;
    - `assumptions`: this work item's open assumptions from `pd-status`;

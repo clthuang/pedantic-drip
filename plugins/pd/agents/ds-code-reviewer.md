@@ -113,7 +113,7 @@ If all external tools are unavailable:
   "strengths": ["What was done well"],
   "issues": [
     {
-      "severity": "blocker | warning | suggestion",
+      "severity": "blocker | warning | note",
       "category": "anti-pattern | pipeline | code-standard | notebook | api-correctness",
       "location": "file:line",
       "description": "What's wrong",
@@ -131,7 +131,7 @@ If all external tools are unavailable:
 |-------|---------|------------------|
 | blocker | Data leakage, incorrect API usage, silent data corruption | Yes |
 | warning | Anti-patterns, missing types, poor structure | No |
-| suggestion | Style improvements, minor optimizations | No |
+| note | Style improvements, minor optimizations | No |
 
 **Approval rule:** `approved: true` only when zero blockers.
 

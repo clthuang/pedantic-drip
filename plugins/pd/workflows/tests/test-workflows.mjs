@@ -85,37 +85,37 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   let qaRuns = 0
   const ISS = { id: 'R1', severity: 'blocker', category: 'c', file: 'a.py', line: 1, claim: 'x', evidence: 'y' }
   const answer = l => l.startsWith('review:codex') ? null
-    : l === 'review:claude' ? { approved: false, issues: [ISS], summary: '' }
+    : l === 'review:claude' ? { approved: false, stage: 'production', issues: [ISS], summary: '' }
     : l.startsWith('qa') ? (qaRuns++, { commit: 'h', ran: [{ command: 'pytest', result: qaRuns > 1 ? 'pass' : 'fail' }], gaps: [], issues: [], flakes: [] })
     : { fixes: [{ issue: 'R1', commit: 'f1', test: 't::a' }], rejections: [] }
   const s = stubs(answer)
-  const r = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }, ...s.args)
+  const r = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'Stage: production\nc', stage: 'production', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }, ...s.args)
   check(keys(r) === keys({ ...every, ...verify }) && keys(r) === keys(globalThis.__RESULT.properties), `verify-change: result fields equal: ${keys(r)}`)
   check(keys(r.qa) === keys(verify.qa) && keys(r.review) === keys(verify.review) && keys(r.fixes[0]) === keys(verify.fixes[0]), 'verify-change: qa, review and fixes fields equal')
   check(s.calls.map(c => c.label).join() === 'review:codex,qa:1,review:codex:retry,review:claude,fix:1,qa:2' && r.cycles === 1, `verify-change: codex, one retry, the Claude fallback, one cycle: ${s.calls.map(c => c.label)}`)
   check(s.calls[0].agentType === 'codex:codex-rescue' && s.calls[3].agentType === 'pd:code-quality-reviewer' && phasesOk(meta, s.calls), 'verify-change: agent types and phases')
   check(s.calls[0].prompt.includes('every run implement-tasks entry in docs/f/log.md') && !s.calls[0].prompt.includes('undefined'),
     'verify-change: the review prompt points at log.md for the case maps instead of carrying them inline (F7)')
-  const noLog = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], workflow_output_cap: 1e9 }, ...stubs(answer).args).then(() => 'ran', e => e.message)
+  const noLog = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'Stage: production\nc', stage: 'production', qa_battery: ['pytest'], workflow_output_cap: 1e9 }, ...stubs(answer).args).then(() => 'ran', e => e.message)
   check(noLog.includes('needs args.log'), `verify-change: refuses to start without args.log: ${noLog}`)
-  const s2 = stubs(l => l.startsWith('review') ? { approved: false, issues: [ISS], summary: '' } : l.startsWith('fix') ? { fixes: [], rejections: [] } : (qaRuns = 0, answer('qa')))
-  const r2 = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9, codex: false }, ...s2.args)
+  const s2 = stubs(l => l.startsWith('review') ? { approved: false, stage: 'production', issues: [ISS], summary: '' } : l.startsWith('fix') ? { fixes: [], rejections: [] } : (qaRuns = 0, answer('qa')))
+  const r2 = await run({ workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'Stage: production\nc', stage: 'production', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9, codex: false }, ...s2.args)
   check(r2.cycles === 3 && s2.calls.filter(c => c.label.startsWith('fix')).map(c => c.model || '-').join() === '-,opus,opus' && s2.calls[0].label === 'review:claude',
     'verify-change: toggle off goes straight to Claude; the loop stops at 3 cycles; cycles 2 and 3 run opus')
-  const A = { workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'c', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }
+  const A = { workitem_id: 'f', base: 'b', shape: 's', plan: 'p', checklist: 'Stage: production\nc', stage: 'production', qa_battery: ['pytest'], log: 'docs/f/log.md', workflow_output_cap: 1e9 }
   const QA_PASS = issues => ({ commit: 'h', ran: [{ command: 'pytest', result: 'pass' }], gaps: [], issues, flakes: [] })
-  const s3 = stubs(l => l.startsWith('review') ? { approved: true, issues: [], summary: '' } : l.startsWith('qa') ? QA_PASS([{ ...ISS, id: 'Q1' }])
+  const s3 = stubs(l => l.startsWith('review') ? { approved: true, stage: 'production', issues: [], summary: '' } : l.startsWith('qa') ? QA_PASS([{ ...ISS, id: 'Q1' }])
     : { fixes: [{ issue: 'Q1', commit: 'f1', test: 't::a' }], rejections: [] })
   const r3 = await run({ ...A, codex: false }, ...s3.args)
   check(r3.cycles === 3 && r3.qa.issues.some(i => i.id === 'Q1' && i.severity === 'blocker'),
     `verify-change: a claimed fix doesn't settle a QA blocker the next QA run still reports (cycles ${r3.cycles})`)
   const REM = { ...ISS, file: 'src/legacy.js', line: 42, claim: 'alias with no external consumer' }
-  const s5 = stubs(l => l.startsWith('review') ? { approved: false, issues: [REM], summary: '' } : l.startsWith('fix') ? { fixes: [{ issue: 'R1', commit: 'd1', test: '' }], rejections: [] } : QA_PASS([]))
+  const s5 = stubs(l => l.startsWith('review') ? { approved: false, stage: 'production', issues: [REM], summary: '' } : l.startsWith('fix') ? { fixes: [{ issue: 'R1', commit: 'd1', test: '' }], rejections: [] } : QA_PASS([]))
   const r5 = await run({ ...A, codex: false }, ...s5.args), qa2 = (s5.calls.find(c => c.label === 'qa:2') || { prompt: '' }).prompt
   check(r5.cycles === 1 && s5.calls.find(c => c.label === 'fix:1').prompt.includes('no new test, and its test is empty')
     && qa2.includes('"file":"src/legacy.js","line":42') && qa2.includes('for a removal (empty test), its commit deletes the code at its finding'),
     'verify-change: a removal fix (empty test) reaches QA with its finding\'s file:line, for QA to check the deletion')
-  const APPROVED = { approved: true, issues: [], summary: '' }, ran = (...rs) => ({ commit: 'h', ran: rs, gaps: [], issues: [], flakes: [] })
+  const APPROVED = { approved: true, stage: 'production', issues: [], summary: '' }, ran = (...rs) => ({ commit: 'h', ran: rs, gaps: [], issues: [], flakes: [] })
   const s6 = stubs(l => l.startsWith('review') ? APPROVED : l.startsWith('fix') ? { fixes: [], rejections: [] }
     : ran({ command: 'pytest', result: 'pass' }, { command: 'pd-lint --isolation b..HEAD', result: 'fail' }))
   const r6 = await run({ ...A, codex: false }, ...s6.args)
@@ -158,6 +158,44 @@ const phasesOk = (meta, calls) => calls.every(c => meta.phases.some(p => p.title
   check(r4.reviewed_by === null && r4.review.issues.map(i => `${i.id}:${i.severity}:${i.file}:${i.line}`).join() === 'R0:blocker:s:1'
     && r4.cycles === 0 && !s4.calls.some(c => c.label.startsWith('fix')),
     `verify-change: no usable review: reviewed_by null, an R0 blocker, no fix cycle spent on it (${r4.reviewed_by}, ${r4.cycles})`)
+  // VerifyArgs: stage and its checklist line are checked before any agent call (B13).
+  const refused = async extra => {
+    const sx = stubs(answer)
+    const msg = await run({ ...A, ...extra }, ...sx.args).then(() => 'ran', e => e.message)
+    return { msg, calls: sx.calls.length }
+  }
+  for (const [what, extra, arg] of [['no stage', { stage: undefined }, 'args.stage'], ['stage beta', { stage: 'beta' }, 'args.stage'],
+    ['a checklist for another stage', { stage: 'mvp' }, 'args.checklist']]) {
+    const x = await refused(extra)
+    check(x.msg.includes(arg) && x.calls === 0, `verify-change: ${what} throws naming ${arg}, with no agent call (${x.msg}, ${x.calls} calls)`)
+  }
+  // The stage reaches the result and its review, including the no-usable-review fallback (B14, B45).
+  const MVP = { ...A, stage: 'mvp', checklist: 'Stage: mvp\nc', codex: false }
+  const sm = stubs(l => l.startsWith('review') ? { ...APPROVED, stage: 'mvp' } : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
+  const rm = await run(MVP, ...sm.args)
+  check(rm.stage === 'mvp' && rm.review.stage === 'mvp', `verify-change: stage mvp reaches the result and its review (${rm.stage}, ${rm.review.stage})`)
+  const sn = stubs(l => l.startsWith('review') ? null : l.startsWith('fix') ? { fixes: [], rejections: [] } : QA_PASS([]))
+  const rn = await run(MVP, ...sn.args)
+  check(rn.stage === 'mvp' && rn.review.stage === 'mvp' && rn.review.issues[0].id === 'R0', `verify-change: the fallback review carries stage mvp (${rn.review.stage})`)
+  // ReviewSchema: REVIEW equals the json block under "The review call", compared structurally (B41).
+  const canon = v => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).sort().map(k => [k, ['required', 'enum'].includes(k) && Array.isArray(v[k]) ? [...v[k]].sort() : canon(v[k])])) : v
+  const schemaDiff = (mdSchema, jsSchema) => J(canon(mdSchema)) === J(canon(jsSchema)) ? ''
+    : `workflow-results.md "The review call" differs from REVIEW in verify-change.js: ${J(canon(mdSchema))} vs ${J(canon(jsSchema))}`
+  const J = JSON.stringify
+  const callBlock = JSON.parse(md.match(/^## The review call\n[\s\S]*?```json\n([\s\S]*?)```/m)[1])
+  const REVIEW_JS = globalThis.__RESULT.properties.review
+  check(schemaDiff(callBlock, REVIEW_JS) === '', `verify-change: REVIEW equals the review call block: ${schemaDiff(callBlock, REVIEW_JS).slice(0, 200)}`)
+  const noStage = structuredClone(callBlock)
+  delete noStage.properties.stage
+  noStage.required = noStage.required.filter(k => k !== 'stage')
+  const badEnum = structuredClone(REVIEW_JS)
+  badEnum.properties.issues.items.properties.severity.enum = ['blocker', 'warning']
+  for (const [what, d] of [['stage missing from the markdown copy', schemaDiff(noStage, REVIEW_JS)], ['a severity enum changed on one side', schemaDiff(callBlock, badEnum)]])
+    check(d.includes('workflow-results.md') && d.includes('verify-change.js'), `verify-change: ${what} fails the comparison naming both files`)
+  // RESULT and the verify-change block both carry stage (B14).
+  check('stage' in verify && 'stage' in verify.review && 'stage' in globalThis.__RESULT.properties && 'stage' in REVIEW_JS.properties,
+    'verify-change: stage is in RESULT, its REVIEW and the verify-change block of workflow-results.md')
 }
 // research-fanout and rca-fanout.
 {

@@ -11,6 +11,7 @@ See the [workflow diagram](../../README.md#workflow) in the repository README.
 | Skills | 20 |
 | Agents | 21 |
 | Commands | 22 |
+| Hooks | 9 |
 
 ## Commands
 

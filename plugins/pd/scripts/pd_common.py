@@ -20,12 +20,15 @@ STATUSES = ("draft", "active", "blocked", "done", "abandoned")
 PHASES = ("specify", "design", "create-plan", "implement", "verify", "finish")
 MODES = ("standard", "small", "express")
 RISKS = ("security", "migration")
+STAGES = ("mvp", "production")
+DECISION_RECORD = ("Session:", "Stage:", "Pros/cons:", "Trade-off:", "Implications:", "Premortem:")
+RISK_PATTERNS = Path(__file__).resolve().parent.parent / "references" / "risk-patterns.md"
 ENTRY_KINDS = ("decision", "phase", "review", "qa", "gate", "run", "handoff",
                "replan", "metrics", "defect", "note", "capped")
 DEFAULT_ARTIFACTS_ROOT = "docs/dev_artifacts"
 CONFIG_DEFAULTS = {
     "artifacts_root": DEFAULT_ARTIFACTS_ROOT, "base_branch": "auto", "tracker": "none",
-    "small_workitem_tasks": "3", "many_files": "10",
+    "small_workitem_tasks": "3", "many_files": "10", "stage": "production",
 }
 # pd 7 names, read only to detect a project left on them (old_names) and as pd-adopt's old-layout source.
 OLD_ITEM_DIR = "features"
@@ -36,7 +39,8 @@ HEADING_RE = re.compile(
     r"^## (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})([+-]\d{2}:\d{2}) ([a-z]+)(?:-(\d+))?(?: (.*))?$")
 # A reference to an entry, or to one id inside it: review-2@2026-10-14 11:30+08:00#R1
 REF_RE = re.compile(r"\b([a-z]+(?:-\d+)?)@(\d{4}-\d{2}-\d{2} \d{2}:\d{2}[+-]\d{2}:\d{2})(?:#([A-Za-z]+\d+))?")
-ISSUE_RE = re.compile(r"^- ([A-Za-z]+\d+) (blocker|warning|note) (\S+?):(\d+) — (.+)$")
+ISSUE_RE = re.compile(r"^- (?P<id>[A-Za-z]+\d+) (?P<sev>blocker|warning|note)(?: (?P<cat>harden-later))? "
+                      r"(?P<file>\S+?):(?P<line>\d+) — (?P<claim>.+)$")
 STOPWORDS = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "by", "at",
              "from", "is", "are", "be", "as", "into", "via", "per", "its", "it", "this", "that"}
 _KEY_RE = re.compile(r"^([A-Za-z_][\w-]*):(?:\s+(.*))?$")
@@ -152,6 +156,58 @@ def load_config(root):
         fm, _, _ = split_frontmatter(path.read_text())
         cfg.update({k: v for k, v in (fm or {}).items() if v is not None})
     return cfg
+
+
+def item_stage(fm):
+    """A README without the key reads production, whatever the config default."""
+    return fm.get("stage") or "production"
+
+
+def base_branch(root, cfg):
+    """The config's base_branch; for `auto`, origin/HEAD's target, else main (pd-session-start.sh's rule)."""
+    configured = str(cfg.get("base_branch") or "auto")
+    if configured != "auto":
+        return configured
+    ref = git(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], root, check=False)
+    return ref.removeprefix("refs/remotes/origin/") if ref else "main"
+
+
+def risk_signals(root, rng):
+    """[(tag, path, line)] where risk-patterns.md matches the lines added in `git diff -U0 rng`; one per tag and path.
+    pd's own records (artifacts_root) and test_paths are skipped: "Tokens:" in every run entry is no surface."""
+    cfg = load_config(root)
+    patterns = re.findall(r"^- (security|migration) (path|line): `(.+)`$", RISK_PATTERNS.read_text(), re.M)
+    diff = git(["diff", "-U0", "--diff-filter=ACMR", rng], root)
+    added, cur, number = {}, None, 0
+    for line in diff.split("\n"):
+        if line.startswith("+++ "):
+            cur = line[6:] if line.startswith("+++ b/") else None  # a quoted (non-ASCII) path is skipped
+            added.setdefault(cur, [])
+        elif line.startswith("@@"):
+            number = int(re.search(r"\+(\d+)", line).group(1))
+        elif line.startswith("+") and cur:
+            added[cur].append((number, line[1:]))
+            number += 1
+    found = as_list(cfg.get("test_paths")) or (["tests/"] if (Path(root) / "tests").is_dir() else [])
+    skip = [dir_prefix(cfg.get("artifacts_root") or DEFAULT_ARTIFACTS_ROOT)] + [dir_prefix(x) for x in found]
+    hits = {}
+    for tag, kind, rx in patterns:
+        r = re.compile(rx, re.I)
+        for f, lines in added.items():
+            if not f or any(f.startswith(s) for s in skip):
+                continue
+            where = [1] if kind == "path" and r.search(f) else [n for n, l in lines if kind == "line" and r.search(l)]
+            if where:
+                hits[(tag, f)] = min(where + [hits.get((tag, f), where[0])])  # the first matching line
+    return [(tag, f, n) for (tag, f), n in sorted(hits.items())]
+
+
+_WAIVER_RE = re.compile(r"^Risk: none \((security|migration)\)[\s:;,.—-]*\w")
+
+
+def risk_waivers(entries):
+    """Tags a decision entry waives with `Risk: none (<tag>) — <reason>`; a waiver with no reason, or in any other entry, waives nothing."""
+    return {m.group(1) for e in entries if e.get("kind") == "decision" for l in e["body"] for m in [_WAIVER_RE.match(l)] if m}
 
 
 def artifacts_dir(root, cfg):
@@ -392,9 +448,9 @@ def open_blockers(entries):
         if e["kind"] in ("review", "qa") and not legacy:
             for line in e["body"]:
                 m = ISSUE_RE.match(line)
-                if m and m.group(2) == "blocker":
-                    key = f"{e['ref']}#{m.group(1)}"
-                    open_[key] = {"ref": key, "file": m.group(3), "line": int(m.group(4)), "claim": m.group(5)}
+                if m and m["sev"] == "blocker":
+                    key = f"{e['ref']}#{m['id']}"
+                    open_[key] = {"ref": key, "file": m["file"], "line": int(m["line"]), "claim": m["claim"]}
     return [dict(b, rejection_proposed=b["ref"] in rejected) for b in open_.values()]
 
 
@@ -500,6 +556,8 @@ def _self_test():
     c.check(es[0]["ref"] == "review@2026-10-14 11:30+08:00" and es[1]["ref"] == "review-2@2026-10-14 11:30+08:00",
             "entry refs carry the -n suffix")
     c.check(es[0]["line"] == 4 and ISSUE_RE.match(es[0]["body"][0]), "entry line numbers and issue lines")
+    c.check(ISSUE_RE.match("- R3 warning harden-later a.py:1 — x")["cat"] == "harden-later"
+            and item_stage({}) == "production" and item_stage({"stage": "mvp"}) == "mvp", "harden-later category, item_stage")
     c.check(set(sections("## Now\nx\n```\n## Fake\n```\n## Links\ny\n")) == {"Now", "Links"}, "sections skip fences")
     plan = ("## Plan\n### Wave 1\n#### Task 1: parse [parallel-safe]\n- files: a.py\n- uses: none\n"
             "- test cases:\n  - C1 [B1] (fixture: none): x\n### Wave 2\n#### Task 2: io\n- command: `t`\n")

@@ -31,6 +31,19 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-commit-lint.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-yolo-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-yolo-guard.sh"
           }
         ]
       },
@@ -44,6 +57,25 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-agent-write-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep|Bash|WebFetch|WebSearch|mcp__codegraph__codegraph_explore",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-read-budget.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pd-read-budget.sh"
           }
         ]
       }

@@ -47,7 +47,7 @@ Apply the criteria in `references/security-review.md`, Anthropic's security-revi
   "approved": true | false,
   "issues": [
     {
-      "severity": "blocker | warning | suggestion",
+      "severity": "blocker | warning | note",
       "securitySeverity": "critical | high | medium | low",
       "category": "injection | auth | crypto | data-exposure | access-control | config | xss | deserialization",
       "location": "file:line",
@@ -66,7 +66,7 @@ Apply the criteria in `references/security-review.md`, Anthropic's security-revi
 | critical | blocker | Yes |
 | high | blocker | Yes |
 | medium | warning | No |
-| low | suggestion | No |
+| low | note | No |
 
 ## Approval Rules
 
