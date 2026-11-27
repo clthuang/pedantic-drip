@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash): refuse a command that would move `stable` or write a v* release tag: a git push,
-`gh release create <tag>` (allowed with --verify-tag, which needs the tag already published) or `gh api` on git/refs.
+`gh release create <tag>`, `gh release edit` with --tag <tag> or --draft=false (each allowed with --verify-tag, which
+needs the tag already published) or `gh api` on git/refs.
 
 Only CI's publish job (scripts/publish-release.sh) writes those refs. The marketplace follows `stable` with
 autoUpdate, so a stray push ships to every install, and GitHub's rulesets stop neither a fast-forward of
@@ -23,7 +24,7 @@ GH_REFS_RELEASE_REF = re.compile(r"(^|[/=])(refs/)?(heads/stable|tags/v[0-9]+\.[
 PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
 DRY_RUN = {"-n", "--dry-run"}
 GH_RELEASE_FLAGS_WITH_VALUE = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--target",
-                               "--notes-start-tag", "--discussion-category", "-R", "--repo"}  # gh 2.103; -R also before create
+                               "--notes-start-tag", "--discussion-category", "--tag", "-R", "--repo"}  # gh 2.103; -R also before create
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")  # not a <<< here-string
@@ -90,16 +91,27 @@ def gh_offending(words):
     """The word that makes a gh call write a release ref, or None."""
     gh = next((i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "gh"), None)
     args = [] if gh is None else words[gh + 1:]
-    words_only = []  # gh's own words, past flags and their values: release, create (or new), the tag
+    words_only, flag_values = [], {}  # gh's own words past flags (release, create, the tag), and the flags' values
     i = 0
     while i < len(args):
-        if args[i].startswith("-"):
-            i += 2 if args[i] in GH_RELEASE_FLAGS_WITH_VALUE else 1
-        else:
-            words_only.append(args[i])
+        word = args[i]
+        if not word.startswith("-"):
+            words_only.append(word)
+        elif word in GH_RELEASE_FLAGS_WITH_VALUE:
+            flag_values[word] = args[i + 1] if i + 1 < len(args) else ""
             i += 1
-    if words_only[:1] == ["release"] and words_only[1:2] in (["create"], ["new"]) and "--verify-tag" not in args:
-        return words_only[2] if len(words_only) > 2 and RELEASE_REF.fullmatch(words_only[2]) else None
+        elif "=" in word:  # --tag=v8.2.0
+            flag, value = word.split("=", 1)
+            flag_values[flag] = value
+        i += 1
+    if words_only[:1] == ["release"] and "--verify-tag" not in args:
+        tags = []
+        if words_only[1:2] in (["create"], ["new"]):
+            tags = words_only[2:3]
+        elif words_only[1:2] == ["edit"]:  # each creates a missing tag: --tag renames the release, and
+            publishes_draft = flag_values.get("--draft", "").lower() in ("false", "f", "0")  # publishing a draft
+            tags = [flag_values.get("--tag", "")] + (words_only[2:3] if publishes_draft else [])
+        return next((t for t in tags if RELEASE_REF.fullmatch(t)), None)
     if args[:1] == ["api"] and any("git/refs" in w for w in args):
         return next((w for w in args if GH_REFS_RELEASE_REF.search(w)), None)
     return None
