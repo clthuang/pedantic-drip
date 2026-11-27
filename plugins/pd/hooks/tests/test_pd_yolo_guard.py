@@ -288,9 +288,19 @@ def test_s2_a_push_after_a_switch_to_the_base_branch_is_refused(run_hook, yolo, 
     assert code == 2 and "Hard stop:" in err
 
 
-def test_s2_a_push_after_a_switch_to_a_feature_branch_passes(run_hook, yolo, tmp_path):
-    repo = make_repo(tmp_path / "repo", branch="main")
+def test_s2_a_push_after_a_switch_to_a_feature_branch_passes_off_the_base_branch(run_hook, yolo, tmp_path):
+    repo = make_repo(tmp_path / "repo", branch="workitem/x")
     assert_allowed(run_hook(HOOK, bash_call("git checkout -b feat && git push", repo)))
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout -b feat && git push",
+    "git switch -c feat && git push -u origin HEAD",
+])
+def test_q1_a_push_after_a_switch_from_the_base_branch_is_refused(run_hook, yolo, tmp_path, command):
+    """Owner ruling (decision@2026-11-27 09:18+08:00): the real HEAD is always checked, `&&` or not."""
+    code, err = run_hook(HOOK, bash_call(command, make_repo(tmp_path / "repo", branch="main")))
+    assert code == 2 and "Hard stop:" in err
 
 
 @pytest.mark.parametrize("command", [
@@ -313,6 +323,8 @@ def test_s8_a_switch_that_may_fail_does_not_hide_the_base_branch_head(run_hook, 
     "pushd OTHER >/dev/null && git switch -c feat && popd >/dev/null && git push -u origin HEAD",
     "git --version switch feat && git push -u origin HEAD",
     "git --exec-path switch feat && git push",
+    "git -v switch feat && git push -u origin HEAD",
+    "git --list-cmds=main switch -c feat && git push -u origin HEAD",
 ])
 def test_y_a_switch_that_may_not_happen_in_this_repo_does_not_hide_the_base_branch_head(run_hook, yolo, tmp_path, command):
     repo = make_repo(tmp_path / "repo", branch="main")
