@@ -47,7 +47,7 @@ def current_branch(at):
     return ref.removeprefix("refs/heads/") if ref else None
 
 
-def is_destructive_push(args, at, switched_to=()):
+def is_destructive_push(args, at, switched_to=(), xargs_fed=False):
     positional, skip = [], False
     for a in args:
         if skip:
@@ -61,6 +61,8 @@ def is_destructive_push(args, at, switched_to=()):
         else:
             positional.append(a)
     refspecs = positional[1:]
+    if xargs_fed:  # xargs appends refspecs the words don't show: assume the base branch
+        return True
     if any(r.startswith("+") or r.startswith(":") for r in refspecs):
         return True
     base = pc.base_branch(pc.repo_root(at), pc.load_config(pc.repo_root(at)))
@@ -150,7 +152,7 @@ def check_command(command, cwd):
             if target is not None:
                 switched.setdefault(repo_of(repo_dir), set()).add(target)
         destructive = (
-            (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir), ())))
+            (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir), ()), xargs_fed))
             or (sub == "branch" and any(a == "--delete" or FLAG_BRANCH_DELETE.match(a) for a in args))
             or (sub == "worktree" and is_foreign_worktree_removal(args, repo_dir, xargs_fed))
             or (sub == "reset" and "--hard" in args)
