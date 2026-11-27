@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Publishes the version on main: tags vX.Y.Z on the commit where plugin.json's version became X.Y.Z,
 # and fast-forwards stable (the branch the marketplace follows) to it.
+# CI's publish job runs it on each push to main, once validate has passed on that commit.
 # Converges: a re-run, a superseded run or any later push to main reaches the same end state,
 # and between releases it does nothing.
-# Usage: scripts/publish-release.sh [commit]   (default HEAD; run by .github/workflows/publish.yml)
+# Usage: scripts/publish-release.sh [commit]   (default HEAD; run by .github/workflows/ci.yml's publish job)
 set -euo pipefail
 
 MANIFEST=plugins/pd/.claude-plugin/plugin.json

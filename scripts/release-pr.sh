@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Opens the release PR: bumps plugin.json's version and promotes CHANGELOG.md's [Unreleased] section.
-# You merge it once CI passes; .github/workflows/publish.yml then tags it and moves stable.
+# You merge it once CI passes; CI's publish job (.github/workflows/ci.yml) then tags it and moves stable.
 # Usage: scripts/release-pr.sh patch|minor|major   (required: choose the bump by semver, https://semver.org)
 set -euo pipefail
 
@@ -20,7 +20,7 @@ ci=$(gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)" --event push
 
 current=$(jq -r '.version' "$MANIFEST")
 { git rev-parse -q --verify "refs/tags/v$current" >/dev/null && git merge-base --is-ancestor "v$current" origin/stable; } \
-    || die "v$current isn't published yet (its tag and stable): wait for the Publish workflow"
+    || die "v$current isn't published yet (its tag and stable): wait for CI's publish job on its release commit"
 IFS=. read -r major minor patch <<<"$current"
 case "$part" in
     major) next="$((major + 1)).0.0" ;;
@@ -28,6 +28,10 @@ case "$part" in
     patch) next="$major.$minor.$((patch + 1))" ;;
 esac
 ! git rev-parse -q --verify "refs/tags/v$next" >/dev/null || die "v$next already exists"
+branch="release/v$next"  # checked before any edit, so a refusal leaves main clean
+! git rev-parse -q --verify "refs/heads/$branch" >/dev/null || die "a local $branch exists: finish its PR or delete it"
+remote_branch=$(git ls-remote --heads origin "$branch") || die "can't ask origin for $branch"
+[[ -z "$remote_branch" ]] || die "origin has $branch: finish its PR or delete it"
 awk '/^## \[Unreleased\]/ { f = 1; next } /^## \[/ { f = 0 } f && NF { n++ } END { exit !n }' CHANGELOG.md \
     || die "CHANGELOG.md has nothing under [Unreleased]"
 
@@ -37,7 +41,6 @@ awk -v h="## [$next] - $(date +%Y-%m-%d)" '!done && /^## \[Unreleased\]/ { print
     CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 notes=$(awk -v h="## [$next]" 'index($0, h) == 1 { f = 1; next } /^## \[/ { f = 0 } f' CHANGELOG.md)
 
-branch="release/v$next"
 git checkout -q -b "$branch"
 git commit -q -m "release: v$next" -- "$MANIFEST" CHANGELOG.md
 git push -q -u origin "$branch"

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Finish reads the PR review before every merge.** Outside YOLO too, `/pd:finish-workitem` reads the PR's review comments once the checks pass and stops on an actionable one. Both paths merge with `--match-head-commit`, so a push after the review fails the merge instead of landing unreviewed.
+- **A release publishes only after CI passes.** Publishing is now CI's `publish` job, which runs once `validate` has passed on the pushed commit, instead of a separate workflow racing CI.
+
 ## [8.1.0] - 2026-11-27
 
 ### Added

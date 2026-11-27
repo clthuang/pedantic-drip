@@ -109,10 +109,9 @@ def test_c36_docs_name_pd_worktrees():
     has_all(pd_common_line, "worktrees", "run_in_flight")
 
     commands = (ROOT / "docs/dev-guide/commands-reference.md").read_text()
-    pytest_line = next(l for l in commands.split("\n") if "pytest -q plugins/pd/hooks" in l)
-    assert "plugins/pd/scripts" in pytest_line
-    loop = next(l for l in commands.split("\n") if l.startswith("for s in pd-lint"))
-    assert "pd-worktrees" not in loop
+    assert "bash scripts/test-all.sh" in commands.split("\n")  # its pytest collects plugins/pd/scripts
+    # pd-worktrees has no self-test, so test-all.sh's pd-* self-test loop must skip it
+    assert "--self-test" not in (ROOT / "plugins/pd/scripts/pd-worktrees").read_text()
 
 
 def test_c43_plugin_path_and_no_trace_file():

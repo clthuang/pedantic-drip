@@ -1,13 +1,13 @@
 # Developer Guide
 
-All work lands on `main` through pull requests. A script opens each release as a PR; a workflow publishes it once merged.
+All work lands on `main` through pull requests. A script opens each release as a PR; CI publishes it once merged and green.
 
 ## Branch Structure
 
 | Branch | Purpose |
 |--------|---------|
 | `main` | Trunk and GitHub's default; every change lands here through a PR, merged as a merge commit |
-| `stable` | Release channel that installs follow; by convention only the Publish workflow moves it, fast-forward only |
+| `stable` | Release channel that installs follow; only CI's publish job moves it, fast-forward only |
 | `workitem/<id>` | A work item's branch, created by `/pd:create-workitem` (`<id>` is `YYYY-MM-DD-slug`) |
 | `pd/<id>/task-<n>` | One plan task's branch inside `implement-tasks` |
 | `release/vX.Y.Z` | A release PR's branch, opened by `scripts/release-pr.sh` |
@@ -16,6 +16,8 @@ GitHub rulesets protect them:
 - **`main`:** PR required (0 approvals, merge commits only); the `validate` check must pass and be up to date with `main`; no force push or deletion.
 - **`stable`:** no force push or deletion.
 - **`v*` tags:** no update or deletion.
+
+The rulesets don't stop a fast-forward of `stable` or a new `v*` tag. In Claude Code sessions in this repository, the project hook `.claude/hooks/protect-release-refs.py` refuses any `git push` that would write either.
 
 All plugin code lives in `plugins/pd/`.
 
@@ -53,7 +55,7 @@ There is one path.
    - **the previous version isn't published yet** (its tag and `stable`);
    - **`[Unreleased]` is empty** in `CHANGELOG.md`.
 2. Merge the PR once CI passes.
-3. `.github/workflows/publish.yml` runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`.
+3. Once CI's `validate` job passes on the merge commit, its `publish` job runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`. If `validate` fails there, the release waits: a re-run, or the next push to `main` whose `validate` passes, publishes it.
 4. Installs pick up the release on their next marketplace update ([Update](docs/user-guide/installation.md#update)).
 
 ## Local Development Setup
@@ -78,15 +80,16 @@ The installed copy changes only through a release, which reaches installs throug
 
 | File | Purpose |
 |------|---------|
-| `validate.sh` | Validates every component, the version and the docs; CI's first step |
+| `validate.sh` | Validates every component, the version and the docs; the battery's first step |
+| `scripts/test-all.sh` | The test battery: CI and Verify's QA (`qa_battery`) both run it |
 | `scripts/release-pr.sh` | Opens the release PR: bumps the version and promotes the CHANGELOG |
-| `scripts/publish-release.sh` | Tags `vX.Y.Z` and fast-forwards `stable`; run by `publish.yml` |
+| `scripts/publish-release.sh` | Tags `vX.Y.Z` and fast-forwards `stable`; run by CI's `publish` job |
 | `scripts/check-version.sh` | The version rules above; run by `validate.sh` |
 | `scripts/check-changelog.sh` | Fails a PR that changes a released CHANGELOG section |
 | `scripts/check-doc-drift.sh` | Checks the component counts in `README.md` and `plugins/pd/README.md`, and the hooks table below, against the filesystem; fails on retired terms in the living docs; run by `validate.sh` |
-| `scripts/test-release.sh` | Tests the release scripts; run by CI |
-| `.github/workflows/ci.yml` | The `validate` check on PRs into and pushes to `main` |
-| `.github/workflows/publish.yml` | Publishes each release merged to `main` |
+| `scripts/test-release.sh` | Tests the release scripts and `protect-release-refs.py`; run by `test-all.sh` |
+| `.github/workflows/ci.yml` | The `validate` check on PRs into and pushes to `main`; then, on a push, the `publish` job |
+| `.claude/hooks/protect-release-refs.py` | Project hook: refuses a `git push` to `stable` or a `v*` tag in Claude Code sessions here |
 | `.github/workflows/claude-review.yml` | Claude Code reviews each same-repo PR into `main` and posts a PR comment. It skips fork PRs and PRs that change only `docs/`, and does nothing until the `CLAUDE_CODE_OAUTH_TOKEN` secret (from `claude setup-token`) is set |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
 | `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |

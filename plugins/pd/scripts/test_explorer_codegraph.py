@@ -165,10 +165,7 @@ def test_c8_rename_checklist_line(skill):
     assert lines == [RENAME_CHECKLIST_LINE]
 
 
-def test_c9_ci_and_changelog():
-    ci = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
-    pytest_line = [l for l in ci if "uv run --project plugins/pd pytest" in l]
-    assert pytest_line and "plugins/pd/scripts/test_explorer_codegraph.py" in pytest_line[0]
+def test_c9_changelog():  # CI runs this file: scripts/test-all.sh collects plugins/pd whole
     changelog = (ROOT / "CHANGELOG.md").read_text()  # any section: a release moves [Unreleased] under a version
     assert any("codebase-explorer" in l and "CodeGraph" in l for l in changelog.splitlines())
 

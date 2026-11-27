@@ -145,11 +145,7 @@ def test_c24_double_dash_edges(repo):
     assert seen("git checkout nosuch -- && git commit -m t", repo) == f"{repo}\t\n"
 
 
-def test_c26_ci_and_changelog():
-    with open(os.path.join(_ROOT, ".github/workflows/ci.yml")) as f:
-        ci = f.read()
-    line = next(l for l in ci.splitlines() if "uv run --project plugins/pd pytest" in l)
-    assert "plugins/pd/hooks/lib/test_commit_target.py" in line
+def test_c26_changelog():  # CI runs this file: scripts/test-all.sh collects plugins/pd whole
     with open(os.path.join(_ROOT, "CHANGELOG.md")) as f:
         changelog = f.read()
     # any section: release-pr.sh moves [Unreleased] entries under the new version's heading

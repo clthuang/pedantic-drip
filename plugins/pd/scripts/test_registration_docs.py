@@ -39,19 +39,17 @@ def test_c2_read_budget_registered_for_reads_and_prompts():
     assert matchers_running("UserPromptSubmit", "pd-read-budget.sh")
 
 
-def test_c3_ci_runs_the_new_suites_and_self_tests():
-    ci = text(".github/workflows/ci.yml")
-    pytest_line = next(line for line in ci.splitlines() if "pytest" in line)
-    for name in (
-        "test_pd_common_stage.py", "test_pd_yolo.py", "test_pd_pr_checks.py", "test_severity_note.py",
-        "test_pd_yolo_guard.py", "test_pd_read_budget.py", "test_pd_stop_gate_goals.py",
-        "test_stage_new_status.py", "test_stage_lint_gate.py", "test_pd_review_prompt.py",
-        "test_workflows_node.py", "test_yolo_prose.py", "test_registration_docs.py",
-    ):
-        assert name in pytest_line, name
-    loop = next(line for line in ci.splitlines() if "--self-test" in line and "for s in" in line)
+def test_c3_ci_and_qa_run_every_suite_and_self_test():
+    # One battery, scripts/test-all.sh, for CI and Verify's QA: pytest collects plugins/pd whole, and its
+    # loop runs the self-test of every plugins/pd/scripts/pd-* file (not .py) that names --self-test.
+    assert "run: bash scripts/test-all.sh" in text(".github/workflows/ci.yml")
+    assert "  - bash scripts/test-all.sh" in text(".claude/pd.local.md").splitlines()
+    battery = text("scripts/test-all.sh").splitlines()
+    assert "uv run --project plugins/pd pytest -q plugins/pd" in battery
+    assert "for s in plugins/pd/scripts/pd-*; do" in battery
+    assert any(l.strip().startswith("if ") and '"$s" --self-test' in l for l in battery)
     for name in SELF_TESTED:
-        assert names_word(loop, name), name
+        assert "--self-test" in text(f"plugins/pd/scripts/{name}"), name
 
 
 def test_c4_config_table_has_stage_and_read_budget_rows():
@@ -66,10 +64,8 @@ def test_c5_hook_and_script_docs_name_the_new_components():
         for hook in ("pd-yolo-guard", "pd-read-budget"):
             assert names_word(rows, hook), (doc, hook)
     scripts_line = next(l for l in text("README_FOR_DEV.md").splitlines() if l.startswith("- **The scripts**"))
-    loop = next(l for l in text("docs/dev-guide/commands-reference.md").splitlines() if l.startswith("for s in"))
     for name in SELF_TESTED:
         assert names_word(scripts_line, name), name
-        assert names_word(loop, name), name
         for doc in ("docs/technical/architecture.md", "docs/technical/api-reference.md"):
             assert names_word(text(doc), name), (doc, name)
     registered = {hook["command"] for entries in HOOKS.values() for e in entries for hook in e["hooks"]}

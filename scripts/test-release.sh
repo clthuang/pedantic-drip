@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests release-pr.sh, publish-release.sh, check-changelog.sh and check-version.sh
+# Tests release-pr.sh, publish-release.sh, check-changelog.sh, check-version.sh and the protect-release-refs hook
 # against throwaway repos: a local bare repo as origin and a stub gh.
 # Usage: bash scripts/test-release.sh
 set -uo pipefail
@@ -109,6 +109,13 @@ echo none > "$T/ci"
 fails "release-pr: no CI run on main" in_work bash "$SCRIPTS/release-pr.sh" patch
 ok "release-pr: asks about this main commit's push run" grep -q "gh run list --workflow ci.yml --commit $(g rev-parse HEAD) --event push" "$T/gh.log"
 rm "$T/ci"
+g branch release/v1.0.1  # a leftover from an earlier attempt
+fails "release-pr: a leftover local release branch" in_work bash "$SCRIPTS/release-pr.sh" patch
+ok "release-pr: refused before editing (local leftover)" test -z "$(g status --porcelain)"
+g branch -D release/v1.0.1 > /dev/null && g push -q origin main:refs/heads/release/v1.0.1
+fails "release-pr: a leftover release branch on origin" in_work bash "$SCRIPTS/release-pr.sh" patch
+ok "release-pr: refused before editing (origin leftover)" test -z "$(g status --porcelain)"
+g push -q origin :refs/heads/release/v1.0.1
 
 # --- release-pr.sh: the PR ---
 ok "release-pr: patch" in_work bash "$SCRIPTS/release-pr.sh" patch
@@ -177,6 +184,67 @@ if g merge -q --no-ff --no-edit feature/late > /dev/null 2>&1; then
 else
     g merge --abort; echo "note: this git conflicted on the late-entry merge; that case is covered by the conflict itself"
 fi
+
+# --- .claude/hooks/protect-release-refs.py: only CI's publish job pushes stable or a v* tag ---
+HOOK="$SCRIPTS/../.claude/hooks/protect-release-refs.py"
+hook() { jq -n --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}}' | python3 "$HOOK"; }
+check_exit() { local name=$1 want=$2 got; shift 2; "$@" > "$T/out" 2>&1; got=$?
+    if [[ "$got" == "$want" ]]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $name (exit $got)"; sed 's/^/    /' "$T/out"; fi; }
+blocks() { check_exit "hook blocks: $1" 2 hook "$1"; }
+allows() { check_exit "hook allows: $1" 0 hook "$1"; }
+blocks "git push origin HEAD:stable"
+blocks "git push origin stable"
+blocks "git push origin +abc123:refs/heads/stable"
+blocks "git push origin v8.2.0"
+blocks "git push origin abc123:refs/tags/v9.0.0"
+blocks "git push --tags"
+blocks "git push --follow-tags origin main"
+blocks "git -C /tmp/x push origin main:stable"
+blocks "/usr/bin/git push origin stable"
+blocks "git status && git push origin main:stable"
+blocks "git fetch -q
+git push origin stable"
+blocks "bash -c 'git push origin HEAD:stable'"
+allows "git push origin main"
+allows "git push -u origin chore/stable-docs"
+allows "git push origin vendor-fix"
+allows "git push origin v2-redesign"
+allows "git commit -m 'push to stable' && git push origin chore/x"
+allows "git log --grep push stable"
+allows "ls stable"
+allows "echo 'unbalanced"
+allows "git commit -m 'the hook refuses a git push to stable'"
+allows "git commit -F - <<'MSG'
+the hook refuses a git push to stable
+MSG
+git log -1"
+blocks "git commit -F - <<'MSG'
+a message
+MSG
+git push origin stable"
+blocks "eval 'git push origin v9.0.0'"
+blocks "# publish
+git push origin HEAD:stable"
+blocks "bash -lc 'git push origin HEAD:stable'"
+blocks "bash <<'EOF'
+git push origin HEAD:stable
+EOF"
+blocks "git -c remote.origin.push=HEAD:stable push origin"
+allows "git push origin main # not stable"
+blocks "# don't forget
+git push origin stable"
+allows "git push origin main # it's not stable"
+blocks "git commit -m 'fix #12' && git push origin stable"
+blocks "echo a#b; git push origin stable"
+blocks "cat <<< hello
+git push origin stable"
+allows "git push --dry-run origin HEAD:stable"
+allows "git push -n origin v8.2.0"
+allows "git -c user.name=stable-bot push origin main"
+blocks "git push origin 'refs/tags/*'"
+blocks "git push origin '+refs/heads/*:refs/heads/*'"
+ok "hook: the block says why" sh -c "hook_out=\$(jq -n '{tool_input: {command: \"git push origin stable\"}}' | python3 '$HOOK' 2>&1); echo \"\$hook_out\" | grep -q 'publish-release.sh'"
+ok "hook: registered for Bash in .claude/settings.json" jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command | contains("protect-release-refs.py")' "$SCRIPTS/../.claude/settings.json"
 
 echo "test-release: $pass passed, $failed failed"
 [[ "$failed" == 0 ]]
