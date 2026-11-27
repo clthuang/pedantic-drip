@@ -32,7 +32,8 @@ jobs:
   # On each push to main, once validate has passed on that commit: tags vX.Y.Z on the commit where
   # plugin.json's version became X.Y.Z and fast-forwards stable, the branch the marketplace follows
   # (scripts/publish-release.sh). Between releases it does nothing. Only the release commit's own run
-  # publishes it, so a release whose CI failed stays unpublished until that run is re-run.
+  # publishes it, so a release whose CI failed stays unpublished until that run is re-run. The same holds
+  # if a newer push's pending publish replaces the release's: the newer run fails and names the commit.
   publish:
     needs: validate
     if: github.event_name == 'push'

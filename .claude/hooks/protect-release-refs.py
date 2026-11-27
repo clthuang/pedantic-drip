@@ -5,8 +5,9 @@ Only CI's publish job (scripts/publish-release.sh) writes those refs. The market
 autoUpdate, so a stray push ships to every install, and GitHub's rulesets stop neither a fast-forward of
 `stable` nor a new tag. If you really mean it, run the push yourself, outside Claude Code.
 Reads the command from the hook's JSON on stdin; exit 2 blocks the call. Fails open on a command it can't
-split (bash couldn't run it either).
-shortcut: only `git ... push` is checked, not `gh api` ref writes; add those if an agent ever uses them.
+split (bash couldn't run it either). A dry run (-n, --dry-run) is allowed.
+shortcut: it guards against accidental pushes, not evasion: only literal refs are seen (not $vars, aliases or
+push config set outside the command), and only `git ... push`, not `gh api` ref writes.
 """
 import json
 import re
@@ -14,52 +15,72 @@ import shlex
 import sys
 
 RELEASE_REF = re.compile(r"(refs/heads/)?stable|(refs/tags/)?v[0-9]+\.[0-9].*")
+PUSH_CONFIG_RELEASE_REF = re.compile(r"[^=]*push[^=]*=(.*[:/+])?(stable|v[0-9]+\.[0-9])")  # -c remote.origin.push=HEAD:stable
 PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
+DRY_RUN = {"-n", "--dry-run"}
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+FED_TO_SHELL = re.compile(r"(^|[\s;&|(])(\S*/)?(sh|bash|zsh|dash|ksh)(\s+-\S+)*\s*<<")
 
 
 def without_heredoc_bodies(command):
-    """The command's lines minus each heredoc's body, which is text, not commands."""
+    """The command minus each heredoc's body, which is text, unless the heredoc feeds a shell."""
     kept, ends = [], []
     for line in command.split("\n"):
         if ends:
-            if line.strip() == ends[0]:
+            end, executed = ends[0]
+            if line.strip() == end:
                 ends.pop(0)
+            elif executed:
+                kept.append(line)
             continue
         kept.append(line)
-        ends += [m.group(2) for m in HEREDOC.finditer(line)]
+        ends += [(m.group(2), bool(FED_TO_SHELL.search(line[:m.end()]))) for m in HEREDOC.finditer(line)]
     return "\n".join(kept)
 
 
 def segments(command):
-    """Each simple command's words; ;, &&, ||, | and newlines separate them."""
+    """Each simple command's words: ;, &&, ||, | and newlines separate them, and a # word starts a comment."""
     lex = shlex.shlex(without_heredoc_bodies(command).replace("\n", ";"), posix=True, punctuation_chars=True)
     lex.whitespace_split = True
-    segment = []
+    lex.commenters = ""  # shlex's own comments would run past the ; standing in for a newline
+    segment, comment = [], False
     for word in lex:
         if set(word) <= set("();&|"):
             yield segment
-            segment = []
+            segment, comment = [], False
+        elif word.startswith("#") or comment:
+            comment = True
         else:
             segment.append(word)
     yield segment
 
 
+def is_shell_c(word):
+    """-c, or combined short flags ending in c, as in bash -lc."""
+    return re.fullmatch(r"-[a-zA-Z]*c", word) is not None
+
+
 def offending(command):
     """The word that makes `command` push a release ref, or None."""
     for words in segments(command):
-        for before, word in zip([""] + words, words):  # a script string: bash -c '...', eval "..."
-            if (before == "-c" or before.rsplit("/", 1)[-1] == "eval") and offending(word):
+        for i, word in enumerate(words):  # a script string: bash -c '...', bash -lc '...', eval "..."
+            before = words[i - 1] if i else ""
+            if (is_shell_c(before) or before.rsplit("/", 1)[-1] == "eval") and offending(word):
                 return word
         git = next((i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "git"), None)
         if git is None:
             continue
-        sub = git + 1  # the subcommand: past git's own options, -C <dir> and -c <key=value> included
+        sub, config = git + 1, None  # the subcommand: past git's own options, -C <dir> and -c <key=value> included
         while sub < len(words) and words[sub].startswith("-"):
+            if words[sub] == "-c" and sub + 1 < len(words) and PUSH_CONFIG_RELEASE_REF.match(words[sub + 1]):
+                config = words[sub + 1]
             sub += 2 if words[sub] in GIT_OPTIONS_WITH_VALUE else 1
-        if words[sub:sub + 1] != ["push"]:
+        if words[sub:sub + 1] != ["push"] or DRY_RUN & set(words[sub + 1:]):
             continue
+        if config:
+            return config
         for word in words[sub + 1:]:
             if word in PUSHES_EVERY_REF:
                 return word

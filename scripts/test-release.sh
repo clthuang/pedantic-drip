@@ -230,6 +230,17 @@ a message
 MSG
 git push origin stable"
 blocks "eval 'git push origin v9.0.0'"
+blocks "# publish
+git push origin HEAD:stable"
+blocks "bash -lc 'git push origin HEAD:stable'"
+blocks "bash <<'EOF'
+git push origin HEAD:stable
+EOF"
+blocks "git -c remote.origin.push=HEAD:stable push origin"
+allows "git push origin main # not stable"
+allows "git push --dry-run origin HEAD:stable"
+allows "git push -n origin v8.2.0"
+allows "git -c user.name=stable-bot push origin main"
 ok "hook: the block says why" sh -c "hook_out=\$(jq -n '{tool_input: {command: \"git push origin stable\"}}' | python3 '$HOOK' 2>&1); echo \"\$hook_out\" | grep -q 'publish-release.sh'"
 ok "hook: registered for Bash in .claude/settings.json" jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command | contains("protect-release-refs.py")' "$SCRIPTS/../.claude/settings.json"
 

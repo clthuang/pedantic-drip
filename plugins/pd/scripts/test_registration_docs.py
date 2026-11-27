@@ -44,7 +44,10 @@ def test_c3_ci_and_qa_run_every_suite_and_self_test():
     # loop runs the self-test of every plugins/pd/scripts/pd-* file (not .py) that names --self-test.
     assert "run: bash scripts/test-all.sh" in text(".github/workflows/ci.yml")
     assert "  - bash scripts/test-all.sh" in text(".claude/pd.local.md").splitlines()
-    assert "uv run --project plugins/pd pytest -q plugins/pd" in text("scripts/test-all.sh").splitlines()
+    battery = text("scripts/test-all.sh").splitlines()
+    assert "uv run --project plugins/pd pytest -q plugins/pd" in battery
+    assert "for s in plugins/pd/scripts/pd-*; do" in battery
+    assert any(l.strip().startswith("if ") and '"$s" --self-test' in l for l in battery)
     for name in SELF_TESTED:
         assert "--self-test" in text(f"plugins/pd/scripts/{name}"), name
 
