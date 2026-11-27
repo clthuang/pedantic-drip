@@ -767,3 +767,9 @@ Closes: review@2026-11-27 12:41+08:00#P4
 
 ## 2026-11-27 12:49+08:00 phase verify -> finish
 Exit check: phase-gate.sh verify passes at the qa commit above.
+
+## 2026-11-27 12:55+08:00 review finish — claude-review (PR #37, third run)
+Verdict: comments (1 warning, 2 notes), no blocker. Commit: 2b580ea2. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/pr37-claude-review-3.md. Each claim spot-checked by the conductor (workflow-transitions/SKILL.md:57 vs commands/create-workitem.md and pd-new, which have no goal-line step; log-entries.md:20; docs/technical/architecture.md:94). Non-blocking, so to the backlog per decision@2026-11-27 12:41+08:00.
+- P6 warning plugins/pd/hooks/pd-stop-gate.sh:167 — nothing moves a brainstorm or rca goal line at promotion, though workflow-transitions:57 and the gate's message say promotion does; the gate keeps holding, or re-arms after the work item's goal clears (on the backlog: 2026-11-27-promotion-moves-goal-line-workflow)
+- P7 note plugins/pd/references/log-entries.md:20 — the decision kind still limits `A (conductor, on the user's behalf)` to a print-mode run, though YOLO uses it (on the backlog: 2026-11-27-promotion-moves-goal-line-workflow)
+- P8 note docs/technical/architecture.md:94 — the doc omits that pd-read-budget acts only with main_read_budget set (on the backlog: 2026-11-27-promotion-moves-goal-line-workflow)
