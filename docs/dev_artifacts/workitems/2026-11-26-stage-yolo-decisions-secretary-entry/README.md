@@ -15,7 +15,8 @@ branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ## Now
 
 goal: 2026-11-26-stage-yolo-decisions-secretary-entry target finish session c9b24375-514b-4e65-867c-d8156a1a427a
-Next: the owner rules on QA's Q1-Q3 (holes the S2 fix's switch tracking opened; the guard before it refused them); then the verify gate, phase verify -> finish, the security reviewer re-checks S8, retro.md, metrics, close, the PR path with the owner's yes before the merge.
+run in flight: verify-change session c9b24375-514b-4e65-867c-d8156a1a427a
+Next: the seeded verify-change run makes the push check always include the real HEAD (Q1-Q3); then the verify gate, phase verify -> finish, the security reviewer re-checks S8 and the switch tracking, retro.md, metrics, close, the PR path with the owner's yes before the merge.
 
 ## Links
 

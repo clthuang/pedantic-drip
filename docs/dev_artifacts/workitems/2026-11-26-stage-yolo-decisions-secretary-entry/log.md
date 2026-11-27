@@ -614,3 +614,7 @@ Criteria gaps: S8 red/green check, run in a detached scratch worktree that has s
 - Q4 note plugins/pd/hooks/pd-yolo-guard.sh:130 — `and_only` scans the raw command text, not the separators simple_commands found. A `&&`-only chain that contains a redirect `2>&1`, a pipe after the push, or a `;` inside a quoted argument is treated as 'switch may fail', so a push from a fresh feature branch is refused. This fails safe and breaks none of pd's own lines. The only switch-then-push line in plugins/pd skills is finishing-branch/SKILL.md:27, which is meant to be refused.
 Fixed: S8 by 624ada13 — plugins/pd/hooks/tests/test_pd_yolo_guard.py::test_s8_a_switch_that_may_fail_does_not_hide_the_base_branch_head (test commit 233280b1; four cases, ; newline || &)
 Closes: review@2026-11-26 23:08+08:00#S8
+
+## 2026-11-27 09:18+08:00 decision
+Q: QA's Q1-Q3 (qa@2026-11-27 09:14+08:00) are holes the S2 fix's switch tracking opened (a negated switch, a switch in another repository, `git --version switch`), each reproduced pushing main; the guard before S2 refused them. Always check the real HEAD (a push is refused when the real current branch or any switch target in the line is the base branch; the && detection goes; from main `git switch -c feat && git push` becomes a Hard stop), or backlog them and ship?
+A (user, verbatim): "Always check the real HEAD (Recommended)"
