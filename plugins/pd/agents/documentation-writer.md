@@ -227,7 +227,7 @@ For each tier listed in `affected_tiers` from the researcher:
 For each doc where `doc_type` is "user-facing" (README, CHANGELOG):
 1. Read the full document
 2. Review it against the current implementation
-3. Update to reflect changes — add new entries, correct stale information, remove outdated content
+3. Update to reflect changes — add new entries, correct stale information, remove outdated content. In CHANGELOG, write only under `## [Unreleased]`: released sections are frozen (`scripts/check-changelog.sh` fails a PR that changes them)
 4. Ensure the document is concise, clear, and friendly for end users
 5. Match existing tone and formatting conventions
 

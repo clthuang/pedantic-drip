@@ -67,6 +67,15 @@ perl -pi -e 's/^## \[1\.0\.0\]/## [1.0.1] - 2026-01-02\n\n- next\n\n## [1.0.0]/'
 ok "check-version: a new version with its CHANGELOG section" in_work bash "$SCRIPTS/check-version.sh"
 set_version 1.0.1-dev
 fails "check-version: a -dev suffix" in_work bash "$SCRIPTS/check-version.sh"
+g checkout -q -- . && set_version 1.01.0
+perl -pi -e 's/^## \[1\.0\.0\]/## [1.01.0] - 2026-01-02\n\n- next\n\n## [1.0.0]/' "$W/CHANGELOG.md"  # so only the format can fail it
+fails "check-version: a leading zero" in_work bash "$SCRIPTS/check-version.sh"
+g checkout -q -- . && set_version 1.0.1
+perl -pi -e 's/^## \[Unreleased\]$/## [Unreleased]\n\n- see ## [1.0.1] below/' "$W/CHANGELOG.md"
+fails "check-version: a mention of the version that isn't a heading" in_work bash "$SCRIPTS/check-version.sh"
+g checkout -q -- . && g tag v1.01.0
+ok "check-version: a tag with a leading zero isn't a release" in_work bash "$SCRIPTS/check-version.sh"
+g tag -d v1.01.0 > /dev/null
 g checkout -q -- .
 g tag v1.0.9 && set_version 1.0.10
 perl -pi -e 's/^## \[1\.0\.0\]/## [1.0.10] - 2026-01-02\n\n- next\n\n## [1.0.0]/' "$W/CHANGELOG.md"

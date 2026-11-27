@@ -54,7 +54,7 @@ Run it in your normal shell: `release-pr.sh` needs your `gh` login.
 ```bash
 # Bumps plugin.json, promotes [Unreleased], opens a PR from release/vX.Y.Z into main (needs gh)
 # Run on a clean main equal to origin/main, once CI on that commit has passed; name the bump by semver (no default)
-scripts/release-pr.sh patch|minor|major
+scripts/release-pr.sh minor   # or patch, or major
 # Merge the PR once CI passes; publish.yml then tags vX.Y.Z and fast-forwards stable
 ```
 

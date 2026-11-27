@@ -113,7 +113,7 @@ See [Commands Reference](docs/dev-guide/commands-reference.md) for the full list
 ```bash
 ./validate.sh                    # Validate components
 bash plugins/pd/hooks/tests/test-hooks.sh  # Hook integration tests
-scripts/release-pr.sh            # Release: opens the release PR into main
+scripts/release-pr.sh minor      # Release: opens the release PR into main; the bump (patch, minor or major) by semver
 ```
 
 ## Key References
