@@ -40,18 +40,36 @@ def without_heredoc_bodies(command):
     return "\n".join(kept)
 
 
+def without_comments(command):
+    """The command minus each comment: a # that starts a word, outside quotes, to the end of its line.
+    Done before shlex, so a quote inside a comment (# don't) can't unbalance the rest."""
+    kept, quote, previous, i = [], None, "\n", 0
+    while i < len(command):
+        c = command[i]
+        if quote is None and c == "#" and previous in " \t\n;&|()":
+            end = command.find("\n", i)
+            i, previous = (len(command) if end < 0 else end), "\n"
+            continue
+        if c == "\\" and quote != "'":  # an escaped character, kept with its backslash
+            kept.append(command[i:i + 2]); previous = command[i + 1:i + 2]; i += 2
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        kept.append(c); previous = c; i += 1
+    return "".join(kept)
+
+
 def segments(command):
-    """Each simple command's words: ;, &&, ||, | and newlines separate them, and a # word starts a comment."""
-    lex = shlex.shlex(without_heredoc_bodies(command).replace("\n", ";"), posix=True, punctuation_chars=True)
+    """Each simple command's words: ;, &&, ||, | and newlines separate them."""
+    script = without_comments(without_heredoc_bodies(command)).replace("\n", ";")
+    lex = shlex.shlex(script, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
-    lex.commenters = ""  # shlex's own comments would run past the ; standing in for a newline
-    segment, comment = [], False
+    lex.commenters = ""  # comments are already gone; shlex's would run past the ; standing in for a newline
+    segment = []
     for word in lex:
         if set(word) <= set("();&|"):
             yield segment
-            segment, comment = [], False
-        elif word.startswith("#") or comment:
-            comment = True
+            segment = []
         else:
             segment.append(word)
     yield segment

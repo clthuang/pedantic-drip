@@ -231,6 +231,11 @@ git push origin HEAD:stable
 EOF"
 blocks "git -c remote.origin.push=HEAD:stable push origin"
 allows "git push origin main # not stable"
+blocks "# don't forget
+git push origin stable"
+allows "git push origin main # it's not stable"
+blocks "git commit -m 'fix #12' && git push origin stable"
+blocks "echo a#b; git push origin stable"
 allows "git push --dry-run origin HEAD:stable"
 allows "git push -n origin v8.2.0"
 allows "git -c user.name=stable-bot push origin main"
