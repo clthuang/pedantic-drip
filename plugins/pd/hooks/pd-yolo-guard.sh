@@ -29,9 +29,6 @@ FLAG_F = re.compile(r"^-[A-Za-z]*f")
 FLAG_D = re.compile(r"^-[A-Za-z]*d")
 FLAG_BRANCH_DELETE = re.compile(r"^-[A-Za-z]*[dD][A-Za-z]*$")
 FLAG_RECURSIVE = re.compile(r"^-[A-Za-z]*[rR]")
-GIT_ENDING_OPTIONS = {"--version", "--help", "-h", "--exec-path", "--html-path", "--man-path", "--info-path"}  # git prints and exits: no subcommand runs
-# `!` negates a switch's status; the rest can send the switch to another repository
-SWITCH_UNCERTAIN = re.compile(r"[;\n|&!]|GIT_DIR|GIT_WORK_TREE|pushd|--git-dir|--work-tree")
 
 
 def refuse(text):
@@ -50,7 +47,7 @@ def current_branch(at):
     return ref.removeprefix("refs/heads/") if ref else None
 
 
-def is_destructive_push(args, at, switched_to=None, switch_certain=True):
+def is_destructive_push(args, at, switched_to=None):
     positional, skip = [], False
     for a in args:
         if skip:
@@ -67,10 +64,8 @@ def is_destructive_push(args, at, switched_to=None, switch_certain=True):
     if any(r.startswith("+") or r.startswith(":") for r in refspecs):
         return True
     base = pc.base_branch(pc.repo_root(at), pc.load_config(pc.repo_root(at)))
-    # a switch earlier in the line moves HEAD before the push runs; unless `&&` guarantees it worked, HEAD may still be where it was
-    heads = {switched_to or current_branch(at)}
-    if switched_to and not switch_certain:
-        heads.add(current_branch(at))
+    # a switch earlier in the line may move HEAD before the push runs, or may not happen at all: check both
+    heads = {current_branch(at), switched_to}
     if "?" in heads:  # switched somewhere unknown: assume the base branch
         heads = (heads - {"?"}) | {base}
     on_base = base in heads
@@ -130,7 +125,6 @@ def check_command(command, cwd):
     commands = xargs_simple_commands(command, cwd)
     if commands is None:
         raise RuntimeError("simple_commands could not split the line")
-    and_only = not SWITCH_UNCERTAIN.search(command.replace("&&", ""))  # only `&&` joins, in this repository: a later command runs only if the switch worked
     switched = {}  # repository -> branch an earlier command in this line moved HEAD to
     for words, at, xargs_fed in commands:
         name = os.path.basename(words[0])
@@ -146,19 +140,17 @@ def check_command(command, cwd):
         if name != "git":
             continue
         j, repo_dir = 1, at
-        ends_git = False
         while j < len(words) and words[j].startswith("-"):
-            ends_git = ends_git or words[j] in GIT_ENDING_OPTIONS
             if words[j] == "-C" and j + 1 < len(words):
                 repo_dir = os.path.join(repo_dir, os.path.expanduser(words[j + 1]))
             j += 2 if words[j] in GLOBAL_WITH_VALUE else 1
         options, sub, args = words[1:j], (words[j] if j < len(words) else ""), words[j + 1:]
-        if sub in NEW_BRANCH and not ends_git:
+        if sub in NEW_BRANCH:
             target = switch_target(sub, args, repo_dir)
             if target is not None:
                 switched[repo_of(repo_dir)] = target
         destructive = (
-            (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir)), and_only))
+            (sub == "push" and is_destructive_push(args, repo_dir, switched.get(repo_of(repo_dir))))
             or (sub == "branch" and any(a == "--delete" or FLAG_BRANCH_DELETE.match(a) for a in args))
             or (sub == "worktree" and is_foreign_worktree_removal(args, repo_dir, xargs_fed))
             or (sub == "reset" and "--hard" in args)
