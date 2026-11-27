@@ -83,6 +83,8 @@ The facilitator's draft covers the log through qa@22:47. Two more security round
   - Q2 (`cd -`) and Q5 (a destination from `git -c remote.origin.push`) went to the backlog (2026-11-27-yolo-guard-push-forms-left).
 - **Incident (note@2026-11-27 09:51):** an unquoted heredoc in the conductor's own shell ran S8's example commands. They created and pushed two stray branches, which the conductor deleted with the owner's approval. main was untouched.
 
+- **After PR #37 (review@2026-11-27 10:39):** the repository's Claude review found P1 (a push that xargs runs), P2 (the probe ruling refused under YOLO) and P3 (a vacuous self-test). All three were fixed before the merge (decision@10:39; the P2 rejection was overruled at decision@12:19), in two seeded runs of 1 cycle each.
+
 **Success criteria compared with outcomes (decision-2@13:30)**
 - **YOLO runs unattended: not shown live.**
   - Not run: B21, B22, B24, B25, B26's model half, B51 and A1 are an owner-run list in note@20:02. Print mode has no AskUserQuestion (qa@20:02, the B26 probe).
