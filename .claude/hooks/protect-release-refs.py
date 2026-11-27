@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash): refuse a git push that would move `stable` or write a v* release tag.
+"""PreToolUse(Bash): refuse a command that would move `stable` or write a v* release tag: a git push,
+`gh release create <tag>` (allowed with --verify-tag, which needs the tag already published) or `gh api` on git/refs.
 
 Only CI's publish job (scripts/publish-release.sh) writes those refs. The marketplace follows `stable` with
 autoUpdate, so a stray push ships to every install, and GitHub's rulesets stop neither a fast-forward of
 `stable` nor a new tag. If you really mean it, run the push yourself, outside Claude Code.
 Reads the command from the hook's JSON on stdin; exit 2 blocks the call. Fails open on a command it can't
 split (bash couldn't run it either). A dry run (-n, --dry-run) is allowed.
-shortcut: it guards against accidental pushes, not evasion: only literal refs are seen (not $vars, aliases or
-push config set outside the command), and only `git ... push`, not `gh api` ref writes.
+shortcut: it guards against accidents, not evasion: only literal refs are seen (not $vars, aliases or push
+config set outside the command), and of GitHub's API only git/refs (not releases or merges endpoints). It doesn't
+read the HTTP method, so a GET on git/refs/<ref> is refused too: read a ref through git/ref/<ref>.
 """
 import json
 import re
@@ -16,8 +18,12 @@ import sys
 
 RELEASE_REF = re.compile(r"(refs/heads/)?stable|(refs/tags/)?v[0-9]+\.[0-9].*|refs/(heads|tags)/(v)?\*")  # globs too
 PUSH_CONFIG_RELEASE_REF = re.compile(r"[^=]*push[^=]*=(.*[:/+])?(stable|v[0-9]+\.[0-9])")  # -c remote.origin.push=HEAD:stable
+FOLLOW_TAGS_ON = re.compile(r"push\.followtags(=(true|yes|on|[1-9][0-9]*))?", re.I)  # -c push.followTags=true
+GH_REFS_RELEASE_REF = re.compile(r"(^|[/=])(refs/)?(heads/stable|tags/v[0-9]+\.[0-9]\S*)$")  # a git/refs path or ref= field
 PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
 DRY_RUN = {"-n", "--dry-run"}
+GH_RELEASE_FLAGS_WITH_VALUE = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--target",
+                               "--notes-start-tag", "--discussion-category", "-R", "--repo"}  # gh 2.103; -R also before create
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")  # not a <<< here-string
@@ -80,6 +86,25 @@ def is_shell_c(word):
     return re.fullmatch(r"-[a-zA-Z]*c", word) is not None
 
 
+def gh_offending(words):
+    """The word that makes a gh call write a release ref, or None."""
+    gh = next((i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "gh"), None)
+    args = [] if gh is None else words[gh + 1:]
+    words_only = []  # gh's own words, past flags and their values: release, create (or new), the tag
+    i = 0
+    while i < len(args):
+        if args[i].startswith("-"):
+            i += 2 if args[i] in GH_RELEASE_FLAGS_WITH_VALUE else 1
+        else:
+            words_only.append(args[i])
+            i += 1
+    if words_only[:1] == ["release"] and words_only[1:2] in (["create"], ["new"]) and "--verify-tag" not in args:
+        return words_only[2] if len(words_only) > 2 and RELEASE_REF.fullmatch(words_only[2]) else None
+    if args[:1] == ["api"] and any("git/refs" in w for w in args):
+        return next((w for w in args if GH_REFS_RELEASE_REF.search(w)), None)
+    return None
+
+
 def offending(command):
     """The word that makes `command` push a release ref, or None."""
     for words in segments(command):
@@ -87,13 +112,17 @@ def offending(command):
             before = words[i - 1] if i else ""
             if (is_shell_c(before) or before.rsplit("/", 1)[-1] == "eval") and offending(word):
                 return word
+        word = gh_offending(words)
+        if word:
+            return word
         git = next((i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "git"), None)
         if git is None:
             continue
         sub, config = git + 1, None  # the subcommand: past git's own options, -C <dir> and -c <key=value> included
         while sub < len(words) and words[sub].startswith("-"):
-            if words[sub] == "-c" and sub + 1 < len(words) and PUSH_CONFIG_RELEASE_REF.match(words[sub + 1]):
-                config = words[sub + 1]
+            value = words[sub + 1] if words[sub] == "-c" and sub + 1 < len(words) else ""
+            if PUSH_CONFIG_RELEASE_REF.match(value) or FOLLOW_TAGS_ON.fullmatch(value):
+                config = value
             sub += 2 if words[sub] in GIT_OPTIONS_WITH_VALUE else 1
         if words[sub:sub + 1] != ["push"] or DRY_RUN & set(words[sub + 1:]):
             continue
@@ -114,9 +143,10 @@ def main():
     except ValueError:  # bad JSON or unbalanced quotes
         return 0
     if word:
-        print(f"BLOCKED by protect-release-refs: '{word}' would push stable or a v* release tag.\n"
+        print(f"BLOCKED by protect-release-refs: '{word}' would move stable or write a v* release tag.\n"
               "Only CI's publish job writes those (scripts/publish-release.sh); installs follow stable.\n"
-              "Release through scripts/release-pr.sh. If you really mean it, run the push yourself.", file=sys.stderr)
+              "Release through scripts/release-pr.sh; for a Release page of a published tag, add --verify-tag.\n"
+              "If you really mean it, run the command yourself.", file=sys.stderr)
         return 2
     return 0
 
