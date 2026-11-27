@@ -53,7 +53,7 @@ def self_test():
         c.check(main(["on", "--session", "s1"]) == 0 and yolo_file("s1").exists(), "on creates the file")
         c.check(main(["off", "--session", "s1"]) == 0 and not yolo_file("s1").exists(), "off removes it")
         c.check(main(["status", "--session", "../x"]) == 2, "a bad session id exits 2")
-        c.check(not yolo_file("s2").parent.joinpath("s2.yolo").exists(), "status writes nothing")
+        c.check(main(["status", "--session", "s2"]) == 0 and not yolo_file("s2").exists(), "status writes nothing")
     return c.done()
 
 
