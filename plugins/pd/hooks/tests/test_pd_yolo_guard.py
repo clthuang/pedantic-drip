@@ -294,6 +294,18 @@ def test_s2_a_push_after_a_switch_to_a_feature_branch_passes(run_hook, yolo, tmp
 
 
 @pytest.mark.parametrize("command", [
+    "git switch -c feat; git push",
+    "git switch -c feat\ngit push -u origin HEAD",
+    "git checkout -b feat || git push",
+    "git switch -c feat & git push",
+])
+def test_s8_a_switch_that_may_fail_does_not_hide_the_base_branch_head(run_hook, yolo, tmp_path, command):
+    repo = make_repo(tmp_path / "repo", branch="main")
+    code, err = run_hook(HOOK, bash_call(command, repo))
+    assert code == 2 and "Hard stop:" in err
+
+
+@pytest.mark.parametrize("command", [
     "find . -type d -name build | xargs rm -rf",
     "git ls-files -o --directory | xargs rm -rf",
     "git worktree list | xargs git worktree remove",
