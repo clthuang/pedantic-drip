@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.5] - 2026-11-27
+
 ### Added
 
 - **`/pd:secretary` is the single entry point again.** After it creates a work item it offers a goal run to finish, so the `Stop` gate carries the work through every stage. `--stage mvp|production` and `--yolo` pass through to the item.
