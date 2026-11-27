@@ -306,6 +306,22 @@ def test_s8_a_switch_that_may_fail_does_not_hide_the_base_branch_head(run_hook, 
 
 
 @pytest.mark.parametrize("command", [
+    "! git switch -c feat && git push -u origin HEAD",
+    "! git checkout -b feat && git push",
+    "git --git-dir=OTHER/.git --work-tree=OTHER switch -c feat && git push -u origin HEAD",
+    "GIT_DIR=OTHER/.git git switch -c feat && git push -u origin HEAD",
+    "pushd OTHER >/dev/null && git switch -c feat && popd >/dev/null && git push -u origin HEAD",
+    "git --version switch feat && git push -u origin HEAD",
+    "git --exec-path switch feat && git push",
+])
+def test_y_a_switch_that_may_not_happen_in_this_repo_does_not_hide_the_base_branch_head(run_hook, yolo, tmp_path, command):
+    repo = make_repo(tmp_path / "repo", branch="main")
+    make_repo(tmp_path / "OTHER")
+    code, err = run_hook(HOOK, bash_call(command.replace("OTHER", str(tmp_path / "OTHER")), repo))
+    assert code == 2 and "Hard stop:" in err
+
+
+@pytest.mark.parametrize("command", [
     "find . -type d -name build | xargs rm -rf",
     "git ls-files -o --directory | xargs rm -rf",
     "git worktree list | xargs git worktree remove",
