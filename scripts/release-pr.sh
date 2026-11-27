@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Opens the release PR: bumps plugin.json's version and promotes CHANGELOG.md's [Unreleased] section.
 # You merge it once CI passes; .github/workflows/publish.yml then tags it and moves stable.
-# Usage: scripts/release-pr.sh [patch|minor|major]   (default patch)
+# Usage: scripts/release-pr.sh patch|minor|major   (required: choose the bump by semver, https://semver.org)
 set -euo pipefail
 
 MANIFEST=plugins/pd/.claude-plugin/plugin.json
 die() { echo "release-pr: $*" >&2; exit 1; }
 
-part=${1:-patch}
-case "$part" in patch|minor|major) ;; *) die "usage: $0 [patch|minor|major]" ;; esac
+part=${1:-}
+case "$part" in patch|minor|major) ;; *) die "usage: $0 patch|minor|major (choose the bump by semver)" ;; esac
 command -v gh >/dev/null || die "gh (GitHub CLI) is required to open the PR"
 [[ "$(git branch --show-current)" == main ]] || die "run it on main"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "commit or stash your changes first"

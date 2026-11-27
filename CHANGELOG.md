@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A release names its bump.** `scripts/release-pr.sh` requires `patch`, `minor` or `major` and no longer defaults to `patch`; the bump follows semver.
+
 - **Reviewers name the stage they applied.** `pd-review-prompt` builds the review prompt with its `Stage:` line and the stage's bar, the review schema gains `stage`, and `verify-change` takes the stage. The reviewer agents' third severity is `note`, in place of `suggestion`.
 - **The `Stop` gate holds brainstorm and RCA goals** until they are promoted, and the gate resets the read budget's counter each turn.
 

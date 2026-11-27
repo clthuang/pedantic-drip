@@ -79,28 +79,30 @@ fails "check-version: no tags" in_work bash "$SCRIPTS/check-version.sh"
 g tag v1.0.0
 
 # --- release-pr.sh: refusals ---
-fails "release-pr: nothing under [Unreleased]" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: nothing under [Unreleased]" in_work bash "$SCRIPTS/release-pr.sh" patch
 add_entry alpha
 fails "release-pr: a bad argument" in_work bash "$SCRIPTS/release-pr.sh" huge
+fails "release-pr: no bump given" in_work bash "$SCRIPTS/release-pr.sh"
+ok "release-pr: no bump says usage" grep -q "usage: .*patch|minor|major" "$T/out"
 echo x >> "$W/CHANGELOG.md"
-fails "release-pr: a dirty tree" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: a dirty tree" in_work bash "$SCRIPTS/release-pr.sh" patch
 g checkout -q -- . && g checkout -q -b elsewhere
-fails "release-pr: not on main" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: not on main" in_work bash "$SCRIPTS/release-pr.sh" patch
 g checkout -q main && g reset -q --hard HEAD~1
-fails "release-pr: main behind origin/main" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: main behind origin/main" in_work bash "$SCRIPTS/release-pr.sh" patch
 g reset -q --hard origin/main
 
 echo "" > "$T/ci"
-fails "release-pr: CI on main still running" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: CI on main still running" in_work bash "$SCRIPTS/release-pr.sh" patch
 echo failure > "$T/ci"
-fails "release-pr: CI on main failed" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: CI on main failed" in_work bash "$SCRIPTS/release-pr.sh" patch
 echo none > "$T/ci"
-fails "release-pr: no CI run on main" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: no CI run on main" in_work bash "$SCRIPTS/release-pr.sh" patch
 ok "release-pr: asks about this main commit's push run" grep -q "gh run list --workflow ci.yml --commit $(g rev-parse HEAD) --event push" "$T/gh.log"
 rm "$T/ci"
 
 # --- release-pr.sh: the PR ---
-ok "release-pr: patch" in_work bash "$SCRIPTS/release-pr.sh"
+ok "release-pr: patch" in_work bash "$SCRIPTS/release-pr.sh" patch
 ok "release-pr: back on main" test "$(g branch --show-current)" = main
 ok "release-pr: the branch is pushed" test -n "$(remote_ref refs/heads/release/v1.0.1)"
 ok "release-pr: plugin.json bumped" test "$(g show release/v1.0.1:plugins/pd/.claude-plugin/plugin.json | jq -r .version)" = 1.0.1
@@ -113,7 +115,7 @@ ok "publish: between releases, nothing to do" in_work bash "$SCRIPTS/publish-rel
 ok "publish: stable unmoved" test "$(remote_ref refs/heads/stable)" = "$(g rev-parse v1.0.0)"
 merge_pr release/v1.0.1
 add_entry beta
-fails "release-pr: refuses while v1.0.1 isn't published" in_work bash "$SCRIPTS/release-pr.sh"
+fails "release-pr: refuses while v1.0.1 isn't published" in_work bash "$SCRIPTS/release-pr.sh" patch
 release1=$(g rev-parse main~1)  # the release merge; main is now the beta merge on top
 ok "publish: a later push publishes the release commit" in_work bash "$SCRIPTS/publish-release.sh"
 ok "publish: v1.0.1 at the release merge" test "$(remote_ref refs/tags/v1.0.1)" = "$release1"
