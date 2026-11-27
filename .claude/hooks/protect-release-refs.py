@@ -22,6 +22,8 @@ FOLLOW_TAGS_ON = re.compile(r"push\.followtags(=(true|yes|on|[1-9][0-9]*))?", re
 GH_REFS_RELEASE_REF = re.compile(r"(^|[/=])(refs/)?(heads/stable|tags/v[0-9]+\.[0-9]\S*)$")  # a git/refs path or ref= field
 PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
 DRY_RUN = {"-n", "--dry-run"}
+GH_RELEASE_FLAGS_WITH_VALUE = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--target",
+                               "--notes-start-tag", "--discussion-category", "-R", "--repo"}  # gh 2.103
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
 HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")  # not a <<< here-string
@@ -89,7 +91,10 @@ def gh_offending(words):
     gh = next((i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "gh"), None)
     args = [] if gh is None else words[gh + 1:]
     if args[:2] == ["release", "create"] and "--verify-tag" not in args:
-        return next((w for w in args[2:] if RELEASE_REF.fullmatch(w)), None)
+        rest = args[2:]
+        while rest and rest[0].startswith("-"):  # the tag is the first positional argument
+            rest = rest[2 if rest[0] in GH_RELEASE_FLAGS_WITH_VALUE else 1:]
+        return rest[0] if rest and RELEASE_REF.fullmatch(rest[0]) else None
     if args[:1] == ["api"] and any("git/refs" in w for w in args):
         return next((w for w in args if GH_REFS_RELEASE_REF.search(w)), None)
     return None
