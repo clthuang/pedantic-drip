@@ -236,6 +236,8 @@ git push origin stable"
 allows "git push origin main # it's not stable"
 blocks "git commit -m 'fix #12' && git push origin stable"
 blocks "echo a#b; git push origin stable"
+blocks "cat <<< hello
+git push origin stable"
 allows "git push --dry-run origin HEAD:stable"
 allows "git push -n origin v8.2.0"
 allows "git -c user.name=stable-bot push origin main"

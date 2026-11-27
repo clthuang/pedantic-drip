@@ -20,7 +20,7 @@ PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
 DRY_RUN = {"-n", "--dry-run"}
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")  # not a <<< here-string
 FED_TO_SHELL = re.compile(r"(^|[\s;&|(])(\S*/)?(sh|bash|zsh|dash|ksh)(\s+-\S+)*\s*<<")
 
 
