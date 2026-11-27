@@ -29,6 +29,9 @@ FLAG_F = re.compile(r"^-[A-Za-z]*f")
 FLAG_D = re.compile(r"^-[A-Za-z]*d")
 FLAG_BRANCH_DELETE = re.compile(r"^-[A-Za-z]*[dD][A-Za-z]*$")
 FLAG_RECURSIVE = re.compile(r"^-[A-Za-z]*[rR]")
+GIT_ENDING_OPTIONS = {"--version", "--help", "-h", "--exec-path", "--html-path", "--man-path", "--info-path"}  # git prints and exits: no subcommand runs
+# `!` negates a switch's status; the rest can send the switch to another repository
+SWITCH_UNCERTAIN = re.compile(r"[;\n|&!]|GIT_DIR|GIT_WORK_TREE|pushd|--git-dir|--work-tree")
 
 
 def refuse(text):
@@ -127,7 +130,7 @@ def check_command(command, cwd):
     commands = xargs_simple_commands(command, cwd)
     if commands is None:
         raise RuntimeError("simple_commands could not split the line")
-    and_only = not re.search(r"[;\n|&]", command.replace("&&", ""))  # only `&&` joins: a later command runs only if the switch worked
+    and_only = not SWITCH_UNCERTAIN.search(command.replace("&&", ""))  # only `&&` joins, in this repository: a later command runs only if the switch worked
     switched = {}  # repository -> branch an earlier command in this line moved HEAD to
     for words, at, xargs_fed in commands:
         name = os.path.basename(words[0])
@@ -143,12 +146,14 @@ def check_command(command, cwd):
         if name != "git":
             continue
         j, repo_dir = 1, at
+        ends_git = False
         while j < len(words) and words[j].startswith("-"):
+            ends_git = ends_git or words[j] in GIT_ENDING_OPTIONS
             if words[j] == "-C" and j + 1 < len(words):
                 repo_dir = os.path.join(repo_dir, os.path.expanduser(words[j + 1]))
             j += 2 if words[j] in GLOBAL_WITH_VALUE else 1
         options, sub, args = words[1:j], (words[j] if j < len(words) else ""), words[j + 1:]
-        if sub in NEW_BRANCH:
+        if sub in NEW_BRANCH and not ends_git:
             target = switch_target(sub, args, repo_dir)
             if target is not None:
                 switched[repo_of(repo_dir)] = target
