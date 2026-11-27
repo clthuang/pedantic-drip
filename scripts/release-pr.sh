@@ -28,6 +28,9 @@ case "$part" in
     patch) next="$major.$minor.$((patch + 1))" ;;
 esac
 ! git rev-parse -q --verify "refs/tags/v$next" >/dev/null || die "v$next already exists"
+branch="release/v$next"  # checked before any edit, so a refusal leaves main clean
+! git rev-parse -q --verify "refs/heads/$branch" >/dev/null || die "a local $branch exists: finish its PR or delete it"
+[[ -z "$(git ls-remote --heads origin "$branch")" ]] || die "origin has $branch: finish its PR or delete it"
 awk '/^## \[Unreleased\]/ { f = 1; next } /^## \[/ { f = 0 } f && NF { n++ } END { exit !n }' CHANGELOG.md \
     || die "CHANGELOG.md has nothing under [Unreleased]"
 
@@ -37,7 +40,6 @@ awk -v h="## [$next] - $(date +%Y-%m-%d)" '!done && /^## \[Unreleased\]/ { print
     CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 notes=$(awk -v h="## [$next]" 'index($0, h) == 1 { f = 1; next } /^## \[/ { f = 0 } f' CHANGELOG.md)
 
-branch="release/v$next"
 git checkout -q -b "$branch"
 git commit -q -m "release: v$next" -- "$MANIFEST" CHANGELOG.md
 git push -q -u origin "$branch"

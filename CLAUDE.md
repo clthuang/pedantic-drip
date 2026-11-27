@@ -111,6 +111,7 @@ See [Commands Reference](docs/dev-guide/commands-reference.md) for the full list
 
 **Quick reference:**
 ```bash
+bash scripts/test-all.sh         # The whole test battery, as CI and Verify's QA run it
 ./validate.sh                    # Validate components
 bash plugins/pd/hooks/tests/test-hooks.sh  # Hook integration tests
 scripts/release-pr.sh minor      # Release: opens the release PR into main; the bump (patch, minor or major) by semver

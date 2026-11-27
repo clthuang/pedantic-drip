@@ -398,11 +398,7 @@ def test_c23_guard_is_not_vacuous():
                  ["update-ref", "--no-deref", "-d", "refs/heads/worktree-wf_r-1", oid]])
 
 
-def test_c24_ci_and_changelog():
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    line = next(l for l in ci.splitlines() if "uv run --project plugins/pd pytest" in l)
-    for name in ("test_pd_worktrees.py", "test_pd_status_leftovers.py", "test_worktree_callers.py"):
-        assert f"plugins/pd/scripts/{name}" in line
+def test_c24_changelog():  # CI runs these files: scripts/test-all.sh collects plugins/pd whole
     assert "pd-worktrees" in (ROOT / "CHANGELOG.md").read_text()  # any section: a release moves [Unreleased] under a version
 
 

@@ -49,3 +49,6 @@ docs/_html/
 
 # Stray local SQLite files
 *.db
+
+# CodeGraph's local index
+.codegraph/
