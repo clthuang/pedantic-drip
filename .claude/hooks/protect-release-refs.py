@@ -8,7 +8,8 @@ autoUpdate, so a stray push ships to every install, and GitHub's rulesets stop n
 Reads the command from the hook's JSON on stdin; exit 2 blocks the call. Fails open on a command it can't
 split (bash couldn't run it either). A dry run (-n, --dry-run) is allowed.
 shortcut: it guards against accidents, not evasion: only literal refs are seen (not $vars, aliases or push
-config set outside the command), and of GitHub's API only git/refs (not releases or merges endpoints).
+config set outside the command), and of GitHub's API only git/refs (not releases or merges endpoints). It doesn't
+read the HTTP method, so a GET on git/refs/<ref> is refused too: read a ref through git/ref/<ref>.
 """
 import json
 import re
