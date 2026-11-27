@@ -2,10 +2,11 @@
 id: 2026-11-26-stage-yolo-decisions-secretary-entry
 type: workitem
 title: Stage, YOLO decisions, secretary entry point, main-session read budget
-status: done
-phase: finish
+status: active
+phase: verify
 mode: standard
 risk: [security]
+branch: workitem/2026-11-26-stage-yolo-decisions-secretary-entry
 ---
 # Stage, YOLO decisions, secretary entry point, main-session read budget
 
@@ -13,7 +14,8 @@ risk: [security]
 
 ## Now
 
-Done.
+run in flight: verify-change session c9b24375-514b-4e65-867c-d8156a1a427a
+Next: the seeded verify-change run fixes PR #37's comments P1-P3; then the verify gate, phase verify -> finish, the security reviewer re-checks the P1 fix, close again, push to PR #37, and the owner's yes before the merge.
 
 ## Links
 

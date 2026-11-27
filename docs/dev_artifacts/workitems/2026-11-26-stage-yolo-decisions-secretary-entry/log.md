@@ -659,3 +659,17 @@ Verdict: approved. Commit: ffcc5955. Scoped re-check of S8 and the push check's 
 - S9 note plugins/pd/hooks/pd-yolo-guard.sh:148 — Already present in 9a6c11b7, not a regression: some git commands other than checkout and switch also move HEAD, and the guard does not track them. `git rebase origin/main main && git push` from a work item branch is allowed and pushes main. (on the backlog: 2026-11-27-yolo-guard-head-moves-untracked)
 - S10 note plugins/pd/hooks/pd-yolo-guard.sh:68 — Already present in 9a6c11b7, not a regression: when a push runs in another repository and no switch appears in the line, the guard reads the branch of the wrong repository. Example: `pushd ../main-checkout && git push`, or `git --git-dir=../m/.git --work-tree=../m push`, where that checkout is on main. (on the backlog: 2026-11-27-yolo-guard-head-moves-untracked)
 Closes: review@2026-11-26 23:08+08:00#S8
+
+## 2026-11-27 10:39+08:00 review finish — claude-review (PR #37)
+Verdict: comments (2 warnings, 1 note). Commit: 52f87a78. The repository's Claude review workflow on https://github.com/clthuang/pedantic-drip/pull/37; checks validate and review pass. Reply: agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/pr37-claude-review.md. Each claim verified by the conductor (agent_sandbox/2026-11-26/2026-11-26-stage-yolo-decisions-secretary-entry/pr37-probe).
+- P1 warning plugins/pd/hooks/pd-yolo-guard.sh:153 — when xargs runs git push, the guard ignores the operands xargs adds, so `echo main | xargs git push origin` from a feature branch passes (exit 0) and pushes main; `git push origin main` is refused (exit 2).
+- P2 warning plugins/pd/scripts/phase-gate.sh:164 — under YOLO a plain Met/Missed probe-ruling question is refused by the guard ("decide this yourself … A (conductor, …)"), and probe_rulings rejects a conductor answer; references/log-entries.md:53 says to ask it through a plain AskUserQuestion, not a 'Hard stop:' question.
+- P3 note plugins/pd/scripts/pd-yolo:56 — the self-test check 'status writes nothing' is vacuous: the only status call uses the refused id ../x, and the check looks at s2.yolo, which nothing touches.
+
+## 2026-11-27 10:39+08:00 decision
+Q: PR #37's Claude review comments P1-P3 (all confirmed): backlog all three and merge, or fix all three before merging (reopen the item for a seeded verify run)?
+A (user, verbatim): "Fix all three before merging"
+
+## 2026-11-27 10:39+08:00 phase finish -> verify (back)
+Reason: PR review comments P1-P3 (review@2026-11-27 10:39+08:00), fixed before the merge per the decision above; the item reopens from done.
+Invalidates: nothing
