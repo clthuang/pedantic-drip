@@ -55,7 +55,7 @@ There is one path.
    - **the previous version isn't published yet** (its tag and `stable`);
    - **`[Unreleased]` is empty** in `CHANGELOG.md`.
 2. Merge the PR once CI passes.
-3. Once CI's `validate` job passes on the merge commit, its `publish` job runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`. If `validate` fails there, nothing is published until that run is re-run and passes; a later push to `main` won't publish it.
+3. Once CI's `validate` job passes on the merge commit, its `publish` job runs `scripts/publish-release.sh`: it tags `vX.Y.Z` on the merge commit and fast-forwards `stable`. If `validate` fails there, the release waits: a re-run, or the next push to `main` whose `validate` passes, publishes it.
 4. Installs pick up the release on their next marketplace update ([Update](docs/user-guide/installation.md#update)).
 
 ## Local Development Setup

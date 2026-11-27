@@ -133,18 +133,11 @@ merge_pr release/v1.0.1
 add_entry beta
 fails "release-pr: refuses while v1.0.1 isn't published" in_work bash "$SCRIPTS/release-pr.sh" patch
 release1=$(g rev-parse main~1)  # the release merge; main is now the beta merge on top
-# CI gates each push's publish run, so only the release commit's own run may publish it.
-fails "publish: a later push doesn't publish an unpublished release" in_work bash "$SCRIPTS/publish-release.sh"
-ok "publish: says to re-run the release commit's CI" grep -q "re-run CI on $release1" "$T/out"
-ok "publish: no tag from a later push" test -z "$(remote_ref refs/tags/v1.0.1)"
-ok "publish: stable unmoved by a later push" test "$(remote_ref refs/heads/stable)" = "$(g rev-parse v1.0.0)"
-ok "publish: the release commit's own run publishes it" in_work bash "$SCRIPTS/publish-release.sh" "$release1"
+ok "publish: a later push publishes the release commit" in_work bash "$SCRIPTS/publish-release.sh"
 ok "publish: v1.0.1 at the release merge" test "$(remote_ref refs/tags/v1.0.1)" = "$release1"
 ok "publish: stable at the release merge" test "$(remote_ref refs/heads/stable)" = "$release1"
-ok "publish: a re-run is a no-op" in_work bash "$SCRIPTS/publish-release.sh" "$release1"
+ok "publish: a re-run is a no-op" in_work bash "$SCRIPTS/publish-release.sh"
 ok "publish: re-run says so" grep -q 'is published' "$T/out"
-ok "publish: a later push after it is a no-op" in_work bash "$SCRIPTS/publish-release.sh"
-ok "publish: later push says so" grep -q 'is published' "$T/out"
 
 g fetch -q --tags origin
 ok "release-pr: minor" in_work bash "$SCRIPTS/release-pr.sh" minor
@@ -241,6 +234,8 @@ allows "git push origin main # not stable"
 allows "git push --dry-run origin HEAD:stable"
 allows "git push -n origin v8.2.0"
 allows "git -c user.name=stable-bot push origin main"
+blocks "git push origin 'refs/tags/*'"
+blocks "git push origin '+refs/heads/*:refs/heads/*'"
 ok "hook: the block says why" sh -c "hook_out=\$(jq -n '{tool_input: {command: \"git push origin stable\"}}' | python3 '$HOOK' 2>&1); echo \"\$hook_out\" | grep -q 'publish-release.sh'"
 ok "hook: registered for Bash in .claude/settings.json" jq -e '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command | contains("protect-release-refs.py")' "$SCRIPTS/../.claude/settings.json"
 

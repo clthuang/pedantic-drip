@@ -14,7 +14,7 @@ import re
 import shlex
 import sys
 
-RELEASE_REF = re.compile(r"(refs/heads/)?stable|(refs/tags/)?v[0-9]+\.[0-9].*")
+RELEASE_REF = re.compile(r"(refs/heads/)?stable|(refs/tags/)?v[0-9]+\.[0-9].*|refs/(heads|tags)/(v)?\*")  # globs too
 PUSH_CONFIG_RELEASE_REF = re.compile(r"[^=]*push[^=]*=(.*[:/+])?(stable|v[0-9]+\.[0-9])")  # -c remote.origin.push=HEAD:stable
 PUSHES_EVERY_REF = {"--tags", "--follow-tags", "--mirror", "--all"}
 DRY_RUN = {"-n", "--dry-run"}
