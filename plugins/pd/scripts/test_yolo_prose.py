@@ -225,3 +225,9 @@ def test_c21_suites_pass_and_finishing_names_pd_pr_checks():
     for command in (("bash", "plugins/pd/hooks/tests/test-hooks.sh"), ("./validate.sh",)):
         r = run(*command)
         assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_p2_probe_ruling_is_a_hard_stop_asked_at_finish():
+    has_all(flat(LOG_ENTRIES), "Q: Hard stop: <the probe's question>")
+    has_all(flat(TRANSITIONS), "a probe ruling")
+    has_all(flat(FINISHING), "Probe ruling", "`Hard stop:` AskUserQuestion", "Met", "Missed")
